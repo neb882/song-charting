@@ -1,0 +1,50 @@
+[
+ {
+  "id": "kimochi_warui",
+  "md5": "710cab8d8ef7e454823b219cfcecfdb9",
+  "artist": "Car Seat Headrest",
+  "title": "Kimochi Warui (When? When? When? When? When? When? When?)",
+  "charter": "InsaneOwO",
+  "slot": "required: Car Seat Headrest, InsaneOwO (indie rock)"
+ },
+ {
+  "id": "drunk_drivers",
+  "md5": "884d79c31438aac03d85b77b9001d2c0",
+  "artist": "Car Seat Headrest",
+  "title": "Drunk Drivers / Killer Whales (Single Version)",
+  "charter": "IaSg14",
+  "slot": "required slot: carefully tempo-mapped guitar-only chart, replaces IaSg14 \"I Want You to Know...\" (530 s > 8 min); same charter and artist"
+ },
+ {
+  "id": "take_me_out",
+  "md5": "f3aed706fd4f7ab4723a95be70ddc3b6",
+  "artist": "Franz Ferdinand",
+  "title": "Take Me Out",
+  "charter": "Harmonix",
+  "slot": "indie / alt rock (tempo change mid-song)"
+ },
+ {
+  "id": "all_the_small_things",
+  "md5": "50306bc38d0f985e138043de47c12588",
+  "artist": "Blink-182",
+  "title": "All the Small Things",
+  "charter": "Harmonix",
+  "slot": "pop-punk"
+ },
+ {
+  "id": "lucretia",
+  "md5": "9281cce268fcc80656570f2b2781f24f",
+  "artist": "Megadeth",
+  "title": "Lucretia",
+  "charter": "Harmonix",
+  "slot": "metal / heavy (18 time-signature changes)"
+ },
+ {
+  "id": "creep",
+  "md5": "a5074c86bcc83298eea3428e8889c7de",
+  "artist": "Radiohead",
+  "title": "Creep",
+  "charter": "Harmonix",
+  "slot": "slower song (~92 BPM, tempo-mapped to the band)"
+ }
+]

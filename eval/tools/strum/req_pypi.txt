@@ -1,0 +1,25 @@
+# STRUM (opria123/strum @ 9f420cb) runtime deps, resolved with
+# uv --exclude-newer 2026-05-11 (day after STRUM's last commit).
+# torch/torchaudio from the PyTorch CPU index (no GPU here; STRUM targets CUDA 12.8).
+numpy
+librosa
+soundfile
+mido
+pretty_midi
+hydra-core
+omegaconf
+click
+rich
+pandas
+tqdm
+pyyaml
+mutagen
+demucs
+# basic-pitch[onnx] without its TensorFlow pin (TF<2.15.1 has no Py3.12 wheel);
+# STRUM's guitar_hybrid_v2 docstring names the ONNX backend.
+onnxruntime
+mir_eval
+resampy<0.4.3
+scikit-learn
+scipy
+typing_extensions

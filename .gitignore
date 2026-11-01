@@ -21,3 +21,17 @@ __pycache__/
 node_modules/
 *.egg-info/
 .pytest_cache/
+
+# Evaluation: downloaded reference songs/charts, tool installs, models and runs stay local
+eval/data/
+eval/.venv/
+eval/tools/*/src/
+eval/tools/*/src_dl/
+eval/tools/*/venv/
+eval/tools/*/models/
+eval/tools/*/node_modules/
+eval/tools/*/runs/
+eval/tools/*/test/
+eval/tools/*/weights_hf/
+eval/tools/*/torch_home/
+eval/tools/*/rt/

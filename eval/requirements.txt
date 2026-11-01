@@ -1,0 +1,6 @@
+# The evaluation harness itself (reference builder and scorer), not the tools under test.
+numpy
+scipy
+soundfile
+librosa
+mido
