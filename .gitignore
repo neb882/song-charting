@@ -1,0 +1,21 @@
+# Audio is never committed: the song is the artist's copyrighted recording, and
+# stems are large. Each person supplies their own copy locally.
+*.mp3
+*.ogg
+*.opus
+*.wav
+*.flac
+*.m4a
+*.mp4
+*.webm
+
+# Local working data and environments
+work/
+stems/
+models/
+out/
+.venv/
+venv/
+__pycache__/
+*.pyc
+node_modules/
