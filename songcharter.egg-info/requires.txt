@@ -1,5 +1,0 @@
-numpy>=2.0
-soundfile>=0.12
-
-[dev]
-pytest>=8
