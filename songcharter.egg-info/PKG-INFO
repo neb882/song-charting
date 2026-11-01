@@ -1,0 +1,27 @@
+Metadata-Version: 2.4
+Name: songcharter
+Version: 0.1.0
+Summary: Make Clone Hero charts from audio
+Requires-Python: <3.14,>=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=2.0
+Requires-Dist: soundfile>=0.12
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+
+# song-charting
+
+Tools and charts for making Clone Hero charts from audio.
+
+First song: "Love Isn't Love Enough" by Beast Monster Thing.
+
+## What lives here
+
+- The charting pipeline (stem separation, tempo map, note extraction, chart writer).
+- The finished chart files (`notes.chart`, `song.ini`).
+
+## What does not
+
+The song audio. It is the artist's copyrighted recording, so it is never committed
+(see `.gitignore`). To play or rebuild a chart, put your own copy of the song in the
+song folder.

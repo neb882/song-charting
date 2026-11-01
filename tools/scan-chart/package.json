@@ -1,0 +1,8 @@
+{
+  "name": "songcharter-scan-chart",
+  "private": true,
+  "description": "Offline chart check with scan-chart, the library Chorus Encore uses",
+  "dependencies": {
+    "scan-chart": "8.0.1"
+  }
+}

@@ -1,0 +1,2 @@
+[console_scripts]
+songcharter = songcharter.cli:main
