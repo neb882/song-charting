@@ -762,7 +762,7 @@ Each level is built from the one above, so the tiers are nested by construction.
 **Guitar and bass,** in this order:
 1. **Priority per onset:** +4 sustained, +2 on a measure line, +1 on the level grid (0.5 / 1 / 2 beats for Hard / Medium / Easy); then metric strength, then earlier [code]. v1's +8 inside star power is dropped: step 4 keeps star power non-empty instead [decision].
 2. **Greedy keep with a time floor:** the minimum gap is the finest of the level's steps that lasts at least a floor at the song's tempo: Hard 1/16, 1/12, 1/8 or 1/4 note with 160 ms; Medium 1/8, 1/4 or 1/2 with 300 ms; Easy 1/4, 1/2 or 1/1 with 500 ms [code]. At 142 BPM this equals v1's "Standard" (0.5 / 1 / 2 beats); at 90 BPM Hard can keep 16ths, which step 9 force-strums. There is no "Dense" preset (§9 Q8).
-3. **Hard thinning by subdivision** (critique E3). With 0.5-beat padding, v1's rule kept 97–100 % of Expert on Hard for 8th-note parts [here, critique `reduce_sim.py`]. So a ladder drops whole position classes, finest first (finer than 16ths; 16ths and 8th triplets; the measure's last 8th; the first half's last 8th; the other 8ths; then beats), and only "sandwiched" onsets, toward target shares of Expert onsets: Hard 0.78, Medium 0.50, Easy 0.30 (ceilings 0.80 / 0.58 / 0.36; floors 0.55 / 0.33 / 0.20) [code]. Basis: Harmonix keeps about 94 % of on-beat notes, 79 % of off-beat 8ths and 31 % of 16ths on Hard [here, critique]; RBN drops every 4th 8th at ≥ 160 BPM [doc].
+3. **Hard thinning by subdivision** (critique E3). With 0.5-beat padding, v1's rule kept 97–100 % of Expert on Hard for 8th-note parts [here, critique `reduce_sim.py`]. So a ladder drops whole position classes, finest first (finer than 16ths; 16ths and 8th triplets; the measure's last 8th; the first half's last 8th; the other 8ths; then beats), and only "sandwiched" onsets, toward target shares of Expert onsets: Hard 0.78, Medium 0.50, Easy 0.30 (ceilings 0.80 / 0.58 / 0.36; floors 0.55 / 0.33 / 0.20) [code]. Bass has its own targets (Q19, decided): Hard 0.86, Medium 0.60, Easy 0.45 (ceilings 0.88 / 0.66 / 0.50; floors 0.62 / 0.40 / 0.25; Hard's limit 0.90 keeps it under the `hardNotThinned` error). On the four Harmonix references bass F1 goes Hard 0.872 → 0.891, Medium 0.840 → 0.898, Easy 0.779 → 0.821, guitar is unchanged; the test song's bass does not change, because each level's time floor binds before the ladder there (at 142 BPM Medium keeps at most quarters) [here, Q18/Q19 run]. Basis: Harmonix keeps about 94 % of on-beat notes, 79 % of off-beat 8ths and 31 % of 16ths on Hard [here, critique]; RBN drops every 4th 8th at ≥ 160 BPM [doc].
 4. **Star-power and solo coverage:** if a phrase or solo has no note on this level, its strongest upper-level onset comes back and whatever crowds it goes.
 5. **Re-limit lanes** (Medium GRYB, Easy GRY) by one contour-preserving Viterbi pass: each note stays near its Expert lane scaled onto the level's lanes, the direction of movement is kept, and fast jumps (Hard: more than 3 lanes within a beat; Medium and Easy: more than 2 within two beats) cost 2 per extra lane [code].
 6. **Then simplify chords** against that lane set (critique G8: doing it the other way round can re-create a forbidden G+B):
@@ -804,7 +804,7 @@ Each level is built from the one above, so the tiers are nested by construction.
    - collapse double cymbals to one; crashes go on green on Hard and below;
    - collapse two toms to one on Medium and below;
    - no kicks inside fills below Expert.
-5. **Kicks:** padding 1 beat on Hard, 2 beats otherwise. On Medium a kick stays only with zero or one hand gem.
+5. **Kicks:** padding 1/2 beat on Hard (8th-note kicks, as all four Harmonix test Hards have; Q18, decided), 2 beats otherwise. On the four Harmonix references drums Hard F1 goes 0.918 → 0.944. On the test song Hard gains 6 kicks, and the ladder then also takes the measure's last 8th (96 hi-hats and 11 rides): drums Hard 0.893 → 0.81 of Expert, the Harmonix range [here, Q18/Q19 run]. On Medium a kick stays only with zero or one hand gem.
 6. **Hard:** no 3-limb hits, no 2x kick.
 7. **Easy:**
    - never a kick paired with a pad;
@@ -1461,9 +1461,9 @@ The other critique gaps are designed in this version: G4 (§2.3, code change pen
 | # | question | what it decides |
 |---|---|---|
 | 1 | **Which instrument(s) does the friend play?** | Which of M1a's rows are judged first (the v1 chart holds all three instruments, so whichever he plays can be playtested now; §5), the M2 order, and the priority of bass (§2.8). Blocks the most. |
-| 2 | **Are non-commercial weights acceptable** (Fretformer 2, ADTOF; htdemucs_6s read as NC)? | Whether Goal 2 has a measured-good route at all, and whether M2's engine work is needed. If not, guitar and drums have no measured engine today, and a rules route still needs a permissively licensed separator, which none of the sources found. Blocks the most. |
-| 3 | If yes: which guitar route? **B2** (our own driver; songcharter stays MIT and uses no AGPL code), **B1** (autochart's engine as a separate program; we ship AGPL code with its source obligations, plus FFmpeg's LGPL), or **D** (build on autochart; songcharter becomes AGPL)? | §2.7, §4.2 |
-| 4 | Must the friend's tool be native Windows, or is WSL2 acceptable? | §4.3, M4 |
+| 2 | **Are non-commercial weights acceptable** (Fretformer 2, ADTOF; htdemucs_6s read as NC)? **Decided: yes** (the owner, 2026-11-02): the tool stays free and is never sold. | Whether Goal 2 has a measured-good route at all, and whether M2's engine work is needed. If not, guitar and drums have no measured engine today, and a rules route still needs a permissively licensed separator, which none of the sources found. Blocks the most. |
+| 3 | **Decided: B1** (the owner, 2026-11-02). Which guitar route? **B2** (our own driver; songcharter stays MIT and uses no AGPL code), **B1** (autochart's engine as a separate program; we ship AGPL code with its source obligations, plus FFmpeg's LGPL), or **D** (build on autochart; songcharter becomes AGPL)? | §2.7, §4.2 |
+| 4 | Must the friend's tool be native Windows, or is WSL2 acceptable? **Decided: native Windows** (the owner, 2026-11-02). | §4.3, M4 |
 | 5 | Will the friend play from the same MP3 file we chart? | M1a's gate; §2.1; otherwise verify sync against their copy |
 | 6 | Should drum fills be charted (they need a fill detector) or omitted (then `noDrumActivationLanes` needs a gate exemption)? | §2.10, §2.13 |
 | 7 | Should the provenance-unknown BS-RoFormer SW ever be offered as an opt-in download? | §2.2 |
@@ -1504,13 +1504,15 @@ verification. "Contested" marks one that a verifier argued against; the fixer th
   the Small Things at 147.5 BPM included)?** Today Hard keeps half of Expert's kicks (human 0.745) and never reaches
   its 0.85 target. With 8th-note kicks: Hard F1 0.918 → 0.944 on the 4 Harmonix songs (both verifiers), and +6 kicks
   (STRUM) and +9 (ADTOF) on the test song, with no errors. Against: Take Me Out's human Hard has almost no sub-beat
-  kicks, and Kimochi Warui's Hard would keep 0.984 of Expert's kicks. **Recommendation:** allow them.
+  kicks, and Kimochi Warui's Hard would keep 0.984 of Expert's kicks. **Recommendation:** allow them. **Decided:
+  allowed** (the owner, 2026-11-02; §2.11 drums step 5).
 - **Q19. Should bass get ladder targets of its own?** Bass uses the guitar targets (0.78 / 0.50 / 0.30); human bass
   ladders average 0.889 / 0.609 / 0.453 (§2.11). The verifiers' what-if with denser bass targets: bass F1 Hard 0.872 →
   0.891, Medium 0.840 → 0.898, Easy 0.779 → 0.821; the test song's bass does not change (0.836 / 0.565 / 0.355 either
   way). A bass Hard must stay under the 0.90 `hardNotThinned` error, which 2 of the 4 human bass Hards reach. Also
   open: should bass Medium drop chords, and should the 2-beat Easy bass sustain floor come down? **Recommendation:**
-  bass targets of their own, with Hard kept under 0.90; tune in M2.
+  bass targets of their own, with Hard kept under 0.90; tune in M2. **Decided: bass targets of their own** (the owner,
+  2026-11-02; §2.11 step 3). Bass Medium chords and the Easy bass sustain floor stay open for M2.
 - **Q20. Easy drums: what decides a section's mode?** Contested; the refutation held. Today a section at or above the
   song's median drum-stem loudness is a two-hand beat and a quieter one a kick/snare beat (§2.11 drums step 7). The
   finding: that matches the human choice in 20 of 36 sections, and removed every kick from 10 of the test song's 19

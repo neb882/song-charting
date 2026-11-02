@@ -34,8 +34,11 @@ Shared machinery:
      500 ms; the floors are about the shortest Harmonix gaps per level). At 142 BPM that is 1/8, 1/4 and 1/2 notes.
      Then the ladder, with these shares of Expert onsets (target, ceiling, floor, limit): Hard 0.78 / 0.80 / 0.55 /
      0.90 (the critique's 0.75-0.8; Harmonix 0.75; a Hard at 0.9 or more is an error in `check_reductions`), Medium
-     0.50 / 0.58 / 0.33 / 0.65, Easy 0.30 / 0.36 / 0.20 / 0.49 (Harmonix 0.47 and 0.28; limits: DESIGN's bands). A
-     note whose sustain survives on the level (trimmed against the next upper onset) is never thinned by the ladder.
+     0.50 / 0.58 / 0.33 / 0.65, Easy 0.30 / 0.36 / 0.20 / 0.49 (Harmonix 0.47 and 0.28; limits: DESIGN's bands).
+     Bass has its own, denser ladder (DESIGN 9 Q19; the human bass ladders average 0.889 / 0.609 / 0.453): Hard 0.86 /
+     0.88 / 0.62 / 0.90 (its limit keeps it under the 0.90 error), Medium 0.60 / 0.66 / 0.40 / 0.75, Easy 0.45 / 0.50
+     / 0.25 / 0.60. A note whose sustain survives on the level (trimmed against the next upper onset) is never thinned
+     by the ladder.
   2. Lanes, contour-preserving. Hard keeps all five lanes, Medium uses G R Y B and Easy G R Y. Every onset's low lane
      is chosen by one Viterbi pass over the part: each note stays near its Expert lane scaled onto the level's lanes
      (x 3/4 on Medium, x 1/2 on Easy, which reproduces the Harmonix lane maps), the direction of movement from the
@@ -60,9 +63,10 @@ Drums (4-lane pro), per level:
      in a regular run; yellow is the hi-hat). Two cymbals on one hit become one (the crash). From Medium down two
      toms become one. Never more than two hand gems.
   2. Fills (activation lanes): below Expert no kicks inside a fill, except on its last note, the activation note.
-  3. Kicks: at least 1 beat apart on Hard and 2 beats on Medium and Easy (4 beats at 170 BPM or more, RBN's one kick
-     per measure); from 100 BPM Medium and Easy kicks stay on beats (RBN); on Hard and Medium no kick under an
-     off-beat crash. Priority: metric strength, then a kick under a crash, then earlier.
+  3. Kicks: at least 1/2 beat apart on Hard (8th-note kicks, as in all four Harmonix test Hards; DESIGN 9 Q18) and 2
+     beats on Medium and Easy (4 beats at 170 BPM or more, RBN's one kick per measure); from 100 BPM Medium and Easy
+     kicks stay on beats (RBN); on Hard and Medium no kick under an off-beat crash. Priority: metric strength, then a
+     kick under a crash, then earlier.
   4. Hands (every pad but the kick, as one stream): kept hits at least 1/2 beat apart on Hard (no 16th patterns or
      rolls; RBN avoids them at 140 BPM or more) and 1 beat on Easy, except that at 120 BPM or less a hit of only
      hi-hat or ride may sit 1/2 beat from another (Harmonix Easy keeps the off-beat ride there; snares stay a beat
@@ -277,6 +281,9 @@ _FRET_RULES = {
     "Easy": _FretRules(3, (1.0, 2.0, 4.0), 0.500, 2.0, _Ladder(0.30, 0.36, 0.20, 0.49), 1.0, 0.0, 1.25, 2, 2.0),
 }
 _BASS_EASY_SUS_MIN = 2.0  # Harmonix Easy bass: shortest sustains 2 beats
+# bass ladders (target, ceiling, floor, limit): denser than guitar's, as the human bass ladders are (DESIGN 9 Q19)
+_BASS_LADDERS = {"Hard": _Ladder(0.86, 0.88, 0.62, 0.90), "Medium": _Ladder(0.60, 0.66, 0.40, 0.75),
+                 "Easy": _Ladder(0.45, 0.50, 0.25, 0.60)}
 
 # lane-fitting costs (see the module docstring)
 _W_FLAT, _W_REVERSE, _W_JUMP, _W_NEAR = 3.0, 6.0, 2.0, 0.01
@@ -432,7 +439,8 @@ def _reduce_frets(upper: Track, level: str, tempo: TempoMap, expert: Track) -> T
 
     kept = _greedy(ticks, key, conflict)
     n_upper = len(up) if upper.difficulty != level else math.inf  # a level re-reduced from itself has no level above
-    kept = _thin(kept, grid, len(ex), n_upper, rules.ladder, lambda t: not held[t], step.get)
+    ladder = _BASS_LADDERS[level] if upper.instrument == "DoubleBass" else rules.ladder
+    kept = _thin(kept, grid, len(ex), n_upper, ladder, lambda t: not held[t], step.get)
     kept = _cover(kept, ticks, spans, key, conflict)
 
     # 2-3. lanes, then chords fitted to them
@@ -503,7 +511,7 @@ class _DrumRules:
 
 
 _DRUM_RULES = {
-    "Hard": _DrumRules(1.0, 0.5, 0.5, 0.25, _Ladder(0.85, 0.87, 0.62, 0.95)),
+    "Hard": _DrumRules(0.5, 0.5, 0.5, 0.25, _Ladder(0.85, 0.87, 0.62, 0.95)),
     "Medium": _DrumRules(2.0, 0.5, 1.0, 0.5, _Ladder(0.61, 0.70, 0.39, 0.85)),
     "Easy": _DrumRules(2.0, 1.0, 1.0, 0.5, _Ladder(0.50, 0.55, 0.30, 0.71)),
 }

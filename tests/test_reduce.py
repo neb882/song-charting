@@ -90,6 +90,52 @@ def test_onset_ladder_is_nested_and_strictly_decreasing(seed):
         assert set(onset_ticks(lower)) <= set(onset_ticks(upper))
 
 
+def test_bass_keeps_a_denser_ladder_than_guitar():
+    """DESIGN 9 Q19: bass thins toward denser targets than guitar, with bass Hard still under the 0.90 error. The
+    targets only stop the thinning sooner: each level's minimum gap (its time floor) still binds first, so at 142 BPM
+    continuous 8ths keep quarters on Medium and half notes on Easy either way."""
+    tm = tempo(142)
+    gs, bs = [], []
+    for seed in range(8):
+        for chords in (False, True):
+            notes = random_part(seed, chords=chords)
+            gs.append(shares(reduce_track(fret_track(notes), tm), fret_track(notes)))
+            bass_ex = fret_track(notes, "DoubleBass")
+            bass_levels = reduce_track(bass_ex, tm)
+            bs.append(shares(bass_levels, bass_ex))
+            assert bs[-1][0] < 0.90 and errors(check_reductions([bass_ex] + bass_levels, tm)) == []
+    mean = lambda rows, k: sum(r[k] for r in rows) / len(rows)  # noqa: E731
+    assert mean(bs, 0) > mean(gs, 0) + 0.02 and mean(bs, 1) > mean(gs, 1)
+    assert all(b[2] >= g[2] - 0.01 for b, g in zip(bs, gs))  # Easy: the 2-beat bass sustain floor protects fewer notes
+    ex = eighths()
+    g = shares(reduce_track(fret_track(ex), tm), fret_track(ex))
+    b = shares(reduce_track(fret_track(ex, "DoubleBass"), tm), fret_track(ex, "DoubleBass"))
+    assert b[0] > g[0] + 0.1 and b[1:] == g[1:] == [0.5, 0.25], (g, b)
+
+
+def test_drums_hard_keeps_8th_note_kicks():
+    """DESIGN 9 Q18: 8th-note kicks survive on Hard (all four Harmonix test Hards have them); Medium keeps 2 beats."""
+    tm = tempo(142)
+    hits = []
+    for m in range(4, 36):
+        for s in range(8):  # 8th notes
+            t = m * M + s * RES // 2
+            hits.append(DrumHit(t, 2, cymbal=True))
+            if s in (0, 3, 4, 7):  # a busy kick pattern with 8th-note pairs
+                hits.append(DrumHit(t, 0))
+            if s in (2, 6):
+                hits.append(DrumHit(t, 1))
+    ex = drum_track(hits)
+    hard, medium, _ = reduce_track(ex, tm)
+    kicks = lambda tr: sorted(t for t, hs in groups(tr).items() if any(h.pad == 0 for h in hs))  # noqa: E731
+    hk = kicks(hard)
+    assert min(b - a for a, b in zip(hk, hk[1:])) == RES // 2
+    assert len(hk) > 0.75 * len(kicks(ex))
+    mk = kicks(medium)
+    assert min(b - a for a, b in zip(mk, mk[1:])) >= 2 * RES
+    assert errors(check_reductions([ex, hard, medium], tm)) == []
+
+
 def test_continuous_8ths_lose_the_rbn_positions_first():
     """Hard drops each measure's last 8th and the first half's last 8th (every fourth 8th per half measure);
     Medium is quarter notes and Easy half notes at 142 BPM."""
@@ -362,7 +408,7 @@ def test_drums_rock_beat_at_142():
     kicks = sorted(t for t, hs in g.items() if any(h.pad == 0 for h in hs))
     assert all(t % RES == 0 for t in kicks) and min(b - a for a, b in zip(kicks, kicks[1:])) >= 2 * RES
     hard_kicks = sorted(t for t, hs in groups(hard).items() if any(h.pad == 0 for h in hs))
-    assert min(b - a for a, b in zip(hard_kicks, hard_kicks[1:])) >= RES
+    assert min(b - a for a, b in zip(hard_kicks, hard_kicks[1:])) >= RES // 2  # 8th-note kicks (DESIGN 9 Q18)
     eg = groups(easy)
     quiet = [hs for t, hs in eg.items() if t < 20 * M]
     loud = [hs for t, hs in eg.items() if t >= 20 * M]
