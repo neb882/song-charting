@@ -2,6 +2,10 @@
 
 *Version 2, 2026-11-02, revised the same day after two checkers' reviews (fidelity and feasibility). Version 1 was the design lead's synthesis of nine research reports. This version applies three later inputs: a critic's review of v1; a comparison of three existing auto-charters (autochart, chartgen, STRUM) on six human-charted songs and on the test song; and a whole-song ADTOF vs STRUM drum test. It also reads the code being written tonight and the checks its builders ran on it. Where the critique and v1 disagree, the critique wins unless newer evidence says otherwise. A choice that no source decides is tagged [decision]. Nobody has listened to any output or played any chart. Nothing has run on Windows or on an RTX 4070.*
 
+*Updated later the same day to match the code that landed on `main` at commit e0e4b7e, after a review of the first
+build (six reviewers, two verifiers per finding, fixers per file). The changes are listed at the end of §11. Nobody
+has played the first chart yet.*
+
 **Evidence tags:**
 - **[here]**: measured by this project in the Linux dev container (4 CPUs, no GPU).
 - **[here, 5070]**: measured on the owner's RTX 5070 under WSL2 (`eval/gpu.sh`).
@@ -10,7 +14,8 @@
 - **[untested]**: nobody has tried it.
 - **[inference]**: reasoned from measurements, not measured itself.
 - **[decision]**: a choice made in this document on judgement; no source decides it.
-- **[code]**: read from this repository on 2026-11-02 at about 03:30, while the uncommitted modules were still being written: branch `first-chart` at commit 6094e49, plus the uncommitted work in §2.0.
+- **[code]**: read from this repository on 2026-11-02: at about 03:30 from branch `first-chart` at commit 6094e49 plus
+  uncommitted work; statements updated after the first-chart review read `main` at commit e0e4b7e (§2.0).
 
 **Evidence documents.** Each measurement is attributed to the document that made it. Apart from the comparison (`eval/REPORT.md`), these documents were written outside the repository on 2026-11-02 and are not committed. A script named without a repo path belongs to them.
 
@@ -21,6 +26,8 @@
 | comparison | `eval/REPORT.md` in this repo: autochart, chartgen and STRUM, run on the 5070 and scored with `eval/scorer/score.py` against six human charts. Four audits come with it: test-song guitar, test-song drums and bass, reference-set claims, practicality. |
 | ADTOF test | ADTOF and STRUM drums on whole reference songs, scored with `eval/scorer/score.py` (`run_adtof_refs.py`, `fuse.py`) |
 | build checks | checks run tonight by the job writing the modules, on work-in-progress code, not reviewed: **beatgrid run** (`beatgrid` on the test song's drum stem and on four Harmonix references' original drum stems: `final_run.txt`, `refs_check_*.json`); **importer check** (`importers` against scan-chart on the three test-song folders: `importers_check/report.json`); **quantizer check** (`quantize` on the test-song outputs over a rigid 142.0009 BPM grid and over a grid made from the guitar audit's local drum beats moved 16 ms early: `quantize_check/run1.txt`, `result.json`). They are not among the brief's inputs. |
+| review | the first-chart review of the test-song build: six reviewers, two verifiers per finding, fixers per file |
+| takes | four autochart Expert takes of the test song (GPU take; CPU seeds 101, 202, 303), spliced for the v1 chart |
 
 ---
 
@@ -31,10 +38,10 @@ songcharter is a free, local tool. A song file goes in (MP3 or anything ffmpeg r
 | | Goal 1: the test song, for the friend, soon | Goal 2: the any-song tool |
 |---|---|---|
 | What | A good chart of Car Seat Headrest, "Beast Monster Thing (Love Isn't Love Enough)", the streaming master (the MP3 container reports 412.395 s; the gapless decode is 412.363 s) | `songcharter`: any song file in, a song folder out, on the friend's Windows PC with an RTX 4070, used by a non-technical person |
-| Gate first | Ask which instrument(s) the friend plays and whether they will play from the same MP3 (§9 Q1, Q5). Nothing is built before the answer (comparison §7.4 step 0). | — |
+| Gate first | Ask which instrument(s) the friend plays and whether they will play from the same MP3 (§9 Q1, Q5). The v1 chart was built for all three instruments before the answer, so the answer now decides which of M1a's rows are judged first (§5). | — |
 | Route | **Merge build** for the friend's instrument(s): import autochart's guitar and STRUM's drums and bass (both already ran on the 5070), re-time them onto our own beat grid, add our own tiers, star power, sustains and sections, pass the gate (§2.13), then a playtest. | **Option B, provisionally:** the best component per stage plus our own scaffolding. The guitar engine route and the licence shape wait on the owner (§9). |
 | Why this order | The comparison put the autochart app plus a Moonscraper pass (A′) first for guitar, and STRUM's chart with one global shift first for drums and bass; it allowed the merge only as a time-boxed step if that quick route failed the playtest (comparison §1, §7.1, §7.4). This version reverses that order [decision]. Reasons: A′ needs our star power, sustain trimming, a fix for the two half-tempo stretches and lower tiers anyway, and the importers (exact against scan-chart [here, importer check]) and the quantizer now exist (§2.0). | — |
-| New model runs | For guitar: one, to replace 341–399 s (a new seed, or the app's inpaint by hand); 2 or more extra seeds are recommended (§2.7). None for drums or bass. | All stages |
+| New model runs | For guitar: done for the v1 chart, three CPU seeds beside the GPU take, spliced per section (§2.7). None for drums or bass. | All stages |
 | Fallback | The comparison's quick routes: the autochart app plus a Moonscraper pass (guitar); STRUM's chart with one global shift (drums, bass) | — |
 
 **One architecture for both goals.** Every note source returns a `TimedSong` (`songcharter/timed.py`) in seconds of the single gapless decode. Only the quantizer turns times into ticks of our `TempoMap`, so no note is ever timed by another tool's tempo map. Imported charts plug in this way today (`songcharter/importers.py` [code]); our Fretformer driver, rules, ADTOF and STRUM onsets are designed to [untested]. Confidence: high.
@@ -53,7 +60,7 @@ songcharter is a free, local tool. A song file goes in (MP3 or anything ffmpeg r
 
 | part | best measured so far | caveat |
 |---|---|---|
-| tempo | On the guitar audit's yardstick (the test song's 800 local drum beats, rising-edge picker), p95 \|dev\|: rigid 142.0009 BPM line 47.9 ms, STRUM's line 34.7 ms, `beatgrid` free 50.7 ms with a median of −16.6 ms, inside the human −14 to −18 ms [here, guitar audit; here, beatgrid run]. On four Harmonix references `beatgrid` (no Beat This start) puts 1.00 / 0.84 / 1.00 / 0.26 of its beats within 70 ms of a human beat (All the Small Things, Take Me Out, Creep, Lucretia) [here, beatgrid run]. | Not yet scored with `score.py`'s beat F1. Its kick-on-1 bar phase was wrong on 2 of the 4 references (both flagged uncertain). v1's prototype figure (median 5.9 / p95 8.3 ms) is a residual of matched onsets in v1's convention and is not comparable (§2.3). autochart's beat F1 on the six references averages 0.87, Lucretia 0.29 [here, 5070]. |
+| tempo | On the guitar audit's yardstick (the test song's 800 local drum beats, rising-edge picker), p95 \|dev\|: rigid 142.0009 BPM line 47.9 ms, STRUM's line 34.7 ms, `beatgrid` free 50.7 ms with a median of −16.6 ms, inside the human −14 to −18 ms [here, guitar audit; here, beatgrid run]. On four Harmonix references `beatgrid` (no Beat This start) puts 1.00 / 0.986 / 1.00 / 0.26 of its beats within 70 ms of a human beat (All the Small Things, Take Me Out, Creep, Lucretia) [here, beatgrid run; Take Me Out after the local tempo periods of §2.3: here, review]. | Not yet scored with `score.py`'s beat F1. Its kick-on-1 bar phase was wrong on 2 of the 4 references (both flagged uncertain). v1's prototype figure (median 5.9 / p95 8.3 ms) is a residual of matched onsets in v1's convention and is not comparable (§2.3). autochart's beat F1 on the six references averages 0.87, Lucretia 0.29 [here, 5070]. |
 | lead guitar | autochart Expert F1@50 0.86; it wins 6 of 6 songs [here, 5070] | On the two Car Seat Headrest community charts it scores 0.81 and 0.78, against 0.86 and 0.77 for an 8th-note grid laid on the human tempo map. Its edge there is lane direction (0.72 vs a trivial 0.62; 0.58 vs 0.39), and its κ is only 0.37–0.39. Our own driver (Engine A) has never been scored. |
 | drums | ADTOF on whole songs: F1@50 0.967 (pad-blind), kick F1 0.986 (5-song mean) [here, ADTOF test] | Not like for like: ADTOF's charts were written unquantized, while STRUM's (0.897) are snapped to its own grid and run late, which costs it about 0.04 that our quantizer removes [inference]. Exact lane agreement 0.585, against STRUM's 0.687. No lane mapper on ADTOF reaches STRUM yet. |
 | bass | STRUM F1@50 0.59; lane direction 0.57 vs a trivial 0.53 [here, 5070] | Our rule engine is unmeasured on whole songs. v1's 0.863 was measured on the oracle grid, on the same songs it was tuned on. |
@@ -107,31 +114,35 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
   - Demucs's default `shifts=1` draws a random time shift from Python's global `random` (demucs 4.1.0: `apply.py` line 245, `api.py` line 59); the ADTOF test called `apply_model(..., shifts=1)` [here]. So two fresh separations differ unless `random` (and torch) is seeded right before each separation, or `shifts=0` is used. Record the choice in `doctor.json`. M1 is safe only because it reuses cached stems.
   - The chosen guitar take's tokens and seed are cached with the stems and in the polish workspace, and re-runs reuse them unless the user asks to regenerate. Determinism is promised only on the same machine and device: one flipped token changes the whole rest of a take (critique G6).
 - **GPU memory.** Free GPU memory between stages. Log peak VRAM per stage in `doctor.json` and in the UI. Tell the user about any CPU fallback (critique G15).
-- **Silence.** No notes inside silences longer than about 4 s [untested] (critique G9).
+- **Silence.** A part loses its onsets before its stem first plays and after it last plays (`assemble.active_span`,
+  §2.8) [code]. Onsets in a silence inside the song are only reported: the critique's "no notes inside silences longer
+  than about 4 s" (G9) is untested and open (§9, Q23).
 - **Absent parts.** A part whose stem never shows activity is omitted, together with its `diff_*` key (critique G3; `ini.py` already writes keys only for charted instruments [code]). Thresholds come from the stress set (§5, M5) [untested].
 
 ### 2.0 Code status [code]
 
-| module | state at about 03:30 on 2026-11-02 |
+| module | state on `main` at commit e0e4b7e (2026-11-02, after the first-chart review) |
 |---|---|
-| `audio.py` | committed. `decode`, `encode_ogg`, `measure_offset`, `verify_sync`. `ffmpeg_exe()` tries `$FFMPEG`, then PATH, then the imageio-ffmpeg wheel (lines 27–36). |
-| `tempo.py` | committed. `TempoMap.from_beats` (default tolerance 0.002; writes only x/4 time signatures), `plan_lead_in` (`LeadIn.first_beat` is the index of the first downbeat after the extrapolated lead-in). |
-| `chart.py`, `ini.py`, `package.py` | committed. The `.chart` and `song.ini` writers; `build_song_folder` (refuses a package whose sync is off by 1 sample or more); `zip_folder`. `ini.py` writes `diff_guitar`, `diff_guitar_coop`, `diff_bass`, `diff_rhythm`, `diff_drums`, `diff_keys` and `diff_drums_real`; it has no band key. |
-| `timed.py` | committed. The `TimedSong` contract; `TimedNote.hopo` carries the source's HOPO intent. Its docstring calls `TimedSong.beats` "for diagnostics only", which the tempo-level HOPO rule (§2.6) contradicts. |
-| `beatgrid.py` | committed in 6094e49. Uncommitted changes (+156 / −62 lines) add an internal Ellis-style DP tracker (`track_beats`, `TRACKER_MARGIN`) and a flag for uncertain downbeats (margin < 0.15). Whole-song runs exist (§2.3). |
-| `importers.py` | untracked, 835 lines, with `tests/test_importers.py` (18 tests on synthetic files): `read_chart`, `read_mid`, `read_song`, `read_ini_modifiers`, following scan-chart's rules (HOPO thresholds and forcing, sustain cut-off, cymbal and tom markers, phrase overlaps). The parser-equivalence check passed, as a scratchpad script rather than a repo test: autochart 4, chartgen 4 and STRUM 12 tracks; worst onset difference 2.9·10⁻¹¹ ms; 0 flag, lane or sustain mismatches; sections and solos equal; STRUM's beats start at 0.0697 s with `time_offset=0.0697` [here, importer check]. |
-| `quantize.py` | untracked, 588 lines, with `tests/test_quantize.py`. Offset estimate per instrument; 1/16 plus 1/12 slots only; merge, separation and minimum spacing; per-difficulty chord limits; sustain rules (Easy floor 2 beats); the source's HOPO intent reproduced everywhere (`quantize_song` never reads `song.beats`); drums: one hit per pad per tick, a tom that collides with a cymbal moves to a free tom pad or is dropped; spans snapped and kept non-empty; taps kept. |
-| `reduce.py` | untracked, 926 lines, no tests yet. Nested Hard/Medium/Easy for 5-fret and drums; minimum gaps from time floors (no Standard/Dense preset); a thinning ladder; a below-Expert HOPO rule; Easy sustain floor 1.25 beats (2 for bass); star-power and solo coverage; `check_reductions` (5-fret Hard ≥ 0.90 of Expert onsets is an error). |
-| starpower, sections, assemble | not in the tree yet |
-| `cli.py` | named in `pyproject.toml` (`songcharter.cli:main`) but missing |
-| tests | committed for tempo, chart and package; untracked for beatgrid, importers and quantize; none for reduce. Not run for this document. |
+| `audio.py` | `decode`, `encode_ogg`, `measure_offset`, `verify_sync`. `ffmpeg_exe()` tries `$FFMPEG`, then PATH, then the imageio-ffmpeg wheel (lines 27–36). An ffmpeg failure is a `ValueError` (decode) or a `RuntimeError` (encode) that quotes ffmpeg's last line. |
+| `tempo.py` | `TempoMap.from_beats` (default tolerance 0.002; writes only x/4 time signatures), `plan_lead_in` (`LeadIn.first_beat` is the index of the first downbeat after the extrapolated lead-in). |
+| `chart.py`, `ini.py`, `package.py` | The `.chart` and `song.ini` writers; `build_song_folder` (refuses a package whose sync is off by 1 sample or more); `zip_folder`. `ini.py` writes `diff_guitar`, `diff_guitar_coop`, `diff_bass`, `diff_rhythm`, `diff_drums`, `diff_keys` and `diff_drums_real`; it has no band key. |
+| `timed.py` | The `TimedSong` contract; `TimedNote.hopo` carries the source's HOPO intent and `TimedNote.hopo_forced` whether the source forced it. `TimedSong.beats` is read by `quantize.odd_32nds`; the "for diagnostics only" note is gone. |
+| `beatgrid.py` | The grid of §2.3: an internal Ellis-style DP tracker (`track_beats`, `TRACKER_MARGIN`) on local 20-s tempo periods (`local_periods`), a check for missed tempo changes (`stats["tempo_check"]`), an opt-in second stem for beats without drum evidence (`secondary=`, `onset_phase`) and a flag for uncertain downbeats (margin < 0.15). |
+| `importers.py` | `read_chart`, `read_mid`, `read_song`, `read_ini_modifiers`, following scan-chart's rules (HOPO thresholds and forcing, sustain cut-off, cymbal and tom markers, phrase overlaps); `hopo_forced` marks the notes the source forced. The parser-equivalence check passed, as a scratchpad script rather than a repo test: autochart 4, chartgen 4 and STRUM 12 tracks; worst onset difference 2.9·10⁻¹¹ ms; 0 flag, lane or sustain mismatches; sections and solos equal; STRUM's beats start at 0.0697 s with `time_offset=0.0697` [here, importer check]. |
+| `quantize.py` | Offset estimate per instrument; 1/16 plus 1/12 slots only, with a 1/32-grid source's odd 1/32s sent to the coarser slot (`odd_32nds`, §2.6); merge, separation and minimum spacing; per-difficulty chord limits; sustain rules (Easy floor 2 beats); HOPO policies (`source_hopo`, `forced_only`; §2.6 step 4); drums: one hit per pad per tick, a tom that collides with a cymbal moves to a free tom pad or is dropped; spans snapped and kept non-empty; taps kept. `QuantizeReport` counts the notes moved more than 25 ms (`moved_25ms`), information only. |
+| `reduce.py` | Nested Hard/Medium/Easy for 5-fret and drums; minimum gaps from time floors (no Standard/Dense preset); a thinning ladder; a below-Expert HOPO rule; Easy sustain floor 1.25 beats (2 for bass); star-power and solo coverage; `check_reductions` (5-fret Hard ≥ 0.90 of Expert onsets is an error). |
+| `starpower.py` | Star power, drum activation lanes (at section changes, in star-power gaps, then every 4 measures) and solos (only in a "Solo" section the caller confirms, e.g. with `stem_confirm`), placed on Expert and fitted to every level (`fit_chart`); `check_phrases` (scan-chart's phrase checks, our rules, a `fillNoCrash` warning) (§2.10). |
+| `sections.py` | allin1 segments, or an imported chart's sections, on measure starts: merged, split and named (§2.5). |
+| `assemble.py` | One JSON config to a gated song folder: decode, stem-lag check, grid with a second stem (§2.3), parts imported, offset-corrected and quantized, edges trimmed (§2.8), sections, phrases, reductions, ratings (§2.12), `build_song_folder` into a staging folder, then the gate with scan-chart 8.0.1 itself (§2.13) and `report.json`. A build the gate fails goes to `<output>.failed`. |
+| `cli.py` | `songcharter assemble <config.json> [--out DIR]`. Exit 0: the gate passed; 1: it failed (the build is in `<output>.failed`); 2: a bad config, input or tool, or song.ogg out of sync (nothing written); 3: a bug (traceback printed). M3's `songcharter chart <file>` is not written. |
+| tests | 294 tests: tempo, chart, package, beatgrid, importers, quantize, reduce, starpower, sections, assemble and the CLI; 4 skip when `tools/scan-chart` is absent. Not re-run for this update. |
 
 **Design and code, decided once.** Each difference is decided here; code changes are §5.6 tasks.
 
 | topic | this design | code today | action |
 |---|---|---|---|
 | snap grid | 1/16 + 1/12 (§2.6) | same | none |
-| tempo-level HOPO exception | kept (§2.6 step 4): on the rigid grid, 11 of the 28 flips the quantizer writes on autochart's Expert fall inside its two half-tempo stretches, which hold 106 of its notes [here, quantizer check] | absent | add to `quantize_song` (it receives the `TimedSong`, so `song.beats` is in reach); fix `timed.py`'s docstring |
+| tempo-level HOPO exception | kept (§2.6 step 4): on the rigid grid, 11 of the 28 flips the quantizer writes on autochart's Expert fall inside its two half-tempo stretches, which hold 106 of its notes [here, quantizer check] | not as designed: assemble's default `hopo: "forced"` keeps only the states the source forced (§2.6 step 4); `timed.py`'s docstring is fixed | open: add the beat-period rule, or keep `forced` in its place; M2's HOPO κ decides |
 | chord limits | `quantize.py` applies the limits of whichever difficulty it receives; in the pipeline only Expert comes from a source, and the reducer builds the rest | same | none |
 | drum collisions | the cymbal stays; the tom moves to a free tom pad (yellow first), else it is dropped and counted (§2.9) | same | report the dropped count (M1) |
 | Hard threshold | error at 5-fret Hard ≥ 0.90 of Expert onsets (critique E3) | same | none |
@@ -153,9 +164,9 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | 2 | Separation (§2.2) | reuse the existing ft and 6s stems (lag 0) | htdemucs_6s, one shared pass, shift seeded; weights treated as non-commercial | high (default), medium (licence) | the owner opts into SW; the M2 stem comparison; a permissively licensed separator |
 | 3 | Beat grid (§2.3) | `beatgrid` on the drum stem; it chose free mode | Beat This proposes, `beatgrid` refines (code changes needed) | medium-low / low | beat F1 with `score.py` on the references (§5.6, task 2); the detector offset on the test song (M1a) |
 | 4 | Meter (§2.4) | 4/4, kick on beat 1 (margin 0.58) | Viterbi x/4 decides; the kick phase and `beatgrid`'s uncertainty flag drive review; 6/8 later | high / low | a listening check; downbeat F on songs with time-signature changes |
-| 5 | Sections (§2.5) | boundaries where autochart and STRUM agree, plus autochart's names, split into 20–30 sections | allin1 or librosa, chosen in M2 | low | M2 scores against Encore section labels |
-| 6 | Quantizer (§2.6) | remove offsets, snap to 1/16 + 1/12, keep HOPO intent except where the source's tempo level was wrong (not in the code yet) | same | medium | snapping moves > 2 % of onsets by > 25 ms; HOPO κ in M2 |
-| 7 | Lead guitar (§2.7) | autochart Expert takes, imported; replace 341–399 s | open: our driver (B2) vs autochart's engine (B1) vs building on autochart (D); 1 take by default | medium / low | the owner's NC and AGPL answers; B2 vs B1 over ≥ 3 seeds |
+| 5 | Sections (§2.5) | allin1's segments (v1's fold-0 result), merged and split per run: 26 sections | allin1 or librosa, chosen in M2 | low | M2 scores against Encore section labels |
+| 6 | Quantizer (§2.6) | remove offsets, snap to 1/16 + 1/12 (a 1/32-grid source's odd 1/32s to the coarser slot), keep the HOPO states the source forced | same | medium | snapping moves > 2 % of onsets by > 25 ms; HOPO κ in M2 |
+| 7 | Lead guitar (§2.7) | four autochart Expert takes, imported and spliced per section by agreement between takes | open: our driver (B2) vs autochart's engine (B1) vs building on autochart (D); 1 take by default | medium / low | the owner's NC and AGPL answers; B2 vs B1 over ≥ 3 seeds |
 | 8 | Bass (§2.8) | STRUM onsets, offset removed by the quantizer, re-laned by pYIN | our rules, scored against STRUM plus re-lane as a benchmark (5 references) | low | M2 scores; whether the friend plays bass |
 | 9 | Drums (§2.9) | STRUM lanes, re-timed; ADTOF kicks only after a de-duplicated fusion re-test | ADTOF onsets and kicks plus a better lane mapper (provisional [decision]); STRUM is the lane benchmark, never shipped | medium / medium-low | a mapper that misses the drum-lane rule of §3.2; the owner choosing a shipped-STRUM route (§9 Q14) |
 | 10 | Star power, solos, activation lanes (§2.10) | v1's rules with the critique's fixes; lanes first | same | low-medium | M2 counts; the playtest; the owner's choice on fills |
@@ -215,16 +226,54 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 
 ### 2.3 Beat grid and tempo map
 **Goal 1:** `songcharter.beatgrid.beat_grid` on the test song's drum stem, as written [code]:
-1. **Start line.** Use the hints (142.0009 BPM, first beat near 0.047–0.050 s) or the onset envelope's autocorrelation, folded into [85, 185) BPM, with a comb-fitted phase. The working-tree version also runs an internal Ellis-style DP tracker on the same envelope (`track_beats`). Its beats become the start grid when they find at least 10 percentage points more confident evidence than the line (`TRACKER_MARGIN`). On the test song the line won, with or without hints (0.66 vs 0.67 confident) [here, beatgrid run].
+1. **Start line.** Use the hints (142.0009 BPM, first beat near 0.047–0.050 s) or the onset envelope's
+   autocorrelation, folded into [85, 185) BPM, with a comb-fitted phase. `beat_grid` also runs an internal Ellis-style
+   DP tracker on the same envelope (`track_beats`). Its beats become the start grid when they find at least 10
+   percentage points more confident evidence than the line (`TRACKER_MARGIN`). On the test song the line won, with or
+   without hints (0.66 vs 0.67 confident) [here, beatgrid run].
+   - **Local periods.** The tracker uses the line's period, except in 20-s windows (every 5 s) whose own
+     autocorrelation tempo clearly differs: by more than 10 %, with a score at least 0.5 above the line's period there
+     (`local_periods`, `LOCAL_TEMPO_MARGIN`). A neighbouring window within 5 % of a kept one joins on any positive
+     margin. A song with no such window decodes exactly as before [code]. The 0.5 margin was chosen on Take Me Out
+     against Lucretia: 0.35 admitted Lucretia's wrong 127 BPM windows. This is a per-window autocorrelation, not v1's
+     local-period DP, which a verifier showed is circular on this path [here, review].
+   - **Tempo check.** `stats["tempo_check"]` lists the windows whose tempo the final grid still misses
+     (`missed_tempo_changes`), and assemble warns about each [code]. It flagged 8 windows in 0–55 s on Take Me Out's
+     old grid and none on any new grid [here, review].
+   - Take Me Out's share of beats within 70 ms of a human beat is now 0.984 / 0.986 (6s / original stems), up from
+     0.846 / 0.836; its 0–45 s intro goes from 0.31–0.35 to 1.00 per 15-s window. All the Small Things, Creep,
+     Lucretia, Kimochi Warui and the test song (with assemble's hints) are bit-identical [here, review].
 2. **Local beats.** For each grid beat, take the strongest envelope peak within ±60 ms, refined by a parabola, with a confidence.
 3. **Mode.**
-   - **Free** when ≥ 60 % of beats have confident evidence (`FREE_SHARE`): LOESS over ±4 beats, beat-to-beat period change ≤ 2 %, and beats without evidence (the drumless intro, 0–42.7 s) taken from the line.
+   - **Free** when ≥ 60 % of beats have confident evidence (`FREE_SHARE`): LOESS over ±4 beats, beat-to-beat period
+     change ≤ 2 %. Beats without drum evidence (the drumless intro, 0–42.7 s) follow a second stem (guitar, else
+     other) where its onsets hold a clear 8th/16th phase, calibrated on the same song; elsewhere they stay on the line.
    - **Click** otherwise.
    - The test song came out free: 648 of 976 beats (0.66) confident [here, beatgrid run].
+   - **Second stem** [code]. `beat_grid(secondary=...)` is opt-in; assemble passes `grid_secondary` (the guitar stem,
+     else other; none when the grid comes from the mix; `"mix"` on request). It is kept conservative:
+     - it times only beats with drum support < 0.5; drum-supported beats keep the drums' curve;
+     - only where its onsets within ±4 beats show a clear 8th-level phase (at least 8 onsets, score ≥ 0.4, 8th-level
+       score ≥ 0.3);
+     - only from a stem that follows the drums where both play: its lag is calibrated on the same song over at least
+       32 drum-supported beats, with a mean score ≥ 0.2 there (onsets at random times score 0.03–0.05, real stems
+       0.39–0.76), so `ONSET_TO_BEAT_MS` is not recalibrated per stem;
+     - the shift is capped at ±3/16 beat (±79 ms at 142 BPM). The cap and the 8th-level score were added after a
+       16th-aliased −104 ms shift at 160.6–161.9 s [here, review];
+     - otherwise the beat stays on the line. assemble warns about every stretch of 16 or more beats that neither the
+       drums nor the second stem time (`GRID_LINE_BEATS`).
+   - On the test song (the ft "other" stem), guitar P@50 goes from 0.689 to 0.835 in the intro, from 0.522 to 0.616 in
+     the drumless stretches (the source scores 0.691 there) and from 0.557 to 0.578 over the song; 2 of 700
+     drum-supported beats moved, by at most 0.3 ms. The mix scored better in the intro (P@50 0.913), but part of that
+     gain looks like a convention shift that happens to match autochart's later placement there, and it was worse at
+     272–304 s; it stays available as `grid_secondary="mix"`. Bass timed nothing in the intro [here, review].
+   - The fix matters most for guitar, which has 233 notes in those stretches, against 39 for bass and 18 for drums.
+     Not measured: `score.py`'s beat F1, any Beat This start, Drunk Drivers; nobody has listened to it [here, review].
 4. **Bar phase.** The phase that puts the most kick (40–160 Hz against the snare's 150–400 Hz) on beat 1. A margin below 0.15 is flagged (`DOWNBEAT_MIN_MARGIN`) [code]. On the test song: phase 0, margin 0.58, no 16-bar window disagreeing [here, beatgrid run].
 5. **Phase convention.** Beats move −22 ms from the envelope peaks (`ONSET_TO_BEAT_MS`), calibrated on the drum stems of All the Small Things and Take Me Out (§2.14, C8).
 6. **Hand-off:** `plan_lead_in(min_lead=2.5)` → `TempoMap.from_beats(tolerance=0.003)`; the code default is 0.002.
-   - Markers at 0.003: 81 in free mode and 1 in click mode on the test song; 67–104 on four references whose human maps have 92–129 [here, beatgrid run].
+   - Markers at 0.003: 81 in free mode and 1 in click mode on the test song; 67–104 on four references whose human
+     maps have 92–129 [here, beatgrid run]. The v1 chart, with the second stem: 122 [here, review].
    - v1 at 0.005: click songs get 1 marker with a maximum rounding error of 1.07 ms over 970 beats; IaSg14's 851-marker chart got 112 markers against 202 at 0.002 [here, v1].
    - Marker count is cosmetic: a few ms of jitter does not move notes [here, comparison claims audit].
 - **Cost:** onset features 4.4 s for the test song's drum stem; `beat_grid` itself 0.6–1.1 s [here, beatgrid run].
@@ -257,7 +306,10 @@ Four Harmonix references: summed original drum stems, no hints, no Beat This sta
 - The share within 70 ms is not `score.py`'s beat F1, and a grid at half tempo would still score 1.0 on it.
 - The −22 ms offset was calibrated on All the Small Things and Take Me Out, so their medians are in-sample; Creep's is not.
 - Kick-on-1 bar phase failed on 2 of 4 (All the Small Things, Take Me Out). Both margins are far below 0.15, so both were flagged uncertain, as was Lucretia's [code]. The flag, not the kick phase, must drive review (§2.4).
-- Take Me Out's 0.836 is more than 0.02 below autochart's beat F1 there (0.99), which would trip this section's first "would change it" if beat F1 confirms it [inference].
+- Take Me Out's 0.836 came from its 142 BPM intro, gridded at 104 BPM by one global period. With the local periods
+  (step 1) it is 0.986, within 0.02 of autochart's beat F1 there (0.99); the share is still not `score.py`'s beat F1
+  [here, review].
+- The other three rows are bit-identical after the review [here, review].
 
 **Goal 2:** Beat This! proposes and `beatgrid` refines.
 1. **Activations.** Beat This! 1.1.0 `final0` (MIT, 81 MB) on the whole mix, giving 50 fps beat and downbeat logits. Use CUDA with float16 if available; on CPU, process 40 s windows.
@@ -267,11 +319,16 @@ Four Harmonix references: summed original drum stems, no hints, no Beat This sta
 5. **DP decoder:** v1's, the one behind the F 0.989 below.
    - Score = activation − 100·log2(gap / local period)²; predecessors searched 0.6–1.6 periods back; edges with activation < 0.2 trimmed.
    - Local period: a 9-interval median filter over intervals already folded to the global octave (step 3), interpolated to every frame. Folding first keeps a half-tempo run's intervals at the global period, which avoids the failure in step 4.
-   - `beatgrid.track_beats` is a different decoder: −100·ln(gap / period)², predecessors 0.5–2 periods back, one global period [code]. Since log2² ≈ 2.08·ln², its penalty is about half of v1's. It runs today only on the onset envelope; on Beat This activations it is [untested], and M2 can compare the two.
+   - `beatgrid.track_beats` is a different decoder: −100·ln(gap / period)², predecessors 0.5–2 periods back, one
+     global period or one per frame from `local_periods` (Goal 1, step 1) [code]. Since log2² ≈ 2.08·ln², its penalty
+     is about half of v1's. It runs today only on the onset envelope; on Beat This activations it is [untested], and M2
+     can compare the two.
 6. **Refine** with `beat_grid(start=...)` [code], after three changes [untested]:
    - With `start=`, `beat_grid` fits no straight line and always returns free mode (`use_tracker` is true), so step 7 cannot run. After refining, fit `robust_line` to the refined beats and run step 7's tests on both paths.
    - With too little evidence (a drumless song, a weak bass or guitar stem) it raises `ValueError`. Return the start beats unrefined with a "low-evidence" flag instead.
    - Refining on bass or guitar onsets when there are no drums (critique G3) is the caller's choice of stem today (the module docstring says "or the mix"), and `ONSET_TO_BEAT_MS` (−22 ms) was calibrated on drum-stem envelope peaks only. Calibrate it for bass and guitar onsets, or disable it there.
+     Inside a song that has drums, drumless beats already follow a second stem calibrated on the same song (Goal 1,
+     step 3), so this concerns only songs with no drums at all.
 7. **Click or free** (needs step 6's first change).
    - Free when ≥ 60 % of beats have confident drum evidence.
    - Otherwise click, but only after also checking the maximum residual and the longest run of residuals, and allowing free islands inside click mode, which are flagged in the UI (critique G4).
@@ -315,10 +372,14 @@ Four Harmonix references: summed original drum stems, no hints, no Beat This sta
   - `beatgrid`'s median offset to the human beats is −3.0 to +3.0 ms on three references (two of them in-sample) [here, beatgrid run].
 - **What matters for notes:** the metrical level, not marker count or a few ms of jitter [here, claims audit].
 
-**Confidence:** Goal 1 medium-low: the method fits a constant-tempo 4/4 song and meets the human median, but its p95 spread on the audit yardstick is above both straight lines, and no `score.py` score exists. Goal 2 low: no Beat This start has been tried, the bar phase failed on 2 of 4 references, and Take Me Out and Lucretia have long stretches off the human beats.
+**Confidence:** Goal 1 medium-low: the method fits a constant-tempo 4/4 song and meets the human median, but its p95
+spread on the audit yardstick is above both straight lines, and no `score.py` score exists. Goal 2 low: no Beat This
+start has been tried, the bar phase failed on 2 of 4 references, and Lucretia has long stretches off the human beats
+(Take Me Out's were fixed by the local periods).
 
 **Would change it:**
-- `beatgrid` beat F1@70 more than 0.02 below autochart's on any reference (Lucretia reported separately); Take Me Out's 0.836 share suggests this already [inference];
+- `beatgrid` beat F1@70 more than 0.02 below autochart's on any reference (Lucretia reported separately); Take Me
+  Out's share within 70 ms is now 0.986 (step 1), so it no longer suggests this;
 - median(beat − nearest ADTOF kick or snare) outside +1.5 to +6.8 ms ± 5 ms (§5.6, task 2);
 - the detector-offset measurement (M1a) showing that the spread belongs to the yardstick, not to the grid;
 - free maps causing trouble in the Moonscraper polish or the playtest.
@@ -342,19 +403,31 @@ Four Harmonix references: summed original drum stems, no hints, no Beat This sta
 - **Confidence:** high for Goal 1, low for odd and compound meters. **Would change it:** a non-4/4 bar heard in the test song; downbeat F on the M2 references with time-signature changes (Lucretia has 17) falling well below the 4/4 songs'.
 
 ### 2.5 Sections
-- **Goal 1:**
-  - Take the boundaries where autochart and STRUM agree (about 43–44, 90–91, 110–112, 167 and 207–208 s), plus autochart's other named boundaries [here, guitar audit].
-  - Snap them to bar lines on our map, apply the naming rules below, and number them in Title Case. v1's target for the test song is 20–30 sections after splitting [here, v1].
-  - autochart's 10 names (Intro 1, Verse 1–4, Chorus 1, Bridge 1, Section 1–2, Instrumental 1) include no Solo. Its solos are `E solo` spans, handled in §2.10.
+- **Goal 1, as built:**
+  - The test song's sections come from allin1's segments (v1's fold-0 result) through
+    `sections.sections_from_segments` and the naming rules below: 26 sections, inside v1's target of 20–30 after
+    splitting [code; here, v1; here, review].
+  - An imported chart's sections (`sections: "from:<part>"`, e.g. autochart's 10 names: Intro 1, Verse 1–4, Chorus 1,
+    Bridge 1, Section 1–2, Instrumental 1) are snapped and merged under 4 measures the same way, but not split:
+    `sections_from_chart` takes no `split_over` or `split_into` yet [code].
+  - The earlier plan, the boundaries where autochart and STRUM agree (about 43–44, 90–91, 110–112, 167 and 207–208 s)
+    [here, guitar audit], is not implemented.
+  - autochart's names include no Solo. Its solos are `E solo` spans, which assemble drops; ours replace them (§2.10).
 - **Goal 2:** allin1 through all-in-one-infer 3.1.0, choosing between it and librosa in M2 against Encore section labels.
   - Use the `harmonix-all` ensemble on GPU and fold 0 on CPU.
   - Feed it our cached stems. In the default preset its 4-stem input is folded from 6s (guitar + piano + other → "other"). That is untested; compare it once with the ft-stem result on the test song (M2).
   - If allin1 cannot take our stems, it runs its own demucs-infer separation: one more pass, which the run-time estimates in §1 do not count.
   - Always pass `keep_byproducts=True`; otherwise `allin1.analyze()` deletes the stems it used [here].
-- **Naming rules** (v1):
-  - drop start/end, snap to bar lines, and merge segments under 4 bars or with the same label as the previous one;
-  - split segments longer than 16 bars into 8-bar A/B/C parts (human median section length 12–17 s);
-  - number in Title Case ("Verse 2", "Solo 3B") and write as `E "section …"`.
+- **Naming rules** (v1's, as `sections.py` implements them) [code]:
+  - drop allin1's "start" and "end"; snap each segment start to the nearest measure start (ties to the earlier one);
+  - merge a segment under 4 measures into the one before it (the first into the one after it), shortest first
+    (`SECTION_MIN_MEASURES`);
+  - merge, then split, per run: consecutive segments with one label form one run, and a run over 16 measures splits at
+    even measure positions into round(length / 8) parts (`SECTION_SPLIT_OVER`, `SECTION_SPLIT_INTO`; a verse of 18 + 10
+    measures becomes four parts of 7). Human median section length is 12–17 s;
+  - name in Title Case ("inst" as "Instrumental"): a label that occurs more than once is numbered ("Verse 2"), one that
+    occurs once is not ("Bridge"), and the parts of one run are lettered ("Intro A", "Solo 3B"); write as
+    `E "section …"`.
 - **librosa fallback:** Laplacian segmentation on beat-synchronous CQT + MFCC with k ≈ duration/25 s, plus naming heuristics (Intro/Outro; Solo = vocals silent while the guitar is loud; Chorus = the most-repeated loud cluster). The heuristics are untested.
 - **Evidence:**
   - The published All-In-One figures (0.740 / 0.596 / 0.730: accuracy, boundary F@0.5 s, F@3 s) are for the 8-fold ensemble, in-domain on Harmonix [doc] (critique E7). A single fold should do worse.
@@ -384,12 +457,23 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
    - every beat is straight (1/16 slots) or triplet (1/12 slots: 8th-note triplets); a beat goes triplet only inside a run of notes that fits triplets clearly better;
    - a note snaps to the nearer slot, with a cost weighted by log-priors from the Harmonix Expert grid mix (1/4 41 %, 1/8 33 %, 1/16 17 %, 1/12 5.3 %) [here, v1], so the coarser line wins near the midpoint;
    - straight and triplet mix within a beat in only 1.4 % of Harmonix beats [here, v1];
-   - v1's 1/32 and 1/24 burst grids are not used: drums snap to 1/16 plus triplets, and guitar or bass notes a 1/32 apart fall under the minimum spacing at the tempos the grid allows (85–185 BPM) [code].
+   - v1's 1/32 and 1/24 burst grids are not used: drums snap to 1/16 plus triplets, the sources barely write them, and
+     a 1/32 level would keep the rounding of a source on a 1/32 grid. Spacing is not the reason: a 1/32 is under the
+     55 ms HOPO spacing only above 136 BPM (80 ms strums: 94 BPM), a 1/24 above 182 BPM (125) [code]. Whether they
+     come back for imported sources is open (§9, Q16);
+   - a note on an odd 1/32 of a source on a 1/32 grid takes the coarser of its two slots when within 1/4 slot of their
+     midpoint and the source has no onset on that coarser line (`odd_32nds`). A source counts as on a 1/32 grid when at
+     least 95 % of its onsets lie within 0.05 of a 1/32 of its own 1/32 lines (STRUM 0.97–1.00; autochart 0.92–1.00;
+     ADTOF 0.11–0.12, chance). On the test song STRUM drums go from 32 to 15 notes a 16th off the stem's hit [code].
 3. **Clean up.** Merge onsets on the same tick (the union of their frets), then apply the difficulty's chord limits. Onsets at least ¾ of a slot apart are not merged: one moves to its free neighbouring slot. An onset closer to the previous one than the minimum spacing (strums 80 ms, HOPOs and taps 55 ms) is dropped, so `brokenNote` (≤ 15 ms) cannot occur.
 4. **HOPOs.**
    - Keep the source's HOPO/strum intent (`TimedNote.hopo`). Where it disagrees with the natural rule on our grid, write an `N 5` flip (critique G1).
    - **Exception:** wherever the source's local beat period differs from ours by ≥ 1.5×, treat the intent as unknown (`hopo=None`) and let the natural rule decide. autochart's 71 BPM stretches are the case: there its 8ths were natural HOPOs on a wrong grid [inference from the claims audit]. On the rigid grid, 11 of the 28 flips the quantizer writes on autochart's Expert fall inside its two half-tempo stretches, which hold 106 of its notes [here, quantizer check].
-   - **Not in the code yet:** `quantize.py` reproduces the source's intent everywhere and never reads `TimedSong.beats`, which `timed.py` documents as "for diagnostics only" [code]. `importers.py` always reports the source's state, never None [code]. Add the rule to `quantize_song`, which receives the `TimedSong`, by comparing the source's beats with ours, and change the `timed.py` docstring.
+   - **In the code, a different rule** [code]. The beat-period comparison is not implemented. Instead assemble's
+     default `hopo: "forced"` (`QuantizeRules.forced_only`) reproduces only the states the source forced
+     (`TimedNote.hopo_forced`: a `.chart` `N 5`, a `.mid` forced HOPO or strum); every other note follows the natural
+     rule on our grid, so a natural HOPO that only the source's wrong tempo map made (8ths on a half-tempo map) does not
+     become a forced one. `"source"` reproduces every state, `"natural"` none. Which rule stays is open (§2.0).
    - Rule-based engines give `hopo=None`, and natural rules apply. Neither forced HOPOs nor attack strength is predictable from audio (AUC 0.48–0.53 [here, v1]), so a rule engine cannot supply intent; a forced-strum rule for rule engines is M5 (§8).
 5. **Sources already on our grid** (Engine A, §2.7): a per-source flag keeps exact ticks and still runs spacing, chord, sustain and HOPO rules [untested; not in `quantize.py`].
 6. **Drums:** one hit per pad per tick; cymbal/tom collisions as in §2.9; at most two hand pads per tick; 2x kick on Expert only.
@@ -409,13 +493,40 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
 
 #### Goal 1: autochart takes, imported (if the friend plays guitar)
 - **Source:** the autochart (Fretformer 2) Expert output from the 5070 run, read with `importers.read_chart`. No autochart code is imported.
-- **Takes:** one model run is required, for 341–399 s (below); at least 2 new seeds are recommended, with `AC_SEED` (`eval/tools/autochart/ac_headless.cjs`).
+- **Takes:** the v1 chart uses four: the GPU take plus CPU seeds 101, 202 and 303, made with `AC_SEED`
+  (`eval/tools/autochart/ac_headless.cjs`) and spliced per section (Several takes, below).
   - Cost per seed: about 3.2 min of decoding (3.8 min per job) on the 5070 [here, 5070], or about 7 min per Expert job on the dev container's CPU [here].
   - The earlier CPU take used the same seed (20260609) as the GPU take: 14 of 18 scored song × difficulty pairs came out identical, so it is not an independent take [here].
 - **Choose per section:** gross-failure checks first (coverage of active 1-bar windows; density against other-stem onsets), then by ear.
+  For the v1 chart the choice was made by agreement between takes (below), not yet by ear.
 - **Replace 341–399 s.** In the 57.5 s from 341.5 s, the GPU take has 98 notes against 230 other-stem onsets. Before 340 s it has 1,029 notes against 1,176 onsets [here]. Use a new seed's take there if it passes the checks; otherwise regenerate the window with the autochart app's inpaint (the hand fallback).
+  In the v1 chart the seeds' takes replace it (below).
 - **Chords:** keep autochart's Expert chords, except invalid ones and chords of 4 or more notes.
 - **Ours, not autochart's:** quantizer and HOPO handling (§2.6), sustain rules (below), tiers (§2.11), star power and solos (§2.10). Its lower tiers are not nested (only 74 % of Hard's onsets occur in Expert) and would triple its run time (652.8 s vs 228.8 s on the test song) [here, 5070].
+
+#### Several takes (the v1 chart of the test song)
+What was done for the test song's v1 chart. It is a measurement, not yet code in the repository [here, takes].
+- **Takes.** autochart ran four times on the test song: the GPU take plus CPU seeds 101, 202 and 303, Expert only.
+  All four takes share one tempo map (identical `[SyncTrack]`), so they splice at tick level.
+- **Choice per section** (the 26 sections of the built chart):
+  - each take is scored by its mean F1 at 50 ms against the other three takes, where a match must also agree on
+    single note against chord;
+  - the original (GPU) take stays unless another beats it by 0.05; then the best-scoring take is used;
+  - sustains are clipped where the take changes;
+  - notes after the guitar's fade-out are dropped: the last 0.1 s frame of the "other" stem within 25 dB of its P95
+    (assemble's `SILENT_DB`; the ft stems have no guitar stem).
+- **Results:**
+  - Over the whole song the original take was the least central: mean F1 to the others 0.77, against 0.80–0.83 for
+    the seeds.
+  - In 5:41–6:39 (340–400 s) the three seeds agreed with each other at F1 0.73–0.84, while the original agreed with
+    them at 0.55–0.60 and had half their onsets (104 against 176–226). So the original was dropping notes there.
+  - 17 of 26 sections took a seed. The spliced Expert has 1201 onsets (original 1137) and a chord share of 0.64
+    (original 0.44; the seeds 0.53–0.72).
+- **The audio barely separates the takes.** The "other"-stem onset proxy moves only from 0.243 to 0.256 within
+  50 ms, because the stem's onsets are smeared in the loud sections. The choice rests on agreement between takes, not
+  on the audio.
+- **Plan:** move this into songcharter as a take-ensemble step (several takes of one source, a per-section medoid)
+  with tests. For Goal 2, run autochart several times when time allows.
 
 #### Goal 2: the engine route is open
 
@@ -431,7 +542,8 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
   - on every song, F1@50 ≥ autochart's on that song − max(0.035, the measured seed spread).
 
   Otherwise use B1 or D. B1 vs B2 vs D is the owner's call (§9 Q3).
-- **Takes:** 1 by default, seeded, with its tokens cached for re-runs (critique G6). More takes on demand.
+- **Takes:** 1 by default, seeded, with its tokens cached for re-runs (critique G6). More takes on demand; the v1
+  chart's splice (above) argues for several when time allows.
 - **Engine B (rules)** is not built for Goal 1. It is the M5 fallback only if non-commercial weights are rejected. Even then it is not free of NC weights while it reads htdemucs_6s stems (§4.2).
 
 #### Engine A (B2) method, v1's design corrected
@@ -500,7 +612,12 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
 - **Goal 1** (if the friend plays bass, or in M1b):
   - Take STRUM's bass onsets, read with the per-song trim (§2.6), as the timing baseline. The quantizer removes the offset it measures against our grid (+35.0 ms on the grid from the audit's local drum beats [here, quantizer check]); the audit's +22.6 ms against its proxy, about 16 ms later than a human, is a diagnostic only.
   - Re-lane them from pYIN pitch on the bass stem with v1's rank/contour mapping.
-  - Drop notes after 402.4 s, where the stem is silent.
+  - Drop notes after 402.4 s, where the stem is silent. As built, assemble removes from every taken level each onset
+    that lies wholly before the stem's first frame within 30 dB of its P95, or wholly after its last (`active_span`,
+    `TRIM_DB`; a stricter floor than the 25 dB silence warning, so a quiet intro or fade-out keeps its notes). Nothing
+    is trimmed if Expert would lose every note, and a part's `trim_silence` turns it off [code]. On the test song this
+    removes the 2 trailing bass notes (402.503 and 405.038 s); 25 and 30 dB give the same trim. Onsets in a silence
+    inside the song are only warned about (§9, Q23) [here, review].
   - Fill held notes the stem plays but STRUM missed (16 gaps of ≥ 2 s) with v1's HFC onset rule [untested].
 - **Goal 2:**
   - Our rule engine is the product engine. Score it on the 5 bass references (F1@50 after offset removal, lane-direction κ), with STRUM onsets plus pYIN re-lane scored beside it as a benchmark only.
@@ -593,8 +710,18 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
 
 **Drums: activation lanes first, then star power** (critique G16, E11):
 1. **Activation lanes (`S 64`):**
-   - one measure long, ending on a crash downbeat, preferably in the measure before a section change, at least 4 measures apart, none in the last bars;
-   - **target count:** about 19–26 per full-band song [decision: four human references have 19–24, one has 3, and v1 cites a Harmonix median of 26];
+   - one measure long, ending on its activation note on a measure line; placed at section changes first, then in every
+     star-power gap, then wherever 4 measures pass without one (`period_measures`); at least 4 measures apart; none in
+     the last bars [code];
+   - **crash ending:** a preference, never a requirement. A crash line wins only among the lines a fill may take, and
+     `check_phrases` warns (`fillNoCrash`, Expert only) when fewer than half of the Expert fills end on a crash (the
+     four Harmonix test references: 0.63–1.00). A hard rule would cost the ADTOF build nearly all its fills, and then
+     its drum star power, since ADTOF writes the test song's crashes as hi-hats [code; here, review];
+   - **target count:** about one every 4 measures of drumming (Harmonix test references: median gap 4, 5.0–8.7 fills a
+     minute; 19–24 on 3–4 minute songs) [decision, in the review: the target is per minute of drumming, which keeps
+     the chart closest to the human charters; YARG's generator also steps 4 measures]. The phrases fix's rebuilds of
+     the test song got 32 / 29 fills (STRUM / ADTOF drums) on 6:52, 5.4 / 4.9 a minute, at the low end of the Harmonix
+     rate [here, review];
    - written on **every drum difficulty**, each ending on a note that exists on that difficulty. scan-chart checks `noDrumActivationLanes` per track, and only when that track has star power, more than 50 notes and more than 60 s [here, critique].
 2. **Star power in the gaps:** never overlapping, touching or immediately following a lane. Drums may get fewer phrases than guitar (Encore does not require drum star power; scan-chart skips `noStarPower` on drums).
 3. **Unit-test the scheduler** on the test song's 242 bars.
@@ -604,11 +731,14 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
 **Solos** (guitar only):
 - **Candidates:** an allin1 "solo" section, or at least 8 bars where the vocal stem is below −30 dB (relative to its P95) while the guitar stem is at or above its P75 [untested thresholds].
 - **Goal 1:** start from autochart's Expert solo spans (67.9 s for 8.2 s; 218.1 s for 40.6 s) [here, guitar audit]. They begin near where its half-tempo stretches begin (67.2–89.6 s and 218.5–230.3 s), so keep them only after a listening check.
+  As built, assemble drops the tools' solos, and `starpower.place_solos` places one only in a "Solo" section the
+  stems confirm (`solos: "stems"`: vocals quiet, guitar loud). On the test song the vocals stem is active in 56 % and
+  95 % of allin1's first two "solo" sections and in two of the three parts of the third [code].
 - **Placement:** `E solo` on the first note, `E soloend` on the last (inclusive). No back-to-back solos; expect 1–3 per song.
 - **Difficulties:** solos are written on every guitar difficulty. The reducer copies them down and keeps at least one note in each solo on every level (`reduce.py`) [code], so scan-chart's `emptySoloSection`, which it checks on every track, cannot fire.
 
 - **Not chosen:** imported star power (autochart has none; STRUM's 8 phrases placed on the densest Expert windows come out empty on Easy); chartgen's 19 phrases.
-- **Confidence:** low-medium: these are design rules not yet run on a real song.
+- **Confidence:** low-medium: the rules now run on the test song (`starpower.py`), but nobody has played the result.
 - **Would change it:** M2 counts and coverage against Encore references; the playtest; the owner choosing to omit fills (then `noDrumActivationLanes` needs a gate exemption).
 
 ### 2.11 Difficulty reductions
@@ -643,8 +773,18 @@ Each level is built from the one above, so the tiers are nested by construction.
 
 **Drums:**
 1. **Collisions first** (§2.9).
-2. **Snares:** padding 0.5 beat on Hard, 1 beat otherwise.
-3. **Hand pads:** padding 0.5 beat on Hard; on Medium, a hit with the hi-hat or ride keeps 1 beat at ≥ 140 BPM. RBN forbids right-hand 8ths on Medium at ≥ 140 BPM, and the test song is at 142 (critique G7).
+2. **Snares:** padding 0.5 beat on Hard and Medium, 1 beat on Easy [code]. The human Medium of All the Small Things
+   plays snare 8ths (24 pairs outside lanes) [here, review].
+3. **Hand pads:** padding 0.5 beat on Hard; on Medium, a hit with the hi-hat or ride keeps 1 beat at ≥ 140 BPM;
+   outside activation lanes so does a hit with a tom or crash (the right hand on a tom: All the Small Things'
+   choruses). On Easy at ≤ 120 BPM, a hit of only hi-hat or ride may sit 0.5 beat from another hand hit; snares stay 1
+   beat apart (Harmonix Easy keeps the off-beat ride at those tempos). RBN forbids right-hand 8ths on Medium at
+   ≥ 140 BPM, and the test song is at 142 (critique G7).
+   - The 120 BPM boundary (half a beat is then at least 250 ms) is judged on the local tempo of both hits [code]. The
+     human Easy tiers of Lucretia and Creep have 77–79 % of their hand gaps under 1 beat. The finding's own fix
+     scored higher (F1 0.818) but halved Easy snare spacing, against step 2 [here, review].
+   - Crashes count as right-hand hits along with toms: a toms-only version scored All the Small Things' Medium 0.911,
+     against 0.932. The hi-hat and ride rule holds inside lanes too [here, review].
 4. **Kit:**
    - collapse double cymbals to one; crashes go on green on Hard and below;
    - collapse two toms to one on Medium and below;
@@ -686,9 +826,24 @@ Each level is built from the one above, so the tiers are nested by construction.
   3. Self-check: scan-chart's parsed notes match what we wrote (count, ms ±1, HOPO/tap/cymbal flags).
   4. Encore rules: sustains ≥ 200 ms; sustain gaps ≥ 60 ms (target 85 ms); first note ≥ 2 s (`min_lead = 2.5 s` covers this and scan-chart's leading-silence check).
 - **Checked per track and difficulty:** `emptyStarPower`, `emptySoloSection`, and `noDrumActivationLanes` on every drum difficulty.
+- **As built** (`assemble.verify_folder`) [code]:
+  - scan-chart 8.0.1 runs whenever node and `tools/scan-chart`'s `node_modules` are found. Every chart issue it
+    reports is an error, `isDefaultBPM` included. Where it reports the same (track, kind) as our own checks, ours is
+    dropped; our stricter Encore issues stay. The self-check runs on scan-chart's parse and on our read-back.
+  - Without node or `node_modules`, the gate warns `scanChartNotRun` and the Python re-implementation of scan-chart's
+    rules (`scan_rules`) decides. `verify_folder(scan_chart=True)` makes that an error, but the CLI has no flag for
+    it. §4.3 ships a pinned Node 22, so the friend's install runs the real scan-chart.
+  - The build is written into a staging folder and gated there. A passing build replaces the output folder. A failing
+    one goes to `<output>.failed`, and `<output>` keeps the last good build; Clone Hero can still list a `.failed`
+    folder inside its Songs folder. A build that raises writes nothing.
+  - An output folder that holds anything the tool does not write is refused (exit 2) rather than cleaned, so an
+    `--out` that points at Clone Hero's Songs folder is safe. Dotfiles, `Thumbs.db` and `desktop.ini` are tolerated.
+  - song.ini needs album, genre and year (charter defaults to "songcharter"); the config's numbers must be JSON
+    numbers.
 - **Sustain floor:** max(200 ms, 0.75 beat) on Expert and Hard (§2.7).
 - **song.ini for Goal 1:** name "Beast Monster Thing (Love Isn't Love Enough)", artist "Car Seat Headrest" (§6). `README.md` still names the artist as "Beast Monster Thing" and must be fixed [code].
 - **Evidence:** 27–31 % of autochart's test-song sustains end less than 40 ms before the next note [here]. How Clone Hero itself treats `badSustainGap` is unverified.
+  The v1 chart of the test song passes the gate, and scan-chart 8.0.1 finds it playable with 0 chart issues (§5, M1a).
 - **Confidence:** high. **Would change it:** a playtest in Clone Hero or YARG showing that the gate rejects something harmless or misses a real problem.
 
 ### 2.14 Contradictions and conflicts resolved
@@ -849,7 +1004,7 @@ v1's absolute targets, kept as information only:
 | ADTOF drums, whole songs | F1@50 0.967 (pad-blind, unquantized); kick 0.986 (5-song mean); exact lane agreement 0.585 (STRUM 0.687) | [here, ADTOF test] |
 | ADTOF fusion, v1 excerpts | pro-lane F 0.844; 0.813 on held-out excerpts of the same songs (v1's metric, not `score.py`'s) | [here, v1; critique E4] |
 | beat F1, tools | autochart 0.87, chartgen 0.77, STRUM 0.46 (Lucretia 0.26–0.29 for all) | [here, 5070] |
-| `beatgrid`, whole songs | test song: median −16.6 ms, p95 \|dev\| 50.7 ms, p95 about the median 44.6 ms (free); four references: 1.00 / 0.84 / 1.00 / 0.26 of beats within 70 ms of a human beat; downbeat match 0.00 / 0.03 / 0.99 / 0.66 | [here, beatgrid run] |
+| `beatgrid`, whole songs | test song: median −16.6 ms, p95 \|dev\| 50.7 ms, p95 about the median 44.6 ms (free); four references: 1.00 / 0.84 / 1.00 / 0.26 of beats within 70 ms of a human beat (Take Me Out 0.986 with the local periods of §2.3); downbeat match 0.00 / 0.03 / 0.99 / 0.66 | [here, beatgrid run; here, review] |
 | v1 tempo prototype | test song 5.9 / 8.3 ms median / p95, a residual of matched onsets in v1's convention (not comparable with the row above); IaSg14 F 0.999 at 11.0 ms; Kimochi Warui's exact BPM | [here, v1] |
 | bass rules | onset F 0.863 (oracle grid, same songs); pYIN contour 0.97–1.00 on 3 of 4 excerpts | [here, v1] |
 | guitar slot rules | 8ths-while-active 0.816; LR 0.893 (oracle grid, excerpts) | [here, v1] |
@@ -984,11 +1139,21 @@ Tolerances come from the measured spreads: autochart run to run up to 0.035 on E
 
 ### M1a: Goal 1 for the friend's instrument(s), plus a Windows spike on the friend's PC
 **Scope:**
-- **Gate first:** Q1 (which instrument(s)) and Q5 (the same MP3?) are answered before anything is built.
+- **Gate first:** Q1 (which instrument(s)) and Q5 (the same MP3?) are answered before the playtest. The v1 chart was
+  built for all three instruments without waiting for Q1 (status below).
 - The merge build, for the friend's instrument(s) only, from existing outputs: the 5070 run's autochart and STRUM test-song folders (`eval/gpu.sh results`), the `htdemucs_ft` stems, and ADTOF's test-song chart (for the kick check). `beatgrid` builds the map from the drum stem; the guitar audit's 800 local drum beats are used only as a yardstick, never to build the grid.
-- Guitar only: one model run for 341–399 s (a new seed or the app's inpaint); 2 or more seeds recommended.
+- Guitar only: done for the v1 chart with three CPU seeds beside the GPU take, spliced per section (§2.7, Several
+  takes).
 - **Before fixing the tempo-median and drum-timing rows:** measure, on the test song, the offset between the guitar audit's rising-edge picker (tempo rows) and the drums/bass audit's band-flux proxy (drum timing rows). Drum notes snap onto the grid, so both rows can hold only if that offset matches the calibrations'. On Take Me Out the two calibrations differ by about 22 ms (humans 13.5 ms before rising-edge onsets; +8.75 ms after the proxy) [inference]; on the test song it is unmeasured.
 - A playtest on the friend's PC. While there: `nvidia-smi`, RAM, an autochart app install, and SmartScreen and Smart App Control behaviour.
+
+**Status: the v1 chart is delivered, not yet played.**
+- The v1 chart of the test song was delivered with all three instruments: guitar from the spliced autochart takes
+  (§2.7), bass and drums from STRUM, all re-timed onto our grid. A second folder, the same but with ADTOF's drums,
+  was built beside it.
+- It passes the gate, and scan-chart 8.0.1 finds it playable with 0 chart issues (§2.13).
+- Nobody has played it yet: the friend's playtest is the next gate. Q1 is still open and now decides which
+  instrument's rows below are judged first.
 
 **Acceptance (test song).** "Source" means the autochart GPU take for guitar and STRUM's GPU output for drums and bass, measured with the audits' methods. Rows apply to the friend's instrument(s); "all" rows always apply.
 
@@ -1052,7 +1217,8 @@ If Q2 rejects non-commercial weights, the B2, B1 and ADTOF work in rows 3–4 an
 - the reference manifest lists ≥ 20 songs meeting §3.3's cutoff (`modifiedTime` ≥ 2026-10-01, no earlier chart in the same `versionGroupId`, capped per charter), with the eligible count reported, and a plan to reach about 50.
 
 ### M3: Pipeline v0.1, any song, command line (Linux or WSL)
-**Scope:** `songcharter chart <file> --out <dir>` (`cli.py` has to be written). It covers the shared separation, the beat grid, the engines chosen in M2, the scaffolding and the gate.
+**Scope:** `songcharter chart <file> --out <dir>` (`cli.py` has only `songcharter assemble <config.json>` today). It
+covers the shared separation, the beat grid, the engines chosen in M2, the scaffolding and the gate.
 
 **Acceptance (per reference song, per instrument), under the rules of §3.2:**
 - guitar: per song F1@50 ≥ the best tool on that song − max(0.035, the measured seed spread) over ≥ 3 seeds, plus the mean rules;
@@ -1103,6 +1269,11 @@ If Q2 rejects non-commercial weights, the B2, B1 and ADTOF work in rows 3–4 an
 - stress songs pass the gates or are flagged for review, with no crash.
 
 ### 5.6 The first three engineering tasks
+**Status after the first-chart review** (`main` at e0e4b7e; §2.0): done are the commits, the reducer's tests, the
+star-power, solo and section modules, assembly with the scan-chart gate, and the CLI's `assemble` command. Still
+open below: the importer check as a repo test, the `start=` changes, the tempo-level HOPO rule, the Easy sustain floor
+in `quantize.py`, taps, the band rating and `eval/m1_check.py`.
+
 1. **Importers and the code already written.**
    - Done: `importers.read_chart`, `read_mid` and `read_song` exist (uncommitted), and the parser-equivalence check passed: on the three test-song folders, note times equal scan-chart's `msTime` (worst difference 2.9·10⁻¹¹ ms; 0 flag, lane or sustain mismatches) [here, importer check]. It is a scratchpad script, not yet a repo test.
    - To do: make that check a repo test (fixtures outside the repo, skipped when absent). Commit `importers.py`, `quantize.py`, `reduce.py`, `tests/test_importers.py`, `tests/test_quantize.py`, `tests/test_beatgrid.py` and the `beatgrid.py` changes.
@@ -1197,7 +1368,11 @@ Omit `delay`, `song_length`, `hopo_frequency`, `eighthnote_hopo` and `sustain_cu
 - **Drum lanes.** No ADTOF lane mapper reaches STRUM's 0.687 yet, and STRUM cannot ship. Green (0.40) and blue (0.52–0.55) are weak for both tools; ride vs crash is unreliable when the crash is ridden. The onset advantage of ADTOF over STRUM may shrink once STRUM's lateness is removed [inference].
 - **Bass lanes** barely follow pitch in STRUM (0.331 on pitch changes), and our re-laning is untested.
 - **Polish is expected.** No measured polish time exists; M5 logs it.
-- **Tempo.** `beatgrid` has whole-song runs but no `score.py` beat F1. On the test song its p95 spread on the audit yardstick is above STRUM's straight line. On four references its kick-on-1 bar phase failed on 2, and Take Me Out and Lucretia have long stretches off the human beats (0.84 and 0.26 within 70 ms). Its Beat This path is untested and needs code changes. Odd meters are weak (downbeat F 0.45–0.67 on 7/4). Rubato, fermatas, silent breaks and free islands are untested.
+- **Tempo.** `beatgrid` has whole-song runs but no `score.py` beat F1. On the test song its p95 spread on the audit
+  yardstick is above STRUM's straight line. On four references its kick-on-1 bar phase failed on 2, and Lucretia has
+  long stretches off the human beats (0.26 within 70 ms; Take Me Out rose from 0.84 to 0.986 with the local periods).
+  Its Beat This path is untested and needs code changes. Odd meters are weak (downbeat F 0.45–0.67 on 7/4). Rubato,
+  fermatas, silent breaks and free islands are untested.
 - **Licences:** Fretformer weights are CC BY-NC-SA 4.0; ADTOF's are BY-NC-SA by inheritance, and our port's code licence is uncertain; the Demucs weights are treated as non-commercial; STRUM's licence rests on a badge; SW has no licence. The tool stays free and non-commercial with attribution (§4.2). Not legal advice.
 - **Training overlap inflates reference scores:** certain for STRUM guitar on 4 songs, probable for STRUM drums on 3, possible for ADTOF (custom charts) and autochart (undocumented).
 - **Single points of failure:**
@@ -1228,9 +1403,9 @@ Omit `delay`, `song_length`, `hopo_frequency`, `eighthnote_hopo` and `sustain_cu
 |---|---|---|
 | Songs above 185 BPM; picked 16ths (critique G1) | The level fold halves the tempo. Model sources keep their HOPO/strum intent (§2.6), but rule engines (`hopo=None`) turn 8th strums at a halved level into natural HOPOs. | M5: choose the metrical level together with note density (prefer the level where typical strums are ≥ 96 ticks apart); a forced-strum rule for rule engines; HOPO κ, natural vs source intent, in M2. |
 | Compound meters and shuffles (G2) | Only octave moves, x/4 only (`TempoMap.from_beats` writes denominator 4); a 6/8 ballad's 16ths land 64 ticks apart. | M5: ternary-level test (inter-beat-interval ratios near 1.5), `TS 6 3` / `TS 12 3` and denominators in `tempo.py`; 6/8 and shuffle songs in the stress set. Until then, flag "check time signature". |
-| Drumless songs (G3) | Designed (refine on bass/guitar onsets; a low-evidence flag instead of `beat_grid`'s `ValueError`; gate ADTOF mix hits by stem energy; omit absent parts) but unimplemented and without thresholds. The −22 ms phase offset is calibrated on drums only. | Implement in M3; calibrate the offset for bass and guitar onsets; set thresholds on drumless stress songs in M5. |
+| Drumless songs (G3) | Designed (refine on bass/guitar onsets; a low-evidence flag instead of `beat_grid`'s `ValueError`; gate ADTOF mix hits by stem energy; omit absent parts) but unimplemented and without thresholds. Inside a drummed song, drumless beats now follow a second stem calibrated on the same song (§2.3); a song with no drums at all still cannot calibrate the second stem. The −22 ms phase offset is calibrated on drums only. | Implement in M3; calibrate the offset for bass and guitar onsets; set thresholds on drumless stress songs in M5. |
 | Fretformer driving (G5) | Level mismatch with autochart's grid untested; descriptor knobs (chords, HOPOs, speed) and the Fill-in model unused; a section that fails its checks is only flagged. | M2: ×1 vs ×2 level test, and 1 knob-conditioned take vs seeded takes. M5: regenerate failed windows. |
-| Long songs, hidden tracks, long silences (G9) | Token-cap windowing is untested; the DP decoder carries beats through silence; `decode()` buffers the whole song through stdout. | No notes in silences over about 4 s; split long songs at silences or sections; a 12–15 min stress song with measured peak RAM (M3/M5). |
+| Long songs, hidden tracks, long silences (G9) | Token-cap windowing is untested; the DP decoder carries beats through silence; `decode()` buffers the whole song through stdout. | Onsets outside a stem's activity are removed (§2.8); mid-song silences are open (§9, Q23); split long songs at silences or sections; a 12–15 min stress song with measured peak RAM (M3/M5). |
 | Degraded rips and live recordings (G10) | Never measured. | Degraded versions of the references in the harness; live songs in the stress set (M5). |
 | Packaging figures (G14) | The lock and sizes predate the final model set; Windows wheels for madmom-infer and all-in-one-infer unchecked. | Re-lock and re-measure in M4. |
 | allin1 weight licence | Not stated in our sources. | Check before shipping (§4.2). |
@@ -1250,7 +1425,9 @@ The other critique gaps are designed in this version: G4 (§2.3, code change pen
   - any ADTOF lane mapper better than `drummap2`;
   - ADTOF vs STRUM after both are quantized;
   - the de-duplicated drum fusion.
-- **Scaffolding:** the star-power, fill and reducer rules on a real song checked by a person (only the critic's simulation and tonight's unreviewed runs exist); fold-0 section quality on unseen songs; allin1 on our 6s-folded stems.
+- **Scaffolding:** the star-power, fill and reducer rules on a real song checked by a person (the first-chart review
+  checked them on the test song, but nobody has played the result); fold-0 section quality on unseen songs; allin1 on
+  our 6s-folded stems.
 - **Windows and hardware:**
   - any Windows run; RTX 4070 speed and VRAM; host RAM for any tool, including STRUM's peak RSS; the friend's RAM;
   - Smart App Control behaviour;
@@ -1260,7 +1437,7 @@ The other critique gaps are designed in this version: G4 (§2.3, code change pen
 - **Variance and references:** seed variance on the references (only same-seed GPU and CPU pairs exist); the independent human ceiling.
 - **Inputs:** degraded rips and live recordings.
 - **Listening and play:** nobody has listened to any output or played any chart.
-- **Tests:** the repo's tests were not run for this document.
+- **Tests:** the repo's 294 tests were not re-run for this update.
 
 ---
 
@@ -1268,7 +1445,7 @@ The other critique gaps are designed in this version: G4 (§2.3, code change pen
 
 | # | question | what it decides |
 |---|---|---|
-| 1 | **Which instrument(s) does the friend play?** | M1a's scope (the gate before the build), the M2 order, and the priority of bass (§2.8). Blocks the most. |
+| 1 | **Which instrument(s) does the friend play?** | Which of M1a's rows are judged first (the v1 chart holds all three instruments, so whichever he plays can be playtested now; §5), the M2 order, and the priority of bass (§2.8). Blocks the most. |
 | 2 | **Are non-commercial weights acceptable** (Fretformer 2, ADTOF; htdemucs_6s read as NC)? | Whether Goal 2 has a measured-good route at all, and whether M2's engine work is needed. If not, guitar and drums have no measured engine today, and a rules route still needs a permissively licensed separator, which none of the sources found. Blocks the most. |
 | 3 | If yes: which guitar route? **B2** (our own driver; songcharter stays MIT and uses no AGPL code), **B1** (autochart's engine as a separate program; we ship AGPL code with its source obligations, plus FFmpeg's LGPL), or **D** (build on autochart; songcharter becomes AGPL)? | §2.7, §4.2 |
 | 4 | Must the friend's tool be native Windows, or is WSL2 acceptable? | §4.3, M4 |
@@ -1283,6 +1460,74 @@ The other critique gaps are designed in this version: G4 (§2.3, code change pen
 | 13 | May we email the Encore team and grow the reference set to about 50 songs? May community charts ever be used to train our models (M5)? | §3.3, M5 |
 | 14 | Should we ask STRUM's author to add a LICENSE file? By default STRUM is a benchmark only; any shipped-STRUM route (a separate environment or WSL, after a LICENSE) is the owner's decision. | §2.8, §2.9, §4.2 |
 | 15 | May we ask xavriley to add a licence to ADTOF-pytorch, and keep our ADTOF port as a separate module treated as BY-NC-SA? | §2.9, §4.2 |
+
+**Open after the first-chart review** [here, review]. Each question comes from a review finding that survived
+verification. "Contested" marks one that a verifier argued against; the fixer then re-checked which side held.
+
+*Grid and quantizer*
+- **Q16. Should the 1/24 and 1/32 grids come back for imported sources?** Contested; the refutation held, though
+  the finding was right that minimum spacing is no reason to leave them out (§2.6). Keep them out (today): the tool
+  sources barely write them (autochart on the test song: three 1/32s and no 1/24; STRUM cannot write 1/24), the test
+  song would change by 1 note, and an ungated 1/32 level would keep STRUM's odd-1/32 rounding
+  (§2.6). Bring them back: the human references use them (Creep 163 onsets on 1/24 positions, Lucretia 33 on 1/24 and
+  109 on 1/32, Drunk Drivers 13), and without them Creep guitar loses 162 of 881 onsets; but those losses were measured
+  with human charts as inputs, which are never quantizer inputs. **Recommendation:** keep them out; reopen when a
+  source that writes them becomes an input (Engine A keeps its exact ticks anyway, §2.7).
+- **Q17. M1's "more than 2 % of onsets moved by more than 25 ms": a gate error, a warning, or an M1 check only? And
+  should spans where the source's beat period differs from ours by 1.5× or more be left out of the count?**
+  Contested; the refutation held: §2.13's gate lists sync, scan-chart, the self-check and Encore's rules; the figure is
+  §2.6's "would change it" trigger and an M1 check for `eval/m1_check.py`; and a warning would fire on every STRUM
+  build, where moving STRUM's notes off its 1/32 rounding is what §2.6 asks for. Today each part's count goes to
+  `report.json` (`moved_25ms`), information only. On the test song the second stem cut guitar onsets moved > 25 ms
+  from 123 to 85 (80 outside the half-tempo stretches; 2 % is about 23), and autochart sits about 10 ms later against
+  the audio in drumless stretches than elsewhere (−21.1 against −31.7 ms), so a count against autochart cannot reach
+  zero. **Recommendation:** keep it out of the gate; `eval/m1_check.py` reports it per part, without the half-tempo
+  spans.
+
+*Reductions*
+- **Q18. Drums Hard: kicks 1 beat apart (§2.11 drums step 5), or 8th-note kicks, as all four Harmonix Hards have (All
+  the Small Things at 147.5 BPM included)?** Today Hard keeps half of Expert's kicks (human 0.745) and never reaches
+  its 0.85 target. With 8th-note kicks: Hard F1 0.918 → 0.944 on the 4 Harmonix songs (both verifiers), and +6 kicks
+  (STRUM) and +9 (ADTOF) on the test song, with no errors. Against: Take Me Out's human Hard has almost no sub-beat
+  kicks, and Kimochi Warui's Hard would keep 0.984 of Expert's kicks. **Recommendation:** allow them.
+- **Q19. Should bass get ladder targets of its own?** Bass uses the guitar targets (0.78 / 0.50 / 0.30); human bass
+  ladders average 0.889 / 0.609 / 0.453 (§2.11). The verifiers' what-if with denser bass targets: bass F1 Hard 0.872 →
+  0.891, Medium 0.840 → 0.898, Easy 0.779 → 0.821; the test song's bass does not change (0.836 / 0.565 / 0.355 either
+  way). A bass Hard must stay under the 0.90 `hardNotThinned` error, which 2 of the 4 human bass Hards reach. Also
+  open: should bass Medium drop chords, and should the 2-beat Easy bass sustain floor come down? **Recommendation:**
+  bass targets of their own, with Hard kept under 0.90; tune in M2.
+- **Q20. Easy drums: what decides a section's mode?** Contested; the refutation held. Today a section at or above the
+  song's median drum-stem loudness is a two-hand beat and a quieter one a kick/snare beat (§2.11 drums step 7). The
+  finding: that matches the human choice in 20 of 36 sections, and removed every kick from 10 of the test song's 19
+  sections at the time. Against an Expert-groove rule: it is fitted in-sample, gets 4 of 10 Take Me Out sections right
+  (loudness 6), and on the test song (1009 of 1194 non-snare hand gems are yellow) it would make nearly every section
+  kick/snare, against "Easy must contain cymbals". A label-based rule needs section names in `reduce` and is also
+  in-sample. **Recommendation:** keep loudness; test a loudness margin on held-out references in M2.
+- **Q21. 5-fret time floors (Hard 160, Medium 300, Easy 500 ms; §2.11 step 2; see Q8): follow the human p5 gaps? And
+  may the ladder apply a class partially or per section?** Contested; the refutation held against the proposed fix.
+  The finding: the floors sit above the shortest Harmonix gaps, and whole-class thinning cannot land on the target.
+  Against: 160 ms is about the mean human p5 Hard gap (162.75 ms guitar, 163.5 ms bass); a 140 ms Hard floor picks
+  the 1/12-note step at 142 BPM and cuts the test song's bass Hard from 0.836 to 0.724; a 390 ms Easy floor drops Take
+  Me Out's guitar Easy F1 from 0.736 to 0.582; a 150 ms floor gains on one song only (Lucretia); the partial-class
+  ladder was never measured. **Recommendation:** keep 160 / 300 / 500 ms; measure a partial or per-section ladder in M2.
+
+*Fills*
+- **Q22. Should a crash be a hard rule for fills?** Today it is a preference, and `fillNoCrash` warns below half
+  (§2.10). As a hard rule the ADTOF build loses nearly all its fills, and then its drum star power
+  (`noDrumActivationLanes`): ADTOF writes the test song's crashes as hi-hats (3 green cymbals in its Expert), so 0.03
+  of its fills end on a labelled crash, against 0.34 for STRUM (the Harmonix test references: 0.63–1.00).
+  **Recommendation:** keep it a preference, and fix crash labels in the drum lane mapper (M2).
+
+*Silence*
+- **Q23. Onsets in a silence inside the song: remove them, and from what length?** The edges are decided: onsets
+  before a stem first plays or after it last plays are removed (§2.8). Inside the song they are only warned about.
+  Options: remove those inside a stem silence of at least N s (the critique's "about 4 s", untested), or none, with a
+  per-part cut-off key. Measured so far: only the edge rule on the test song (2 trailing bass notes; 25 and 30 dB give
+  the same trim). **Recommendation:** keep warnings until the stress set (M5) sets N.
+
+Decided by the code since the review, and recorded in their sections: the second-stem grid and the local tempo
+periods (§2.3), the odd-1/32 rule (§2.6), the Medium tom/crash and slow-Easy hi-hat rules (§2.11), fills every 4
+measures (§2.10), the edge trimming (§2.8), and scan-chart in the gate with the `<output>.failed` folder (§2.13).
 
 **Information to collect at the M1 spike:** `nvidia-smi --query-gpu=name,driver_version,compute_cap --format=csv` on the friend's PC; its RAM; the Smart App Control state.
 
@@ -1347,8 +1592,10 @@ The other critique gaps are designed in this version: G4 (§2.3, code change pen
 - Code signing: https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options, https://signpath.org/terms
 
 **In this repository**
-- `songcharter/`: `audio.py`, `tempo.py`, `chart.py`, `ini.py`, `package.py`, `timed.py`, `beatgrid.py`; uncommitted: `importers.py`, `quantize.py`, `reduce.py`
-- `tests/`: `test_tempo.py`, `test_chart.py`, `test_package.py`; uncommitted: `test_beatgrid.py`, `test_importers.py`, `test_quantize.py`
+- `songcharter/`: `audio.py`, `tempo.py`, `chart.py`, `ini.py`, `package.py`, `timed.py`, `beatgrid.py`, `importers.py`,
+  `quantize.py`, `reduce.py`, `starpower.py`, `sections.py`, `assemble.py`, `cli.py`
+- `tests/`: `test_tempo.py`, `test_chart.py`, `test_package.py`, `test_beatgrid.py`, `test_importers.py`,
+  `test_quantize.py`, `test_reduce.py`, `test_starpower.py`, `test_sections.py`, `test_assemble.py`
 - `eval/`: `scorer/score.py`, `scorer/scan_notes.cjs`, `scorecard.py`, `drive.sh`, `gpu.sh`, `build_refs.sh`, `refs.json`, `refs/`, `tools/{autochart,chartgen,strum}/` (including `tools/autochart/ac_headless.cjs`)
 - `tools/scan-chart/scan.cjs`
 
@@ -1372,7 +1619,7 @@ The other critique gaps are designed in this version: G4 (§2.3, code change pen
 | grid phase | no constant offset | the offset belongs to the detector: −22 ms from `beatgrid`'s envelope peaks, drum stems only | C8 |
 | meter | Viterbi x/4 | the Viterbi decides; the kick phase and `beatgrid`'s uncertainty flag drive review; 6/8 in M5 with `tempo.py` denominators | G2; kick-on-1 wrong on 2 of 4 references [here, beatgrid run] |
 | sections | fold 0, cited at 0.740 / 0.596 / 0.730 | that figure is the 8-fold ensemble, in-domain; ensemble on GPU, fold 0 on CPU, chosen in M2; Goal 1 from the tools' agreement; 20–30 sections kept | E7 |
-| snap grid | straight {1/8, 1/16, 1/32} and triplet {1/12, 1/24} families | 1/16 + 1/12 only; Engine A keeps its exact ticks through a flag | `quantize.py` (1/32 apart falls under the minimum spacing at 85–185 BPM) |
+| snap grid | straight {1/8, 1/16, 1/32} and triplet {1/12, 1/24} families | 1/16 + 1/12 only, a 1/32-grid source's odd 1/32s to the coarser slot; Engine A keeps its exact ticks through a flag | `quantize.py` (drums snap to 1/16 plus triplets, the sources barely write 1/32s or 1/24s, and a 1/32 level would keep a 1/32-grid source's rounding; spacing is not the reason: a 1/32 is under the 55 ms HOPO spacing only above 136 BPM) |
 | HOPOs | natural only, drop every `N 5` | keep the source's intent and write `N 5` flips; unknown where the source's tempo level was wrong (to add to `quantize.py`); below Expert, `reduce.py`'s strum rule | G1, C10; quantizer check |
 | guitar engine | Engine A default, justified by autochart's numbers; 3 takes; repeat-consistency selector | Engine A unmeasured; B1 / B2 / D open, benchmarked over ≥ 3 seeds; 1 take by default with cached tokens; token-cap windows; pickups fed; autochart's sampling settings by default | E1, E2, E5, G5, G6, C1 |
 | guitar run time | "a few minutes on a 4070"; ≤ 5 min target | about 3.2 min of decoding per take on the 5070, GPU barely helps; target ≤ 8 min, estimated per route (B2 about 3–7, B1 about 5–7) | E1, C2 |
@@ -1390,4 +1637,24 @@ The other critique gaps are designed in this version: G4 (§2.3, code change pen
 | new sections | — | code status and design-vs-code decisions (§2.0), how results gate decisions (§3.2), first engineering tasks (§5.6), known limitations (§8) | the brief; the checkers' reviews |
 | paths | scratchpad paths | repo files or named research documents only | repo-ready |
 
-**Kept out of v2 on purpose:** v1's +8 star-power priority (replaced by the coverage step), the Standard/Dense presets (replaced by time floors), the 1/32 and 1/24 grids (minimum spacing), kick-locked downbeats for Goal 2 (the Viterbi decides), and the p95-drift click test (critique G4).
+**Kept out of v2 on purpose:** v1's +8 star-power priority (replaced by the coverage step), the Standard/Dense
+presets (replaced by time floors), the 1/32 and 1/24 grids (the sources barely write them, and a 1/32 level would keep
+a 1/32-grid source's rounding; open for imported sources, §9 Q16), kick-locked downbeats for Goal 2 (the Viterbi
+decides), and the p95-drift click test (critique G4).
+
+**Changes after the first-chart review** (`main` at e0e4b7e):
+- **Beat grid:** the internal tracker follows local 20-s tempo periods, and `stats["tempo_check"]` flags missed
+  changes (Take Me Out within 70 ms: 0.836 → 0.986). Drumless beats of a drummed song follow a second stem calibrated
+  on the same song (§2.3).
+- **Quantizer:** the 1/32 and 1/24 rationale is corrected (spacing is not the reason); a 1/32-grid source's odd 1/32s
+  go to the coarser slot; assemble keeps only a source's forced HOPO states by default; notes moved more than 25 ms
+  are counted, information only (§2.6).
+- **Reductions:** on Medium at ≥ 140 BPM a tom or crash outside activation lanes keeps 1 beat, like the hi-hat; on
+  Easy at ≤ 120 BPM a hit of only hi-hat or ride may sit half a beat from another hand hit (§2.11).
+- **Fills:** one every 4 measures of drumming; a crash is a preference, with a `fillNoCrash` warning (§2.10).
+- **Sections:** merge, then split, per run of one label; 26 on the test song (§2.5).
+- **Assembly and gate:** onsets outside a stem's activity are trimmed (§2.8); real scan-chart 8.0.1 gates every build
+  where node is present; a failed build goes to `<output>.failed`; an output folder with foreign files is refused;
+  stricter config checks; CLI exit codes 0–3 (§2.0, §2.13).
+- **Guitar:** the v1 chart's guitar is spliced from four autochart takes by per-section agreement (§2.7).
+- **Owner questions:** eight new ones from the review (§9, Q16–Q23).
