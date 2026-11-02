@@ -11,8 +11,12 @@ per take, behind a process boundary, so no AGPL code is imported.
   * **Input.** The gapless decode written as WAV, not the user's MP3, so the takes' times are seconds of our decode.
   * **Cache.** A take whose folder holds notes.chart and a summary.json for the same input (SHA-256), seed, sampling
     settings and engine version is reused.
-  * **Devices.** "cpu", "cuda" or "webgpu" (the engine's own names). The engine falls back to the CPU by itself; the
-    devices it used are in each take's summary.
+  * **Devices.** "cpu", "cuda" or "webgpu" (the engine's own names). With "cuda" the engine itself would move the
+    transcriber to WebGPU whenever a WebGPU adapter answers its probe, even a software one that runs on the CPU (seen
+    in WSL: 1031 s for a take that took 319 s on CUDA), so the transcriber is pinned to the requested device with the
+    engine's AUTOCHART_ONNX_TRANSCRIBER_DEVICE (unless it is set already). The engine still falls back to the CPU by
+    itself when a provider fails to load; the devices it used are in each take's summary, and a take that did not
+    run on the requested device is not reused.
 """
 from __future__ import annotations
 
@@ -85,8 +89,17 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _done(folder: Path, input_sha: str, seed: int) -> dict | None:
-    """The summary of a finished take in `folder` for this input and seed, else None."""
+def _on_device(summary: dict, device: str | None) -> bool:
+    """Whether every run's transcriber used `device` (summaries without devices count as yes)."""
+    if device is None:
+        return True
+    used = [(r.get("devices") or {}).get("transcriber") for r in summary.get("runs") or []]
+    return all(u in (None, device) for u in used)
+
+
+def _done(folder: Path, input_sha: str, seed: int, device: str | None = None) -> dict | None:
+    """The summary of a finished take in `folder` for this input and seed (and, if given, made on `device`), else
+    None."""
     chart, summary = folder / "notes.chart", folder / "autochart_run" / "summary.json"
     if not (chart.is_file() and summary.is_file()):
         return None
@@ -97,7 +110,7 @@ def _done(folder: Path, input_sha: str, seed: int) -> dict | None:
     runs = s.get("runs") or []
     ok = (s.get("inputSha256") == input_sha and s.get("seed") == seed and s.get("difficulties") == ["expert"]
           and s.get("temperature") == TEMPERATURE and s.get("topP") == TOP_P
-          and runs and all(r.get("status") == "completed" for r in runs))
+          and runs and all(r.get("status") == "completed" for r in runs) and _on_device(s, device))
     return s if ok else None
 
 
@@ -120,7 +133,7 @@ def generate(install: Install, audio: Path | str, out: Path | str, seeds: Sequen
     takes = []
     for seed in seeds:
         folder = out / f"seed_{seed}"
-        summary = _done(folder, input_sha, seed)
+        summary = _done(folder, input_sha, seed, device)
         if summary is not None:
             takes.append(Take(seed, folder / "notes.chart", summary, True, 0.0))
             continue
@@ -130,6 +143,8 @@ def generate(install: Install, audio: Path | str, out: Path | str, seeds: Sequen
                "AC_TEMPERATURE": str(TEMPERATURE), "AC_TOP_P": str(TOP_P), "AC_TIMEOUT_S": str(int(timeout_s)),
                "AC_APP_ROOT": str(install.app_root), "AC_MODELS": str(install.models),
                "AUTOCHART_FFMPEG_PATH": ffmpeg or A.ffmpeg_exe()}
+        if device in ("cpu", "cuda"):
+            env.setdefault("AUTOCHART_ONNX_TRANSCRIBER_DEVICE", device)
         if title:
             env["AC_TITLE"] = title
         if artist:

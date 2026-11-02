@@ -23,9 +23,10 @@ def install(tmp_path):
 class FakeDriver:
     """Writes a take the way ac_headless.cjs does, and records every call."""
 
-    def __init__(self, fail_seed=None):
+    def __init__(self, fail_seed=None, transcriber=None):
         self.calls = []
         self.fail_seed = fail_seed
+        self.transcriber = transcriber  # the device the engine ends up using, if not the one asked for
 
     def __call__(self, cmd, env, cwd, capture_output, text, timeout):
         self.calls.append((cmd, env, cwd))
@@ -39,7 +40,8 @@ class FakeDriver:
         (folder / "notes.chart").write_text(f"[Song]\n{{\n}}\n// seed {seed}\n", encoding="utf-8")
         summary = {"inputSha256": AC.sha256(Path(audio)), "seed": seed, "difficulties": ["expert"],
                    "temperature": float(env["AC_TEMPERATURE"]), "topP": float(env["AC_TOP_P"]),
-                   "runs": [{"status": "completed", "devices": {"transcriber": env["AC_DEVICE"]}}]}
+                   "runs": [{"status": "completed",
+                             "devices": {"transcriber": self.transcriber or env["AC_DEVICE"]}}]}
         (folder / "autochart_run" / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
@@ -60,7 +62,27 @@ def test_one_take_per_seed_on_a_shared_work_folder(tmp_path):
     assert env["AC_DIFFICULTIES"] == "expert" and env["AC_DEVICE"] == "cuda" and env["AUTOCHART_FFMPEG_PATH"] == "/opt/ffmpeg"
     assert env["AC_APP_ROOT"] == str(inst.app_root) and env["AC_MODELS"] == str(inst.models)
     assert env["AC_TITLE"] == "Song" and env["AC_ARTIST"] == "Band"
+    assert env["AUTOCHART_ONNX_TRANSCRIBER_DEVICE"] == "cuda"  # not the engine's WebGPU preference
     assert takes[1].devices == {"transcriber": "cuda"}
+
+
+def test_a_take_made_on_another_device_is_made_again(tmp_path):
+    """The engine falls back by itself (CUDA libraries missing, a WebGPU adapter that runs on the CPU): such a take
+    is kept and reported, but the next run on the requested device makes it again."""
+    inst = find_install(install(tmp_path), node="node")
+    audio = tmp_path / "input.wav"
+    audio.write_bytes(b"x")
+    drv = FakeDriver(transcriber="webgpu")
+    first = generate(inst, audio, tmp_path / "out", (1,), device="cuda", run=drv)
+    assert first[0].devices == {"transcriber": "webgpu"} and not first[0].cached
+    again = generate(inst, audio, tmp_path / "out", (1,), device="cuda", run=FakeDriver())
+    assert not again[0].cached and again[0].devices == {"transcriber": "cuda"}
+    assert generate(inst, audio, tmp_path / "out", (1,), device="cuda", run=FakeDriver())[0].cached
+    # an override set by the caller wins, and webgpu (or none) is left to the engine
+    env_drv = FakeDriver()
+    generate(inst, audio, tmp_path / "w", (2,), device="webgpu", run=env_drv)
+    assert "AUTOCHART_ONNX_TRANSCRIBER_DEVICE" not in env_drv.calls[0][1] or \
+        env_drv.calls[0][1]["AUTOCHART_ONNX_TRANSCRIBER_DEVICE"] == AC.os.environ.get("AUTOCHART_ONNX_TRANSCRIBER_DEVICE")
 
 
 def test_finished_takes_are_reused_and_a_changed_input_is_not(tmp_path):

@@ -18,6 +18,28 @@ T="$HERE/tools"
 DRIVER_RE='^(/[^ ]*/)?bash [^ ]*drive\.sh'   # a running driver itself, not a command line that mentions it
 
 mem_mb() { awk -v k="$1:" '$1 == k {print int($2/1024)}' /proc/meminfo; }
+
+# onnxruntime-node's CUDA provider needs cuDNN 9 (libcudnn.so.9) and the CUDA 12 libraries. WSL's driver gives libcuda
+# (/usr/lib/wsl/lib); the CUDA toolkit, if installed, gives the CUDA 12 libraries (/usr/local/cuda/lib64); cuDNN comes
+# from a pip wheel: autochart's own tools/autochart/cudnn_venv first (kept apart from the torch tools on purpose),
+# else a tool's or conda's nvidia-cudnn wheel. This prints the folders to prepend to LD_LIBRARY_PATH for autochart
+# only, and fails when no cuDNN 9 is found.
+cuda_libs() {
+  local dirs=() c
+  if ! ldconfig -p 2>/dev/null | grep -q 'libcudnn\.so\.9 '; then
+    c=$(ls -d "$T"/autochart/cudnn_venv/lib/python3*/site-packages/nvidia/cudnn/lib \
+              "$T"/strum/venv/lib/python3*/site-packages/nvidia/cudnn/lib \
+              "$T"/chartgen/venv/lib/python3*/site-packages/nvidia/cudnn/lib \
+              "$HOME"/miniconda3/lib/python3*/site-packages/nvidia/cudnn/lib 2>/dev/null \
+        | while read -r d; do ls "$d"/libcudnn.so.9* >/dev/null 2>&1 && { echo "$d"; break; }; done)
+    [ -n "$c" ] || return 1
+    dirs+=("$c")
+    # without a CUDA toolkit, the same wheel set's other nvidia libraries (cublas, cudart, ...) are needed too
+    [ -d /usr/local/cuda/lib64 ] || dirs+=($(ls -d "$(dirname "$(dirname "$c")")"/*/lib))
+  fi
+  for c in /usr/local/cuda/lib64 /usr/lib/wsl/lib; do [ -d "$c" ] && dirs+=("$c"); done
+  (IFS=:; echo "${dirs[*]}")
+}
 running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
 
 # Imports torch in a tool's venv and runs one matmul on the GPU, so a CPU-only build or a missing kernel shows up here
@@ -54,6 +76,12 @@ check() {
   if [ -d "$T/autochart/node_modules/onnxruntime-node" ]; then
     if find "$T/autochart/node_modules/onnxruntime-node" -name 'libonnxruntime_providers_cuda.so*' | grep -q .; then
       echo "autochart: ok: onnxruntime-node has its CUDA provider (each run's log names the device it used)"
+      local libs
+      if libs=$(cuda_libs); then
+        echo "autochart: CUDA libraries for its runs: $libs"
+      else
+        echo "autochart: no cuDNN 9 (libcudnn.so.9) on the system or in a tool venv: its CUDA provider would fail to load"; bad=1
+      fi
     else
       echo "autochart: onnxruntime-node has no CUDA provider, so it would run on CPU (reinstall with ONNXRUNTIME_NODE_INSTALL_CUDA=v12)"; bad=1
     fi
@@ -99,7 +127,9 @@ _takes() {
   echo $$ > "$PIDFILE"
   echo 500 > /proc/self/oom_score_adj 2>/dev/null || true
   echo "$(date '+%F %T') takes run started"
-  local py="${EVAL_PY:-$HERE/.venv/bin/python}"
+  local py="${EVAL_PY:-$HERE/.venv/bin/python}" libs
+  libs=$(cuda_libs) && [ -n "$libs" ] && export LD_LIBRARY_PATH="$libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}"
   EVAL_DATA="$DATA" "$py" "$HERE/takes.py" --device cuda ${SEEDS:+--seeds "$SEEDS"} ${SONGS:+--songs "$SONGS"}
   local rc=$?
   results
