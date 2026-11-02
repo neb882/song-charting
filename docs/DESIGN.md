@@ -133,9 +133,10 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | `reduce.py` | Nested Hard/Medium/Easy for 5-fret and drums; minimum gaps from time floors (no Standard/Dense preset); a thinning ladder; a below-Expert HOPO rule; Easy sustain floor 1.25 beats (2 for bass); star-power and solo coverage; `check_reductions` (5-fret Hard ≥ 0.90 of Expert onsets is an error). |
 | `starpower.py` | Star power, drum activation lanes (at section changes, in star-power gaps, then every 4 measures) and solos (only in a "Solo" section the caller confirms, e.g. with `stem_confirm`), placed on Expert and fitted to every level (`fit_chart`); `check_phrases` (scan-chart's phrase checks, our rules, a `fillNoCrash` warning) (§2.10). |
 | `sections.py` | allin1 segments, or an imported chart's sections, on measure starts: merged, split and named (§2.5). |
+| `takes.py` | `splice`: a part's Expert from several runs of its source, chosen per section by the takes' agreement (§2.7, Several takes); assemble's part key `takes`. |
 | `assemble.py` | One JSON config to a gated song folder: decode, stem-lag check, grid with a second stem (§2.3), parts imported, offset-corrected and quantized, edges trimmed (§2.8), sections, phrases, reductions, ratings (§2.12), `build_song_folder` into a staging folder, then the gate with scan-chart 8.0.1 itself (§2.13) and `report.json`. A build the gate fails goes to `<output>.failed`. |
 | `cli.py` | `songcharter assemble <config.json> [--out DIR]`. Exit 0: the gate passed; 1: it failed (the build is in `<output>.failed`); 2: a bad config, input or tool, or song.ogg out of sync (nothing written); 3: a bug (traceback printed). M3's `songcharter chart <file>` is not written. |
-| tests | 294 tests: tempo, chart, package, beatgrid, importers, quantize, reduce, starpower, sections, assemble and the CLI; 4 skip when `tools/scan-chart` is absent. Not re-run for this update. |
+| tests | 302 tests: tempo, chart, package, beatgrid, importers, quantize, reduce, starpower, sections, takes, assemble and the CLI; 4 skip when `tools/scan-chart` is absent. |
 
 **Design and code, decided once.** Each difference is decided here; code changes are §5.6 tasks.
 
@@ -505,7 +506,8 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
 - **Ours, not autochart's:** quantizer and HOPO handling (§2.6), sustain rules (below), tiers (§2.11), star power and solos (§2.10). Its lower tiers are not nested (only 74 % of Hard's onsets occur in Expert) and would triple its run time (652.8 s vs 228.8 s on the test song) [here, 5070].
 
 #### Several takes (the v1 chart of the test song)
-What was done for the test song's v1 chart. It is a measurement, not yet code in the repository [here, takes].
+What was done for the test song's v1 chart, first as a script and then as code: `songcharter/takes.py`, used by a
+part's `takes` key in the assemble config [here, takes].
 - **Takes.** autochart ran four times on the test song: the GPU take plus CPU seeds 101, 202 and 303, Expert only.
   All four takes share one tempo map (identical `[SyncTrack]`), so they splice at tick level.
 - **Choice per section** (the 26 sections of the built chart):
@@ -525,8 +527,13 @@ What was done for the test song's v1 chart. It is a measurement, not yet code in
 - **The audio barely separates the takes.** The "other"-stem onset proxy moves only from 0.243 to 0.256 within
   50 ms, because the stem's onsets are smeared in the loud sections. The choice rests on agreement between takes, not
   on the audio.
-- **Plan:** move this into songcharter as a take-ensemble step (several takes of one source, a per-section medoid)
-  with tests. For Goal 2, run autochart several times when time allows.
+- **In the code** (`takes.splice`): the same rule on the sections assemble builds (now built before the parts), on
+  any part with `take_difficulties: "expert"` and two or more takes (one hit against several on drums). The fade-out
+  cut is not part of it: the end is left to assemble's edge trimming (§2.8, 30 dB), which on the test song keeps 3
+  more onsets in the fade than the script did (1204 against 1201; reported as onsets in silence). On the test song
+  it reproduces all 26 of the script's picks. report.json lists every window's scores and pick under
+  `parts.<name>.takes`.
+- **Plan:** for Goal 2, run autochart several times when time allows (about 3.2 min per seed on the 5070).
 
 #### Goal 2: the engine route is open
 
@@ -1593,9 +1600,9 @@ measures (§2.10), the edge trimming (§2.8), and scan-chart in the gate with th
 
 **In this repository**
 - `songcharter/`: `audio.py`, `tempo.py`, `chart.py`, `ini.py`, `package.py`, `timed.py`, `beatgrid.py`, `importers.py`,
-  `quantize.py`, `reduce.py`, `starpower.py`, `sections.py`, `assemble.py`, `cli.py`
+  `quantize.py`, `reduce.py`, `starpower.py`, `sections.py`, `takes.py`, `assemble.py`, `cli.py`
 - `tests/`: `test_tempo.py`, `test_chart.py`, `test_package.py`, `test_beatgrid.py`, `test_importers.py`,
-  `test_quantize.py`, `test_reduce.py`, `test_starpower.py`, `test_sections.py`, `test_assemble.py`
+  `test_quantize.py`, `test_reduce.py`, `test_starpower.py`, `test_sections.py`, `test_takes.py`, `test_assemble.py`
 - `eval/`: `scorer/score.py`, `scorer/scan_notes.cjs`, `scorecard.py`, `drive.sh`, `gpu.sh`, `build_refs.sh`, `refs.json`, `refs/`, `tools/{autochart,chartgen,strum}/` (including `tools/autochart/ac_headless.cjs`)
 - `tools/scan-chart/scan.cjs`
 
