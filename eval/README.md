@@ -36,7 +36,7 @@ scan-chart, the parser Chorus Encore uses. Per instrument and difficulty, the sc
 | tool | code | weights | instruments |
 |---|---|---|---|
 | [autochart](https://github.com/dvar0/autochart) (Fretformer 2) | AGPL-3.0 | CC BY-NC-SA 4.0 | lead guitar |
-| [chartgen](https://github.com/Mechazawa/chartgen) | MIT | separator weights: licence unknown | guitar, bass, drums |
+| [chartgen](https://github.com/Mechazawa/chartgen) | MIT | separator weights: licence unknown | lead guitar |
 | [STRUM](https://github.com/opria123/strum) | MIT (stated) | MIT (stated) | guitar, bass, drums |
 
 Each `tools/<tool>/setup.sh` installs one at a pinned commit and pinned, checksum-verified weights. Each
