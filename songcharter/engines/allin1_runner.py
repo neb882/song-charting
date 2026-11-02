@@ -1,12 +1,18 @@
 """The allin1 side of the sections engine (engines/sections.py): a script run by the Python that has allin1, never
 imported by songcharter, so All-In-One's code and dependencies stay behind a process boundary.
 
-    <allin1 python> -I allin1_runner.py probe <out.json>   # the package, its versions, CUDA, the attention backend
-    <allin1 python> -I allin1_runner.py run <job.json>     # segments of the stems on stdin, written to job["out"]
+    <allin1 python> -c <RUNNER_BOOT> allin1_runner.py probe <out.json>   # the package, its versions, CUDA, ...
+    <allin1 python> -c <RUNNER_BOOT> allin1_runner.py run <job.json>     # segments of the stems on stdin
+
+sections.RUNNER_BOOT runs this file as __main__ under that Python's own import rules (its user site and PYTHONPATH
+count, as for a plain `python -c "import allin1_infer"`), with neither the current folder nor this file's folder on
+sys.path. `-I` would drop the user site and PYTHONPATH too, and `-P` needs Python 3.11.
 
 Either package that carries All-In-One's code works: all-in-one-infer (`allin1_infer`: pure-PyTorch neighbourhood
-attention and madmom-infer, so nothing to compile) first, then the original allin1 (`allin1`, which needs NATTEN's
-<= 0.17 ops and madmom). Both have the same pieces, and only these are used:
+attention and madmom-infer, so nothing to compile; 3.1.0 imports torchaudio but declares it only in its `natten`
+extra, so install torchaudio with it) first, then the original allin1 (`allin1` 1.x, which needs madmom and NATTEN
+0.17.4 or older: 0.17.5 dropped the natten*d{qk,qkrpb,av} ops that allin1 1.1.0 imports, there is no 0.18 or
+0.19, and 0.20 removed that API and CPU support). Both have the same pieces, and only these are used:
 
   * the spectrogram chain of its `spectrogram` module (frames of 2048 at 100 fps, STFT, 12 bands per octave from
     30 Hz to 17 kHz, log(1 + x)), run on the four stems it is sent;
@@ -74,11 +80,27 @@ def _write(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
+def cuda_check() -> tuple[bool, str | None]:
+    """Whether a CUDA kernel runs here, and the error when it does not. torch.cuda.is_available() alone is also true
+    on a GPU this torch build has no kernels for ("no kernel image is available")."""
+    import torch
+    if not torch.cuda.is_available():
+        return False, None
+    try:
+        x = torch.ones(8, device="cuda") @ torch.ones(8, 8, device="cuda")
+        torch.cuda.synchronize()
+        float(x.sum())
+        return True, None
+    except Exception as e:  # noqa: BLE001 - any failure means "not on this GPU"; the caller is told why
+        return False, f"{type(e).__name__}: {(str(e).strip().splitlines() or [''])[0][:200]}"
+
+
 def probe(out: Path) -> None:
     import torch
     module, dist = load_package()
+    cuda, cuda_error = cuda_check()
     _write(out, {"package": dist, "module": module, "version": _version(dist), "torch": torch.__version__,
-                 "cuda": bool(torch.cuda.is_available()), "attention": attention(module),
+                 "cuda": cuda, "cuda_error": cuda_error, "attention": attention(module),
                  "python": sys.version.split()[0], "platform": sys.platform})
 
 
@@ -143,6 +165,8 @@ def read_stems(stream, samples: int) -> dict:
 def run(job_path: Path, stream=None) -> None:
     import torch
     job = json.loads(job_path.read_text(encoding="utf-8"))
+    if job.get("stems", list(STEMS)) != list(STEMS):  # the caller's order on stdin must be this one
+        raise ValueError(f"the job's stems come as {job['stems']}, but this runner reads {list(STEMS)}")
     module, dist = load_package()
     if job.get("threads"):
         torch.set_num_threads(int(job["threads"]))

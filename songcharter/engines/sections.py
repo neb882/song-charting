@@ -13,10 +13,16 @@ after the music. songcharter.sections snaps them to measures, merges, splits and
     allin1 reads from the WAVs Demucs writes for it (each rescaled when it peaks over full scale), and sent on stdin
     to allin1_runner.py in the Python that has all-in-one-infer or allin1 (`Settings.python`, else
     $SONGCHARTER_ALLIN1_PYTHON, else this Python when it has one of them): no second separation, no stem files.
+    The runner starts under that Python's own import rules, user site and PYTHONPATH included, as a plain
+    `python -c "import allin1_infer"` would (RUNNER_BOOT), so a `pip install --user` counts.
     `model="auto"` is fold 0 on the CPU and the 8-fold ensemble on CUDA. The checkpoints come from the Hugging Face
     hub at a pinned revision, downloaded on first use; each is checked against its SHA-256 before the runner loads
-    it (they are pickles: the check is what makes loading them safe). CUDA out of memory falls back to the CPU, and
-    engine.json says so.
+    it (they are pickles: the check is what makes loading them safe).
+  * **CUDA.** The probe runs a CUDA kernel rather than trusting `torch.cuda.is_available()`, which is also true on a
+    GPU the torch build has no kernels for; `device="auto"` takes CUDA only when the kernel ran. CUDA out of memory
+    is retried on the CPU by the runner. A CUDA run that fails any other way is run again on the CPU when the
+    device was "auto" (fold 0 when `model="auto"`), and raises when it was "cuda". engine.json records either
+    fallback.
   * **librosa** (numpy, scipy and librosa only), for when allin1 is not available. Laplacian structural
     segmentation (McFee and Ellis 2014, as in librosa's gallery) on beat-synchronous CQT and MFCC; the cluster
     count is the one whose segments, after those under 16 beats merge, come closest to one per
@@ -31,9 +37,12 @@ after the music. songcharter.sections snaps them to measures, merges, splits and
     (the allin1 package and version, the model and its weights' hashes, the device; the librosa version and the
     fallback's parameters and constants). A call whose key matches the folder's engine.json returns the files
     already there; for allin1 the probe still runs first (a few seconds), since its answer is part of the key.
+    The hit's engine.json is rewritten with this call's "why" and "settings", so it says why this call chose
+    the backend; the rest describes the run that made the files (its timings under "seconds"/"run").
 
-The fallback needs librosa (`pip install songcharter[sections]`). allin1 needs a Python with all-in-one-infer
-(`pip install all-in-one-infer`: pure Python, nothing to compile), either this one or one of its own.
+The fallback needs librosa (`pip install songcharter[sections]`). allin1 needs a Python with all-in-one-infer and
+torchaudio (`pip install all-in-one-infer torchaudio`: wheels, nothing to compile; all-in-one-infer 3.1.0 imports
+torchaudio but declares it only in its `natten` extra), either this one or one of its own.
 """
 from __future__ import annotations
 
@@ -41,6 +50,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -59,6 +69,11 @@ ENGINE_VERSION = 1          # part of the key: bump it when a change here change
 ENV_PYTHON = "SONGCHARTER_ALLIN1_PYTHON"
 ALLIN1_MODULES = ("allin1_infer", "allin1")   # all-in-one-infer, else the original allin1 (allin1_runner.PACKAGES)
 RUNNER = Path(__file__).with_name("allin1_runner.py")
+# `python -c RUNNER_BOOT <runner> <args>`: the runner as __main__, with the allin1 Python's user site and PYTHONPATH
+# (what allin1_python's find_spec sees here) but not the current folder, nor the runner's own (run_path on a file
+# leaves sys.path alone). `-I` would drop the user site and PYTHONPATH too; `-P` needs Python 3.11.
+RUNNER_BOOT = ("import sys; getattr(sys.flags, 'safe_path', False) or sys.path.pop(0); import runpy; "
+               "sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')")
 SEGMENTS, ENGINE = "segments.json", "engine.json"
 
 ALLIN1_REPO = "taejunkim/allinone"                            # tagged MIT on the hub
@@ -107,6 +122,14 @@ def _fallback_constants() -> tuple:
 
 class Allin1Error(RuntimeError):
     """allin1 is not available here, or its run failed."""
+
+
+class _RunFailed(Allin1Error):
+    """The runner exited with an error; `line` is the error's own line from its traceback."""
+
+    def __init__(self, message: str, line: str):
+        super().__init__(message)
+        self.line = line
 
 
 @dataclass(frozen=True)
@@ -205,8 +228,9 @@ def _write_json(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
-def _cached(out: Path, key: str) -> SectionsResult | None:
-    """The result already in `out` for this key, else None."""
+def _cached(out: Path, key: str, live: dict) -> SectionsResult | None:
+    """The result already in `out` for this key, else None. A hit's engine.json takes this call's `live` fields
+    (why, settings) and is written back, so the file and the result say why this call chose the backend."""
     try:
         info = json.loads((out / ENGINE).read_text(encoding="utf-8"))
         if info.get("key") != key:
@@ -214,6 +238,9 @@ def _cached(out: Path, key: str) -> SectionsResult | None:
         read_allin1(out / SEGMENTS)
     except (OSError, ValueError):
         return None
+    seconds = info.get("seconds") or {}
+    info = {**info, **live, "cached": True, "seconds": {"total": 0.0, "run": seconds.get("run", seconds)}}
+    _write_json(out / ENGINE, info)
     return SectionsResult(out / SEGMENTS, info, True)
 
 
@@ -232,6 +259,19 @@ def _tail(proc: subprocess.CompletedProcess, lines: int = 8) -> str:
     return "\n".join(text.strip().splitlines()[-lines:])
 
 
+def _error_line(proc: subprocess.CompletedProcess) -> str:
+    """The exception's line of a traceback ("RuntimeError: CUDA error: ..."), else the last line, at most 200
+    characters: a CUDA error's message goes on with lines of advice after it."""
+    lines = _tail(proc, 40).splitlines()
+    named = [line for line in lines if re.match(r"[A-Za-z_][\w.]*(Error|Exception): ", line)]
+    return (named or lines or [""])[-1].strip()[:200]
+
+
+def runner_command(python: str, *args: str) -> list[str]:
+    """The command that runs allin1_runner.py with `args` in `python` (RUNNER_BOOT)."""
+    return [python, "-c", RUNNER_BOOT, str(RUNNER), *args]
+
+
 def allin1_python(settings: Settings) -> str | None:
     """The Python to run allin1 in: the setting, $SONGCHARTER_ALLIN1_PYTHON, or this one when it has allin1."""
     if settings.python or os.environ.get(ENV_PYTHON):
@@ -242,12 +282,13 @@ def allin1_python(settings: Settings) -> str | None:
 
 
 def probe(python: str, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> dict:
-    """What the allin1 Python has: package, version, torch, cuda, attention. Allin1Error when it cannot run it."""
+    """What the allin1 Python has: package, version, torch, cuda (a kernel ran), cuda_error, attention.
+    Allin1Error when it cannot run it."""
     with tempfile.TemporaryDirectory(prefix="allin1-probe-") as tmp:
         out = Path(tmp) / "probe.json"
         try:
-            proc = run([python, "-I", str(RUNNER), "probe", str(out)], capture_output=True, text=True,
-                       timeout=PROBE_TIMEOUT_S)
+            proc = run(runner_command(python, "probe", str(out)), capture_output=True, text=True,
+                       timeout=PROBE_TIMEOUT_S, cwd=tmp)
         except (OSError, subprocess.SubprocessError) as e:
             raise Allin1Error(f"allin1's Python {python} did not run ({type(e).__name__}: {e})") from e
         if proc.returncode != 0 or not out.is_file():
@@ -255,7 +296,8 @@ def probe(python: str, run: Callable[..., subprocess.CompletedProcess] = subproc
         return json.loads(out.read_text(encoding="utf-8"))
 
 
-def _check(mix: np.ndarray, stems: Mapping[str, np.ndarray] | None, sample_rate: int, settings: Settings) -> None:
+def _check(mix: np.ndarray, stems: Mapping[str, np.ndarray] | None, sample_rate: int, settings: Settings,
+           beats: np.ndarray | None) -> None:
     if sample_rate != SAMPLE_RATE:
         raise ValueError(f"find_sections needs {SAMPLE_RATE} Hz audio, not {sample_rate} Hz")
     if mix.ndim != 2 or mix.shape[1] == 0:
@@ -271,6 +313,11 @@ def _check(mix: np.ndarray, stems: Mapping[str, np.ndarray] | None, sample_rate:
         raise ValueError(f"device is auto, cpu or cuda, not {settings.device!r}")
     if not settings.seconds_per_segment > 0:
         raise ValueError("seconds_per_segment must be positive")
+    if beats is not None:  # times outside the audio are fine (trimmed); a NaN is the caller's bug
+        b = np.asarray(beats, dtype=np.float64)
+        if b.ndim != 1 or not np.all(np.isfinite(b)):
+            raise ValueError(f"beats must be a 1-D array of finite times in seconds, not shape {b.shape} with "
+                             f"{int(np.sum(~np.isfinite(b)))} non-finite")
 
 
 def find_sections(mix: np.ndarray, stems: Mapping[str, np.ndarray] | None, out: Path | str,
@@ -280,10 +327,11 @@ def find_sections(mix: np.ndarray, stems: Mapping[str, np.ndarray] | None, out: 
     """Segments of the song in out/segments.json and how they were made in out/engine.json (module docstring).
 
     mix:   the decoded song, float32 (channels, n) at 44.1 kHz; stems: name -> array of the same shape (or None).
-    beats: beat times in seconds for the fallback's beat-synchronous features (default: librosa's tracker).
+    beats: beat times in seconds for the fallback's beat-synchronous features (default: librosa's tracker); those
+           before 0 s (a tempo map's lead-in) or after the end are left out.
     run, download: stand-ins for subprocess.run and huggingface_hub's hf_hub_download (tests).
     """
-    _check(mix, stems, sample_rate, settings)
+    _check(mix, stems, sample_rate, settings, beats)
     out = Path(out)
     why = []
     if settings.backend in ("auto", "allin1"):
@@ -306,15 +354,38 @@ def _allin1(mix, stems, out: Path, s: Settings, run, download) -> SectionsResult
         raise Allin1Error(f"no allin1 Python: set {ENV_PYTHON} to a Python with all-in-one-infer (or allin1)")
     payload = allin1_input(stems)
     found = probe(python, run)
+    cuda_error = f" ({found['cuda_error']})" if found.get("cuda_error") else ""
+    if s.device == "cuda" and not found.get("cuda"):
+        raise Allin1Error(f"device cuda asked for, but allin1's Python {python} has no working CUDA{cuda_error}")
     device = s.device if s.device != "auto" else ("cuda" if found.get("cuda") else "cpu")
-    if device == "cuda" and not found.get("cuda"):
-        raise Allin1Error(f"device cuda asked for, but allin1's Python {python} has no CUDA")
+    why, fallback = f"backend {s.backend}: allin1's Python {python} passed its probe", None
+    if s.device == "auto" and cuda_error:
+        fallback = f"CUDA does not run here{cuda_error}; analysed on the CPU"
+        why += f"; {fallback}"
+    try:
+        return _allin1_job(mix, stems, payload, out, s, python, found, device, why, fallback, run, download)
+    except _RunFailed as e:
+        if device == "cpu" or s.device != "auto":  # asked for cuda: no second try
+            raise
+        failed = f"the CUDA run failed ({e.line})"
+        fallback = f"{failed}; analysed on the CPU"
+        try:
+            return _allin1_job(mix, stems, payload, out, s, python, found, "cpu", f"{why}; {fallback}", fallback,
+                               run, download)
+        except Allin1Error as again:
+            raise Allin1Error(f"{failed}, and then on the CPU: {again}") from again
+
+
+def _allin1_job(mix, stems, payload: np.ndarray, out: Path, s: Settings, python: str, found: dict, device: str,
+                why: str, fallback: str | None, run, download) -> SectionsResult:
+    """One allin1 run on `device` (or the cached result of one); _RunFailed when the runner exits with an error."""
     model = s.model if s.model != "auto" else ("harmonix-all" if device == "cuda" else "harmonix-fold0")
     weights = {ALLIN1_FOLDS[f][0]: ALLIN1_FOLDS[f][1] for f in ALLIN1_MODELS[model]}
     key = cache_key({"stems": payload}, {"backend": "allin1", "engine": ENGINE_VERSION, "package": found.get("package"),
                            "version": found.get("version"), "model": model, "weights": weights, "device": device,
                            "rate": SAMPLE_RATE})
-    hit = _cached(out, key)
+    live = {"why": why, "settings": {**asdict(s), "python": python}}
+    hit = _cached(out, key, live)
     if hit is not None:
         return hit
     try:
@@ -329,24 +400,24 @@ def _allin1(mix, stems, out: Path, s: Settings, run, download) -> SectionsResult
                "checkpoints": [str(p) for p in checkpoints], "seed": 0, "out": str(work / "result.json")}
         _write_json(work / "job.json", job)
         try:
-            proc = run([python, "-I", str(RUNNER), "run", str(work / "job.json")], capture_output=True,
-                       input=payload.astype("<i2").tobytes(), timeout=s.timeout_s)
+            proc = run(runner_command(python, "run", str(work / "job.json")), capture_output=True,
+                       input=payload.astype("<i2").tobytes(), timeout=s.timeout_s, cwd=tmp)
         except (OSError, subprocess.SubprocessError) as e:
             raise Allin1Error(f"allin1 did not finish ({type(e).__name__}: {e})") from e
         if proc.returncode != 0 or not (work / "result.json").is_file():
-            raise Allin1Error(f"allin1 failed (exit {proc.returncode}):\n{_tail(proc)}")
+            raise _RunFailed(f"allin1 failed (exit {proc.returncode}):\n{_tail(proc)}", _error_line(proc))
         res = json.loads((work / "result.json").read_text(encoding="utf-8"))
     seconds = round(time.perf_counter() - t0, 2)
     segments = {"segments": res["segments"], "bpm": res.get("bpm"), "beats": res.get("beats"),
                 "downbeats": res.get("downbeats")}
-    info = {"engine": "sections", "engine_version": ENGINE_VERSION, "key": key, "backend": "allin1",
-            "why": f"backend {s.backend}: allin1's Python {python} passed its probe",
-            "settings": {**asdict(s), "python": python},
+    info = {"engine": "sections", "engine_version": ENGINE_VERSION, "key": key, "backend": "allin1", **live,
+            "cached": False,
             "input": {"duration_s": round(mix.shape[1] / SAMPLE_RATE, 3), "stems": sorted(stems),
                       "other": sorted(n for n in stems if n not in ("bass", "drums", "vocals"))},
-            "allin1": {**found, "model": model, "device": res.get("device", device), "fallback": res.get("fallback"),
-                       "threads": res.get("threads"), "repo": ALLIN1_REPO, "revision": ALLIN1_REVISION,
-                       "weights": weights, "attention": res.get("attention", found.get("attention"))},
+            "allin1": {**found, "model": model, "device": res.get("device", device),
+                       "fallback": res.get("fallback") or fallback, "threads": res.get("threads"),
+                       "repo": ALLIN1_REPO, "revision": ALLIN1_REVISION, "weights": weights,
+                       "attention": res.get("attention", found.get("attention"))},
             "seconds": {"total": seconds,  # the runner's own total as "runner"
                         **{("runner" if k == "total" else k): v for k, v in (res.get("seconds") or {}).items()}},
             "segments": len(res["segments"])}
@@ -442,7 +513,7 @@ def laplacian_segments(y: np.ndarray, beat_frames: np.ndarray, target: int) -> t
     if not tried:
         return [[0, 0]], bounds[:-1], {"clusters": 1, "tried": {}}
     k = min(tried, key=lambda k: (abs(len(tried[k]) - target), k))
-    return tried[k], bounds[:-1], {"clusters": k, "tried": {k: len(r) for k, r in tried.items()}}
+    return tried[k], bounds[:-1], {"clusters": k, "tried": {str(k): len(r) for k, r in tried.items()}}
 
 
 def name_segments(feats: list[dict], have_vocals: bool) -> list[str]:
@@ -500,17 +571,20 @@ def _librosa(mix, stems, out: Path, s: Settings, beats, why: list[str]) -> Secti
     from scipy.signal import resample_poly
     guitar_stem = "guitar" if "guitar" in stems else ("other" if "other" in stems else None)
     arrays = {"mix": mix, **{k: stems[k] for k in ("vocals", guitar_stem) if k is not None and k in stems}}
-    if beats is not None:
-        arrays["beats"] = np.asarray(beats, dtype=np.float32)
+    duration = mix.shape[1] / SAMPLE_RATE
+    if beats is not None:  # only the beats inside the audio: a tempo map's lead-in is before 0 s
+        beats = np.asarray(beats, dtype=np.float64)
+        beats = beats[(beats >= 0) & (beats <= duration)]
+        arrays["beats"] = beats.astype(np.float32)
     params = {"backend": "librosa", "engine": ENGINE_VERSION, "librosa": librosa.__version__,
               "seconds_per_segment": s.seconds_per_segment, "rate": SAMPLE_RATE, "guitar": guitar_stem,
               "constants": _fallback_constants()}
     key = cache_key(arrays, params)
-    hit = _cached(out, key)
+    live = {"why": "; ".join(why), "settings": asdict(s)}
+    hit = _cached(out, key, live)
     if hit is not None:
         return hit
     t0 = time.perf_counter()  # reported only
-    duration = mix.shape[1] / SAMPLE_RATE
     y = resample_poly(_mono(mix), 1, SAMPLE_RATE // FEATURE_RATE).astype(np.float32)
     # the music: from the first to the last frame within SILENCE_DB of the loudest
     rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=HOP)[0]
@@ -523,7 +597,7 @@ def _librosa(mix, stems, out: Path, s: Settings, beats, why: list[str]) -> Secti
         _, frames = librosa.beat.beat_track(y=y, sr=FEATURE_RATE, hop_length=HOP, trim=False)
         beat_source = "librosa"
     else:
-        frames = librosa.time_to_frames(np.asarray(beats, dtype=np.float64), sr=FEATURE_RATE, hop_length=HOP)
+        frames = librosa.time_to_frames(beats, sr=FEATURE_RATE, hop_length=HOP)
         beat_source = "given"
     frames = np.unique(np.asarray(frames, dtype=int))
     if len(frames) < 2 * MIN_SEGMENT_BEATS:  # no usable beats: half-second columns instead
@@ -557,8 +631,8 @@ def _librosa(mix, stems, out: Path, s: Settings, beats, why: list[str]) -> Secti
     segs = ([[0.0, round(first, 3), "start"]] if first > 0 else [])
     segs += [[f["start"], f["end"], f["label"]] for f in feats]
     segs += ([[round(last, 3), round(duration, 3), "end"]] if last < duration else [])
-    info = {"engine": "sections", "engine_version": ENGINE_VERSION, "key": key, "backend": "librosa",
-            "why": "; ".join(why), "settings": asdict(s),
+    info = {"engine": "sections", "engine_version": ENGINE_VERSION, "key": key, "backend": "librosa", **live,
+            "cached": False,
             "input": {"duration_s": round(duration, 3), "stems": sorted(stems), "guitar": guitar_stem},
             "librosa": {"version": librosa.__version__, "numpy": np.__version__, "scipy": scipy.__version__,
                         "beats": beat_source, "beat_count": int(len(frames)), "target_segments": target,
