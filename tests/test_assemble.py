@@ -1,0 +1,898 @@
+"""The assemble step end to end on a synthetic song (click drums, tool charts written for the test: a half-tempo
+.chart running 30 ms late with its own Hard, and a trimmed-audio .mid for bass and drums), then the gate's checks,
+the config and the command line on their own. Only synthetic audio and charts are used."""
+import io
+import json
+import shutil
+import sys
+
+import numpy as np
+import pytest
+
+import songcharter.assemble as assemble_module
+from songcharter import audio as A
+from songcharter.assemble import (HOPO_RULES, GateIssue, active_span, assemble, check_inputs, difficulty_rating,
+                                  failed_folder, find_scan_chart, load_config, parse_config, run_scan_chart,
+                                  scan_chart_issues, scan_chart_song, scan_rules, self_check, silent_onsets,
+                                  stem_alignment, trim_silent_edges, verify_folder)
+from songcharter.chart import (DRUM_ACTIVATION, STAR_POWER, Chart, DrumHit, FretNote, Phrase, SongInfo, Track,
+                               write_chart)
+from songcharter.cli import main
+from songcharter.importers import read_chart, read_song
+from songcharter.quantize import play_states, quantize_part
+from songcharter.tempo import Tempo, TempoMap
+from songcharter.timed import TimedHit, TimedNote, TimedPart, TimedSong, TimedSpan
+
+SR = A.SAMPLE_RATE
+FIRST, PERIOD, BEATS = 0.5, 0.5, 164  # 120 BPM from 0.5 s: 41 measures
+DURATION = 84.0
+LATE = 0.030         # the guitar tool runs this late
+TRIM = 0.07          # the .mid tool trimmed this much audio: input time = its time + TRIM
+FORCED_PAIR = 10     # measure holding a 16th pair whose second note the tool forces to a strum
+FREE_PAIR = 12       # measure holding an unforced 16th pair (a natural HOPO everywhere)
+
+
+def beat(k: float) -> float:
+    return FIRST + k * PERIOD
+
+
+# ------------------------------------------------------------------------------------------------ synthetic song
+
+def drum_audio(seed=0) -> np.ndarray:
+    """A hat on every beat, a kick on beat 1 and a snare on beat 3 of each bar, a little noise (shape (2, n))."""
+    rng = np.random.default_rng(seed)
+    y = np.zeros(int(DURATION * SR))
+    t = np.arange(int(0.25 * SR)) / SR
+    kick = np.sin(2 * np.pi * 55 * t) * np.exp(-t / 0.08)
+    snare = (0.5 * np.sin(2 * np.pi * 190 * t) + 0.6 * rng.standard_normal(len(t))) * np.exp(-t / 0.06)
+    hat = np.diff(rng.standard_normal(len(t) + 1)) * np.exp(-t / 0.015) * 0.15
+    for k in range(BEATS):
+        i = int(round(beat(k) * SR))
+        y[i:i + len(t)] += hat + (kick if k % 4 == 0 else 0) + (snare if k % 4 == 2 else 0)
+    y += rng.standard_normal(len(y)) * 1e-3
+    y = (0.4 * y).astype(np.float32)
+    return np.stack([y, y])
+
+
+def guitar_times():
+    """The guitar part as (beat position, frets, sustain beats, forced strum)."""
+    out = []
+    for m in range(2, BEATS // 4 - 1):
+        for j in range(8):
+            if m % 4 == 0 and j in (1, 2, 3):
+                continue  # a sustained chord fills the first beat
+            if m % 4 == 0 and j == 0:
+                out.append((4 * m, (0, 1), 1.0, False))
+                continue
+            out.append((4 * m + j / 2, ((0, 1, 2, 1, 0, 1, 2, 3)[j],), 0.0, False))
+            if m in (FORCED_PAIR, FREE_PAIR) and j == 5:
+                out.append((4 * m + j / 2 + 0.25, (4,), 0.0, m == FORCED_PAIR))
+    return out
+
+
+def write_tool_chart(path):
+    """autochart-like: the guitar on a half-tempo (60 BPM) map at resolution 480, every note LATE seconds late, so
+    every 8th note with a fret change is a natural HOPO on its own map; Expert and a quarter-note Hard."""
+    tm = TempoMap(480, [Tempo(0, 60000)])
+    tick = lambda t: round(tm.sec_to_tick(t))  # noqa: E731
+    expert, hard = [], []
+    for pos, frets, sus, forced in guitar_times():
+        t = beat(pos) + LATE
+        length = tick(t + sus * PERIOD) - tick(t) if sus else 0
+        on_map = tick(t)
+        expert.append(FretNote(on_map, frets, length, flip=forced))
+        if pos == int(pos):
+            hard.append(FretNote(on_map, frets[:1], length))
+    chart = Chart(SongInfo("tool", "tool"), tm, [(tick(beat(32)), "verse_1")],
+                  [Track("Expert", "Single", expert), Track("Hard", "Single", hard)])
+    path.write_text(write_chart(chart), encoding="utf-8", newline="")
+    return expert, hard
+
+
+STRAYS = (0.1, 83.2)  # input seconds of two snare hits the .mid tool put where the drum stem is silent
+
+
+def write_tool_mid(folder):
+    """STRUM-like: bass (quarter notes) and drums (kick, snare, hi-hat 8ths) in a .mid timed against audio with the
+    first TRIM seconds cut off; the folder's song.ini sets pro_drums, so the hi-hat is a cymbal. The drums also hold
+    the STRAYS, before the drum audio starts and after it ends (not in the returned list: assemble trims them)."""
+    mido = pytest.importorskip("mido")
+    tick = lambda t: round((t - TRIM) * 2 * 480)  # noqa: E731  120 BPM, 480 ticks per beat
+    bass, drums = [], []
+    for k in range(8, BEATS - 4):
+        bass.append((tick(beat(k)), 96 + k % 3, 120))
+        for half in (0, 0.5):
+            drums.append((tick(beat(k + half)), 98, 60))
+        if k % 4 == 0:
+            drums.append((tick(beat(k)), 96, 60))
+        if k % 4 == 2:
+            drums.append((tick(beat(k)), 97, 60))
+    mf = mido.MidiFile(type=1, ticks_per_beat=480)
+    mf.tracks.append(mido.MidiTrack([mido.MetaMessage("set_tempo", tempo=500000, time=0)]))
+    strays = [(tick(t), 97, 60) for t in STRAYS]
+    for name, notes in (("PART BASS", bass), ("PART DRUMS", drums + strays)):
+        events = []
+        for t, pitch, length in notes:
+            events += [(t, 1, mido.Message("note_on", note=pitch, velocity=100)),
+                       (t + length, 0, mido.Message("note_off", note=pitch, velocity=0))]
+        tr = mido.MidiTrack([mido.MetaMessage("track_name", name=name, time=0)])
+        last = 0
+        for t, _, msg in sorted(events, key=lambda e: (e[0], e[1])):
+            tr.append(msg.copy(time=t - last))
+            last = t
+        mf.tracks.append(tr)
+    folder.mkdir(parents=True, exist_ok=True)
+    mf.save(folder / "notes.mid")
+    (folder / "song.ini").write_text("[song]\r\nname = tool\r\npro_drums = True\r\n", encoding="utf-8")
+    return bass, drums
+
+
+CONFIG = {
+    "_about": "synthetic test song",
+    "audio": "mix.wav",
+    "stems": {"drums": "drums.wav"},
+    "beat_hints": None,
+    "lead_in": 2.5,
+    "parts": [
+        {"instrument": "guitar", "source": "tool/notes.chart", "take_difficulties": "all", "hopo": "forced"},
+        {"instrument": "bass", "source": "strum", "time_shift": TRIM},
+        {"instrument": "drums", "source": "strum", "time_shift": TRIM, "offset": "auto"},
+    ],
+    "sections": "allin1.json",
+    "metadata": {"name": "Click Song", "artist": "songcharter tests", "album": "Synthetic", "genre": "Test",
+                 "year": 2026, "album_track": 1, "charter": "songcharter"},
+    "output": "out/Click Song",
+}
+
+
+@pytest.fixture(scope="module")
+def built(tmp_path_factory):
+    pytest.importorskip("mido")
+    root = tmp_path_factory.mktemp("assemble")
+    drums = drum_audio()
+    tone = np.zeros(drums.shape[1], dtype=np.float32)
+    for pos, *_ in guitar_times():
+        i = int(beat(pos) * SR)
+        tone[i:i + 4000] += (0.05 * np.sin(2 * np.pi * 330 * np.arange(4000) / SR)).astype(np.float32)
+    A.write_wav(drums + tone, root / "mix.wav")
+    A.write_wav(drums, root / "drums.wav")
+    (root / "tool").mkdir()
+    expert, hard = write_tool_chart(root / "tool" / "notes.chart")
+    bass, kit = write_tool_mid(root / "strum")
+    # measures of 2 s from 0.5 s: the 2-measure break joins the verse (under 4), whose 20 measures split in two
+    segments = [[0.0, 0.5, "start"], [0.5, 16.5, "intro"], [16.5, 52.5, "verse"], [52.5, 56.5, "break"],
+                [56.5, 80.5, "chorus"], [80.5, DURATION, "end"]]
+    (root / "allin1.json").write_text(json.dumps({"segments": segments}), encoding="utf-8")
+    (root / "song.json").write_text(json.dumps(CONFIG), encoding="utf-8")
+    result = assemble(root / "song.json")
+    return root, result, {"expert": expert, "hard": hard, "bass": bass, "drums": kit}
+
+
+# ------------------------------------------------------------------------------------------------ end to end
+
+def test_folder_passes_the_gate(built):
+    root, result, _ = built
+    assert result.folder == root / "out" / "Click Song" and result.package.folder == result.folder
+    assert sorted(p.name for p in result.folder.iterdir()) == ["notes.chart", "report.json", "song.ini", "song.ogg"]
+    assert [p.name for p in (root / "out").iterdir()] == ["Click Song"]  # no staging folder or .failed left
+    assert result.ok, [i for i in result.issues if i.error]
+    assert result.package.sync.ok
+    report = json.loads((result.folder / "report.json").read_text(encoding="utf-8"))
+    assert report["gate"]["ok"] and report["gate"]["errors"] == 0
+    assert report["sync"]["ok"] and report["folder"] == str(result.folder)
+    scan = report["gate"]["scan_chart"]
+    if find_scan_chart()[0] is None:
+        assert not scan["ran"] and any(i.kind == "scanChartNotRun" and not i.error for i in result.issues)
+    else:  # DESIGN.md 2.13 step 2: scan-chart itself, and its parsed notes match ours
+        assert scan["ran"] and scan["playable"] and scan["chart_issues"] == 0 and scan["self_check_errors"] == 0
+        assert scan["folder_issues"] == ["noAlbumArt"] and scan["metadata_issues"] == []
+
+
+def test_grid_and_lead_in(built):
+    _, result, _ = built
+    r = result.report
+    assert abs(r["grid"]["bpm_median"] - 120) < 0.05
+    assert r["grid"]["downbeat_phase"] == 0
+    assert r["tempo_map"]["max_error_ms"] <= 3.0 + 1e-6
+    tm = result.chart.tempo
+    pad = result.lead.pad_seconds
+    first = tm.tick_to_sec(result.lead.first_beat * tm.resolution)
+    assert first >= 2.5 and abs(first - pad - result.grid.beats[0]) < 0.004  # the first beat, moved by the pad
+    assert (result.lead.first_beat * tm.resolution) % (4 * tm.resolution) == 0  # on a measure line
+
+
+def test_offsets_are_measured_per_part(built):
+    """The guitar runs LATE behind the drums; the trimmed .mid lines up once time_shift is added."""
+    _, result, _ = built
+    off = {k: p["offset"] for k, p in result.report["parts"].items()}
+    assert all(o["trusted"] and o["applied"] == o["measured"] for o in off.values())
+    assert abs(off["guitar"]["applied"] - off["drums"]["applied"] - LATE) < 0.004
+    assert abs(off["bass"]["applied"] - off["drums"]["applied"]) < 0.004
+
+
+def test_notes_land_on_our_grid(built):
+    """Every part on 1/16 (or triplet) lines of our map, and all three on the same spot against the audio: the
+    guitar's lateness and the .mid's trim are gone."""
+    root, result, tool = built
+    tm, pad = result.chart.tempo, result.lead.pad_seconds
+    true = np.array([beat(k / 2) for k in range(2 * BEATS)])  # the synthetic 8th lines
+    devs = {}
+    for t in result.chart.tracks:
+        assert all(n.tick % 48 == 0 or n.tick % 64 == 0 for n in t.notes), t.name
+        if t.difficulty == "Expert":
+            times = np.array(sorted({tm.tick_to_sec(n.tick) - pad for n in t.notes}))
+            on = times[np.abs(times - true[np.argmin(np.abs(times[:, None] - true[None, :]), axis=1)]) < 0.06]
+            devs[t.instrument] = on - true[np.argmin(np.abs(on[:, None] - true[None, :]), axis=1)]
+    for inst, d in devs.items():
+        assert len(d) > 100 and np.ptp(d) < 0.008, inst
+    assert abs(np.median(devs["Single"]) - np.median(devs["Drums"])) < 0.004
+    assert abs(np.median(devs["DoubleBass"]) - np.median(devs["Drums"])) < 0.004
+    reps = result.report["parts"]
+    assert reps["guitar"]["quantize"]["expert"]["notes_out"] == len({n.tick for n in tool["expert"]})
+    assert reps["guitar"]["quantize"]["hard"]["notes_out"] == len(tool["hard"])
+    assert reps["bass"]["quantize"]["expert"]["notes_out"] == len(tool["bass"])
+    song = read_chart(result.folder / "notes.chart")
+    assert len(song.parts[("drums", "expert")].notes) == len(tool["drums"])  # the STRAYS trimmed
+    assert all(h.cymbal for h in song.parts[("drums", "expert")].notes if h.pad == 2)  # pro_drums from song.ini
+
+
+def test_onsets_in_the_silence_around_a_stem_are_trimmed(built):
+    """The two stray hits before the drum stem starts and after it ends are gone from every drum level (DESIGN.md
+    2.8); parts without their own stem (guitar, bass here) are left alone."""
+    _, result, _ = built
+    tm, pad = result.chart.tempo, result.lead.pad_seconds
+    trimmed = result.report["parts"]["drums"]["trimmed"]
+    assert trimmed["stem"] == "drums" and list(trimmed["onsets"]) == ["expert"]
+    assert len(trimmed["onsets"]["expert"]) == 2
+    assert all(abs(t - s) < 0.07 for t, s in zip(trimmed["onsets"]["expert"], STRAYS))
+    start, end = trimmed["kept"]
+    for t in result.chart.tracks:
+        if t.is_drums:
+            times = [tm.tick_to_sec(h.tick) - pad for h in t.notes]
+            assert start <= min(times) and max(times) < end, t.name
+    assert "trimmed" not in result.report["parts"]["guitar"] and "trimmed" not in result.report["parts"]["bass"]
+
+
+def test_every_difficulty_and_its_ladder(built):
+    _, result, tool = built
+    song = read_chart(result.folder / "notes.chart")
+    for inst in ("guitar", "bass", "drums"):
+        onsets = {d: {round(n.time, 6) for n in song.parts[(inst, d)].notes}
+                  for d in ("expert", "hard", "medium", "easy")}
+        assert onsets["easy"] <= onsets["medium"] <= onsets["hard"] <= onsets["expert"], inst
+        assert len(onsets["easy"]) < len(onsets["medium"]) < len(onsets["hard"]), inst
+    # guitar Hard is the tool's own (take_difficulties "all"), Medium and Easy come from it
+    assert len(song.parts[("guitar", "hard")].notes) == len(tool["hard"])
+    for d in ("hard", "medium", "easy"):
+        assert not any(n.tap or (d != "hard" and n.hopo) for n in song.parts[("guitar", d)].notes)
+        assert not any(h.double_kick for h in song.parts[("drums", d)].notes)
+
+
+def test_hopos_follow_our_grid_except_where_forced(built):
+    """On the tool's half-tempo map every changing 8th is a natural HOPO; on ours they are strums. The forced strum
+    on a 16th survives as a flip, the unforced 16th stays a natural HOPO."""
+    _, result, _ = built
+    tm, pad = result.chart.tempo, result.lead.pad_seconds
+    ex = next(t for t in result.chart.tracks if t.name == "ExpertSingle")
+    notes = sorted(ex.notes, key=lambda n: n.tick)
+    states = dict(zip((n.tick for n in notes), play_states(notes, tm.resolution)))
+    grid = result.grid.beats
+    sixteenths = {}
+    for n in notes:
+        t = tm.tick_to_sec(n.tick) - pad
+        k = int(np.argmin(np.abs(grid - t)))
+        sixteenths[n.tick] = (k, round((t - grid[k]) / PERIOD * 4) % 4)
+    pairs = [t for t, (k, q) in sixteenths.items() if q in (1, 3)]
+    assert len(pairs) == 2
+    forced, free = sorted(pairs)
+    assert states[forced] == "strum" and next(n for n in notes if n.tick == forced).flip
+    assert states[free] == "hopo"
+    # the other HOPOs: the 8th a 16th after each pair's 16th; none of the source's half-tempo 8th HOPOs
+    assert sum(s == "hopo" for s in states.values()) == 3
+    assert result.report["tracks"]["guitar"]["expert"]["flips"] == 1
+
+
+def test_phrases_sections_and_metadata(built):
+    """Sections follow DESIGN.md 2.5: the 2-measure break merges into the verse, and the 20-measure verse it makes
+    splits into two parts of 10 (with the old 2-measure minimum and no split: Intro, Verse, Break, Chorus)."""
+    _, result, _ = built
+    tm, pad = result.chart.tempo, result.lead.pad_seconds
+    assert [n for _, n in result.chart.sections] == ["Intro", "Verse A", "Verse B", "Chorus"]
+    for (tick, _), start in zip(result.chart.sections, (0.5, 16.5, 36.5, 56.5)):
+        assert abs(tm.tick_to_sec(tick) - pad - start) < 1.0 and tick % (4 * tm.resolution) == 0
+    for t in result.chart.tracks:
+        sp = [p for p in t.phrases if p.kind == STAR_POWER]
+        assert sp, t.name
+        if t.is_drums:
+            assert [p for p in t.phrases if p.kind == DRUM_ACTIVATION], t.name
+    ini = (result.folder / "song.ini").read_text(encoding="utf-8")
+    for line in ("name = Click Song", "artist = songcharter tests", "album = Synthetic", "year = 2026",
+                 "album_track = 1", "pro_drums = True"):
+        assert line in ini
+    for key in ("diff_guitar", "diff_bass", "diff_drums"):
+        assert f"{key} = {result.report['ratings'][key[5:]]}" in ini
+    chorus = tm.tick_to_sec(result.chart.sections[3][0]) * 1000
+    assert f"preview_start_time = {round(chorus)}" in ini
+
+
+def test_report_matches_the_written_chart(built):
+    _, result, _ = built
+    report = json.loads((result.folder / "report.json").read_text(encoding="utf-8"))
+    song = read_chart(result.folder / "notes.chart")
+    for inst, levels in report["tracks"].items():
+        for d, stats in levels.items():
+            assert stats["onsets"] == len({n.time for n in song.parts[(inst, d)].notes}), (inst, d)
+    assert report["sections"]["count"] == 4
+    assert set(report["parts"]) == {"guitar", "bass", "drums"}
+    q = report["parts"]["guitar"]["quantize"]["expert"]
+    assert q["notes_in"] == q["notes_out"] + q["merged"] + q["dropped"]
+    assert {"odd_32nds", "moved_25ms", "moved_signed_median"} <= set(q)
+    assert report["config"]["parts"][0]["hopo"] == "forced"
+    assert report["grid"]["secondary_source"] is None  # the fixture has no guitar or other stem
+    assert 0.0 <= report["phrases"]["drums"]["fill_crash_share"] <= 1.0
+
+
+class _Stop(Exception):
+    pass
+
+
+def test_the_grid_gets_a_second_stem_and_the_quantizer_the_source_beats(built, tmp_path, monkeypatch):
+    """By default the guitar or "other" stem times the beats the drums leave without evidence ("none" turns it off,
+    and the mix gets none), each part is quantized with its source's own beats (quantize.odd_32nds), and a tempo the
+    grid misses or a long stretch timed by neither stem is warned about."""
+    root, result, _ = built
+    shutil.copy(root / "drums.wav", tmp_path / "other.wav")
+    other, _ = A.read_wav(tmp_path / "other.wav")
+    real_grid, real_quantize = assemble_module.beat_grid, assemble_module.quantize_part
+    seen: dict = {"beats": []}
+
+    def stopped(audio, *args, secondary=None, **kwargs):
+        seen["secondary"] = secondary
+        raise _Stop
+
+    def config(**change):
+        stems = {"drums": "drums.wav", "other": str(tmp_path / "other.wav")}
+        return parse_config({**CONFIG, "stems": stems, **change}, root, tmp_path / "out")
+
+    monkeypatch.setattr(assemble_module, "beat_grid", stopped)
+    for change, want in (({}, other), ({"grid_secondary": "none"}, None), ({"grid_source": "mix"}, None),
+                         ({"grid_secondary": "mix"}, A.decode(root / "mix.wav"))):
+        with pytest.raises(_Stop):
+            assemble(config(**change))
+        assert (seen["secondary"] is None) if want is None else np.array_equal(seen["secondary"], want), change
+
+    def grid(*args, **kwargs):
+        g = real_grid(*args, **kwargs)
+        g.stats["tempo_check"] = [(10.0, 30.0, 96.0, 120.0)]
+        g.stats["secondary"]["stretches"] += [(40.0, 50.0, 20, 0.25), (60.0, 64.0, 8, 0.0), (70.0, 80.0, 20, 0.75)]
+        return g
+
+    def quantize(part, *args):
+        seen["beats"].append(args[-1])
+        return real_quantize(part, *args)
+
+    monkeypatch.setattr(assemble_module, "beat_grid", grid)
+    monkeypatch.setattr(assemble_module, "quantize_part", quantize)
+    r = assemble(config()).report
+    assert r["grid"]["secondary_source"] == "other" and r["gate"]["ok"]
+    # guitar Expert and Hard (take_difficulties "all"), then bass and drums with STRUM's beats moved by time_shift
+    assert [list(b) for b in seen["beats"]] == [read_song(root / "tool" / "notes.chart").beats] * 2 + [
+        read_song(root / "strum", TRIM).beats] * 2
+    assert "tempo 96.0 BPM at 10-30 s is not followed by the grid (120.0 BPM): pass beat hints or start= beats" \
+        in r["warnings"]
+    lines = [w for w in r["warnings"] if "follow the straight line" in w]
+    assert lines == ["beats at 40-50 s follow the straight line (no drum or second-stem evidence): check sync there"]
+    # a second stem that only repeats the drums changes no count; the last beats, past the drums' last hit, move by
+    # about 1 ms
+    for inst, levels in r["tracks"].items():
+        for d, stats in levels.items():
+            old = result.report["tracks"][inst][d]
+            assert {k: v for k, v in stats.items() if not k.endswith("_note")} == \
+                {k: v for k, v in old.items() if not k.endswith("_note")}, (inst, d)
+            assert all(abs(stats[k] - old[k]) < 0.002 for k in ("first_note", "last_note")), (inst, d)
+
+
+def test_cli_rebuilds_the_same_chart(built, tmp_path, monkeypatch):
+    """Byte-identical notes.chart and song.ini from the command line, a config with a UTF-8 BOM (Windows
+    PowerShell's), and a folder name stdout's code page cannot show (cp1252, as on Windows when stdout is a pipe)."""
+    root, result, _ = built
+    out = tmp_path / "again 気持ち"
+    config = root / "bom.json"
+    config.write_bytes(b"\xef\xbb\xbf" + (root / "song.json").read_bytes())
+    stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    monkeypatch.setattr(sys, "stdout", stdout)
+    assert main(["assemble", str(config), "--out", str(out)]) == 0
+    stdout.flush()
+    printed = stdout.buffer.getvalue().decode("cp1252")
+    assert "gate: OK" in printed and str(tmp_path / "again \\u6c17\\u6301\\u3061") in printed
+    for name in ("notes.chart", "song.ini"):
+        assert (out / name).read_bytes() == (result.folder / name).read_bytes()
+    again = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    assert again["tracks"] == result.report["tracks"] and again["parts"] == json.loads(
+        json.dumps(result.report["parts"]))
+
+
+def test_gate_rejects_a_folder_with_a_second_chart(built, tmp_path):
+    _, result, _ = built
+    folder = tmp_path / "copy"
+    shutil.copytree(result.folder, folder)
+    (folder / "notes.mid").write_bytes(b"MThd")
+    issues = verify_folder(folder, result.chart, result.lead.pad_seconds, scan_chart=False)
+    assert [i.kind for i in issues if i.error] == ["multipleChart"]
+    assert [i.kind for i in issues if not i.error] == ["scanChartNotRun"]
+    if find_scan_chart()[0] is not None:  # scan-chart's own verdict, ours on the same kind left to it
+        record = {}
+        kinds = [i.kind for i in verify_folder(folder, result.chart, result.lead.pad_seconds, record=record)
+                 if i.error]
+        assert {"notPlayable", "multipleChart"} <= set(kinds) and kinds.count("multipleChart") == 1
+        assert record["scan_chart"]["ran"] and not record["scan_chart"]["playable"]
+
+
+def test_gate_without_scan_chart(built, monkeypatch):
+    """Without node (or tools/scan-chart's node_modules) the re-implementation stands in and the gate warns; a gate
+    told to require scan-chart fails."""
+    _, result, _ = built
+    monkeypatch.setattr(assemble_module, "find_scan_chart", lambda: (None, "node is not on PATH"))
+    record = {}
+    issues = verify_folder(result.folder, result.chart, result.lead.pad_seconds, record=record)
+    assert [(i.kind, i.error) for i in issues if i.kind.startswith("scanChart")] == [("scanChartNotRun", False)]
+    assert not [i for i in issues if i.error]
+    assert record["scan_chart"] == {"ran": False, "reason": "node is not on PATH"}
+    required = verify_folder(result.folder, result.chart, result.lead.pad_seconds, scan_chart=True)
+    assert [i.kind for i in required if i.error] == ["scanChartNotRun"]
+
+
+def _contents(folder):
+    return {p.name: p.read_bytes() for p in folder.iterdir()}
+
+
+def test_a_failed_gate_leaves_the_output_alone(built, tmp_path, monkeypatch, capsys):
+    """A build the gate fails goes to <output>.failed (exit 1) and the earlier build in <output> stays as it was;
+    the next good build replaces <output>, an earlier build's extra file and the stale .failed included."""
+    root, result, _ = built
+    out = (tmp_path / "Click Song").resolve()
+    shutil.copytree(result.folder, out)
+    before = _contents(out)
+    real = assemble_module.verify_folder
+    monkeypatch.setattr(assemble_module, "verify_folder",
+                        lambda *a, **k: real(*a, **k) + [GateIssue(None, None, "fake", "a gate error")])
+    assert main(["assemble", str(root / "song.json"), "--out", str(out)]) == 1
+    printed = capsys.readouterr().out
+    failed = failed_folder(out)
+    assert "gate: FAILED" in printed and f"song folder: {failed}" in printed and "error fake" in printed
+    assert _contents(out) == before
+    assert sorted(_contents(failed)) == ["notes.chart", "report.json", "song.ini", "song.ogg"]
+    report = json.loads((failed / "report.json").read_text(encoding="utf-8"))
+    assert not report["gate"]["ok"] and report["folder"] == str(failed)
+    monkeypatch.setattr(assemble_module, "verify_folder", real)
+    (out / "album.jpg").write_bytes(b"an earlier build's art")
+    assert main(["assemble", str(root / "song.json"), "--out", str(out)]) == 0
+    assert [p.name for p in tmp_path.iterdir()] == ["Click Song"]
+    assert sorted(_contents(out)) == ["notes.chart", "report.json", "song.ini", "song.ogg"]
+    assert (out / "notes.chart").read_bytes() == (result.folder / "notes.chart").read_bytes()
+    assert json.loads((out / "report.json").read_text(encoding="utf-8"))["folder"] == str(out)
+
+
+def test_a_build_that_raises_writes_nothing(built, tmp_path, monkeypatch, capsys):
+    """A song.ogg out of sync (simulated) is refused with exit 2: the output keeps the earlier build and its
+    report, and the half-written staging folder is gone."""
+    root, result, _ = built
+    out = (tmp_path / "Click Song").resolve()
+    shutil.copytree(result.folder, out)
+    before = _contents(out)
+
+    def out_of_sync(folder, *args, **kwargs):
+        (folder / "notes.chart").write_text("half written", encoding="utf-8")
+        raise RuntimeError("song.ogg is out of sync with the chart: simulated")
+
+    monkeypatch.setattr(assemble_module, "build_song_folder", out_of_sync)
+    assert main(["assemble", str(root / "song.json"), "--out", str(out)]) == 2
+    assert "out of sync" in capsys.readouterr().err
+    assert _contents(out) == before and [p.name for p in tmp_path.iterdir()] == ["Click Song"]
+
+
+def test_cli_exit_codes(built, tmp_path, monkeypatch, capsys):
+    """2 for a bad config or input, found before any audio work and never 1 (a failed gate); 3, with the
+    traceback, for a bug."""
+    root, _, _ = built
+    for change, message in (({"audio": "missing.wav"}, "not found: audio"),
+                            ({"parts": 5}, "parts must be a list"),
+                            ({"stems": ["drums.wav"]}, "stems must be an object"),
+                            ({"parts": [{**CONFIG["parts"][0], "time_shift": None}]}, "time_shift must be a number"),
+                            ({"tempo_tolerance": -1}, "tempo_tolerance must be above 0"),
+                            ({"metadata": {**CONFIG["metadata"], "genre": ""}}, "needs 'genre'"),
+                            ({"audio": "allin1.json"}, "ffmpeg could not read")):
+        (root / "bad.json").write_text(json.dumps({**CONFIG, **change}), encoding="utf-8")
+        assert main(["assemble", str(root / "bad.json"), "--out", str(tmp_path / "x")]) == 2, change
+        assert message in capsys.readouterr().err, change
+    (root / "bad.json").write_text("{'audio': ", encoding="utf-8")
+    assert main(["assemble", str(root / "bad.json")]) == 2 and "is not a JSON config" in capsys.readouterr().err
+    assert not (tmp_path / "x").exists()
+
+    def bug(_):
+        raise KeyError("a bug")
+
+    monkeypatch.setattr(assemble_module, "assemble", bug)
+    assert main(["assemble", str(root / "song.json"), "--out", str(tmp_path / "x")]) == 3
+    err = capsys.readouterr().err
+    assert "Traceback" in err and "KeyError: 'a bug'" in err and "internal error" in err
+
+
+# ------------------------------------------------------------------------------------------------ the gate's rules
+
+def _song(parts, sections=((5.0, "Intro"),)):
+    return TimedSong("test", {(p.instrument, p.difficulty): p for p in parts}, list(sections))
+
+
+def _kinds(issues):
+    return sorted(((i.instrument, i.difficulty, i.kind) for i in issues if i.error), key=lambda k: str(k))
+
+
+def test_scan_rules_accept_a_clean_chart():
+    notes = [TimedNote(3 + 0.25 * k, (k % 4,)) for k in range(300)]
+    drums = [TimedHit(3 + 0.25 * k, k % 2) for k in range(300)]
+    sp = [TimedSpan(10, 12)]
+    parts = [TimedPart("guitar", "expert", notes, sp), TimedPart("guitar", "hard", notes[::2], sp),
+             TimedPart("drums", "expert", drums, sp, activation=[TimedSpan(20, 22)])]
+    assert scan_rules(_song(parts)) == []
+
+
+@pytest.mark.parametrize("difficulty,frets,bad", [
+    ("hard", (0, 4), True), ("hard", (0, 3), False), ("medium", (4,), True), ("medium", (0, 3), True),
+    ("medium", (0, 2), False), ("easy", (3,), True), ("easy", (2,), False), ("expert", (0, 1, 2, 3, 4), True)])
+def test_scan_rules_forbidden_frets(difficulty, frets, bad):
+    p = TimedPart("guitar", difficulty, [TimedNote(3.0, (0,)), TimedNote(4.0, frets)])
+    ex = TimedPart("guitar", "expert", [TimedNote(3.0, (1,)), TimedNote(4.0, (1,))])
+    kinds = [k for _, _, k in _kinds(scan_rules(_song([ex, p])))]
+    assert (("difficultyForbiddenNote" in kinds) or ("invalidChord" in kinds)) == bad
+
+
+def test_scan_rules_drums_sustains_phrases_and_timing():
+    drums = [TimedHit(3.0, 0, double_kick=True), TimedHit(4.0, 0), TimedHit(4.0, 1), TimedHit(4.0, 2),
+             TimedHit(5.0, 1), TimedHit(5.0, 2), TimedHit(5.0, 3)]
+    guitar = [TimedNote(1.5, (0,)),                 # inside the first 2 s
+              TimedNote(3.0, (1,), end=3.05),        # babySustain (50 ms)
+              TimedNote(4.0, (1,), end=4.15),        # shortSustain (150 ms: Encore)
+              TimedNote(4.18, (2,)),                 # 30 ms after a sustain: badSustainGap
+              TimedNote(4.19, (3,)),                 # 10 ms after the previous note: brokenNote
+              TimedNote(6.0, (2,), end=6.5), TimedNote(6.55, (3,))]  # 50 ms gap: Encore's sustainGap
+    parts = [TimedPart("drums", "expert", drums[:1]), TimedPart("drums", "easy", drums[1:]),
+             TimedPart("guitar", "expert", guitar, [TimedSpan(8, 9)], [TimedSpan(8, 9)])]
+    issues = scan_rules(_song(parts), pad_seconds=1.0, audio_end=6.4)
+    kinds = _kinds(issues)
+    assert ("drums", "easy", "difficultyForbiddenNote") in kinds   # a kick with two pads on Easy
+    assert ("drums", "easy", "invalidChord") in kinds
+    for k in ("smallLeadingSilence", "babySustain", "shortSustain", "badSustainGap", "brokenNote", "sustainGap",
+              "emptyStarPower", "emptySoloSection", "noteAfterAudio"):
+        assert ("guitar", "expert", k) in kinds, k
+    assert next(i for i in issues if i.kind == "brokenNote").time == pytest.approx(3.19)  # input seconds
+    hard = scan_rules(_song([TimedPart("drums", "expert", [TimedHit(3.0, 1)]),
+                             TimedPart("drums", "hard", [TimedHit(3.0, 0, double_kick=True)])]))
+    assert ("drums", "hard", "difficultyForbiddenNote") in _kinds(hard)
+
+
+def test_scan_rules_song_level():
+    long = [TimedNote(3 + 0.5 * k, (k % 3,)) for k in range(200)]
+    hits = [TimedHit(3 + 0.5 * k, 1) for k in range(200)]
+    parts = [TimedPart("guitar", "expert", long), TimedPart("guitar", "hard", list(long)),
+             TimedPart("bass", "hard", long[:10]), TimedPart("drums", "expert", hits, [TimedSpan(10, 11)])]
+    kinds = _kinds(scan_rules(_song(parts, sections=())))
+    assert (None, None, "noSections") in kinds
+    assert ("guitar", "expert", "noStarPower") in kinds
+    assert ("guitar", "hard", "difficultyNotReduced") in kinds
+    assert ("bass", None, "noExpert") in kinds
+    assert ("drums", "expert", "noDrumActivationLanes") in kinds
+    assert _kinds(scan_rules(_song([]))) == [(None, None, "noNotes")]
+
+
+def _small_chart():
+    tm = TempoMap.from_beats(np.arange(64) * 0.5)
+    notes = [FretNote(192 * (8 + k), (k % 3,), 192 if k == 4 else 0) for k in range(20)]
+    notes.append(FretNote(192 * 27 + 48, (2,)))  # a 16th after the last note: a natural HOPO
+    drums = [DrumHit(192 * (8 + k), k % 2) for k in range(20)] + [DrumHit(192 * 9, 2, cymbal=True)]
+    return Chart(SongInfo("x", "y"), tm, [(192 * 8, "Intro")],
+                 [Track("Expert", "Single", notes, [Phrase(192 * 8, 192 * 4)], [(192 * 12, 192 * 14)]),
+                  Track("Expert", "Drums", drums, [Phrase(192 * 8, 192 * 4), Phrase(192 * 20, 192 * 2, DRUM_ACTIVATION)])])
+
+
+def test_self_check_finds_what_the_file_lost(tmp_path):
+    chart = _small_chart()
+    text = write_chart(chart)
+    path = tmp_path / "notes.chart"
+    path.write_text(text, encoding="utf-8", newline="")
+    assert self_check(chart, read_chart(path)) == []
+    lines = {f"  {192 * 9} = N 66 0\r\n": "",                                          # the cymbal marker
+             f"  {192 * 13} = N 2 0\r\n": f"  {192 * 13} = N 2 0\r\n  {192 * 13} = N 5 0\r\n",  # a flip
+             f"  {192 * 12} = N 1 192\r\n": f"  {192 * 12} = N 1 96\r\n"}                  # a shorter sustain
+    tampered = text
+    for old, new in lines.items():
+        assert old in tampered
+        tampered = tampered.replace(old, new)
+    path.write_text(tampered, encoding="utf-8", newline="")
+    msgs = [i.message for i in self_check(chart, read_chart(path))]
+    assert any("hits read back differently" in m for m in msgs)
+    assert any("different hopo" in m for m in msgs)
+    assert any("different sustain" in m for m in msgs)
+    assert all(isinstance(i, GateIssue) and i.kind == "selfCheck" for i in self_check(chart, read_chart(path)))
+
+
+def _scan_chart():
+    command, why = find_scan_chart()
+    if command is None:
+        pytest.skip(f"scan-chart not available: {why}")
+    return command
+
+
+def test_scan_chart_read_back(tmp_path):
+    """scan-chart's own parse of what we wrote matches the chart (notes, flags, sustains, star power, solo, fill,
+    sections), and the self-check on it finds what a tampered file lost; its issues map to gate errors."""
+    command = _scan_chart()
+    chart = _small_chart()
+    text = write_chart(chart)
+    (tmp_path / "notes.chart").write_text(text, encoding="utf-8", newline="")
+    data = run_scan_chart(tmp_path, command)
+    assert self_check(chart, scan_chart_song(data)) == []
+    kinds = {i.kind for i in scan_chart_issues(data)}  # no song.ini or audio, one 120 BPM marker
+    assert {"notPlayable", "noAudio", "noMetadata", "isDefaultBPM"} <= kinds and "noAlbumArt" not in kinds
+    tampered = (text.replace(f"  {192 * 9} = N 66 0\r\n", "")
+                .replace(f"  {192 * 13} = N 2 0\r\n", f"  {192 * 13} = N 2 0\r\n  {192 * 13} = N 5 0\r\n")
+                .replace(f"  {192 * 12} = N 1 192\r\n", f"  {192 * 12} = N 1 96\r\n"))
+    (tmp_path / "notes.chart").write_text(tampered, encoding="utf-8", newline="")
+    msgs = [i.message for i in self_check(chart, scan_chart_song(run_scan_chart(tmp_path, command)))]
+    for what in ("hits read back differently", "different hopo", "different sustain"):
+        assert any(what in m for m in msgs), what
+
+
+def _edit_track(text: str, track: str, change) -> str:
+    """notes.chart text with one track's lines (without indent) replaced by change(lines), sorted as we write."""
+    head, rest = text.split(f"[{track}]\r\n{{\r\n", 1)
+    body, tail = rest.split("}\r\n", 1)
+    lines = change([line.strip() for line in body.split("\r\n") if line.strip()])
+    order = {"N": 0, "S": 1, "E": 2}
+    lines.sort(key=lambda s: (int(s.split()[0]), order[s.split()[2]],
+                              int(s.split()[3]) if s.split()[2] in "NS" else 0))
+    return head + f"[{track}]\r\n{{\r\n" + "".join(f"  {s}\r\n" for s in lines) + "}\r\n" + tail
+
+
+def _ticks(lines, codes=("0", "1", "2", "3", "4")):
+    return sorted({int(s.split()[0]) for s in lines if s.split()[2] == "N" and s.split()[3] in codes})
+
+
+def _plain(lines):
+    """A note tick with one fret and no sustain whose next note is at least an 8th later."""
+    ticks = _ticks(lines)
+    for a, b in zip(ticks[40:], ticks[41:]):
+        notes = [s for s in lines if int(s.split()[0]) == a and s.split()[2] == "N"]
+        if b - a >= 96 and len(notes) == 1 and notes[0].split()[4] == "0":
+            return a, notes[0].split()[3], b
+    raise AssertionError("no plain note")
+
+
+def _hand_tick(lines):
+    return next(t for t in _ticks(lines, ("1", "2", "3", "4"))[30:]
+                if len({s.split()[3] for s in lines if int(s.split()[0]) == t and s.split()[3] in "1234"}) == 1)
+
+
+def _sustain(lines, length):
+    a, fret, _ = _plain(lines)
+    return [s if s != f"{a} = N {fret} 0" else f"{a} = N {fret} {length}" for s in lines]
+
+
+def _sustain_into(lines, gap):
+    a, fret, b = _plain(lines)
+    return [s if s != f"{a} = N {fret} 0" else f"{a} = N {fret} {b - a - gap}" for s in lines]
+
+
+# each: (track, change, the error both must find); the synthetic chart is at 120 BPM, Resolution 192
+MUTATIONS = {
+    "five_note_chord": ("ExpertSingle", lambda L: L + [f"{_plain(L)[0]} = N {f} 0" for f in "01234"
+                                                        if f != _plain(L)[1]], ("guitar", "expert", "invalidChord")),
+    "easy_blue": ("EasySingle", lambda L: [s if int(s.split()[0]) != _ticks(L)[20] or s.split()[2] != "N"
+                                           else s.split()[0] + " = N 3 0" for s in L],
+                  ("guitar", "easy", "difficultyForbiddenNote")),
+    "broken_note": ("ExpertSingle", lambda L: L + [f"{_plain(L)[0] + 4} = N {(int(_plain(L)[1]) + 1) % 5} 0"],
+                    ("guitar", "expert", "brokenNote")),
+    "baby_sustain": ("ExpertSingle", lambda L: _sustain(L, 20), ("guitar", "expert", "babySustain")),  # 52 ms
+    "bad_sustain_gap": ("ExpertSingle", lambda L: _sustain_into(L, 6), ("guitar", "expert", "badSustainGap")),
+    "three_hands": ("ExpertDrums", lambda L: L + [f"{_hand_tick(L)} = N {p} 0" for p in "234"
+                                                  if f"{_hand_tick(L)} = N {p} 0" not in L],
+                    ("drums", "expert", "invalidChord")),
+    "hard_double_kick": ("HardDrums", lambda L: L + [f"{_ticks(L, ('0',))[5]} = N 32 0"],
+                         ("drums", "hard", "difficultyForbiddenNote")),
+    "empty_star_power": ("ExpertDoubleBass", lambda L: L + ["96 = S 2 96"], ("bass", "expert", "emptyStarPower")),
+    "empty_solo": ("ExpertDoubleBass", lambda L: L + ["96 = E solo", "190 = E soloend"],
+                   ("bass", "expert", "emptySoloSection")),
+}
+
+
+def test_scan_rules_agree_with_scan_chart(built, tmp_path):
+    """The stand-in gate and scan-chart find the same errors (track and kind) on broken copies of a built folder,
+    so the two cannot drift apart; Encore's stricter rules (ours only) are left out of the comparison."""
+    command = _scan_chart()
+    _, result, _ = built
+    text = (result.folder / "notes.chart").read_bytes().decode("utf-8")  # CRLF kept
+    ours_only = {"smallLeadingSilence", "shortSustain", "sustainGap", "noteAfterAudio"}
+
+    def both(name, chart_text):
+        folder = tmp_path / name
+        folder.mkdir()
+        (folder / "notes.chart").write_text(chart_text, encoding="utf-8", newline="")
+        for f in ("song.ini", "song.ogg"):
+            shutil.copy(result.folder / f, folder / f)
+        scan = {(i.instrument, i.difficulty, i.kind) for i in scan_chart_issues(run_scan_chart(folder, command))}
+        ours = {(i.instrument, i.difficulty, i.kind) for i in scan_rules(read_chart(folder / "notes.chart"),
+                                                                       tempo=result.chart.tempo) if i.error}
+        return scan, {k for k in ours if k[2] not in ours_only}
+
+    assert both("clean", text) == (set(), set())
+    for name, (track, change, want) in MUTATIONS.items():
+        scan, ours = both(name, _edit_track(text, track, change))
+        assert want in scan and scan == ours, (name, scan, ours)
+    events = text.split("[Events]\r\n{\r\n", 1)
+    scan, ours = both("no_sections", events[0] + "[Events]\r\n{\r\n" + events[1].split("}\r\n", 1)[1])
+    assert scan == ours == {(None, None, "noSections")}
+
+
+def test_hopo_forced_from_the_importer_and_forced_only_quantizing(tmp_path):
+    """The importer marks the states its source forced; quantize's forced_only keeps those and lets the rest follow
+    the natural rule on our grid ("forced" in assemble), while "source" reproduces every played state."""
+    expert, _ = write_tool_chart(tmp_path / "notes.chart")
+    part = read_chart(tmp_path / "notes.chart").parts[("guitar", "expert")]
+    assert sum(n.hopo_forced for n in part.notes) == 1 and sum(n.hopo for n in part.notes) > 100
+    shifted = read_chart(tmp_path / "notes.chart").shifted(1.0).parts[("guitar", "expert")]
+    assert [n.hopo_forced for n in shifted.notes] == [n.hopo_forced for n in part.notes]
+    tm = TempoMap.from_beats([0.0] + [beat(k) + LATE for k in range(BEATS)])  # our grid, with the tool's lateness
+    counts = {}
+    for mode, rules in HOPO_RULES.items():
+        track, _ = quantize_part(TimedPart("guitar", "expert", part.notes), tm, 0.0, 0.0, rules)
+        states = play_states(sorted(track.notes, key=lambda n: n.tick), tm.resolution)
+        counts[mode] = states.count("hopo")
+    assert counts["source"] == sum(n.hopo for n in part.notes)  # every artefact HOPO reproduced
+    # natural: each 16th and the 8th after it (both 1/16 apart); forced: the forced 16th strums
+    assert counts["natural"] == 4 and counts["forced"] == 3
+
+
+# ------------------------------------------------------------------------------------------------ helpers
+
+def test_difficulty_rating_models():
+    tm = TempoMap.from_beats(np.arange(400) * 0.25)  # 240 BPM map: a beat is 0.25 s
+    drums = Track("Expert", "Drums", [DrumHit(192 * k, k % 2) for k in range(240)])  # 4 hits/s for 60 s
+    rating, f = difficulty_rating(drums, tm)
+    assert f["avg_nps"] == pytest.approx(240 / 59.75, rel=1e-3) and f["max_nps_1s"] == 4.0
+    assert f["value"] == pytest.approx(-0.63 + 0.325 * f["avg_nps"] + 0.178 * 4.0, abs=2e-3) and rating == 1
+    guitar = Track("Expert", "Single", [FretNote(192 * k, ((0,), (1,), (2,), (0, 1))[k % 4]) for k in range(240)])
+    rating, f = difficulty_rating(guitar, tm)
+    assert f["chord"] == 0.25 and f["move"] == 1.0 and f["hopo"] == 0.0
+    assert 0 <= rating <= 6 and difficulty_rating(Track("Expert", "Single", []), tm) == (0, {})
+
+
+def test_stem_alignment_and_silence():
+    rng = np.random.default_rng(3)
+    mix = (rng.standard_normal((2, SR * 12)) * 0.1).astype(np.float32)
+    assert stem_alignment(mix, mix * 0.5)["ok"]
+    late = np.concatenate([np.zeros((2, 50), np.float32), mix[:, :-50]], axis=1)
+    check = stem_alignment(mix, late * 0.5)
+    assert not check["ok"] and abs(check["lag_samples"] - 50) < 0.5
+    assert stem_alignment(mix, mix * 0.001)["checked"] is False  # -60 dB: not checked
+    levels = np.full(100, -10.0)
+    levels[60:] = -50.0
+    assert silent_onsets([1.0, 7.0], levels, 0.1) == [7.0]
+
+
+def test_trim_silent_edges():
+    """Onsets before the stem's first loud frame or after its last go from every level (by time, so the levels stay
+    nested); a stem under which Expert would lose every note is not the part's, and nothing is trimmed."""
+    tm = TempoMap.from_beats(np.arange(200) * 0.5)  # 120 BPM from 0 s: tick 192 k is k / 2 seconds
+    levels = np.full(1000, -60.0)
+    levels[100:800] = -10.0  # 100 ms frames: the stem plays from 10 s to 80 s
+    assert active_span(levels) == pytest.approx((9.8, 80.05))
+    beats = (10, 20, 40, 100, 159, 161, 170)  # 5, 10, 20, 50, 79.5, 80.5 and 85 s
+    expert = Track("Expert", "DoubleBass", [FretNote(192 * k, (k % 3,)) for k in beats])
+    hard = Track("Hard", "DoubleBass", expert.notes[::2])
+    out, removed = trim_silent_edges({"expert": expert, "hard": hard}, levels, tm, 0.0)
+    assert removed == {"expert": [5.0, 80.5, 85.0], "hard": [5.0, 85.0]}
+    assert [n.tick // 192 for n in out["expert"].notes] == [20, 40, 100, 159]
+    assert [n.tick // 192 for n in out["hard"].notes] == [40, 159]
+    shifted, _ = trim_silent_edges({"expert": expert}, levels, tm, 1.0)  # input second t sits at t + pad
+    assert [n.tick // 192 for n in shifted["expert"].notes] == [40, 100, 159, 161]
+    late = np.full(1000, -60.0)
+    late[900:] = -10.0
+    assert trim_silent_edges({"expert": expert}, late, tm, 0.0) == ({"expert": expert}, {})
+
+
+def test_config_parsing_and_errors(tmp_path):
+    cfg = parse_config(CONFIG, tmp_path)
+    assert cfg.audio == tmp_path / "mix.wav" and cfg.output == tmp_path / "out" / "Click Song"
+    assert cfg.parts[1].source == tmp_path / "strum" and cfg.parts[1].from_instrument == "bass"
+    assert cfg.parts[0].take_difficulties == "all" and cfg.parts[1].hopo == "forced" and cfg.parts[2].offset == "auto"
+    assert cfg.sections == str(tmp_path / "allin1.json") and cfg.bpm is None and cfg.solos == "off"
+    (tmp_path / "c.json").write_text(json.dumps({**CONFIG, "parts": [{**CONFIG["parts"][0], "offset": 0.02}]}))
+    loaded = load_config(tmp_path / "c.json", tmp_path / "elsewhere")
+    assert loaded.output == tmp_path / "elsewhere" and loaded.parts[0].offset == 0.02
+    bad = [
+        ({"colour": 1}, "unknown key"),
+        ({"parts": []}, "no parts"),
+        ({"parts": [{"instrument": "keys", "source": "x"}]}, "instruments"),
+        ({"parts": [{"instrument": "drums", "source": "x", "source_instrument": "guitar"}]}, "drums come only"),
+        ({"parts": [CONFIG["parts"][0], CONFIG["parts"][0]]}, "more than one part"),
+        ({"parts": [{**CONFIG["parts"][0], "hopo": "maybe"}]}, "hopo"),
+        ({"sections": "from:keys"}, "no part is named"),
+        ({"grid_mode": "loose"}, "grid_mode"),
+        ({"metadata": {"name": "x"}}, "artist"),
+        ({"beat_hints": {"tempo": 120}}, "unknown key"),
+        ({"output": "strum"}, "would be overwritten"),
+        # types and ranges, each named
+        ({"parts": 5}, "parts must be a list"),
+        ({"parts": [{**CONFIG["parts"][0], "source": 5}]}, r"parts\[0\].source must be a non-empty string"),
+        ({"parts": [{**CONFIG["parts"][0], "time_shift": None}]}, r"parts\[0\].time_shift must be a number"),
+        ({"parts": [{**CONFIG["parts"][0], "offset": "manual"}]}, "offset must be 'auto' or a number"),
+        ({"parts": [{**CONFIG["parts"][0], "trim_silence": "yes"}]}, "trim_silence must be true or false"),
+        ({"stems": ["drums.wav"]}, "stems must be an object"),
+        ({"grid_source": ["drums"]}, "grid_source must be a string or null"),
+        ({"grid_secondary": "guitar"}, "grid_secondary 'guitar' is not 'mix', 'none' or one of the stems"),
+        ({"grid_secondary": 3}, "grid_secondary must be a string or null"),
+        ({"quality": True}, "quality must be a number"),
+        ({"quality": 99}, "quality must be at most 10"),
+        ({"tempo_tolerance": -1}, "tempo_tolerance must be above 0"),
+        ({"lead_in": 1.0}, "lead_in must be at least 2.0"),
+        ({"beat_hints": {"bpm": 0}}, "bpm must be above 0"),
+        ({"metadata": {**CONFIG["metadata"], "album": ""}}, "needs 'album'"),
+        ({"metadata": {k: v for k, v in CONFIG["metadata"].items() if k != "year"}}, "needs 'year'"),
+        ({"metadata": {**CONFIG["metadata"], "album_track": 2.5}}, "album_track must be a whole number"),
+        ({"album_art": "cover.gif"}, "not a .png or .jpg"),
+    ]
+    for change, message in bad:
+        with pytest.raises(ValueError, match=message):
+            parse_config({**CONFIG, **change}, tmp_path)
+    assert parse_config({**CONFIG, "sections": "from:guitar"}, tmp_path).sections == "from:guitar"
+    assert parse_config(CONFIG, tmp_path).grid_secondary is None  # the default: the guitar stem, else other
+    for value, want in (("None", ""), ("mix", "mix"), ("drums", "drums")):
+        assert parse_config({**CONFIG, "grid_secondary": value}, tmp_path).grid_secondary == want
+    meta = {k: v for k, v in CONFIG["metadata"].items() if k != "charter"}
+    cfg = parse_config({**CONFIG, "metadata": meta, "parts": [{**CONFIG["parts"][0], "offset": "AUTO",
+                                                                 "trim_silence": False}]}, tmp_path)
+    assert cfg.metadata["charter"] == "songcharter" and cfg.metadata["year"] == "2026"
+    assert cfg.parts[0].offset == "auto" and cfg.parts[0].trim_silence is False and cfg.parts[0].time_shift == 0.0
+
+
+def test_check_inputs(tmp_path):
+    """Every named file must exist and the sections file be an allin1 result; the output folder (and its .failed)
+    may hold only what a build writes, plus OS clutter."""
+    for name in ("mix.wav", "drums.wav", "tool/notes.chart", "strum/notes.mid"):
+        (tmp_path / name).parent.mkdir(exist_ok=True)
+        (tmp_path / name).write_bytes(b"x")
+    (tmp_path / "allin1.json").write_text(json.dumps({"segments": []}), encoding="utf-8")
+    cfg = parse_config(CONFIG, tmp_path)
+    check_inputs(cfg)
+    out = cfg.output
+    out.mkdir(parents=True)
+    for name in ("notes.chart", "song.ogg", "report.json", "Album.PNG", "Thumbs.db", ".DS_Store"):
+        (out / name).write_bytes(b"")
+    check_inputs(cfg)
+    for name in ("notes.mid", "Songs"):  # Clone Hero's Songs folder holds song folders
+        (out / name).mkdir() if name == "Songs" else (out / name).write_bytes(b"")
+        with pytest.raises(ValueError, match=rf"holds what a build does not write \({name}\)"):
+            check_inputs(cfg)
+        (out / name).rmdir() if name == "Songs" else (out / name).unlink()
+    failed_folder(out).mkdir()
+    (failed_folder(out) / "notes.txt").write_text("mine", encoding="utf-8")
+    with pytest.raises(ValueError, match="Click Song.failed holds"):
+        check_inputs(cfg)
+    shutil.rmtree(failed_folder(out))
+    (tmp_path / "allin1.json").write_text(json.dumps({"sections": []}), encoding="utf-8")
+    with pytest.raises(ValueError, match="not an allin1 result"):
+        check_inputs(cfg)
+    (tmp_path / "mix.wav").unlink()
+    (tmp_path / "drums.wav").unlink()
+    with pytest.raises(FileNotFoundError, match="not found: audio .*mix.wav; stem drums .*drums.wav"):
+        check_inputs(cfg)
+
+
+def test_cli_help_and_errors(tmp_path, capsys):
+    with pytest.raises(SystemExit) as e:
+        main(["--help"])
+    assert e.value.code == 0 and "assemble" in capsys.readouterr().out
+    assert main([]) == 2
+    (tmp_path / "bad.json").write_text(json.dumps({**CONFIG, "parts": []}))
+    assert main(["assemble", str(tmp_path / "bad.json")]) == 2
+    assert "no parts" in capsys.readouterr().err

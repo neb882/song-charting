@@ -1,0 +1,519 @@
+"""Quantizing: synthetic parts in seconds placed on a tempo map (offset, straight and triplet grids, merges and chord
+limits, sustains, HOPO states, drum lanes, spans)."""
+import numpy as np
+import pytest
+
+from songcharter.chart import DRUM_ACTIVATION, STAR_POWER, Chart, SongInfo, write_chart
+from songcharter.quantize import (QuantizeRules, SnapGrid, estimate_offset, limit_chord, odd_32nds, play_states,
+                                  quantize_part, quantize_song)
+from songcharter.tempo import TempoMap
+from songcharter.timed import OPEN, TimedHit, TimedNote, TimedPart, TimedSong, TimedSpan
+
+RES = 192
+PAD = 1.0  # seconds of lead-in: input second t is at t + PAD on the maps
+
+
+def const_map(bpm=120.0, beats=400):
+    return TempoMap.from_beats(np.arange(beats) * 60 / bpm)
+
+
+def drifting_map(beats=400):
+    rng = np.random.default_rng(3)
+    bpm = 140 + np.cumsum(rng.normal(0, 0.3, beats))
+    return TempoMap.from_beats(np.concatenate([[0], np.cumsum(60 / bpm[:-1])]), tolerance=0.001)
+
+
+def at(tm, beat, ms=0.0):
+    """Input time of a position on the map, in beats, plus a deviation in ms."""
+    return tm.tick_to_sec(beat * RES) - PAD + ms / 1000
+
+
+def part(notes, instrument="guitar", difficulty="expert", **spans):
+    return TimedPart(instrument, difficulty, sorted(notes, key=lambda n: n.time), **spans)
+
+
+def rock_pattern(beats):
+    """Beat positions of a riff: mostly 8ths, some 16ths, a rest every 4th bar."""
+    pos = []
+    for b in range(beats):
+        if b % 16 >= 14:
+            continue
+        pos += [b, b + 0.5] if b % 4 != 3 else [b, b + 0.25, b + 0.5, b + 0.75]
+    return pos
+
+
+def check(rep):
+    assert rep.notes_in == rep.notes_out + rep.merged + rep.dropped
+
+
+# ------------------------------------------------------------------------------------------------ offset
+
+def test_offset_of_a_late_part():
+    tm = const_map()
+    rng = np.random.default_rng(1)
+    pos = rock_pattern(300)
+    times = [at(tm, p, 25 + rng.normal(0, 8)) for p in pos]
+    off, conc = estimate_offset(times, tm, PAD)
+    assert off == pytest.approx(0.025, abs=0.002)
+    assert conc > 0.8
+
+
+def test_offset_past_a_32nd_uses_the_8th_level():
+    tm = const_map(142.0)  # a 1/32 is 52.8 ms, a 1/16 105.6 ms
+    pos = [b + h for b in range(200) for h in (0, 0.5)] + [b + 0.75 for b in range(0, 200, 4)]
+    off, _ = estimate_offset([at(tm, p, 70) for p in pos], tm, PAD)
+    assert off == pytest.approx(0.070, abs=0.001)
+    early, _ = estimate_offset([at(tm, p, -70) for p in pos], tm, PAD)
+    assert early == pytest.approx(-0.070, abs=0.001)
+
+
+def test_offset_without_8th_evidence_stays_near_zero():
+    # as many notes on odd 16ths as on 8ths: the 8th-level phase says nothing, so no 16th-sized jump
+    tm = const_map()
+    pos = [b + q / 4 for b in range(200) for q in range(4)]
+    off, conc = estimate_offset([at(tm, p, 10) for p in pos], tm, PAD)
+    assert off == pytest.approx(0.010, abs=0.001)
+    assert conc > 0.9
+
+
+def test_offset_of_notes_that_ignore_the_grid():
+    tm = const_map()
+    times = np.sort(np.random.default_rng(2).uniform(0, 150, 600))
+    off, conc = estimate_offset(times, tm, PAD)
+    assert conc < 0.15
+    assert not QuantizeRules().applies(off, conc, 600)
+
+
+def test_a_weak_but_certain_offset_is_applied():
+    # 300 notes on 16th lines, 200 on odd 32nds (opposite 16th phase): R ~ 0.2, but over 500 onsets that is certain
+    tm = const_map(142.0)
+    rng = np.random.default_rng(8)
+    pos = [b + q / 4 for b in range(75) for q in range(4)] + [b + 1 / 8 + q / 4 for b in range(100) for q in (0, 2)]
+    times = sorted(at(tm, p, 20 + rng.normal(0, 4)) for p in pos)
+    off, conc = estimate_offset(times, tm, PAD)
+    assert off == pytest.approx(0.020, abs=0.003)
+    assert 0.1 < conc < 0.3 and QuantizeRules().applies(off, conc, len(times))
+
+
+def test_offset_on_a_drifting_tempo_map():
+    tm = drifting_map()
+    rng = np.random.default_rng(4)
+    times = [at(tm, p, 20 + rng.normal(0, 5)) for p in rock_pattern(380)]
+    off, conc = estimate_offset(times, tm, PAD)
+    assert off == pytest.approx(0.020, abs=0.002)
+    assert conc > 0.8
+
+
+def test_measured_offset_is_removed_before_snapping():
+    tm = const_map()
+    rng = np.random.default_rng(5)
+    pos = rock_pattern(200)
+    notes = [TimedNote(at(tm, p, 30 + rng.uniform(-20, 20)), (int(p * 2) % 3,)) for p in pos]
+    track, rep = quantize_part(part(notes), tm, PAD)
+    assert rep.offset == pytest.approx(0.030, abs=0.003) and rep.offset == rep.measured_offset
+    assert [n.tick for n in track.notes] == [round(p * RES) for p in pos]
+    assert rep.max_error < 0.025 and rep.moved_25ms == 0 and rep.moved_signed_median == 0.0
+    check(rep)
+    # notes left more than 25 ms from their source time are counted, with their median signed error
+    late = [TimedNote(at(tm, p, 40.0 if i in (5, 9, 13) else 0.0), (0,)) for i, p in enumerate(rock_pattern(8))]
+    _, rep = quantize_part(part(late), tm, PAD, offset=0.0)
+    assert rep.moved_25ms == 3 and rep.moved_signed_median == pytest.approx(-0.040, abs=1e-6)
+    # an untrusted offset (too few notes) is measured but not applied; an explicit one always is
+    _, rep = quantize_part(part(notes[:10]), tm, PAD)
+    assert rep.offset == 0.0 and rep.measured_offset != 0.0
+    _, rep = quantize_part(part(notes[:10]), tm, PAD, offset=0.012)
+    assert rep.offset == 0.012
+
+
+
+# ------------------------------------------------------------------------------------------------ grid
+
+def snapped(tm, beats_pos, jitter_ms=0.0, seed=0, **kw):
+    rng = np.random.default_rng(seed)
+    notes = [TimedNote(at(tm, p, rng.uniform(-jitter_ms, jitter_ms)), (i % 5,)) for i, p in enumerate(beats_pos)]
+    track, rep = quantize_part(part(notes), tm, PAD, offset=0.0, **kw)
+    check(rep)
+    return [n.tick for n in track.notes], rep
+
+
+def test_straight_16ths_with_jitter_never_go_triplet():
+    tm = const_map(142.0)
+    pos = [b + q / 4 for b in range(160) for q in range(4) if (b + q) % 3]
+    ticks, rep = snapped(tm, pos, jitter_ms=22)
+    assert rep.triplet_notes == 0
+    assert ticks == [round(p * RES) for p in pos]
+
+
+def test_a_triplet_run_snaps_to_twelfths():
+    tm = const_map()
+    trip = [8 + k / 3 for k in range(6)]  # two beats of 8th-note triplets
+    pos = [b + h for b in range(8) for h in (0, 0.5)] + trip + [b + h for b in range(10, 16) for h in (0, 0.5)]
+    ticks, rep = snapped(tm, pos, jitter_ms=12, seed=1)
+    assert ticks == [round(p * RES) for p in pos]
+    assert rep.triplet_notes == 4
+
+
+def test_a_lone_triplet_note_stays_straight():
+    tm = const_map()
+    pos = [0, 0.5, 1, 1 + 1 / 3, 2, 2.5, 3]
+    ticks, rep = snapped(tm, pos)
+    assert rep.triplet_notes == 0
+    assert ticks[3] == RES + RES // 4  # the nearest 1/16
+
+
+def test_a_shuffle_goes_triplet_across_plain_beats():
+    tm = const_map()
+    pos = []
+    for b in range(16):
+        pos += [b, b + 2 / 3] if b % 2 == 0 else [b]  # swung 8ths every other beat; on-beat notes between
+    ticks, rep = snapped(tm, pos, jitter_ms=10, seed=2)
+    assert ticks == [round(p * RES) for p in pos]
+    assert rep.triplet_notes == 8
+
+
+def test_a_passage_running_a_32nd_late_is_not_read_as_triplets():
+    # 8ths shifted a 1/32 late (a source on a 1/32 grid): 5/8 sits near the 2/3 slot, but the beat notes are 1/32 off
+    tm = const_map(142.0)
+    pos = [b + h + 1 / 8 for b in range(8, 24) for h in (0, 0.5)] + [b + h for b in range(24, 30) for h in (0, 0.5)]
+    _, rep = snapped(tm, pos)
+    assert rep.triplet_notes == 0
+    # the same off-beat notes with no beat notes at all: no anchor, no triplets
+    _, rep = snapped(tm, [b + 5 / 8 for b in range(8, 24)])
+    assert rep.triplet_notes == 0
+
+
+def test_a_triplet_figure_is_anchored_by_the_line_that_closes_it():
+    tm = const_map()
+    pos = [0, 0.5, 1, 1.5, 2 + 1 / 3, 2 + 2 / 3, 3, 3.5, 4]  # "(rest) trip-let" then the beat line
+    ticks, rep = snapped(tm, pos, jitter_ms=8, seed=3)
+    assert ticks == [round(p * RES) for p in pos] and rep.triplet_notes == 2
+
+
+def test_triplets_can_be_switched_off():
+    tm = const_map()
+    ticks, rep = snapped(tm, [0, 1 / 3, 2 / 3, 1, 4 / 3, 5 / 3, 2], rules=QuantizeRules(triplet=0))
+    assert rep.triplet_notes == 0 and all(t % 48 == 0 for t in ticks)
+
+
+def test_snap_grid_beats_start_half_a_16th_early():
+    tm = const_map()
+    g = SnapGrid(tm, triplet_beats=frozenset({1}))
+    assert g.beat_of(RES - 23) == 1 and g.beat_of(RES - 25) == 0
+    assert g.snap(RES + 60) == RES + 64 and g.snap(RES + 170) == 2 * RES  # triplet beat
+    assert g.snap(2 * RES + 60) == 2 * RES + 48                           # straight beat
+
+
+def test_a_note_between_two_slots_goes_to_the_coarser_line():
+    g = SnapGrid(const_map(142.0))  # 1 tick = 2.2 ms; the 8th/16th boundary moves 2.5 ms toward the 16th
+    eighth = 4 * RES + 96
+    assert g.snap(eighth + 24) == eighth and g.snap(eighth + 25) == eighth        # midpoint, and 2.2 ms past it
+    assert g.snap(eighth + 27) == eighth + 48                                     # 6.6 ms past it
+    assert g.snap(eighth - 24) == eighth and g.snap(eighth - 27) == eighth - 48
+    # coarse (an odd 1/32 of a source on a 1/32 grid): the 8th up to 1/4 slot (26 ms) off the midpoint
+    assert g.snap(eighth + 34, coarse=True) == eighth and g.snap(eighth + 34) == eighth + 48     # 22 ms past it
+    assert g.snap(eighth - 34, coarse=True) == eighth and g.snap(eighth - 34) == eighth - 48
+    assert g.snap(eighth + 40, coarse=True) == eighth + 48                                      # 35 ms past it
+    assert g.snap(4 * RES - 34, coarse=True) == 4 * RES and g.snap(4 * RES - 34) == 4 * RES - 48  # the beat line
+    t = SnapGrid(const_map(142.0), triplet_beats=frozenset({1}))  # triplet slots are equally coarse: nearer wins
+    assert t.snap(RES + 96 + 6, coarse=True) == RES + 128 and t.snap(RES + 96 - 6, coarse=True) == RES + 64
+
+
+def on_source_grid(tm, positions, ms, beats=400):
+    """A source on a 1/32 grid whose beats sit `ms` off ours: its beat times, and input times of its positions."""
+    return [at(tm, b, ms) for b in range(beats)], [at(tm, p, ms) for p in positions]
+
+
+def test_odd_32nds_only_on_a_source_on_a_32nd_grid():
+    tm = const_map(142.0)
+    pos = [b + h for b in range(40) for h in (0, 0.5) if b % 4 < 2]                    # notes on beats 0, 1, 4, 5 ...
+    free = [b + 7 / 8 for b in range(2, 40, 4)] + [b + 3 / 8 for b in range(3, 40, 4)]  # nothing on 3, 3.5, 7 ...
+    taken = [b + 1 / 8 for b in range(0, 40, 4)]  # a 1/32 after a note on the beat: a hit of its own
+    beats, times = on_source_grid(tm, pos + free + taken, -12)
+    assert list(odd_32nds(times, beats)) == [False] * len(pos) + [True] * len(free) + [False] * len(taken)
+    pos += free + taken
+    # a note a tick off its line at 480 PPQ still counts (1.25 ms at 100 BPM: the tolerance is 1/20 of a 1/32)
+    slow = const_map(100.0)
+    beats, times = on_source_grid(slow, [b + 3 / 8 for b in range(40)], 0)
+    assert odd_32nds([t + 0.00125 for t in times], beats).all()
+    # a source that times notes freely (ADTOF) is not on a 1/32 grid: about 1 in 10 lands near a line by chance
+    rng = np.random.default_rng(9)
+    beats, times = on_source_grid(tm, pos, 0)
+    assert not odd_32nds(np.array(times) + rng.uniform(-0.02, 0.02, len(times)), beats).any()
+    assert not odd_32nds(times, []).any() and odd_32nds([], beats).shape == (0,)
+
+
+def test_odd_32nds_snap_to_the_coarser_line_where_the_grids_differ():
+    # the source's grid runs 12 ms early here, which the constant offset does not remove: its 7/8s and 3/8s (hits on
+    # the beat and the 8th, rounded onto its odd 1/32s) sit 12 ms short of the midpoint between our 16th lines
+    tm = const_map(142.0)
+    pos = [b + h for b in range(0, 32) for h in (0, 0.5) if b % 4 != 3] + [b + 7 / 8 for b in range(2, 32, 4)]
+    pos += [b + 3 / 8 for b in range(3, 32, 4)]
+    beats, times = on_source_grid(tm, pos, -12)
+    hits = [TimedHit(t, 1 if p % 1 else 0) for t, p in zip(times, pos)]
+    track, rep = quantize_part(part(hits, "drums"), tm, PAD, offset=0.0, source_beats=beats)
+    assert sorted(n.tick for n in track.notes) == sorted(round(np.ceil(p * 2) / 2 * RES) for p in pos)
+    assert rep.odd_32nds == 16 and rep.triplet_notes == 0
+    check(rep)
+    plain, rep = quantize_part(part(hits, "drums"), tm, PAD, offset=0.0)  # no source beats: each takes the nearer 16th
+    assert rep.odd_32nds == 0
+    assert sum(n.tick % 96 != 0 for n in plain.notes) == 16
+    # quantize_song hands the song's beats to every part
+    out = quantize_song(TimedSong("t", {("drums", "expert"): part(hits, "drums")}, beats=beats), tm, PAD,
+                        offsets={"drums": 0.0})
+    assert out[("drums", "expert")][0] == track
+
+
+def test_a_source_beat_that_is_not_ours_moves_nothing():
+    # a half-tempo source: its beat is two of ours, so its odd 1/32s are our odd 16th lines, where the notes stay
+    tm = const_map(142.0)
+    pos = [q / 4 for q in range(160) if q % 3]
+    beats = [at(tm, 2 * b) for b in range(100)]
+    notes = [TimedNote(at(tm, p), (i % 3,)) for i, p in enumerate(pos)]
+    track, rep = quantize_part(part(notes), tm, PAD, offset=0.0, source_beats=beats)
+    assert rep.odd_32nds > 0 and [n.tick for n in track.notes] == [round(p * RES) for p in pos]
+
+
+def test_triplets_of_a_source_on_a_32nd_grid_still_go_triplet():
+    # STRUM cannot write triplets: a 1/3 and a 2/3 come out as 3/8 and 5/8, odd 1/32s that still read as triplets
+    tm = const_map(142.0)
+    trip = [8, 8 + 3 / 8, 8 + 5 / 8, 9, 9 + 3 / 8, 9 + 5 / 8]
+    pos = [b + h for b in range(8) for h in (0, 0.5)] + trip + [b + h for b in range(10, 16) for h in (0, 0.5)]
+    beats, times = on_source_grid(tm, pos, 0)
+    notes = [TimedNote(t, (i % 5,)) for i, t in enumerate(times)]
+    track, rep = quantize_part(part(notes), tm, PAD, offset=0.0, source_beats=beats)
+    assert rep.odd_32nds == 4 and rep.triplet_notes == 4
+    assert [n.tick for n in track.notes if 8 * RES <= n.tick < 10 * RES] == [8 * RES + k * 64 for k in range(6)]
+
+
+# ------------------------------------------------------------------------------------------------ chords
+
+@pytest.mark.parametrize("frets, difficulty, want", [
+    ((0, 1, 2, 3, 4), "expert", (0, 1, 3)),
+    ((0, 4), "expert", (0, 3)),
+    ((1, 2, 3), "expert", (1, 2, 3)),
+    ((0, 2, 4), "hard", (0, 3)),
+    ((0, 4), "hard", (0, 3)),
+    ((1, 4), "hard", (1, 4)),
+    ((0, 3), "medium", (0, 2)),
+    ((1, 4), "medium", (1, 3)),
+    ((3, 4), "medium", (3,)),
+    ((4,), "medium", (3,)),
+    ((0, 2), "easy", (0,)),
+    ((3,), "easy", (2,)),
+    ((OPEN, 2), "expert", (2,)),
+    ((OPEN,), "easy", (OPEN,)),
+])
+def test_limit_chord(frets, difficulty, want):
+    assert limit_chord(frets, difficulty) == want
+
+
+def test_notes_on_one_tick_merge_then_obey_the_limits():
+    tm = const_map()
+    notes = [TimedNote(at(tm, 4), (0,)), TimedNote(at(tm, 4, 15), (4,)), TimedNote(at(tm, 5), (1,)),
+             TimedNote(at(tm, 5, 8), (1,))]
+    track, rep = quantize_part(part(notes), tm, PAD, offset=0.0)
+    assert [(n.tick, n.frets) for n in track.notes] == [(4 * RES, (0, 3)), (5 * RES, (1,))]
+    assert rep.merged == 2 and rep.limited == 1
+    check(rep)
+    track, _ = quantize_part(part(notes, difficulty="medium"), tm, PAD, offset=0.0)
+    assert track.notes[0].frets == (0, 2)
+
+
+def test_onsets_a_16th_apart_never_share_a_tick():
+    tm = const_map(142.0)  # a 1/16 is 105.6 ms
+    notes = [TimedNote(at(tm, 3), (2,)), TimedNote(at(tm, 4, -50), (0,)), TimedNote(at(tm, 4, 45), (1,)),
+             TimedNote(at(tm, 5, 30), (3,)), TimedNote(at(tm, 5.25, -48), (4,)), TimedNote(at(tm, 5.25), (2,))]
+    track, rep = quantize_part(part(notes), tm, PAD, offset=0.0)
+    # 4 - 50 ms and 4 + 45 ms both snap to beat 4: the earlier fits its other slot better and moves there.
+    # 5.25 - 48 ms and 5.25 are under 3/4 of a slot apart: they merge into a chord
+    assert [(n.tick, n.frets) for n in track.notes] == [
+        (3 * RES, (2,)), (4 * RES - 48, (0,)), (4 * RES, (1,)), (5 * RES, (3,)), (5 * RES + 48, (2, 4))]
+    assert rep.separated == 1 and rep.merged == 1
+    check(rep)
+    # drums: one lane per pad; a flam on one pad merges
+    hits = [TimedHit(at(tm, 4, -50), 1), TimedHit(at(tm, 4, 45), 1), TimedHit(at(tm, 4, 45), 2, cymbal=True),
+            TimedHit(at(tm, 6), 1), TimedHit(at(tm, 6, 20), 1)]
+    track, rep = quantize_part(part(hits, "drums"), tm, PAD, offset=0.0)
+    assert [(n.tick, n.pad) for n in track.notes] == [(4 * RES - 48, 1), (4 * RES, 1), (4 * RES, 2), (6 * RES, 1)]
+    assert rep.separated == 1 and rep.merged == 1
+
+
+def test_onsets_under_the_minimum_spacing_are_dropped():
+    tm = const_map(200.0)  # a 1/16 is 75 ms: too close for strums (80 ms), fine for HOPOs (55 ms)
+    strums = [TimedNote(at(tm, q / 4), (0,)) for q in range(4)]          # same fret: strummed
+    hopos = [TimedNote(at(tm, 4 + q / 4), (q % 3,)) for q in range(4)]  # changing frets: natural HOPOs
+    track, rep = quantize_part(part(strums + hopos), tm, PAD, offset=0.0)
+    ticks = [n.tick for n in track.notes]
+    assert ticks == [0, 96, 4 * RES, 4 * RES + 48, 4 * RES + 96, 4 * RES + 144]
+    assert rep.dropped == 2
+    check(rep)
+
+
+# ------------------------------------------------------------------------------------------------ sustains
+
+def gaps_ok(track, tm, difficulty="expert"):
+    """No sustain ends within max(85 ms, a 1/16) of the next onset (scan-chart's badSustainGap uses 40 ms)."""
+    onsets = sorted({n.tick for n in track.notes})
+    for n in track.notes:
+        if n.length:
+            nxt = next((t for t in onsets if t > n.tick), None)
+            if nxt is not None:
+                end = n.tick + n.length
+                assert nxt - end >= RES // 4 and tm.tick_to_sec(nxt) - tm.tick_to_sec(end) >= 0.085 - 1e-9
+
+
+def test_sustains_snap_trim_and_drop():
+    tm = const_map()
+    notes = [
+        TimedNote(at(tm, 0), (0,), end=at(tm, 1.5, 12)),    # ends on its 1/16 line
+        TimedNote(at(tm, 2), (1,), end=at(tm, 3.95)),       # runs into the next note: stops a 1/16 before it
+        TimedNote(at(tm, 4), (2,), end=at(tm, 4.5)),        # 0.5 beat (250 ms): under 0.75 beat, dropped
+        TimedNote(at(tm, 6), (3,), end=at(tm, 6.5, -40)),   # babySustain-sized: dropped
+        TimedNote(at(tm, 8), (4,), end=at(tm, 9)),
+        TimedNote(at(tm, 9, 5), (0,)),                      # right at the previous sustain's end
+    ]
+    track, rep = quantize_part(part(notes), tm, PAD, offset=0.0)
+    assert [n.length for n in track.notes] == [288, 336, 0, 0, 144, 0]
+    assert rep.sustains_trimmed == 2 and rep.sustains_dropped == 2
+    gaps_ok(track, tm)
+    # Medium leaves a 1/8 and needs a whole beat
+    track, _ = quantize_part(part(notes, difficulty="medium"), tm, PAD, offset=0.0)
+    assert [n.length for n in track.notes] == [288, 288, 0, 0, 0, 0]
+
+
+def test_short_sustains_at_a_fast_tempo_need_200_ms():
+    tm = const_map(240.0)  # 0.75 beat = 188 ms: the 200 ms floor decides
+    notes = [TimedNote(at(tm, 0), (0,), end=at(tm, 0.75)), TimedNote(at(tm, 2), (1,), end=at(tm, 3))]
+    track, rep = quantize_part(part(notes), tm, PAD, offset=0.0)
+    assert [n.length for n in track.notes] == [0, RES]
+    assert rep.sustains_dropped == 1
+
+
+# ------------------------------------------------------------------------------------------------ HOPOs
+
+def test_the_source_hopo_states_are_reproduced():
+    tm = const_map()
+    seq = [  # (beat, frets, hopo as the source plays it, tap)
+        (0, (0,), False, False),
+        (0.25, (1,), True, False),     # a 1/16 fret change: natural HOPO here too
+        (0.5, (2,), False, False),     # natural HOPO on our grid, the source strums it: flip
+        (1.0, (3,), True, False),      # an 8th: natural strum, the source has a HOPO: flip
+        (1.25, (3,), False, False),    # same fret: strum either way
+        (1.5, (0, 1), True, False),    # forced HOPO chord: flip
+        (2.0, (2,), None, False),      # unknown: natural (strum)
+        (2.25, (OPEN,), None, False),  # an open note after a fret: natural HOPO
+        (2.5, (4,), False, True),      # a tap stays a tap, no flip
+        (3.0, (1,), False, False),
+    ]
+    notes = [TimedNote(at(tm, b, 6), f, hopo=h, tap=t) for b, f, h, t in seq]
+    track, rep = quantize_part(part(notes), tm, PAD, offset=0.0)
+    want = ["tap" if t else "hopo" if h else "strum" for _, _, h, t in seq]
+    want[6], want[7] = "strum", "hopo"
+    assert play_states(track.notes, RES) == want
+    assert [n.flip for n in track.notes] == [False, False, True, True, False, True, False, False, False, False]
+    assert rep.flips == 3
+    natural = quantize_part(part(notes), tm, PAD, offset=0.0, rules=QuantizeRules(source_hopo=False, taps=False))
+    assert natural[1].flips == 0 and not any(n.tap for n in natural[0].notes)
+
+
+# ------------------------------------------------------------------------------------------------ drums
+
+def test_drum_lanes():
+    tm = const_map()
+    hits = [
+        TimedHit(at(tm, 0), 0), TimedHit(at(tm, 0, 10), 0, double_kick=True),  # 1x and 2x kick: one 1x kick
+        TimedHit(at(tm, 0), 2, cymbal=True), TimedHit(at(tm, 0, -12), 2),      # hi-hat and yellow tom: tom moves
+        TimedHit(at(tm, 1), 1, accent=True), TimedHit(at(tm, 1, 3), 1),        # same pad twice: one accented snare
+        TimedHit(at(tm, 2), 1), TimedHit(at(tm, 2, 4), 3, cymbal=True),        # four hands: two stay
+        TimedHit(at(tm, 2, -20), 4, cymbal=True), TimedHit(at(tm, 2, 15), 3),
+        TimedHit(at(tm, 3), 0, double_kick=True), TimedHit(at(tm, 3), 1, ghost=True),
+    ]
+    track, rep = quantize_part(part(hits, "drums"), tm, PAD, offset=0.0)
+    got = [(n.tick, n.pad, n.cymbal, n.double_kick, n.accent, n.ghost) for n in track.notes]
+    assert got == [
+        (0, 0, False, False, False, False), (0, 2, True, False, False, False), (0, 3, False, False, False, False),
+        (RES, 1, False, False, True, False),
+        (2 * RES, 1, False, False, False, False), (2 * RES, 3, True, False, False, False),
+        (3 * RES, 0, False, True, False, False), (3 * RES, 1, False, False, False, True),
+    ]
+    assert rep.merged == 2 and rep.limited == 1 and rep.dropped == 2
+    check(rep)
+    # below Expert the 2x kick goes; on Easy a kick under two hands goes too
+    hard, rep = quantize_part(part(hits, "drums", "hard"), tm, PAD, offset=0.0)
+    assert not any(n.double_kick for n in hard.notes) and rep.dropped == 4  # both 2x kicks and two hands
+    easy, _ = quantize_part(part(hits, "drums", "easy"), tm, PAD, offset=0.0)
+    assert [(n.tick, n.pad) for n in easy.notes if n.tick == 0] == [(0, 2), (0, 3)]
+
+
+# ------------------------------------------------------------------------------------------------ spans
+
+def covered(phrase_tick, phrase_len, ticks):
+    """Notes inside a phrase as scan-chart counts them: tick <= t < tick + length."""
+    return [t for t in ticks if phrase_tick <= t < phrase_tick + max(phrase_len, 1)]
+
+
+def test_spans_cover_the_same_notes():
+    tm = const_map()
+    rng = np.random.default_rng(6)
+    pos = [b + h for b in range(32) for h in (0, 0.5)]
+    dev = {p: rng.uniform(-24, 24) for p in pos}
+    notes = [TimedNote(at(tm, p, dev[p]), (int(p) % 4,)) for p in pos]
+    t = {p: n.time for p, n in zip(pos, notes)}
+    sp = [TimedSpan(t[4], t[7.5] + 0.001),            # starts on its first note, ends just after its last
+          TimedSpan(t[12] - 0.2, t[16]),              # wide start; ends at the next note (half-open)
+          TimedSpan(t[20.5] + 0.01, t[21] - 0.01)]    # holds no note: dropped
+    solos = [TimedSpan(t[24], t[28] + 0.001)]         # 24 .. 28 inclusive
+    track, rep = quantize_part(part(notes, star_power=sp, solos=solos), tm, PAD, offset=0.0)
+    ticks = [n.tick for n in track.notes]
+    phrases = [p for p in track.phrases if p.kind == STAR_POWER]
+    assert len(phrases) == 2 and rep.spans_dropped == 1
+    assert covered(phrases[0].tick, phrases[0].length, ticks) == [round(p * RES) for p in pos if 4 <= p <= 7.5]
+    assert covered(phrases[1].tick, phrases[1].length, ticks) == [round(p * RES) for p in pos if 12 <= p < 16]
+    (a, b), = track.solos
+    assert [k for k in ticks if a <= k <= b] == [round(p * RES) for p in pos if 24 <= p <= 28]
+
+
+def test_drum_fills_and_star_power():
+    tm = const_map()
+    hits = [TimedHit(at(tm, b / 2, 8), 1 if b % 2 else 0) for b in range(64)]
+    fill = TimedSpan(at(tm, 12), at(tm, 16, 30))  # ends on the beat-16 kick, which sits 8 ms late
+    sp = TimedSpan(at(tm, 20), at(tm, 24))
+    track, rep = quantize_part(part(hits, "drums", star_power=[sp], activation=[fill]), tm, PAD, offset=0.0)
+    ticks = sorted({n.tick for n in track.notes})
+    (act,) = [p for p in track.phrases if p.kind == DRUM_ACTIVATION]
+    (star,) = [p for p in track.phrases if p.kind == STAR_POWER]
+    assert covered(act.tick, act.length, ticks) == [k * 96 for k in range(24, 33)]
+    assert covered(star.tick, star.length, ticks) == [k * 96 for k in range(40, 48)]
+
+
+# ------------------------------------------------------------------------------------------------ song
+
+def test_quantize_song_uses_one_offset_per_instrument():
+    tm = const_map()
+    rng = np.random.default_rng(7)
+    pos = rock_pattern(200)
+    expert = [TimedNote(at(tm, p, 28 + rng.normal(0, 6)), (int(p) % 5,)) for p in pos]
+    easy = [TimedNote(at(tm, p, 28 + rng.normal(0, 6)), (0,)) for p in pos[::8]]
+    drums = [TimedHit(at(tm, p, -12 + rng.normal(0, 4)), 0) for p in pos]
+    song = TimedSong("test", {("guitar", "expert"): part(expert), ("guitar", "easy"): part(easy, difficulty="easy"),
+                              ("drums", "expert"): part(drums, "drums")})
+    out = quantize_song(song, tm, PAD)
+    assert list(out) == [("guitar", "expert"), ("guitar", "easy"), ("drums", "expert")]
+    g, e, d = (out[k][1] for k in out)
+    assert g.offset == pytest.approx(0.028, abs=0.002) and e.offset == g.offset
+    assert d.offset == pytest.approx(-0.012, abs=0.002)
+    assert quantize_song(song, tm, PAD, offsets={"guitar": 0.0})[("guitar", "easy")][1].offset == 0.0
+    # deterministic, and the tracks write as a .chart
+    again = quantize_song(song, tm, PAD)
+    assert all(again[k][0] == out[k][0] for k in out)
+    chart = Chart(SongInfo("t", "a"), tm, [], [t for t, _ in out.values()])
+    assert "[EasySingle]" in write_chart(chart)
+
+
+def test_an_empty_part_and_a_note_before_tick_zero():
+    tm = const_map()
+    track, rep = quantize_part(part([], star_power=[TimedSpan(1.0, 2.0)]), tm, PAD)
+    assert track.notes == [] and track.phrases == [] and rep.spans_dropped == 1
+    track, rep = quantize_part(part([TimedNote(-PAD - 0.2, (0,)), TimedNote(at(tm, 4), (1,))]), tm, PAD, offset=0.0)
+    assert [n.tick for n in track.notes] == [4 * RES] and rep.dropped == 1
+    check(rep)

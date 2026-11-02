@@ -22,6 +22,8 @@ class TimedNote:
     hopo: bool | None = None       # how the source plays it (natural rules plus forcing): True = HOPO, False = strum;
                                    # None = unknown, so the natural rules on our grid decide
     tap: bool = False
+    hopo_forced: bool = False      # the source forced `hopo` against its own natural rule (.chart N 5, .mid forced
+                                   # HOPO/strum); False where its natural rule gave it, which its tempo map decides
 
 
 @dataclass(frozen=True)
@@ -57,7 +59,8 @@ class TimedSong:
     source: str                                        # e.g. "autochart:/path/notes.chart"
     parts: dict[tuple[str, str], TimedPart] = field(default_factory=dict)   # key: (instrument, difficulty)
     sections: list[tuple[float, str]] = field(default_factory=list)          # (seconds, name)
-    beats: list[float] = field(default_factory=list)   # the source tempo map's beat times, for diagnostics only
+    beats: list[float] = field(default_factory=list)   # the source tempo map's beat times; quantize.odd_32nds reads
+                                                       # them (a 1/32-grid source's odd 1/32s)
 
     def shifted(self, seconds: float) -> "TimedSong":
         """The same song with every time moved by `seconds` (e.g. +0.0697 for a tool that trimmed the audio)."""
@@ -67,7 +70,7 @@ class TimedSong:
         def note(n):
             if isinstance(n, TimedHit):
                 return TimedHit(n.time + seconds, n.pad, n.cymbal, n.double_kick, n.accent, n.ghost)
-            return TimedNote(n.time + seconds, n.frets, mv(n.end), n.hopo, n.tap)
+            return TimedNote(n.time + seconds, n.frets, mv(n.end), n.hopo, n.tap, n.hopo_forced)
 
         def spans(s):
             return [TimedSpan(x.start + seconds, x.end + seconds) for x in s]

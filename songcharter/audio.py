@@ -36,11 +36,22 @@ def ffmpeg_exe() -> str:
         raise RuntimeError("ffmpeg not found: install it or `pip install imageio-ffmpeg`") from e
 
 
+def ffmpeg_error(e: subprocess.CalledProcessError) -> str:
+    """The last line ffmpeg printed before it failed."""
+    text = e.stderr.decode("utf-8", "replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return lines[-1] if lines else f"exit status {e.returncode}"
+
+
 def decode(path, sample_rate: int = SAMPLE_RATE, channels: int = 2) -> np.ndarray:
-    """Gapless float32 decode of the first audio stream, shape (channels, samples)."""
+    """Gapless float32 decode of the first audio stream, shape (channels, samples). A file ffmpeg cannot read is a
+    ValueError."""
     cmd = [ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", str(path), "-map", "0:a:0",
            "-ac", str(channels), "-ar", str(sample_rate), "-f", "f32le", "-c:a", "pcm_f32le", "pipe:1"]
-    raw = subprocess.run(cmd, check=True, capture_output=True).stdout
+    try:
+        raw = subprocess.run(cmd, check=True, capture_output=True).stdout
+    except subprocess.CalledProcessError as e:
+        raise ValueError(f"ffmpeg could not read {path}: {ffmpeg_error(e)}") from e
     y = np.frombuffer(raw, dtype="<f4")
     if y.size == 0:
         raise ValueError(f"no audio decoded from {path}")
@@ -52,12 +63,15 @@ def pad_front(audio: np.ndarray, samples: int) -> np.ndarray:
 
 
 def encode_ogg(audio: np.ndarray, path, sample_rate: int = SAMPLE_RATE, quality: float = 7.0) -> None:
-    """Ogg Vorbis (libvorbis, VBR quality 0-10; 7 is about 224 kbps stereo)."""
+    """Ogg Vorbis (libvorbis, VBR quality 0-10; 7 is about 224 kbps stereo). ffmpeg failing is a RuntimeError."""
     ch = audio.shape[0]
     cmd = [ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "f32le", "-ar", str(sample_rate),
            "-ac", str(ch), "-i", "pipe:0", "-c:a", "libvorbis", "-q:a", str(quality), str(path)]
     data = np.ascontiguousarray(np.clip(audio, -1, 1).T.astype("<f4")).tobytes()
-    subprocess.run(cmd, input=data, check=True, capture_output=True)
+    try:
+        subprocess.run(cmd, input=data, check=True, capture_output=True)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"ffmpeg could not write {path}: {ffmpeg_error(e)}") from e
 
 
 @dataclass
