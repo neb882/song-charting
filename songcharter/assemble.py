@@ -426,12 +426,18 @@ def check_inputs(cfg: AssembleConfig) -> None:
     if cfg.sections is not None and not cfg.sections.startswith("from:"):
         _read_sections(cfg.sections)
     for folder in (cfg.output, failed_folder(cfg.output)):
-        if folder.exists() and not folder.is_dir():
-            raise ValueError(f"the output {folder} is a file, not a folder")
-        other = _foreign(folder)
-        if other:
-            raise ValueError(f"{folder} holds what a build does not write ({', '.join(other[:5])}"
-                             f"{', ...' if len(other) > 5 else ''}): give a new or empty folder as the output")
+        check_output(folder)
+
+
+def check_output(folder: Path) -> None:
+    """Raise when `folder` (an output, or its .failed) is a file or holds anything a build does not write."""
+    folder = Path(folder)
+    if folder.exists() and not folder.is_dir():
+        raise ValueError(f"the output {folder} is a file, not a folder")
+    other = _foreign(folder)
+    if other:
+        raise ValueError(f"{folder} holds what a build does not write ({', '.join(other[:5])}"
+                         f"{', ...' if len(other) > 5 else ''}): give a new or empty folder as the output")
 
 
 # ------------------------------------------------------------------------------------------------ result

@@ -1,12 +1,22 @@
-"""The command line: `songcharter assemble <config.json> [--out DIR]`.
+"""The command line:
 
-Exit status:
+    songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums] [--takes N]
+                      [--device auto|cpu|cuda] [--threads N] [--title ...] [--artist ...] [--album ...] [--year ...]
+                      [--genre ...]
+    songcharter assemble <config.json> [--out DIR]
+
+`chart` runs the whole pipeline on one song file (pipeline.py): decode, separation, the engines, then assemble's
+build and gate; progress goes to stderr, a line per stage with its time, and the summary to stdout. `assemble`
+builds a song folder from a config that names existing charts.
+
+Exit status (both commands):
   0  the song folder passed the gate and is in the output folder;
   1  the build failed the gate: it is in <output>.failed for inspection (see its report.json), and the output folder
      keeps what it held;
-  2  the build could not run: the config, an input or the environment is bad, or song.ogg came out of sync (nothing
-     is written);
-  3  an internal error, a bug (the traceback is printed).
+  2  the build could not run: the config, an input or the environment is bad (a missing component is named with
+     its fix), or song.ogg came out of sync (nothing is written);
+  3  an internal error, a bug (the traceback is printed);
+  130  interrupted (Ctrl+C): the output folder keeps what it held.
 """
 from __future__ import annotations
 
@@ -66,6 +76,10 @@ def _summary(result) -> str:
     return "\n".join(lines)
 
 
+def _instruments(text: str) -> tuple[str, ...]:
+    return tuple(x.strip().lower() for x in text.split(",") if x.strip())
+
+
 def main(argv: list[str] | None = None) -> int:
     # a song name or path the console's code page cannot show (cp1252 when Windows redirects stdout) must not turn
     # a finished build into a crash; stderr already escapes such characters
@@ -76,6 +90,29 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="songcharter", description="Make Clone Hero charts from audio.")
     parser.add_argument("--version", action="version", version=f"songcharter {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="command")
+    c = sub.add_parser("chart", help="chart a song file: separation, the engines, our scaffolding and the gate",
+                       description="Chart one song file (MP3 or anything ffmpeg reads) into a Clone Hero song "
+                                   "folder: one decode, one stem separation, the drums, bass, guitar and "
+                                   "sections engines, then our grid, tiers, star power, fills and sections, and "
+                                   "the gate. Every stage caches its work in the work folder, so a re-run is "
+                                   "quick. Writes notes.chart, song.ini, song.ogg and report.json into the output "
+                                   "folder (into <output>.failed when the gate fails).")
+    c.add_argument("song", type=Path, help="the song file")
+    c.add_argument("--out", type=Path, required=True, help="the song folder to write")
+    c.add_argument("--work", type=Path, help="the work folder for the decode, stems and engine outputs "
+                                             "(default: <out>.work beside the output)")
+    c.add_argument("--instruments", type=_instruments, default=None, metavar="LIST",
+                   help="comma-separated parts to chart (default: guitar,bass,drums)")
+    c.add_argument("--takes", type=int, default=1, metavar="N",
+                   help="guitar takes, spliced by agreement: 1 (default), or 3 or more (each about one more "
+                        "autochart run)")
+    c.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto",
+                   help="where the models run (default: auto, CUDA when available)")
+    c.add_argument("--threads", type=int, metavar="N", help="CPU threads for the models (default: theirs)")
+    for flag, key in (("--title", "name"), ("--artist", "artist"), ("--album", "album"), ("--year", "year"),
+                      ("--genre", "genre")):
+        c.add_argument(flag, dest=f"meta_{key}", metavar="TEXT",
+                       help=f"song.ini's {key} (default: the file's tag, else a placeholder)")
     p = sub.add_parser("assemble", help="build a song folder from a config (our grid, tool parts, our scaffolding)",
                        description="Build a Clone Hero song folder from a JSON config: our beat grid and tempo map, "
                                    "each part taken from an existing chart and re-timed onto it, our difficulties, "
@@ -88,18 +125,32 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 2
-    from .assemble import assemble, load_config  # numpy and the pipeline load only when needed
     try:
-        cfg = load_config(args.config, args.out.resolve() if args.out else None)
-        result = assemble(cfg)
+        if args.command == "chart":
+            from . import pipeline  # numpy and the pipeline load only when needed
+            meta = {k[5:]: v for k, v in vars(args).items() if k.startswith("meta_") and v is not None}
+            instruments = pipeline.INSTRUMENTS if args.instruments is None else args.instruments
+            options = pipeline.Options(instruments=instruments, takes=args.takes, device=args.device,
+                                       threads=args.threads, work=args.work, metadata=meta)
+            done = pipeline.chart(args.song, args.out, options)
+            result, extra = done.assembled, pipeline.summary(done)
+        else:
+            from .assemble import assemble, load_config
+            cfg = load_config(args.config, args.out.resolve() if args.out else None)
+            result, extra = assemble(cfg), None
     except (ValueError, OSError, RuntimeError) as e:  # bad input, a missing tool, song.ogg out of sync
         print(f"songcharter: error: {e}", file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        print("songcharter: interrupted", file=sys.stderr)
+        return 130
     except Exception:  # noqa: BLE001  a bug: not to be mistaken for a bad input or a failed gate
         traceback.print_exc()
         print("songcharter: internal error (a bug, please report it with the traceback above)", file=sys.stderr)
         return 3
     print(_summary(result))
+    if extra:
+        print(extra)
     return 0 if result.ok else 1
 
 
