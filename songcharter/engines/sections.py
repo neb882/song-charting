@@ -319,7 +319,7 @@ def _allin1(mix, stems, out: Path, s: Settings, run, download) -> SectionsResult
         return hit
     try:
         checkpoints = checkpoint_paths(model, download)
-    except (OSError, RuntimeError, ValueError) as e:  # a failed download, or a file that is not the pinned one
+    except (ImportError, OSError, RuntimeError, ValueError) as e:  # no hub client, no download, not the pinned file
         raise Allin1Error(f"allin1 weights for {model}: {type(e).__name__}: {e}") from e
     threads = s.threads or max(1, (os.cpu_count() or 2) - 1)
     t0 = time.perf_counter()  # reported only

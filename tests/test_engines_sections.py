@@ -179,6 +179,13 @@ def test_auto_falls_back_to_librosa_and_says_why(tmp_path, weights, fallback, mo
                       download=weights)
 
 
+def test_no_huggingface_hub_falls_back_too(tmp_path, fallback, monkeypatch):
+    mix, stems = song(2.0)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", None)  # not installed: importing it raises ImportError
+    r = find_sections(mix, stems, tmp_path / "out", Settings(python="py"), run=FakeAllin1())
+    assert r.backend == "librosa" and "allin1 weights for harmonix-fold0: ModuleNotFoundError" in fallback[0][0]
+
+
 def test_the_python_comes_from_the_setting_the_environment_or_this_python(monkeypatch):
     monkeypatch.setenv(S.ENV_PYTHON, "/from/env/python")
     assert S.allin1_python(Settings()) == "/from/env/python"
