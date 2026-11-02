@@ -843,6 +843,12 @@ def test_config_parsing_and_errors(tmp_path):
         ({"parts": [{**CONFIG["parts"][1], "takes": "run2.chart"}]}, r"parts\[0\].takes must be a list"),
         ({"parts": [{**CONFIG["parts"][0], "takes": ["a.chart", "b.chart"]}]}, "takes splice Expert only"),
         ({"parts": [{**CONFIG["parts"][1], "takes": ["a.chart"]}]}, "at least two more runs"),
+        ({"parts": [{**CONFIG["parts"][1], "takes": ["r2/notes.chart", "./r2/notes.chart"]}]}, "listed twice"),
+        ({"parts": [{**CONFIG["parts"][1], "takes": ["r2", "strum"]}]}, "strum is listed twice"),
+        ({"parts": [{**CONFIG["parts"][1], "takes": ["r2/notes.chart", "r3"]}], "output": "r2"},
+         "holds part bass's take: it would be overwritten"),
+        ({"parts": [{**CONFIG["parts"][1], "takes": ["r2/notes.chart", "r3"]}], "output": "r3"},
+         "holds part bass's take: it would be overwritten"),
     ]
     for change, message in bad:
         with pytest.raises(ValueError, match=message):
@@ -904,31 +910,79 @@ def test_cli_help_and_errors(tmp_path, capsys):
     assert "no parts" in capsys.readouterr().err
 
 
-def test_takes_splice_the_expert_part(built):
-    """Three takes of the tool's guitar: the source lost every other onset in the first verse section; the other
-    two are whole. The verse comes from a take, the rest from the source, so Expert is the whole tool chart."""
-    root, _, _ = built
+VERSE_CHORD = round((beat(32) + LATE) * 480)  # the tool chart's tick of the sustained chord (lanes 0 and 1) on the
+                                              # first verse section's downbeat
+
+
+def _runs(root):
+    """Three runs of the tool's guitar, each in its own folder: "lossy" lost every other onset in the first verse
+    section and plays the chord on its downbeat on lanes 1 and 2; run2 and run3 are whole but for one onset each
+    outside that section. Returns every Expert tick and the ones lossy lost."""
     text = (root / "tool" / "notes.chart").read_text(encoding="utf-8")
     head, rest = text.split("[ExpertSingle]", 1)
     body, tail = rest.split("}", 1)
-    ticks = sorted({int(line.split("=")[0]) for line in body.splitlines() if " = N " in line})
+    lines = body.splitlines()
+    ticks = sorted({int(line.split("=")[0]) for line in lines if " = N " in line})
     gone = set(t for t in ticks if 17.0 * 480 <= t < 35.0 * 480)  # 60 BPM at 480: tick = seconds x 480
     gone = set(sorted(gone)[1::2])
-    kept = [line for line in body.splitlines() if " = " not in line or int(line.split("=")[0]) not in gone]
-    (root / "lossy").mkdir(exist_ok=True)
-    (root / "lossy" / "notes.chart").write_text(head + "[ExpertSingle]" + "\n".join(kept) + "\n}" + tail,
-                                                encoding="utf-8", newline="")
-    cfg = {**CONFIG, "parts": [{"instrument": "guitar", "source": "lossy/notes.chart", "take_difficulties": "expert",
-                                "takes": ["tool/notes.chart", "tool/notes.chart"]}] + CONFIG["parts"][1:],
-           "output": "out/takes"}
-    (root / "takes.json").write_text(json.dumps(cfg), encoding="utf-8")
-    result = assemble(root / "takes.json")
+    later = [t for t in ticks if t >= 40.0 * 480]
+    lanes = {f"  {VERSE_CHORD} = N 0 ": f"  {VERSE_CHORD} = N 2 "}
+    for name, drop, change in (("lossy", gone, lanes), ("run2", {later[3]}, {}), ("run3", {later[40]}, {})):
+        kept = [next((line.replace(a, b) for a, b in change.items() if line.startswith(a)), line) for line in lines
+                if " = " not in line or int(line.split("=")[0]) not in drop]
+        (root / name).mkdir(exist_ok=True)
+        (root / name / "notes.chart").write_text(head + "[ExpertSingle]" + "\n".join(kept) + "\n}" + tail,
+                                                 encoding="utf-8", newline="")
+    return ticks, gone
+
+
+def _build_takes(root, output, time_shift=0.0):
+    cfg = {**CONFIG, "parts": [{"instrument": "guitar", "source": "lossy/notes.chart", "time_shift": time_shift,
+                                "takes": ["run2/notes.chart", "run3"]}] + CONFIG["parts"][1:], "output": output}
+    result = assemble(parse_config(cfg, root))
     assert result.ok, [i for i in result.issues if i.error]
     info = result.report["parts"]["guitar"]["takes"]
-    assert info["sources"][0].endswith("notes.chart") and len(info["sources"]) == 3
-    picks = [(w["section"], w["pick"]) for w in info["windows"]]
     changed = [w for w in info["windows"] if w["pick"] != 0]
-    assert len(changed) == 1 and abs(changed[0]["start"] - (16.5 - 0.05)) < 0.01, picks
-    assert info["onsets"] == {"source": len(ticks) - len(gone), "spliced": len(ticks)}
+    assert len(changed) == 1 and abs(changed[0]["start"] - (16.5 - 0.05)) < 0.01, info["windows"]  # input seconds
+    assert info["picked"] == [len(info["windows"]) - 1, 1, 0]
     expert = next(t for t in result.chart.tracks if t.instrument == "Single" and t.difficulty == "Expert")
+    chord = [n for n in expert.notes if n.tick == result.chart.sections[1][0]]  # the verse's downbeat
+    assert len(chord) == 1 and chord[0].frets == (0, 1) and chord[0].length > 0  # run2's, with its sustain
+    return result, info, expert
+
+
+def test_takes_splice_the_expert_part(built):
+    """Three takes of the tool's guitar: the source lost every other onset in the first verse section; the other
+    two are whole there. The verse comes from a take, the rest from the source, so Expert is the whole tool chart."""
+    root, _, _ = built
+    ticks, gone = _runs(root)
+    result, info, expert = _build_takes(root, "out/takes")
+    assert info["sources"][0].endswith("notes.chart") and len(info["sources"]) == 3
+    assert info["onsets"] == {"source": len(ticks) - len(gone), "spliced": len(ticks)}
     assert len({n.tick for n in expert.notes}) == len(ticks)
+
+
+def test_takes_are_cut_on_their_own_clock(built):
+    """Takes running 55 ms early (a trusted offset): the windows move with them, so the chord just ahead of the
+    verse's downbeat still comes from the verse's take, with its sustain."""
+    root, built_result, _ = built
+    _runs(root)
+    early = -0.055 - built_result.report["parts"]["guitar"]["offset"]["applied"]  # the tool runs late on its own
+    result, _, _ = _build_takes(root, "out/takes-early", time_shift=early)
+    offset = result.report["parts"]["guitar"]["offset"]
+    assert offset["trusted"] and abs(offset["applied"] + 0.055) < 0.002
+
+
+def test_takes_must_be_other_runs(built):
+    """A take with the same Expert notes as another run (the source given as a folder, a copy) always agrees with
+    it and would outvote the rest: refused before any audio work."""
+    root, _, _ = built
+    _runs(root)
+    (root / "copy").mkdir(exist_ok=True)
+    shutil.copy(root / "run2" / "notes.chart", root / "copy" / "notes.chart")
+    for takes, same in ((["lossy", "run2"], "lossy"), (["run2/notes.chart", "copy/notes.chart"], "run2")):
+        cfg = {**CONFIG, "parts": [{"instrument": "guitar", "source": "lossy/notes.chart", "takes": takes}],
+               "output": "out/x"}
+        with pytest.raises(ValueError, match=f"{same}.* have the same Expert notes"):
+            assemble(parse_config(cfg, root))
+    assert not (root / "out" / "x").exists()

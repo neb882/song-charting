@@ -136,7 +136,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | `takes.py` | `splice`: a part's Expert from several runs of its source, chosen per section by the takes' agreement (§2.7, Several takes); assemble's part key `takes`. |
 | `assemble.py` | One JSON config to a gated song folder: decode, stem-lag check, grid with a second stem (§2.3), parts imported, offset-corrected and quantized, edges trimmed (§2.8), sections, phrases, reductions, ratings (§2.12), `build_song_folder` into a staging folder, then the gate with scan-chart 8.0.1 itself (§2.13) and `report.json`. A build the gate fails goes to `<output>.failed`. |
 | `cli.py` | `songcharter assemble <config.json> [--out DIR]`. Exit 0: the gate passed; 1: it failed (the build is in `<output>.failed`); 2: a bad config, input or tool, or song.ogg out of sync (nothing written); 3: a bug (traceback printed). M3's `songcharter chart <file>` is not written. |
-| tests | 302 tests: tempo, chart, package, beatgrid, importers, quantize, reduce, starpower, sections, takes, assemble and the CLI; 4 skip when `tools/scan-chart` is absent. |
+| tests | 308 tests: tempo, chart, package, beatgrid, importers, quantize, reduce, starpower, sections, takes, assemble and the CLI; 4 skip when `tools/scan-chart` is absent. |
 
 **Design and code, decided once.** Each difference is decided here; code changes are §5.6 tasks.
 
@@ -533,6 +533,14 @@ part's `takes` key in the assemble config [here, takes].
   more onsets in the fade than the script did (1204 against 1201; reported as onsets in silence). On the test song
   it reproduces all 26 of the script's picks. report.json lists every window's scores and pick under
   `parts.<name>.takes`.
+- **Rules added by a review of the code** (each with a test):
+  - takes that all leave a window empty agree fully, so two silent runs outvote one that writes notes there;
+  - a sustain is cut 60 ms before the next window whose notes come from another take; a window that take leaves
+    empty (a break no take plays in) does not count, so a chord can ring over it;
+  - the offset is measured on the source's Expert before splicing, and the windows are cut on the takes' clock
+    (section start plus that offset);
+  - a run listed twice, a take with the same Expert notes as another run, and an output folder that is one of the
+    takes are refused.
 - **Plan:** for Goal 2, run autochart several times when time allows (about 3.2 min per seed on the 5070).
 
 #### Goal 2: the engine route is open

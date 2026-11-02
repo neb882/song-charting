@@ -4,7 +4,8 @@ own difficulties, star power, fills and sections, and a Clone Hero folder that i
 `assemble(config)` runs the whole build from one config (a JSON file for `songcharter assemble`):
 
   0. **Inputs.** `check_inputs`: every file the config names exists, the sections file reads, the output folder holds
-     only files this tool writes; then every part's source is read (step 3's import), all before any audio work.
+     only files this tool writes; then every part's source and takes are read (step 3's import), all before any
+     audio work.
   1. **Audio.** One gapless decode of the input (audio.decode), the time reference for everything. Stems (WAV or
      FLAC at 44.1 kHz, separated from that decode) are read as they are and checked against it: the median lag over
      windows that correlate (>= 0.15) must be within 2 samples; stems quieter than -30 dB against the mix are not
@@ -16,23 +17,25 @@ own difficulties, star power, fills and sections, and a Clone Hero folder that i
      or more beats that neither the drums nor the second stem time, are warned about. plan_lead_in puts silence in
      front so tick 0 is a measure line, and TempoMap.from_beats builds the map (3 ms). From here every input second
      t sits at t + pad_seconds on the map, and every stage is given the pad: the notes, the sections, the solo test
-     and the audio all move by it together.
+     and the audio all move by it together. Then the sections (allin1's segments, or an imported chart's; DESIGN.md
+     2.5: under 4 measures merged, an allin1 segment over 16 split into parts of about 8), built here because a
+     part's takes are spliced by them.
   3. **Parts.** Each part is read with importers.read_song (a .chart, a .mid or a song folder, with its song.ini)
-     plus its `time_shift`. A part with `takes` (other runs of the same tool on the same audio) gets its Expert
-     spliced from all of them, section by section, by the takes' agreement (takes.splice, DESIGN.md 2.7; the
-     sections are built first for this). Its constant offset against our grid is measured on its Expert part
-     (quantize.estimate_offset) and removed when trusted ("auto"), or set by hand; then quantize_part puts every
-     taken difficulty on our grid. HOPOs: by default only the states the source forced are kept and the rest follow
-     the natural rule on our grid (`HOPO_RULES`). The tools' own star power, fills and solos are dropped: ours
-     replace them. Onsets before the part's own stem first plays or after it last plays are removed from every
-     taken level (`active_span`, DESIGN.md 2.8: no notes after the stem stops; a part's `trim_silence` turns it
-     off); an onset elsewhere where the stem is silent is only reported.
-  4. **Chart.** Sections (allin1's segments, or an imported chart's; DESIGN.md 2.5: under 4 measures merged, an
-     allin1 segment over 16 split into parts of about 8), then star power, fills and (opt-in) solos on
-     Expert (starpower.place_phrases), then Hard, Medium and Easy, each reduced from the level above (reduce.py; with
-     take_difficulties "all" the source's own levels, any missing one reduced from the level above), then every
-     level's phrases fitted to its own notes (starpower.fit_chart). Easy drums get the drum stem's loudness per
-     section. reduce.check_reductions and starpower.check_phrases run per instrument.
+     plus its `time_shift`. Its constant offset against our grid is measured on its Expert part
+     (quantize.estimate_offset) and removed when trusted ("auto"), or set by hand. A part with `takes` (other runs
+     of the same tool on the same audio; a take with the same Expert notes as another run is refused) gets its
+     Expert spliced from all of them, section by section, by the takes' agreement (takes.splice, DESIGN.md 2.7),
+     on windows at the section starts moved by that offset: the takes share the source's clock. Then quantize_part
+     puts every taken difficulty on our grid. HOPOs: by default only the states the source forced are kept and the
+     rest follow the natural rule on our grid (`HOPO_RULES`). The tools' own star power, fills and solos are
+     dropped: ours replace them. Onsets before the part's own stem first plays or after it last plays are removed
+     from every taken level (`active_span`, DESIGN.md 2.8: no notes after the stem stops; a part's `trim_silence`
+     turns it off); an onset elsewhere where the stem is silent is only reported.
+  4. **Chart.** Star power, fills and (opt-in) solos on Expert (starpower.place_phrases), then Hard, Medium and
+     Easy, each reduced from the level above (reduce.py; with take_difficulties "all" the source's own levels, any
+     missing one reduced from the level above), then every level's phrases fitted to its own notes
+     (starpower.fit_chart). Easy drums get the drum stem's loudness per section. reduce.check_reductions and
+     starpower.check_phrases run per instrument.
   5. **Folder.** package.build_song_folder writes notes.chart, song.ini (difficulty ratings from DESIGN.md 2.12,
      the preview at the first chorus) and song.ogg into a staging folder beside the output, and refuses a song.ogg
      more than a sample out of sync.
@@ -300,6 +303,10 @@ def parse_config(data: dict, base: Path | str = ".", output: Path | str | None =
             raise ValueError(f"parts[{i}]: takes splice Expert only, so they need take_difficulties 'expert'")
         if len(part.takes) == 1:
             raise ValueError(f"parts[{i}]: takes need at least two more runs (three in all) to agree on anything")
+        runs = [part.source, *part.takes]  # a run listed twice always agrees with itself and outvotes the rest
+        again = next((r for j, r in enumerate(runs) if r.resolve() in [q.resolve() for q in runs[:j]]), None)
+        if again is not None:
+            raise ValueError(f"parts[{i}]: {again} is listed twice: the source and its takes must be different runs")
         parts.append(part)
     if not parts:
         raise ValueError("the config has no parts")
@@ -361,8 +368,10 @@ def parse_config(data: dict, base: Path | str = ".", output: Path | str | None =
         cfg.sections = str(path(cfg.sections, "sections"))
     out = cfg.output.resolve()
     for p in parts:
-        if out == (p.source.parent if p.source.suffix.lower() in (".chart", ".mid") else p.source).resolve():
-            raise ValueError(f"the output folder {cfg.output} holds part {p.key}'s source: it would be overwritten")
+        for what, src in [("source", p.source)] + [("take", t) for t in p.takes]:
+            if out == (src.parent if src.suffix.lower() in (".chart", ".mid") else src).resolve():
+                raise ValueError(f"the output folder {cfg.output} holds part {p.key}'s {what}: it would be "
+                                 "overwritten")
     return cfg
 
 
@@ -1017,26 +1026,43 @@ def _import(part: PartConfig, source: Path | None = None) -> TimedSong:
     return song
 
 
-def _splice_takes(part: PartConfig, song: TimedSong, takes: list[TimedSong], sections: list[tuple[float, str]]
-                  ) -> tuple[TimedSong, dict]:
-    """The part's source with its Expert spliced from the source and its takes (takes.splice), and the report."""
+def _import_takes(part: PartConfig, song: TimedSong) -> list[TimedSong]:
+    """The part's takes (_import), each a run of its own: two runs with the same Expert notes (one file named two
+    ways, a copy, a take run with the source's seed) would always agree, and outvote the others (DESIGN.md 2.7)."""
+    takes = [_import(part, t) for t in part.takes]
     key = (part.from_instrument, "expert")
-    spliced, windows = splice([song.parts[key]] + [t.parts[key] for t in takes], sections)
+    runs = [(part.source, song)] + list(zip(part.takes, takes))
+    for j, (path, run) in enumerate(runs):
+        same = next((p for p, r in runs[:j] if r.parts[key].notes == run.parts[key].notes), None)
+        if same is not None:
+            raise ValueError(f"part {part.key}: {same} and {path} have the same Expert notes: takes must be other "
+                             "runs (another seed), not the same one again")
+    return takes
+
+
+def _splice_takes(part: PartConfig, song: TimedSong, takes: list[TimedSong], sections: list[tuple[float, str]],
+                  offset: float) -> tuple[TimedSong, dict]:
+    """The part's source with its Expert spliced from the source and its takes (takes.splice), and the report.
+    sections: (input seconds, name). The takes share the source's clock, `offset` seconds late against ours
+    (_offset), so the windows are cut at the section starts plus the offset; the report gives them in input
+    seconds."""
+    key = (part.from_instrument, "expert")
+    spliced, windows = splice([song.parts[key]] + [t.parts[key] for t in takes], [(t + offset, n) for t, n in sections])
     names = [str(part.source)] + [str(t) for t in part.takes]
-    info = {"sources": names, "windows": [{"section": w.name, "start": w.start, "end": w.end,
+    ours = [0.0] + [round(w.start - offset, 4) for w in windows[1:]]  # the first window starts with the song
+    info = {"sources": names, "windows": [{"section": w.name, "start": a, "end": b,
                                            "onsets": list(w.onsets), "scores": list(w.scores), "pick": w.pick}
-                                          for w in windows],
-            "picked": {names[k]: sum(w.pick == k for w in windows) for k in range(len(names))},
+                                          for w, a, b in zip(windows, ours, ours[1:] + [None])],
+            "picked": [sum(w.pick == k for w in windows) for k in range(len(names))],  # windows per source
             "onsets": {"source": len({n.time for n in song.parts[key].notes}),
                        "spliced": len({n.time for n in spliced.notes})}}
     return replace(song, parts={**song.parts, key: spliced}), info
 
 
-def _quantize(part: PartConfig, song: TimedSong, tempo: TempoMap, pad: float
-              ) -> tuple[dict[str, tuple[Track, QuantizeReport]], dict, list[str]]:
-    """The part's taken difficulties on our grid, its offset (measured on Expert, one for all its levels), warnings."""
-    levels = {d: p for (i, d), p in song.parts.items() if i == part.from_instrument}
-    times = [n.time for n in levels["expert"].notes]
+def _offset(part: PartConfig, song: TimedSong, tempo: TempoMap, pad: float) -> tuple[float, dict, list[str]]:
+    """The part's offset against our grid (measured on its source's Expert; one for all its levels and its takes,
+    which share the source's clock), its report and warnings."""
+    times = [n.time for n in song.parts[(part.from_instrument, "expert")].notes]
     n = len(set(times))
     measured, conc = estimate_offset(times, tempo, pad)
     trusted = RULES.applies(measured, conc, n)
@@ -1048,14 +1074,21 @@ def _quantize(part: PartConfig, song: TimedSong, tempo: TempoMap, pad: float
     if part.offset == "auto" and not trusted:
         warnings.append(f"part {part.key}: offset {measured * 1000:+.1f} ms measured but not applied "
                         f"(concentration {conc:.2f}, evidence {n * conc ** 2:.0f})")
+    return applied, info, warnings
+
+
+def _quantize(part: PartConfig, song: TimedSong, tempo: TempoMap, pad: float, offset: float
+              ) -> dict[str, tuple[Track, QuantizeReport]]:
+    """The part's taken difficulties on our grid, every one moved by the part's offset (_offset)."""
+    levels = {d: p for (i, d), p in song.parts.items() if i == part.from_instrument}
     rules = HOPO_RULES[part.hopo]
     take = ["expert"] if part.take_difficulties == "expert" else [d for d in DIFFICULTIES if d in levels]
     out = {}
     for d in take:
         p = levels[d]
         clean = TimedPart(part.instrument, d, list(p.notes))  # the tool's phrases go: ours replace them
-        out[d] = quantize_part(clean, tempo, pad, applied, rules, song.beats)
-    return out, info, warnings
+        out[d] = quantize_part(clean, tempo, pad, offset, rules, song.beats)
+    return out
 
 
 def _ladder(expert: Track, own: dict[str, Track], tempo: TempoMap, sections: list[int],
@@ -1111,7 +1144,7 @@ def assemble(config: AssembleConfig | dict | str | Path) -> AssembleResult:
     cfg = config
     check_inputs(cfg)
     songs = {p.key: _import(p) for p in cfg.parts}  # a bad source fails here, before any audio work
-    takes = {p.key: [_import(p, t) for t in p.takes] for p in cfg.parts}
+    takes = {p.key: _import_takes(p, songs[p.key]) for p in cfg.parts}
     sr = SAMPLE_RATE
     warnings: list[str] = []
     report: dict[str, Any] = {"config": _jsonable({**asdict(cfg), "parts": [asdict(p) for p in cfg.parts]})}
@@ -1198,13 +1231,14 @@ def assemble(config: AssembleConfig | dict | str | Path) -> AssembleResult:
     report["parts"] = {}
     for part in cfg.parts:
         song, spliced = songs[part.key], None
+        applied, offset, warn = _offset(part, song, tm, pad)
+        warnings += warn
         if takes[part.key]:
             song, spliced = _splice_takes(part, song, takes[part.key],
-                                          [(tm.tick_to_sec(t) - pad, n) for t, n in sections])
+                                          [(tm.tick_to_sec(t) - pad, n) for t, n in sections], applied)
             if not sections:
                 warnings.append(f"part {part.key}: takes need sections to splice by; the source alone is used")
-        q, offset, warn = _quantize(part, song, tm, pad)
-        warnings += warn
+        q = _quantize(part, song, tm, pad, applied)
         by_inst[part.instrument] = {d: track for d, (track, _) in q.items()}
         src_counts = {d: len({n.time for n in p.notes}) for (i, d), p in songs[part.key].parts.items()
                       if i == part.from_instrument}

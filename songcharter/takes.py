@@ -5,14 +5,16 @@ stretch the others agree on (the test song's original take had half the other ta
 three or more takes of the same audio on the same clock, the take the others agree with most in a stretch is the
 best guess at what a run would write there:
 
-  1. The song is cut into windows at the section starts (input seconds), each moved `early` seconds earlier so a
-     note a little ahead of the downbeat belongs to the section it starts.
+  1. The song is cut into windows at the section starts (on the takes' clock), each moved `early` seconds earlier
+     so a note a little ahead of the downbeat belongs to the section it starts.
   2. In each window every take is scored by its mean F1 against each other take. A match pairs two onsets within
      `tol` one to one, nearest first, and they must agree on the onset's shape: single note against chord on
-     5-fret parts, one hit against several on drums.
+     5-fret parts, one hit against several on drums. Two takes that both leave the window empty agree fully, so
+     takes that agree a stretch is silent outvote one that writes notes there.
   3. The first take (the base) stays unless another take beats it by `margin`; then the best-scoring take is used.
-  4. The window's notes come from the chosen take. Where the take changes at a window's end, a sustain is cut
-     `gap` seconds before it, so it never runs under the next take's first note.
+  4. The window's notes come from the chosen take. A sustain is cut `gap` seconds before the next window whose
+     notes come from another take (a window where the chosen take writes nothing does not count), so it never runs
+     under another take's notes.
 
 Only the Expert part is spliced (the build reduces the other levels from it). The takes' own star power, solos and
 fills are dropped, as assemble drops every source's phrases.
@@ -33,7 +35,7 @@ GAP = 0.06      # seconds: a sustain ends this long before a window where anothe
 
 @dataclass(frozen=True)
 class Window:
-    start: float                 # input seconds
+    start: float                 # seconds on the takes' clock
     end: float | None            # None: to the end of the song
     name: str
     onsets: tuple[int, ...]      # per take
@@ -51,8 +53,11 @@ def onsets(notes: list) -> tuple[np.ndarray, np.ndarray]:
 
 
 def agreement(a: tuple[np.ndarray, np.ndarray], b: tuple[np.ndarray, np.ndarray], tol: float = TOL) -> float:
-    """F1 of one-to-one onset matches within tol (nearest first) that also agree on single against chord."""
+    """F1 of one-to-one onset matches within tol (nearest first) that also agree on single against chord; 1 when
+    both are empty (they agree there is nothing to play)."""
     (ta, wa), (tb, wb) = a, b
+    if not len(ta) and not len(tb):
+        return 1.0
     if not len(ta) or not len(tb):
         return 0.0
     used = np.zeros(len(tb), dtype=bool)
@@ -69,7 +74,8 @@ def agreement(a: tuple[np.ndarray, np.ndarray], b: tuple[np.ndarray, np.ndarray]
 def splice(takes: list[TimedPart], sections: list[tuple[float, str]], *, margin: float = MARGIN,
            early: float = EARLY, tol: float = TOL, gap: float = GAP) -> tuple[TimedPart, list[Window]]:
     """One part from several takes of it (the first is the base), chosen window by window (the module docstring).
-    sections: (input seconds, name), sorted; with fewer than three takes, or no sections, the base is returned."""
+    sections: (seconds on the takes' clock, name), sorted; with fewer than three takes, or no sections, the base is
+    returned."""
     base = takes[0]
     if len(takes) < 3 or not sections:
         return base, []
@@ -90,12 +96,14 @@ def splice(takes: list[TimedPart], sections: list[tuple[float, str]], *, margin:
     notes = []
     for i, w in enumerate(windows):
         hi = np.inf if w.end is None else w.end
-        change = i + 1 < len(windows) and windows[i + 1].pick != w.pick
+        # sustains stop gap seconds before another take's notes begin: at the next window with another pick that
+        # writes notes there (a window its take leaves empty, such as a break no take plays in, is skipped)
+        cut = next((v.start for v in windows[i + 1:] if v.pick != w.pick and v.onsets[v.pick]), np.inf) - gap
         for n in takes[w.pick].notes:
             if not w.start <= n.time < hi:
                 continue
-            if change and not isinstance(n, TimedHit) and n.end is not None and n.end > hi - gap:
-                n = replace(n, end=hi - gap if hi - gap > n.time else None)
+            if not isinstance(n, TimedHit) and n.end is not None and n.end > cut:
+                n = replace(n, end=cut if cut > n.time else None)
             notes.append(n)
     notes.sort(key=lambda n: n.time)
     return TimedPart(base.instrument, base.difficulty, notes), windows
