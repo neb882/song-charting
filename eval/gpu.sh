@@ -5,7 +5,8 @@
 #   eval/gpu.sh start     check, then run drive.sh detached: it survives closing the terminal and a Claude crash
 #   eval/gpu.sh status    running or not, the latest driver.log lines, GPU and memory now
 #   eval/gpu.sh stop      stop the run; finished jobs are kept, and `start` carries on from there
-#   eval/gpu.sh results   zip the scores, the logs and the test-song charts (no audio) to send back
+#   eval/gpu.sh takes     check, then run eval/takes.py detached: 4 autochart Expert takes of every song (no scoring)
+#   eval/gpu.sh results   zip the scores, the logs, the test-song charts and the takes' charts (no audio) to send back
 # Env: TOOLS (default "autochart chartgen strum", so STRUM's long test song runs last), SKIP (e.g. "strum:test_song"),
 #      MEM_WAIT_MB (default 4000), EVAL_DATA, ALLOW_CPU=1 (start even if the check fails).
 set -u
@@ -94,6 +95,34 @@ _run() {
   rm -f "$PIDFILE"
 }
 
+_takes() {
+  echo $$ > "$PIDFILE"
+  echo 500 > /proc/self/oom_score_adj 2>/dev/null || true
+  echo "$(date '+%F %T') takes run started"
+  local py="${EVAL_PY:-$HERE/.venv/bin/python}"
+  EVAL_DATA="$DATA" "$py" "$HERE/takes.py" --device cuda ${SEEDS:+--seeds "$SEEDS"} ${SONGS:+--songs "$SONGS"}
+  local rc=$?
+  results
+  echo "$(date '+%F %T') takes run finished (exit $rc)"
+  rm -f "$PIDFILE"
+}
+
+takes() {
+  if running; then echo "already running (pid $(cat "$PIDFILE")): eval/gpu.sh status"; exit 1; fi
+  if ! check; then
+    [ "${ALLOW_CPU:-0}" = 1 ] || { echo; echo "check failed: not starting (ALLOW_CPU=1 to start anyway)"; exit 1; }
+  fi
+  mkdir -p "$RUNS"
+  setsid nohup "$0" _takes >> "$RUNS/gpu_run.log" 2>&1 < /dev/null &
+  for _ in 1 2 3 4 5 6 7 8 9 10; do running && break; sleep 0.5; done
+  if running; then
+    echo; echo "started (pid $(cat "$PIDFILE")). Follow it with: eval/gpu.sh status   (or: tail -f $RUNS/takes/takes.log)"
+    echo "Keep one Ubuntu window open while it runs: WSL may shut down when the last one closes."
+  else
+    echo "did not start; see $RUNS/gpu_run.log:"; tail -n 20 "$RUNS/gpu_run.log"; exit 1
+  fi
+}
+
 start() {
   if running; then echo "already running (pid $(cat "$PIDFILE")): eval/gpu.sh status"; exit 1; fi
   if pgrep -f "$DRIVER_RE" >/dev/null; then
@@ -117,6 +146,7 @@ start() {
 status() {
   if running; then echo "running (pid $(cat "$PIDFILE"))"; else echo "not running"; fi
   [ -f "$RUNS/driver.log" ] && { echo "--- driver.log"; tail -n "${N:-12}" "$RUNS/driver.log"; }
+  [ -f "$RUNS/takes/takes.log" ] && { echo "--- takes.log"; tail -n "${N:-12}" "$RUNS/takes/takes.log"; }
   local oom; oom=$(grep -c 'rc=137' "$RUNS/driver.log" 2>/dev/null)
   [ "${oom:-0}" -gt 0 ] && echo "note: $oom job(s) ended with rc=137 (killed, most likely out of memory)"
   echo "---"
@@ -138,7 +168,9 @@ results() {
 import glob, os, sys, zipfile
 runs, out = sys.argv[1:]
 pats = ["SCORECARD.md", "driver.log", "gpu_run.log", "gpu_samples.csv", "*/*.score.json", "*/*.score.txt", "*/*.log",
-        "*/test_song/notes.chart", "*/test_song/notes.mid", "*/test_song/song.ini"]   # never audio
+        "*/test_song/notes.chart", "*/test_song/notes.mid", "*/test_song/song.ini",
+        "takes/takes.log", "takes/*/seed_*/notes.chart", "takes/*/seed_*/song.ini",
+        "takes/*/seed_*/autochart_run/*.json"]   # never audio
 files = sorted({f for p in pats for f in glob.glob(os.path.join(runs, p))})
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
     for f in files:
@@ -159,6 +191,8 @@ case "${1:-}" in
   status) status ;;
   stop) stop ;;
   results) results ;;
+  takes) takes ;;
   _run) _run ;;
-  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  _takes) _takes ;;
+  *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
