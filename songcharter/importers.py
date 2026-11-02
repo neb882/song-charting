@@ -26,6 +26,10 @@ What the TimedSong contract leaves open, decided here:
   * activation holds drum fills only (`S 64`, .mid note 120, in a drum track before any [coda] event); big rock
     endings are left out.
   * beats: one every `resolution` ticks (the beat the BPM counts) from tick 0 to the chart's last event.
+  * measures: the measure lines of the time signatures (.chart `TS n [d]`, the denominator 2^d, /4 without it; .mid
+    track 0's time-signature events; 4/4 before the first), a measure being resolution x 4 x n / denominator ticks.
+    Each time signature opens a new measure on its own tick, as Moonscraper and TempoMap.measure_starts place them.
+    They run to the last beat and one line past it, so the last two lines are a whole measure of the last meter.
 
 Not read: disco flips, flams, rolls and trills, lyrics and vocals, and instruments other than guitar, bass and drums.
 """
@@ -37,6 +41,7 @@ import re
 import struct
 from dataclasses import dataclass, field
 from enum import IntEnum
+from fractions import Fraction
 from pathlib import Path
 
 from .timed import DIFFICULTIES, INSTRUMENTS, OPEN, TimedHit, TimedNote, TimedPart, TimedSong, TimedSpan
@@ -239,6 +244,7 @@ class _Raw:
     tempos: list[tuple[int, float]]   # (tick, BPM), the first at tick 0
     sections: list[tuple[int, str]]
     tracks: list[_RawTrack]
+    signatures: list[tuple[int, int, int]] = field(default_factory=list)  # (tick, numerator, denominator)
 
 
 def _sort_track(t: _RawTrack, events: list[_Ev], first_coda: int | None) -> _RawTrack:
@@ -283,6 +289,7 @@ _CHART_SOLO = {"solo": _E.SOLO_START, "soloend": _E.SOLO_END}
 # scan-chart's line patterns, matched against whole trimmed lines
 _RE_META = re.compile(r'(.+?) = "?(.*?)"?')
 _RE_TEMPO = re.compile(r"(\d+) = B (\d+)", re.ASCII)
+_RE_TS = re.compile(r"(\d+) = TS (\d+)(?: (\d+))?", re.ASCII)
 _RE_SECTION = re.compile(r'(\d+) = E "\[?(?:section|prc)[ _](.*?)\]?"', re.ASCII)
 _RE_CODA = re.compile(r'(\d+) = E "\s*\[?coda\]?\s*"', re.ASCII)
 _RE_EVENT = re.compile(r"(\d+) = ([A-Z]+) ([\w\s\[\]]+?)( \d+)?", re.ASCII)
@@ -334,6 +341,8 @@ def _parse_chart(text: str) -> _Raw:
     res = int(res) if res.is_integer() else res
     sync = sections.get("SyncTrack", [])
     tempos = _tempo_list([(int(m[1]), int(m[2]) / 1000) for m in map(_RE_TEMPO.fullmatch, sync) if m])
+    signatures = [(int(m[1]), int(m[2]), 2 ** int(m[3]) if m[3] else 4)
+                  for m in map(_RE_TS.fullmatch, sync) if m and (not m[3] or int(m[3]) <= _MAX_DEN_LOG2)]
     events = sections.get("Events", [])
     names = [(int(m[1]), m[2]) for m in map(_RE_SECTION.fullmatch, events) if m]
     codas = [int(m[1]) for m in map(_RE_CODA.fullmatch, events) if m]
@@ -355,7 +364,7 @@ def _parse_chart(text: str) -> _Raw:
                 evs.append(_Ev(int(m[1]), int(m[4]) if m[4] else 0, typ))
         evs.sort(key=lambda e: e.tick)
         tracks.append(_sort_track(_RawTrack(inst, diff), _merge_solos(evs), first_coda))
-    return _Raw(res, _number(meta.get("Offset")), tempos, names, tracks)
+    return _Raw(res, _number(meta.get("Offset")), tempos, names, tracks, signatures)
 
 
 def _merge_solos(evs: list[_Ev]) -> list[_Ev]:
@@ -441,6 +450,8 @@ def _read_track(b: bytes) -> list[tuple]:
                 payload, pos = b[pos:pos + n], pos + n
                 if kind == 0x51 and n == 3:
                     out.append((tick, "tempo", int.from_bytes(payload, "big")))
+                elif kind == 0x58 and n >= 2:
+                    out.append((tick, "ts", payload[0], payload[1]))  # numerator, log2 of the denominator
                 elif kind in (0x01, 0x03):
                     out.append((tick, "text" if kind == 0x01 else "name", _text(payload)))
             elif st in (0xF0, 0xF7):
@@ -481,12 +492,14 @@ class _End:
 
 def _parse_mid(data: bytes, mods: ChartModifiers) -> _Raw:
     resolution, tracks = _read_smf(data)
-    tempos = []
+    tempos, signatures = [], []
     for tick, kind, *v in tracks[0]:
         if kind == "tempo":
             if not v[0]:
                 raise ValueError("MIDI tempo of zero microseconds per beat")
             tempos.append((tick, 60000000 / v[0]))
+        elif kind == "ts" and v[1] <= _MAX_DEN_LOG2:
+            signatures.append((tick, v[0], 2 ** v[1]))
     named: dict[str, list[tuple]] = {}
     for track in tracks:
         name = None
@@ -514,7 +527,7 @@ def _parse_mid(data: bytes, mods: ChartModifiers) -> _Raw:
             t = _sort_track(_RawTrack(inst, diff), per_diff[diff], first_coda)
             if t.events:
                 raw_tracks.append(t)
-    return _Raw(resolution, 0.0, _tempo_list(tempos), sections, raw_tracks)
+    return _Raw(resolution, 0.0, _tempo_list(tempos), sections, raw_tracks, signatures)
 
 
 def _mid_ends(track: list[tuple], drums: bool) -> dict[str, list[_End]]:
@@ -623,6 +636,29 @@ def _legacy_star_power(events: dict[str, list[_Ev]], mods: ChartModifiers) -> No
 
 
 # ------------------------------------------------------------------------------------------------ shared rules
+
+_MAX_DEN_LOG2 = 16  # a time signature over more than 2^16 is not a meter: left out
+
+
+def _measure_ticks(signatures: list[tuple[int, int, int]], res, end) -> list[Fraction]:
+    """Measure-line ticks: 4/4 from tick 0 until the first time signature, each signature opening a measure on its
+    own tick, up to `end` and one line past it. Lengths stay exact (15/16 at an odd resolution is a fraction of a
+    tick). A signature with a zero numerator, or a measure under one tick, is left out; the last one on a tick wins."""
+    length = {0: Fraction(4) * Fraction(res)}
+    for tick, num, den in sorted(signatures, key=lambda s: s[0]):
+        m = Fraction(res) * 4 * num / den
+        if num > 0 and m >= 1:
+            length[tick] = m
+    ticks = sorted(t for t in length if t <= end)
+    out: list[Fraction] = []
+    for t, stop in zip(ticks, ticks[1:] + [None]):
+        m, step = Fraction(t), length[t]
+        while (m < stop) if stop is not None else (m <= end):
+            out.append(m)
+            m += step
+    out.append(m)  # the line past the end
+    return out
+
 
 class _Clock:
     """Chart ticks to milliseconds with scan-chart's float64 arithmetic, operation for operation."""
@@ -833,6 +869,8 @@ def _build(raw: _Raw, fmt: str, mods: ChartModifiers, time_offset: float, source
             t.instrument, t.difficulty, notes,
             *([TimedSpan(sec(e.tick), sec(e.tick + e.length)) for e in spans[k]] for k in ("sp", "solo", "fill")))
     order = sorted(parts, key=lambda k: (INSTRUMENTS.index(k[0]), DIFFICULTIES.index(k[1])))
+    beats = math.ceil(last / res)
     return TimedSong(source, {k: parts[k] for k in order},
                      [(sec(tick), name) for tick, name in sorted(raw.sections, key=lambda s: s[0])],
-                     [sec(k * res) for k in range(math.ceil(last / res) + 1)])
+                     [sec(k * res) for k in range(beats + 1)],
+                     [sec(float(m)) for m in _measure_ticks(raw.signatures, res, beats * res)])

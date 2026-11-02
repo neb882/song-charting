@@ -412,6 +412,15 @@ def test_cli_rebuilds_the_same_chart(built, tmp_path, monkeypatch):
         json.dumps(result.report["parts"]))
 
 
+def test_report_names_the_stems_by_absolute_path(built, tmp_path, monkeypatch):
+    """A config whose paths are relative to the working directory (assemble(dict)) still writes absolute stem paths
+    into report.json, so the preview finds the stems from any directory."""
+    root, _, _ = built
+    monkeypatch.chdir(root)
+    report = assemble(parse_config(CONFIG, ".", tmp_path / "out")).report
+    assert report["stems"]["drums"]["path"] == str((root / "drums.wav").resolve())
+
+
 def test_gate_rejects_a_folder_with_a_second_chart(built, tmp_path):
     _, result, _ = built
     folder = tmp_path / "copy"

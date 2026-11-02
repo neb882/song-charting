@@ -1162,7 +1162,8 @@ def assemble(config: AssembleConfig | dict | str | Path) -> AssembleResult:
             raise ValueError(f"stem {name}: {rate} Hz, not {sr} Hz")
         stems[name] = y
         check = stem_alignment(mix, y, sr)
-        report["stems"][name] = {"path": str(path), **check}
+        # absolute, so the report finds the stem from any working directory (the preview reads it)
+        report["stems"][name] = {"path": str(Path(path).resolve()), **check}
         if not check["ok"]:
             warnings.append(f"stem {name} may not line up with the audio: {check.get('reason') or check}")
     levels_db = {name: frame_levels(y, sr) for name, y in stems.items()}

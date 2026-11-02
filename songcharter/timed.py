@@ -61,6 +61,8 @@ class TimedSong:
     sections: list[tuple[float, str]] = field(default_factory=list)          # (seconds, name)
     beats: list[float] = field(default_factory=list)   # the source tempo map's beat times; quantize.odd_32nds reads
                                                        # them (a 1/32-grid source's odd 1/32s)
+    measures: list[float] = field(default_factory=list)  # the source's measure lines from its time signatures, to
+                                                         # its last beat and one line past it; empty if not known
 
     def shifted(self, seconds: float) -> "TimedSong":
         """The same song with every time moved by `seconds` (e.g. +0.0697 for a tool that trimmed the audio)."""
@@ -78,4 +80,4 @@ class TimedSong:
         parts = {k: TimedPart(p.instrument, p.difficulty, [note(n) for n in p.notes], spans(p.star_power),
                               spans(p.solos), spans(p.activation)) for k, p in self.parts.items()}
         return TimedSong(self.source, parts, [(t + seconds, n) for t, n in self.sections],
-                         [b + seconds for b in self.beats])
+                         [b + seconds for b in self.beats], [m + seconds for m in self.measures])
