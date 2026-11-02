@@ -383,6 +383,8 @@ def _check(mix: np.ndarray, bass: np.ndarray) -> None:
             raise ValueError(f"the {name} must be a stereo (2, n) array, not shape {a.shape}")
     if mix.shape != bass.shape:
         raise ValueError(f"the bass stem {bass.shape} and the mix {mix.shape} differ in length")
+    if mix.shape[1] == 0:
+        raise ValueError("the mix holds no samples")
 
 
 def _done(folder: Path, key: str) -> dict | None:

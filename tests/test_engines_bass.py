@@ -178,6 +178,8 @@ def test_settings_and_inputs_are_checked(stem, tmp_path):
         generate(stem, stem[:, :-1], tmp_path / "x")
     with pytest.raises(ValueError, match="44100 Hz"):
         generate(stem, stem, tmp_path / "x", sample_rate=48000)
+    with pytest.raises(ValueError, match="no samples"):
+        generate(stem[:, :0], stem[:, :0], tmp_path / "x")
     assert not (tmp_path / "x").exists()
 
 
