@@ -25,13 +25,15 @@ mem_mb() { awk -v k="$1:" '$1 == k {print int($2/1024)}' /proc/meminfo; }
 # else a tool's or conda's nvidia-cudnn wheel. This prints the folders to prepend to LD_LIBRARY_PATH for autochart
 # only, and fails when no cuDNN 9 is found.
 cuda_libs() {
-  local dirs=() c
+  local dirs=() c d
   if ! ldconfig -p 2>/dev/null | grep -q 'libcudnn\.so\.9 '; then
-    c=$(ls -d "$T"/autochart/cudnn_venv/lib/python3*/site-packages/nvidia/cudnn/lib \
-              "$T"/strum/venv/lib/python3*/site-packages/nvidia/cudnn/lib \
-              "$T"/chartgen/venv/lib/python3*/site-packages/nvidia/cudnn/lib \
-              "$HOME"/miniconda3/lib/python3*/site-packages/nvidia/cudnn/lib 2>/dev/null \
-        | while read -r d; do ls "$d"/libcudnn.so.9* >/dev/null 2>&1 && { echo "$d"; break; }; done)
+    c=
+    for d in "$T"/autochart/cudnn_venv/lib/python3*/site-packages/nvidia/cudnn/lib \
+             "$T"/strum/venv/lib/python3*/site-packages/nvidia/cudnn/lib \
+             "$T"/chartgen/venv/lib/python3*/site-packages/nvidia/cudnn/lib \
+             "$HOME"/miniconda3/lib/python3*/site-packages/nvidia/cudnn/lib; do   # in this order (ls would sort)
+      ls "$d"/libcudnn.so.9* >/dev/null 2>&1 && { c=$d; break; }
+    done
     [ -n "$c" ] || return 1
     dirs+=("$c")
     # without a CUDA toolkit, the same wheel set's other nvidia libraries (cublas, cudart, ...) are needed too
