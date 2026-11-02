@@ -15,7 +15,7 @@ hh_cy="stronger"), the baseline a better mapper must beat (M2), with DESIGN.md 2
      mix), and asking for the hat's own highs in the stem (2 kHz up, -10 to +30 ms, 30 dB) removed a quarter of the
      test song's hats, all in drummed passages.
   3. **Hits.** Peaks of any class less than `merge_s` (30 ms) after a hit's first peak join that hit, each class
-     keeping its strongest activation. At 100 frames a second that is two frames.
+     keeping its strongest activation. At 100 frames a second that is up to two frames after it.
   4. **Lanes.** BD kick; SD red; HH yellow cymbal; CY blue cymbal in a regular run (at least 4 CY hits within +-2
      beats, itself included) and green otherwise; TT toms by pitch: the dominant 60-400 Hz peak in the stem's first
      80 ms after the hit, clustered on a log scale into one to three groups split at the widest gaps over 18 %
@@ -25,12 +25,16 @@ hh_cy="stronger"), the baseline a better mapper must beat (M2), with DESIGN.md 2
   6. **2x kick** (Expert only, the only level an engine writes). In a run of more than `double_kick_rate` (6) kicks,
      each less than 1/6 s after the one before (a second or so of kicks faster than 6 a second), a kick less than
      1/6 s after the run's last single-pedal kick becomes a 2x kick, so the run's single-pedal kicks are at least
-     1/6 s apart. Shorter bursts, a quick double among them, stay single.
+     1/6 s apart. Shorter bursts, a quick double among them, stay single. The run's first kick is always single,
+     so which kicks are 2x follows where the run starts, not the beat. The human Lucretia chart's one fast run (8
+     sextuplet kicks from just after a beat) has 4 2x kicks; the rule also marks 4, but 0 of them match: it marks
+     the human's single kicks, the one on the beat among them. Choosing the phase from the tempo map is open (M2).
 
 The beat period for step 4 is the mix's tempo (beatgrid.estimate_tempo, folded into 85-185 BPM) unless given.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Callable
 
@@ -124,7 +128,7 @@ def merge(found: dict[str, tuple[np.ndarray, np.ndarray]], fps: int, merge_s: fl
     A peak less than merge_s after a hit's first peak joins it."""
     ev = sorted((int(f), lab, float(s)) for lab, (frames, strength) in found.items()
                 for f, s in zip(frames, strength))
-    tol = int(round(merge_s * fps))
+    tol = math.ceil(merge_s * fps - 1e-9)  # a gap of g frames joins when g < merge_s * fps (0.07 * 100 > 7)
     out: list[tuple[int, dict]] = []
     for f, lab, s in ev:
         if out and f - out[-1][0] < tol:
@@ -174,7 +178,8 @@ def tom_lanes(pitch: np.ndarray) -> list[str]:
 def double_kicks(times: np.ndarray, rate: float) -> np.ndarray:
     """Which kicks (sorted times, s) are 2x kicks. A run of kicks each less than 1/rate after the one before that
     holds more than `rate` of them (about a second or more of kicks faster than `rate` a second) gets them: a kick
-    less than 1/rate after the run's last single-pedal kick. Shorter bursts stay single."""
+    less than 1/rate after the run's last single-pedal kick. Shorter bursts stay single. The run's first kick is
+    single-pedal, so the phase follows the run's start, not the beat."""
     times = np.asarray(times, dtype=np.float64)
     out = np.zeros(len(times), dtype=bool)
     i = 0

@@ -10,9 +10,9 @@
     and the lane mapping (drumlanes.py) are our own and not part of this component.
   * **Model.** Frame_RNN: two convolution blocks and three bidirectional GRUs on a log-filtered spectrogram (84
     semitone bands, 100 frames a second), giving per-frame activations for kick (BD), snare (SD), toms (TT),
-    hi-hat (HH) and cymbals (CY). Peaks are picked per class as madmom's NotePeakPickingProcessor picks them, with
-    ADTOF's settings. The convolutions run in blocks of frames (exact: they see 4 frames either side), so a long
-    song needs little memory.
+    hi-hat (HH) and cymbals (CY). Peaks are picked per class with a variant of madmom's NotePeakPickingProcessor
+    at ADTOF's settings (peaks() says how it differs). The convolutions run in blocks of frames (exact: they see 4
+    frames either side), so a long song needs little memory.
   * **Weights.** The converted 3.6 MB state dict at a pinned commit of xavriley/ADTOF-pytorch, checked against its
     SHA-256 whether downloaded or already in the models folder, and loaded with torch.load(weights_only=True).
   * **Signals.** The model runs on the drum stem and on the mix; drumlanes.py takes kick, snare and toms from the
@@ -20,8 +20,11 @@
   * **Output.** out/notes.chart (Expert drums only, on a constant 120 BPM map at resolution 480, so 1 tick is
     1.04 ms and the quantizer sees the hits' own times), out/song.ini (pro_drums = True) and out/engine.json (the
     settings, versions, counts and timings). out/activations.npz keeps the model's activations.
-  * **Cache.** A folder whose engine.json holds the same key (the samples, the weights and every setting) is
-    reused as it is. The activations are reused for the same samples and weights when only lane settings change.
+  * **Cache.** A folder whose engine.json holds the same key (the samples, the weights, every setting and the beat
+    period used) is reused as it is. The beat period is in the key because, unless settings.beat_s gives it, it is
+    beatgrid's tempo estimate, which lives outside this engine and its version; so a run estimates it before
+    looking (a few seconds a song). The activations are reused for the same samples and weights when only lane
+    settings change.
 
 Needs torch (`pip install songcharter[drums]`, or [separate], which brings it too); importing this module does not.
 """
@@ -54,7 +57,7 @@ N_FFT = 2048
 LABELS = L.LABELS            # BD, SD, TT, HH, CY: the model's outputs, in order
 CNN_BLOCK = 4096             # frames per convolution block
 CNN_HALO = 4                 # frames of context each side: four 3x3 convolutions
-# madmom's NotePeakPickingProcessor as ADTOF sets it (seconds): moving average, moving maximum, combine
+# ADTOF's settings for madmom's NotePeakPickingProcessor (seconds): moving average, moving maximum, combine
 PEAK_PRE_AVG, PEAK_POST_AVG, PEAK_PRE_MAX, PEAK_POST_MAX, PEAK_COMBINE = 0.1, 0.01, 0.02, 0.01, 0.02
 CHART_RESOLUTION, CHART_BPM_MILLI = 480, 120000   # 960 ticks a second
 
@@ -282,9 +285,15 @@ def activations(model, feat: np.ndarray, device: str = "cpu") -> np.ndarray:
 # ------------------------------------------------------------------------------------------------ peaks
 
 def peaks(act: np.ndarray, threshold: float, fps: int = FPS) -> np.ndarray:
-    """Peak frames of one class's activations, as madmom's NotePeakPickingProcessor picks them: the activation
-    minus its moving average (0.1 s before, 0.01 s after) must reach `threshold` and be the maximum of its window
-    (0.02 s before, 0.01 s after); peaks within 0.02 s of each other keep the strongest (the first of equals)."""
+    """Peak frames of one class's activations: the activation minus its moving average (0.1 s before, 0.01 s after)
+    must reach `threshold` and be the maximum of its window (0.02 s before, 0.01 s after); peaks within 0.02 s of
+    each other keep the strongest (the first of equals).
+
+    A variant of madmom's NotePeakPickingProcessor at ADTOF's settings. Its threshold test is madmom's, so ADTOF's
+    thresholds select the same frames; it differs in two ways. It takes the maximum of the activation minus its
+    average, where madmom takes that of the raw activation, and a chain of peaks keeps its strongest, where madmom
+    keeps the first within 0.02 s. So on the reference songs about 5.6 % of peaks come one frame (10 ms) earlier
+    than madmom's, with no measurable change in score."""
     a = np.asarray(act, dtype=np.float32)
     la, ra = int(round(PEAK_PRE_AVG * fps)), int(round(PEAK_POST_AVG * fps))
     k = np.ones(la + ra + 1, np.float32) / (la + ra + 1)
@@ -317,10 +326,11 @@ def _samples_hash(*arrays: np.ndarray):
     return h
 
 
-def cache_key(mix: np.ndarray, drums: np.ndarray, weights: str, settings: L.Settings) -> str:
-    """A hash of the samples, the weights and every setting that changes the chart."""
+def cache_key(mix: np.ndarray, drums: np.ndarray, weights: str, settings: L.Settings, beat_s: float) -> str:
+    """A hash of the samples, the weights, every setting and the beat period used for ride or crash (settings.beat_s,
+    or beatgrid's estimate, which a beatgrid change can move without a new ENGINE_VERSION)."""
     h = _samples_hash(mix, drums)
-    h.update(repr((ENGINE_VERSION, weights, sorted(asdict(settings).items()), SAMPLE_RATE)).encode())
+    h.update(repr((ENGINE_VERSION, weights, sorted(asdict(settings).items()), float(beat_s), SAMPLE_RATE)).encode())
     return h.hexdigest()[:24]
 
 
@@ -366,7 +376,8 @@ def generate(mix: np.ndarray, drums: np.ndarray, out: Path | str, settings: L.Se
 
     mix, drums: the decode and its drum stem, float32 (2, n) at 44.1 kHz (sample-aligned, as separate.py gives).
     model: None for the pinned weights (from `models`, downloaded on first use), or a FrameRNN object (tests).
-    A folder already holding this key's output is returned as it is (cached).
+    A folder already holding this key's output is returned as it is (cached). The key holds the beat period, so
+    with settings.beat_s None the mix's tempo is estimated first, a cached run included.
     """
     if mix.ndim != 2 or mix.shape[0] != 2 or drums.shape != mix.shape:
         raise ValueError(f"generate needs a stereo (2, n) mix and a drum stem of the same shape, not {mix.shape} "
@@ -375,14 +386,18 @@ def generate(mix: np.ndarray, drums: np.ndarray, out: Path | str, settings: L.Se
     out = Path(out)
     t0 = time.perf_counter()  # wall times are reported only; nothing depends on them
     weights = WEIGHTS.sha256 if model is None else _state_sha(model)
-    key = cache_key(mix, drums, weights, settings)
+    beat_s, beat_from = settings.beat_s, "settings"
+    if beat_s is None:
+        beat_s, beat_from = L.beat_period(mix), "mix"
+    beat_seconds = round(time.perf_counter() - t0, 2)
+    key = cache_key(mix, drums, weights, settings, beat_s)
     info = _cached(out, key)
     if info is not None:
         return Result(out, out / "notes.chart", info, True)
     out.mkdir(parents=True, exist_ok=True)
     (out / "engine.json").unlink(missing_ok=True)  # a run cut off below must not pass for another key's output
     import torch
-    seconds: dict[str, float] = {}
+    seconds: dict[str, float] = {"beat": beat_seconds}
     m_mono, s_mono = mix.mean(axis=0), drums.mean(axis=0)
     t = time.perf_counter()
     feat = {"mix": features(m_mono), "stem": features(s_mono)}
@@ -413,9 +428,6 @@ def generate(mix: np.ndarray, drums: np.ndarray, out: Path | str, settings: L.Se
         found[lab] = (f, a[f].astype(np.float64))
     level = None if settings.hat_gate_db is None else L.stem_level_db(feat["stem"], feat["mix"], band_hz(), settings,
                                                                        FPS)
-    beat_s, beat_from = settings.beat_s, "settings"
-    if beat_s is None:
-        beat_s, beat_from = L.beat_period(mix), "mix"
     hits, counts = L.lanes(found, FPS, settings, beat_s, s_mono, SAMPLE_RATE, level)
     chart = chart_of(hits)
     seconds["lanes"] = round(time.perf_counter() - t, 2)
