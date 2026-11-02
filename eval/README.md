@@ -56,8 +56,31 @@ eval/build_refs.sh /path/to/test-song.mp3          # reference set, plus the tes
 TORCH_INDEX=https://download.pytorch.org/whl/cu128 eval/tools/strum/setup.sh
 TORCH_INDEX=https://download.pytorch.org/whl/cu128 eval/tools/chartgen/setup.sh
 eval/tools/autochart/setup.sh
-AC_DEVICE=cuda STRUM_DEVICE=cuda eval/drive.sh     # every tool on every song, then eval/data/runs/SCORECARD.md
 ```
 
-Check that each tool really ran on the GPU: the run logs name the device. autochart falls back to CPU by
-itself if its CUDA provider fails to load.
+Then run it the way Overclock renders, as a job of its own that no Claude session has to babysit:
+
+```sh
+eval/gpu.sh check      # names the GPU, runs a CUDA op inside each tool, shows the memory WSL has; fails on a CPU fallback
+eval/gpu.sh start      # every tool on every song, detached; finished jobs are skipped, so it resumes after any stop
+eval/gpu.sh status     # the latest driver.log lines, GPU use, free memory
+eval/gpu.sh results    # eval/data/gpu_results.zip: scores, logs and the test-song charts, no audio
+```
+
+`start` runs `drive.sh` in its own session (`setsid`), so closing the terminal or a crashed Claude session leaves
+it running. It also raises the job's `oom_score_adj`: if memory runs out, the kernel kills the job, which resumes on
+the next `start`, rather than Claude or Remote Control. Keep one Ubuntu window open while it runs, because WSL can
+shut down after the last one closes. autochart falls back to CPU on its own if its CUDA provider fails to load,
+and its run logs name the device it used.
+
+### Memory
+
+By default WSL gets half of Windows' RAM. STRUM and chartgen on a long song can need more than that, and a WSL
+that runs out kills processes or stalls. Give it more in `%UserProfile%\.wslconfig` on Windows, then run
+`wsl --shutdown` from PowerShell, which stops everything in WSL, and reopen Ubuntu:
+
+```ini
+[wsl2]
+memory=24GB   # your RAM minus about 6 GB for Windows
+swap=16GB
+```
