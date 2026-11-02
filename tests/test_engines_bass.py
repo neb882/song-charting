@@ -1,5 +1,6 @@
-"""The bass rule engine (songcharter.engines.bass) on a synthetic bass line: onsets, the leakage gate, pitch and
-lanes, sustains from the pitch track, the folder an importer reads, determinism and the cache."""
+"""The bass rule engine (songcharter.engines.bass) on a synthetic bass line, and its rules on built level and pitch
+tracks: onsets, the leakage gate, pitch and lanes, sustains from the pitch track, the folder an importer reads,
+determinism and the cache."""
 import json
 
 import numpy as np
@@ -76,6 +77,33 @@ def test_sustains_come_from_where_the_pitch_holds(notes):
     assert got[0].end == pytest.approx(got[1].time - 0.085, abs=1e-9)
 
 
+def test_a_sustain_ends_where_the_mix_drowns_the_stem(stem, notes):
+    clean, _ = notes
+    rng = np.random.default_rng(2)
+    mix = stem.copy()
+    a, b = int(4.3 * SR), int(5.2 * SR)
+    mix[:, a:b] += 30 * rng.standard_normal((2, b - a)).astype(np.float32)   # 40+ dB over the stem
+    got, _ = transcribe(mix, stem)
+    assert len(got) == len(clean) and got[6].time == clean[6].time
+    assert got[6].end == pytest.approx(4.3, abs=0.05)                      # the note held from 3.5 s stops there
+    same = [(a.time, a.frets, a.end) == (b.time, b.frets, b.end) for a, b in zip(got, clean)]
+    assert same == [i != 6 for i in range(len(clean))]                      # and only that note changes
+
+
+def test_an_octave_error_in_the_pitch_track_keeps_the_sustain():
+    s = Settings()
+    fps = s.pitch_rate / s.pitch_hop
+    midi = np.full(int(3 * fps), np.nan)          # E1 held from 0.5 to 2.1 s, read an octave up for 0.3 s of it
+    midi[int(0.5 * fps):int(2.1 * fps)] = 28.0
+    midi[int(1.0 * fps):int(1.3 * fps)] = 40.0
+    ok = np.ones(len(midi), bool)
+    ends = B.sustain_ends(np.array([0.5]), np.array([3.0]), np.array([28.0]), midi, ok, s)
+    assert ends[0] == pytest.approx(2.1, abs=0.02)
+    ok[int(1.5 * fps):] = False                   # the stem 30 dB under the mix from 1.5 s
+    ends = B.sustain_ends(np.array([0.5]), np.array([3.0]), np.array([28.0]), midi, ok, s)
+    assert ends[0] == pytest.approx(1.5, abs=0.02)
+
+
 def test_the_leakage_gate_drops_notes_where_the_stem_is_30_db_under_the_mix(stem):
     rng = np.random.default_rng(1)
     loud = stem + 30 * rng.standard_normal(stem.shape).astype(np.float32)   # the mix 40+ dB over the stem
@@ -88,6 +116,25 @@ def test_the_leakage_gate_drops_notes_where_the_stem_is_30_db_under_the_mix(stem
     mix_lv = np.ones(len(stem_lv))
     assert B.leakage_ok(np.array([0.5, 1.0, 2.5, 3.5]), stem_lv, mix_lv, s).tolist() == [True, True, False, False]
     assert B.leakage_ok(np.array([0.5]), stem_lv, mix_lv, Settings(leak_db=45.0)).tolist() == [True]
+
+
+def test_the_gate_reads_the_mean_level_from_50_ms_before_to_200_ms_after_the_onset():
+    s, fps, t = Settings(), SR / B.LEVEL_HOP, 2.0
+    mix_lv = np.ones(int(4 * fps))
+
+    def stem_lv(base, *spans):                    # dB under the mix: a base, then (from s, to s, dB) spans
+        out = np.full(len(mix_lv), 10 ** (base / 10))
+        for a, b, db in spans:
+            out[int(round(a * fps)):int(round(b * fps))] = 10 ** (db / 10)
+        return out
+
+    cases = [(stem_lv(-60, (t, t + 0.01, -20)), False),                         # a 10-ms click: -34 dB over the window
+             (stem_lv(-60, (t + 0.02, t + 0.20, -10)), True),                   # quiet at the onset, loud after it
+             (stem_lv(-60, (t - 0.05, t - 0.03, -5), (t + 0.18, t + 0.20, -5)), True),   # loud at its two ends only
+             # loud only outside the window, 20 ms clear of it (its last frame starts at t + 200 ms)
+             (stem_lv(-60, (t - 0.15, t - 0.07, 0), (t + 0.22, t + 0.40, 0)), False),
+             (stem_lv(-40, (t - 0.05, t + 0.20, -10)), True)]                   # a quiet stem, loud over the window
+    assert [bool(B.leakage_ok(np.array([t]), x, mix_lv, s)[0]) for x, _ in cases] == [ok for _, ok in cases]
 
 
 def test_the_folder_reads_back_as_expert_bass_in_seconds(folder, notes):
@@ -148,6 +195,16 @@ def test_pitch_chunks_line_up_with_one_pass(stem):
     both = np.isfinite(whole) & np.isfinite(chunked)
     assert both.sum() > 0.9 * np.isfinite(whole).sum()
     assert np.mean(np.abs(whole[both] - chunked[both]) < 0.1) > 0.98
+
+
+def test_a_note_takes_its_pitch_from_its_own_frames_only():
+    s = Settings()
+    fps = s.pitch_rate / s.pitch_hop
+    midi = np.full(int(2 * fps), np.nan)          # E2 for 70 ms, then B2
+    midi[int(0.5 * fps):int(0.57 * fps)] = 40.0
+    midi[int(0.57 * fps):int(1.5 * fps)] = 47.0
+    # the first note's frames stop at the next onset: 20-150 ms after it would hold more B2 than E2
+    assert B.note_pitches(np.array([0.5, 0.57]), np.array([0.57, 2.0]), midi, s).tolist() == [40.0, 47.0]
 
 
 def test_map_lanes_keeps_v1s_rules():
