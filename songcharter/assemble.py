@@ -18,7 +18,9 @@ own difficulties, star power, fills and sections, and a Clone Hero folder that i
      t sits at t + pad_seconds on the map, and every stage is given the pad: the notes, the sections, the solo test
      and the audio all move by it together.
   3. **Parts.** Each part is read with importers.read_song (a .chart, a .mid or a song folder, with its song.ini)
-     plus its `time_shift`. Its constant offset against our grid is measured on its Expert part
+     plus its `time_shift`. A part with `takes` (other runs of the same tool on the same audio) gets its Expert
+     spliced from all of them, section by section, by the takes' agreement (takes.splice, DESIGN.md 2.7; the
+     sections are built first for this). Its constant offset against our grid is measured on its Expert part
      (quantize.estimate_offset) and removed when trusted ("auto"), or set by hand; then quantize_part puts every
      taken difficulty on our grid. HOPOs: by default only the states the source forced are kept and the rest follow
      the natural rule on our grid (`HOPO_RULES`). The tools' own star power, fills and solos are dropped: ours
@@ -62,7 +64,8 @@ The config (JSON; relative paths are relative to the config file, keys starting 
      "lead_in": 2.5,
      "parts": [{"instrument": "guitar", "source": "autochart/notes.chart"},
                {"instrument": "drums", "source": "strum/notes.mid", "time_shift": 0.0697, "offset": "auto",
-                "take_difficulties": "expert", "hopo": "forced", "trim_silence": true}],
+                "take_difficulties": "expert", "hopo": "forced", "trim_silence": true},
+               {"instrument": "bass", "source": "run1/notes.chart", "takes": ["run2/notes.chart", "run3/notes.chart"]}],
      "sections": "allin1.json",                               (or "from:<part name>", or null)
      "solos": "off",                                          ("stems": confirmed by the vocals stem, "labels")
      "metadata": {"name": "...", "artist": "...", "album": "...", "genre": "...", "year": "2014",
@@ -94,6 +97,7 @@ from .quantize import (RULES, TRACK_DIFFICULTY, TRACK_INSTRUMENT, QuantizeReport
 from .reduce import LEVELS, Issue, check_reductions, hopo_states, reduce_level
 from .sections import read_allin1, sections_from_chart, sections_from_segments
 from .starpower import check_phrases, fill_crash_share, fit_chart, place_phrases, stem_confirm
+from .takes import splice
 from .tempo import LeadIn, TempoMap, plan_lead_in
 from .timed import DIFFICULTIES, INSTRUMENTS, TimedHit, TimedNote, TimedPart, TimedSong, TimedSpan
 
@@ -159,6 +163,8 @@ class PartConfig:
                                         # "source": how the source plays every note; "natural": our grid's only
     name: str | None = None             # how `sections: "from:<name>"` names it (default: instrument)
     trim_silence: bool = True           # remove onsets before its stem first plays and after it last plays
+    takes: tuple[Path, ...] = ()        # other runs of the same tool on the same audio: Expert is spliced from
+                                        # all of them by their agreement (takes.py; with take_difficulties "expert")
 
     @property
     def key(self) -> str:
@@ -265,6 +271,9 @@ def parse_config(data: dict, base: Path | str = ".", output: Path | str | None =
             offset = "auto"
         elif isinstance(offset, bool) or not isinstance(offset, (int, float)) or not math.isfinite(offset):
             raise ValueError(f"{where}.offset must be 'auto' or a number of seconds, not {offset!r}")
+        takes = p.get("takes", [])
+        if not isinstance(takes, list):
+            raise ValueError(f"{where}.takes must be a list of paths, not {takes!r}")
         if not isinstance(p.get("trim_silence", True), bool):
             raise ValueError(f"{where}.trim_silence must be true or false, not {p['trim_silence']!r}")
         source_instrument = _string(p.get("source_instrument"), f"{where}.source_instrument", True)
@@ -277,7 +286,8 @@ def parse_config(data: dict, base: Path | str = ".", output: Path | str | None =
                                                     f"{where}.take_difficulties").lower(),
                           hopo=_string(p.get("hopo", "forced"), f"{where}.hopo").lower(),
                           name=_string(p.get("name"), f"{where}.name", True),
-                          trim_silence=p.get("trim_silence", True))
+                          trim_silence=p.get("trim_silence", True),
+                          takes=tuple(path(t, f"{where}.takes[{j}]") for j, t in enumerate(takes)))
         if part.instrument not in INSTRUMENTS or part.from_instrument not in INSTRUMENTS:
             raise ValueError(f"parts[{i}]: instruments are {', '.join(INSTRUMENTS)}")
         if (part.instrument == "drums") != (part.from_instrument == "drums"):
@@ -286,6 +296,10 @@ def parse_config(data: dict, base: Path | str = ".", output: Path | str | None =
             raise ValueError(f"parts[{i}]: take_difficulties is 'expert' or 'all'")
         if part.hopo not in HOPO_RULES:
             raise ValueError(f"parts[{i}]: hopo is {', '.join(repr(k) for k in HOPO_RULES)}")
+        if part.takes and part.take_difficulties != "expert":
+            raise ValueError(f"parts[{i}]: takes splice Expert only, so they need take_difficulties 'expert'")
+        if len(part.takes) == 1:
+            raise ValueError(f"parts[{i}]: takes need at least two more runs (three in all) to agree on anything")
         parts.append(part)
     if not parts:
         raise ValueError("the config has no parts")
@@ -389,6 +403,7 @@ def check_inputs(cfg: AssembleConfig) -> None:
     is there, and the folder given might be Clone Hero's Songs folder."""
     named = [("audio", cfg.audio)] + [(f"stem {k}", p) for k, p in sorted(cfg.stems.items())]
     named += [(f"part {p.key}'s source", p.source) for p in cfg.parts]
+    named += [(f"part {p.key}'s take", t) for p in cfg.parts for t in p.takes]
     if cfg.sections is not None and not cfg.sections.startswith("from:"):
         named.append(("sections", Path(cfg.sections)))
     if cfg.album_art is not None:
@@ -988,16 +1003,33 @@ def track_stats(track: Track, tempo: TempoMap, pad: float) -> dict:
     return out
 
 
-def _import(part: PartConfig) -> TimedSong:
-    """The part's source, which must hold an Expert part of the instrument it is taken from."""
-    if not part.source.exists():
-        raise FileNotFoundError(f"part {part.key}: {part.source} does not exist")
-    song = read_song(part.source, part.time_shift, source=f"{part.key}:{part.source}")
+def _import(part: PartConfig, source: Path | None = None) -> TimedSong:
+    """The part's source (or one of its takes), which must hold an Expert part of the instrument it is taken
+    from."""
+    source = source or part.source
+    if not source.exists():
+        raise FileNotFoundError(f"part {part.key}: {source} does not exist")
+    song = read_song(source, part.time_shift, source=f"{part.key}:{source}")
     if (part.from_instrument, "expert") not in song.parts:
         found = sorted({i for i, _ in song.parts})
-        raise ValueError(f"part {part.key}: {part.source} has no Expert {part.from_instrument} "
+        raise ValueError(f"part {part.key}: {source} has no Expert {part.from_instrument} "
                          f"(it has {', '.join(found) or 'no parts'})")
     return song
+
+
+def _splice_takes(part: PartConfig, song: TimedSong, takes: list[TimedSong], sections: list[tuple[float, str]]
+                  ) -> tuple[TimedSong, dict]:
+    """The part's source with its Expert spliced from the source and its takes (takes.splice), and the report."""
+    key = (part.from_instrument, "expert")
+    spliced, windows = splice([song.parts[key]] + [t.parts[key] for t in takes], sections)
+    names = [str(part.source)] + [str(t) for t in part.takes]
+    info = {"sources": names, "windows": [{"section": w.name, "start": w.start, "end": w.end,
+                                           "onsets": list(w.onsets), "scores": list(w.scores), "pick": w.pick}
+                                          for w in windows],
+            "picked": {names[k]: sum(w.pick == k for w in windows) for k in range(len(names))},
+            "onsets": {"source": len({n.time for n in song.parts[key].notes}),
+                       "spliced": len({n.time for n in spliced.notes})}}
+    return replace(song, parts={**song.parts, key: spliced}), info
 
 
 def _quantize(part: PartConfig, song: TimedSong, tempo: TempoMap, pad: float
@@ -1079,6 +1111,7 @@ def assemble(config: AssembleConfig | dict | str | Path) -> AssembleResult:
     cfg = config
     check_inputs(cfg)
     songs = {p.key: _import(p) for p in cfg.parts}  # a bad source fails here, before any audio work
+    takes = {p.key: [_import(p, t) for t in p.takes] for p in cfg.parts}
     sr = SAMPLE_RATE
     warnings: list[str] = []
     report: dict[str, Any] = {"config": _jsonable({**asdict(cfg), "parts": [asdict(p) for p in cfg.parts]})}
@@ -1144,29 +1177,7 @@ def assemble(config: AssembleConfig | dict | str | Path) -> AssembleResult:
                            "bpm_min": min(bpms), "bpm_max": max(bpms), "max_error_ms": round(float(err.max()) * 1000, 3),
                            "beats": len(lead.beats)}
 
-    # 3. parts
-    by_inst: dict[str, dict[str, Track]] = {}
-    report["parts"] = {}
-    for part in cfg.parts:
-        q, offset, warn = _quantize(part, songs[part.key], tm, pad)
-        warnings += warn
-        by_inst[part.instrument] = {d: track for d, (track, _) in q.items()}
-        src_counts = {d: len({n.time for n in p.notes}) for (i, d), p in songs[part.key].parts.items()
-                      if i == part.from_instrument}
-        report["parts"][part.key] = {
-            "instrument": part.instrument, "source": str(part.source), "source_instrument": part.from_instrument,
-            "time_shift": part.time_shift, "take_difficulties": part.take_difficulties, "hopo": part.hopo,
-            "source_onsets": src_counts, "offset": offset,
-            "quantize": {d: _jsonable(asdict(r)) for d, (_, r) in q.items()}}
-        stem = next((s for s in STEMS_FOR[part.instrument] if s in levels_db), None)
-        if stem and part.trim_silence:
-            by_inst[part.instrument], removed = trim_silent_edges(by_inst[part.instrument], levels_db[stem], tm, pad)
-            span = active_span(levels_db[stem])
-            report["parts"][part.key]["trimmed"] = {
-                "stem": stem, "floor_db": TRIM_DB, "kept": None if span is None else [round(x, 3) for x in span],
-                "onsets": removed}
-
-    # 4. sections, phrases, reductions
+    # sections (before the parts: takes are spliced by section)
     if cfg.sections is None:
         sections, how = [], "none"
     elif cfg.sections.startswith("from:"):
@@ -1181,6 +1192,38 @@ def assemble(config: AssembleConfig | dict | str | Path) -> AssembleResult:
         warnings.append("no sections (scan-chart's noSections)")
     report["sections"] = {"source": how, "count": len(sections),
                           "list": [(_in_s(tm, t, pad), t, n) for t, n in sections]}
+
+    # 3. parts
+    by_inst: dict[str, dict[str, Track]] = {}
+    report["parts"] = {}
+    for part in cfg.parts:
+        song, spliced = songs[part.key], None
+        if takes[part.key]:
+            song, spliced = _splice_takes(part, song, takes[part.key],
+                                          [(tm.tick_to_sec(t) - pad, n) for t, n in sections])
+            if not sections:
+                warnings.append(f"part {part.key}: takes need sections to splice by; the source alone is used")
+        q, offset, warn = _quantize(part, song, tm, pad)
+        warnings += warn
+        by_inst[part.instrument] = {d: track for d, (track, _) in q.items()}
+        src_counts = {d: len({n.time for n in p.notes}) for (i, d), p in songs[part.key].parts.items()
+                      if i == part.from_instrument}
+        report["parts"][part.key] = {
+            "instrument": part.instrument, "source": str(part.source), "source_instrument": part.from_instrument,
+            "time_shift": part.time_shift, "take_difficulties": part.take_difficulties, "hopo": part.hopo,
+            "source_onsets": src_counts, "offset": offset,
+            "quantize": {d: _jsonable(asdict(r)) for d, (_, r) in q.items()}}
+        if spliced is not None:
+            report["parts"][part.key]["takes"] = spliced
+        stem = next((s for s in STEMS_FOR[part.instrument] if s in levels_db), None)
+        if stem and part.trim_silence:
+            by_inst[part.instrument], removed = trim_silent_edges(by_inst[part.instrument], levels_db[stem], tm, pad)
+            span = active_span(levels_db[stem])
+            report["parts"][part.key]["trimmed"] = {
+                "stem": stem, "floor_db": TRIM_DB, "kept": None if span is None else [round(x, 3) for x in span],
+                "onsets": removed}
+
+    # 4. phrases, reductions (the sections are built before the parts, for the takes)
     confirm = None
     if cfg.solos == "stems":
         if "vocals" not in levels_db:

@@ -840,6 +840,9 @@ def test_config_parsing_and_errors(tmp_path):
         ({"metadata": {k: v for k, v in CONFIG["metadata"].items() if k != "year"}}, "needs 'year'"),
         ({"metadata": {**CONFIG["metadata"], "album_track": 2.5}}, "album_track must be a whole number"),
         ({"album_art": "cover.gif"}, "not a .png or .jpg"),
+        ({"parts": [{**CONFIG["parts"][1], "takes": "run2.chart"}]}, r"parts\[0\].takes must be a list"),
+        ({"parts": [{**CONFIG["parts"][0], "takes": ["a.chart", "b.chart"]}]}, "takes splice Expert only"),
+        ({"parts": [{**CONFIG["parts"][1], "takes": ["a.chart"]}]}, "at least two more runs"),
     ]
     for change, message in bad:
         with pytest.raises(ValueError, match=message):
@@ -853,6 +856,9 @@ def test_config_parsing_and_errors(tmp_path):
                                                                  "trim_silence": False}]}, tmp_path)
     assert cfg.metadata["charter"] == "songcharter" and cfg.metadata["year"] == "2026"
     assert cfg.parts[0].offset == "auto" and cfg.parts[0].trim_silence is False and cfg.parts[0].time_shift == 0.0
+    assert cfg.parts[0].takes == () and parse_config(
+        {**CONFIG, "parts": [{**CONFIG["parts"][1], "takes": ["r2/notes.chart", "r3"]}]}, tmp_path
+    ).parts[0].takes == (tmp_path / "r2" / "notes.chart", tmp_path / "r3")
 
 
 def test_check_inputs(tmp_path):
@@ -896,3 +902,33 @@ def test_cli_help_and_errors(tmp_path, capsys):
     (tmp_path / "bad.json").write_text(json.dumps({**CONFIG, "parts": []}))
     assert main(["assemble", str(tmp_path / "bad.json")]) == 2
     assert "no parts" in capsys.readouterr().err
+
+
+def test_takes_splice_the_expert_part(built):
+    """Three takes of the tool's guitar: the source lost every other onset in the first verse section; the other
+    two are whole. The verse comes from a take, the rest from the source, so Expert is the whole tool chart."""
+    root, _, _ = built
+    text = (root / "tool" / "notes.chart").read_text(encoding="utf-8")
+    head, rest = text.split("[ExpertSingle]", 1)
+    body, tail = rest.split("}", 1)
+    ticks = sorted({int(line.split("=")[0]) for line in body.splitlines() if " = N " in line})
+    gone = set(t for t in ticks if 17.0 * 480 <= t < 35.0 * 480)  # 60 BPM at 480: tick = seconds x 480
+    gone = set(sorted(gone)[1::2])
+    kept = [line for line in body.splitlines() if " = " not in line or int(line.split("=")[0]) not in gone]
+    (root / "lossy").mkdir(exist_ok=True)
+    (root / "lossy" / "notes.chart").write_text(head + "[ExpertSingle]" + "\n".join(kept) + "\n}" + tail,
+                                                encoding="utf-8", newline="")
+    cfg = {**CONFIG, "parts": [{"instrument": "guitar", "source": "lossy/notes.chart", "take_difficulties": "expert",
+                                "takes": ["tool/notes.chart", "tool/notes.chart"]}] + CONFIG["parts"][1:],
+           "output": "out/takes"}
+    (root / "takes.json").write_text(json.dumps(cfg), encoding="utf-8")
+    result = assemble(root / "takes.json")
+    assert result.ok, [i for i in result.issues if i.error]
+    info = result.report["parts"]["guitar"]["takes"]
+    assert info["sources"][0].endswith("notes.chart") and len(info["sources"]) == 3
+    picks = [(w["section"], w["pick"]) for w in info["windows"]]
+    changed = [w for w in info["windows"] if w["pick"] != 0]
+    assert len(changed) == 1 and abs(changed[0]["start"] - (16.5 - 0.05)) < 0.01, picks
+    assert info["onsets"] == {"source": len(ticks) - len(gone), "spliced": len(ticks)}
+    expert = next(t for t in result.chart.tracks if t.instrument == "Single" and t.difficulty == "Expert")
+    assert len({n.tick for n in expert.notes}) == len(ticks)
