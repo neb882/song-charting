@@ -133,6 +133,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | `reduce.py` | Nested Hard/Medium/Easy for 5-fret and drums; minimum gaps from time floors (no Standard/Dense preset); a thinning ladder; a below-Expert HOPO rule; Easy sustain floor 1.25 beats (2 for bass); star-power and solo coverage; `check_reductions` (5-fret Hard ≥ 0.90 of Expert onsets is an error). |
 | `starpower.py` | Star power, drum activation lanes (at section changes, in star-power gaps, then every 4 measures) and solos (only in a "Solo" section the caller confirms, e.g. with `stem_confirm`), placed on Expert and fitted to every level (`fit_chart`); `check_phrases` (scan-chart's phrase checks, our rules, a `fillNoCrash` warning) (§2.10). |
 | `sections.py` | allin1 segments, or an imported chart's sections, on measure starts: merged, split and named (§2.5). |
+| `separate.py` | `separate`: one Demucs pass on the decoded array (htdemucs_6s by default, htdemucs_ft for M2), weights at a pinned Hugging Face revision with every file's SHA-256 checked, `random` and torch seeded right before the call, CUDA out of memory retried on the CPU (reported), a float32 WAV stem cache keyed by the samples and settings (§2.2). Optional dependency `songcharter[separate]`. |
 | `takes.py` | `splice`: a part's Expert from several runs of its source, chosen per section by the takes' agreement (§2.7, Several takes); assemble's part key `takes`. |
 | `assemble.py` | One JSON config to a gated song folder: decode, stem-lag check, grid with a second stem (§2.3), parts imported, offset-corrected and quantized, edges trimmed (§2.8), sections, phrases, reductions, ratings (§2.12), `build_song_folder` into a staging folder, then the gate with scan-chart 8.0.1 itself (§2.13) and `report.json`. A build the gate fails goes to `<output>.failed`. |
 | `cli.py` | `songcharter assemble <config.json> [--out DIR]`. Exit 0: the gate passed; 1: it failed (the build is in `<output>.failed`); 2: a bad config, input or tool, or song.ogg out of sync (nothing written); 3: a bug (traceback printed). M3's `songcharter chart <file>` is not written. |
@@ -201,6 +202,10 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
   - skip stems quieter than about −30 dB;
   - on failure, warn and re-separate.
   - Basis [here, critique `lagcheck.py`]: 6s drums and guitar lag exactly 1105 samples; ft and bass stems lag −0.6 to +1.4 samples; 6s piano (−31 dB) has outlier windows; median correlations run 0.03–0.77 for all stems.
+- **Built** (`songcharter/separate.py` [code]): the default above, with the pinned revision `3c5ee475` and both
+  files' SHA-256 checked on every load. On the test song, on the dev container's CPU: 138.5 s; every stem's median lag
+  against the mix within 0.1 sample (drums 0.001, bass −0.099, guitar 0.001, other 0.061, vocals −0.005; piano at
+  −31.9 dB not checked); two runs on a 30-s excerpt bit-identical [here, separation run].
 - **Goal 1:** no new separation. Reuse the `ft` stems (lag 0) and the ADTOF test's 6s drum stems (lag 0).
 - **Leakage gate** (kept from v1, untested): a note candidate from a stem needs the stem within 30 dB of the mix in that window. It is motivated by the 6s stems' −34 dB leakage in the test song's intro.
 - **BS-RoFormer SW is not in this version.** It has the best stems, but its weights have no licence, their origin is disputed, and it costs 8–14 min on a 6–8-core CPU [est.] (20–25 min in the dev container [here]). The owner may override (§9).
