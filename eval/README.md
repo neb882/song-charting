@@ -81,6 +81,17 @@ that runs out kills processes or stalls. Give it more in `%UserProfile%\.wslconf
 
 ```ini
 [wsl2]
-memory=24GB   # your RAM minus about 6 GB for Windows
-swap=16GB
+# your RAM minus about 8 GB for Windows (this is for 32 GB); comments go on their own lines
+memory=24GB
+swap=8GB
+```
+
+From Ubuntu, this writes that file without Notepad's habit of adding `.txt`:
+
+```sh
+cat > "$(wslpath "$(cd /mnt/c && cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')")/.wslconfig" <<'EOF'
+[wsl2]
+memory=24GB
+swap=8GB
+EOF
 ```
