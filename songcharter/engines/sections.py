@@ -29,9 +29,11 @@ after the music. songcharter.sections snaps them to measures, merges, splits and
     the fallback; engine.json records the backend and why. `backend="allin1"` raises instead of falling back.
   * **Cache.** engine.json holds a key of the samples the backend read and every setting that changes the result
     (the allin1 package and version, the model and its weights' hashes, the device; the librosa version and the
-    fallback's parameters). A call whose key matches the folder's engine.json returns the files already there.
+    fallback's parameters and constants). A call whose key matches the folder's engine.json returns the files
+    already there; for allin1 the probe still runs first (a few seconds), since its answer is part of the key.
 
-Needs soundfile; the fallback needs librosa (`pip install songcharter[sections]`); allin1 lives in its own Python.
+The fallback needs librosa (`pip install songcharter[sections]`). allin1 needs a Python with all-in-one-infer
+(`pip install all-in-one-infer`: pure Python, nothing to compile), either this one or one of its own.
 """
 from __future__ import annotations
 
@@ -95,6 +97,12 @@ VOCAL_SHARE = 0.25          # a segment has vocals when this share of its blocks
 SOLO_DB = 2.0               # a solo's guitar is this much louder against the mix than the song's median segment
 QUIET_DB = -6.0             # a break is this much quieter than the song's median segment
 BLOCK_S = 0.5               # stem-level blocks
+
+
+def _fallback_constants() -> tuple:
+    """The fallback's constants as they are now: part of its key, so a changed one is a new key."""
+    return (FEATURE_RATE, HOP, MIN_SEGMENT_BEATS, tuple(CLUSTERS), KMEANS_RUNS, SILENCE_DB, VOCALS_DB, VOCAL_SHARE,
+            SOLO_DB, QUIET_DB, BLOCK_S)
 
 
 class Allin1Error(RuntimeError):
@@ -495,7 +503,8 @@ def _librosa(mix, stems, out: Path, s: Settings, beats, why: list[str]) -> Secti
     if beats is not None:
         arrays["beats"] = np.asarray(beats, dtype=np.float32)
     params = {"backend": "librosa", "engine": ENGINE_VERSION, "librosa": librosa.__version__,
-              "seconds_per_segment": s.seconds_per_segment, "rate": SAMPLE_RATE, "guitar": guitar_stem}
+              "seconds_per_segment": s.seconds_per_segment, "rate": SAMPLE_RATE, "guitar": guitar_stem,
+              "constants": _fallback_constants()}
     key = cache_key(arrays, params)
     hit = _cached(out, key)
     if hit is not None:

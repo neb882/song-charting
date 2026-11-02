@@ -430,5 +430,8 @@ def test_the_fallback_finds_the_sections_of_a_synthetic_song(tmp_path, monkeypat
     assert again.segments == segs and again.info["key"] == r.info["key"]
     monkeypatch.setattr(S, "laplacian_segments", lambda *a: pytest.fail("segmented again"))
     assert find_sections(mix, stems, tmp_path / "one", settings).cached
-    with pytest.raises(pytest.fail.Exception):
+    with pytest.raises(pytest.fail.Exception):  # another setting is another key
         find_sections(mix, stems, tmp_path / "one", Settings(backend="librosa", seconds_per_segment=20.0))
+    monkeypatch.setattr(S, "VOCALS_DB", -19.0)
+    with pytest.raises(pytest.fail.Exception):  # and so is another constant
+        find_sections(mix, stems, tmp_path / "one", settings)
