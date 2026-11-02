@@ -9,10 +9,11 @@ hh_cy="stronger"), the baseline a better mapper must beat (M2), with DESIGN.md 2
      test-song excerpt). No constant offset.
   2. **Stem evidence for the mix's hats and cymbals** (critique G3). A mix HH or CY peak is kept only where the drum
      stem plays around it: its power over the second around the peak (`hat_gate_window`, every band) within
-     `hat_gate_db` (40 dB) of the mix's. Where the song has no drums the stem holds only leakage, about 60 dB under
-     the mix, so a guitar's or a voice's transients there give no hats. The window is wide on purpose: the stem
-     often lacks the hat itself (the reason HH and CY come from the mix), and asking for the hat's own highs in the
-     stem (2 kHz up, -10 to +30 ms, 30 dB) removed a quarter of the test song's hats, all in drummed passages.
+     `hat_gate_db` (40 dB) of the mix's. Where the song has no drums the stem holds only leakage (a median 47-66 dB
+     under the mix in the references' drumless stretches), so a guitar's or a voice's transients there give no
+     hats. The window is wide on purpose: the stem often lacks the hat itself (the reason HH and CY come from the
+     mix), and asking for the hat's own highs in the stem (2 kHz up, -10 to +30 ms, 30 dB) removed a quarter of the
+     test song's hats, all in drummed passages.
   3. **Hits.** Peaks of any class less than `merge_s` (30 ms) after a hit's first peak join that hit, each class
      keeping its strongest activation. At 100 frames a second that is two frames.
   4. **Lanes.** BD kick; SD red; HH yellow cymbal; CY blue cymbal in a regular run (at least 4 CY hits within +-2
