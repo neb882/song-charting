@@ -4,9 +4,10 @@
     song = importers.read_song(result.folder)      # its Expert drums, in seconds of the decode (time_offset 0)
 
   * **Licence.** This module is a separate component, treated as CC BY-NC-SA 4.0 (DESIGN.md 4.2, 9 Q15). Its
-    network, input features and peak picking were written from reading xavriley/ADTOF-pytorch, an unlicensed port
-    of ADTOF, whose whole repository is BY-NC-SA; the weights are BY-NC-SA by inheritance. No code or weights are
-    vendored: the weights are downloaded on first use. The fusion and the lane mapping (drumlanes.py) are our own.
+    network, input features and peak picking come from the research port written from reading xavriley/
+    ADTOF-pytorch, an unlicensed port of ADTOF, whose whole repository is BY-NC-SA; the weights are BY-NC-SA by
+    inheritance. Nothing of either repository is vendored, and the weights are downloaded on first use. The fusion
+    and the lane mapping (drumlanes.py) are our own and not part of this component.
   * **Model.** Frame_RNN: two convolution blocks and three bidirectional GRUs on a log-filtered spectrogram (84
     semitone bands, 100 frames a second), giving per-frame activations for kick (BD), snare (SD), toms (TT),
     hi-hat (HH) and cymbals (CY). Peaks are picked per class as madmom's NotePeakPickingProcessor picks them, with
@@ -22,7 +23,7 @@
   * **Cache.** A folder whose engine.json holds the same key (the samples, the weights and every setting) is
     reused as it is. The activations are reused for the same samples and weights when only lane settings change.
 
-Needs torch (`pip install songcharter[separate]` brings it); importing this module does not.
+Needs torch (`pip install songcharter[drums]`, or [separate], which brings it too); importing this module does not.
 """
 from __future__ import annotations
 
@@ -42,6 +43,7 @@ import numpy as np
 from .. import audio as A
 from ..chart import Chart, SongInfo, Track, write_chart
 from ..ini import write_ini
+from ..tempo import Tempo, TempoMap
 from . import drumlanes as L
 
 ENGINE_VERSION = "adtof-1"   # bump when the output for the same input and settings changes
@@ -59,16 +61,15 @@ CHART_RESOLUTION, CHART_BPM_MILLI = 480, 120000   # 960 ticks a second
 
 @dataclass(frozen=True)
 class Weights:
-    url: str
+    url: str             # at a pinned commit
     sha256: str
-    size: int
     file: str
 
 
 WEIGHTS = Weights("https://raw.githubusercontent.com/xavriley/ADTOF-pytorch/85c192e78f716ea0b111cc8a5ee4a8f6a3a4f8a9/"
                   "src/adtof_pytorch/data/adtof_frame_rnn_pytorch_weights.pth",
-                  "1bc986e596ec47ba0b44916f87cd4a39f0b2bec23596df3fb5d0e87749217320", 3617805,
-                  "adtof_frame_rnn_pytorch_weights.pth")
+                  "1bc986e596ec47ba0b44916f87cd4a39f0b2bec23596df3fb5d0e87749217320",
+                  "adtof_frame_rnn_pytorch_weights.pth")  # 3,617,805 bytes
 
 
 @dataclass(frozen=True)
@@ -352,7 +353,6 @@ def _cached(folder: Path, key: str) -> dict | None:
 
 def chart_of(hits: list, info: SongInfo | None = None) -> Chart:
     """The Expert drums chart of drumlanes hits on the engine's constant tempo map."""
-    from ..tempo import Tempo, TempoMap
     tm = TempoMap(CHART_RESOLUTION, [Tempo(0, CHART_BPM_MILLI)])
     per_second = CHART_RESOLUTION * CHART_BPM_MILLI / 60000
     notes = L.drum_hits(hits, lambda t: int(round(t * per_second)))
@@ -411,7 +411,8 @@ def generate(mix: np.ndarray, drums: np.ndarray, out: Path | str, settings: L.Se
         a = act["mix" if lab in settings.from_mix else "stem"][:, i]
         f = peaks(a, settings.thresholds[i])
         found[lab] = (f, a[f].astype(np.float64))
-    level = None if settings.hat_gate_db is None else L.stem_level_db(feat["stem"], feat["mix"], band_hz())
+    level = None if settings.hat_gate_db is None else L.stem_level_db(feat["stem"], feat["mix"], band_hz(), settings,
+                                                                       FPS)
     beat_s, beat_from = settings.beat_s, "settings"
     if beat_s is None:
         beat_s, beat_from = L.beat_period(mix), "mix"

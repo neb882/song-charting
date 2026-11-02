@@ -58,7 +58,7 @@ def test_the_network_matches_the_converted_layout_and_runs_in_blocks(tmp_path, m
 def test_pinned_weights_are_hash_checked_and_downloaded_once(tmp_path, monkeypatch):
     good = b"weights" * 100
     monkeypatch.setattr(AD, "WEIGHTS", AD.Weights("https://example.invalid/w.pth", hashlib.sha256(good).hexdigest(),
-                                                  len(good), "w.pth"))
+                                                  "w.pth"))
     monkeypatch.delenv("SONGCHARTER_OFFLINE", raising=False)
     asked = []
 
@@ -150,18 +150,26 @@ def test_toms_cluster_by_pitch():
 
 def test_the_hat_gate_asks_the_drum_stem_for_evidence():
     hz = AD.band_hz()
-    mix = np.full((400, 84), 0.5, np.float32)
+    mix = np.full((600, 84), 0.5, np.float32)
     stem = mix.copy()
-    stem[200:, :] = 0.0                       # the stem falls silent: a drumless stretch
-    stem[100:110, hz >= L.HAT_GATE_HZ] = 0.001  # log10(1 + m): far below the mix in the high bands
-    level = L.stem_level_db(stem, mix, hz)
-    assert level[50] == pytest.approx(0.0) and np.isneginf(level[300]) and level[105] < -30
-    f = found(HH=[(50, 0.9), (105, 0.9), (300, 0.9)], CY=[(310, 0.9)], BD=[(300, 0.9)])
-    hits, counts = L.lanes(f, 100, Settings(beat_s=0.5), 0.5, np.zeros(5 * SR, np.float32), SR, level)
-    assert [(round(h.time * 100), pads(h)) for h in hits] == [(50, [(2, True)]), (300, [(0, False)])]
-    assert counts["hat_gate_removed"] == {"HH": 2, "CY": 1}  # the stem's own kick stays
+    stem[300:, :] = 0.0                    # the stem falls silent at 3 s: a drumless stretch
+    stem[100:106, hz >= 2000] = 0.001      # a hit whose highs the stem lacks (the separation dropped the hat)
+    wide = Settings(beat_s=0.5)            # the default: the stem within 40 dB of the mix over +-0.5 s, every band
+    level = L.stem_level_db(stem, mix, hz, wide, 100)
+    assert abs(level[50]) < 0.1 and level[101] > -1 and np.isneginf(level[400])
+    narrow = Settings(beat_s=0.5, hat_gate_db=30.0, hat_gate_hz=2000.0, hat_gate_window=(-0.01, 0.03))
+    tight = L.stem_level_db(stem, mix, hz, narrow, 100)
+    assert tight[101] < -30 and abs(tight[50]) < 0.1  # read at the hit itself, in the highs
+    f = found(HH=[(50, 0.9), (101, 0.9), (400, 0.9)], CY=[(410, 0.9)], BD=[(400, 0.9)])
+    quiet = np.zeros(6 * SR, np.float32)
+    hits, counts = L.lanes(f, 100, wide, 0.5, quiet, SR, level)
+    assert [(round(h.time * 100), pads(h)) for h in hits] == [(50, [(2, True)]), (101, [(2, True)]),
+                                                              (400, [(0, False)])]
+    assert counts["hat_gate_removed"] == {"HH": 1, "CY": 1}  # the stem's own kick stays
+    _, strict = L.lanes(f, 100, narrow, 0.5, quiet, SR, tight)
+    assert strict["hat_gate_removed"] == {"HH": 2, "CY": 1}
     with pytest.raises(ValueError, match="stem_level_db"):
-        L.lanes(f, 100, Settings(beat_s=0.5), 0.5, np.zeros(5 * SR, np.float32), SR)
+        L.lanes(f, 100, wide, 0.5, quiet, SR)
 
 
 def test_2x_kicks_only_where_kicks_run_faster_than_6_a_second():
@@ -192,7 +200,7 @@ def test_beat_period_of_a_click_track():
 
 def test_settings_are_checked():
     for bad in (dict(thresholds=(0.2,) * 4), dict(from_mix=("XX",)), dict(merge_s=0.5), dict(hat_gate_db=0),
-                dict(beat_s=3.0), dict(double_kick_rate=-1)):
+                dict(hat_gate_window=(0.1, 0.5)), dict(hat_gate_hz=-1.0), dict(beat_s=3.0), dict(double_kick_rate=-1)):
         with pytest.raises(ValueError):
             Settings(**bad).check()
 
@@ -269,4 +277,5 @@ def test_the_engine_drops_the_mix_hats_where_the_stem_is_silent(tmp_path, monkey
     torch.manual_seed(0)
     r = AD.generate(mix, drums, tmp_path / "out", Settings(beat_s=0.5), model=AD.frame_rnn())
     hats = [h.time for h in read_song(r.folder).parts[("drums", "expert")].notes if h.pad == 2]
-    assert hats and max(hats) < 3.1 and r.info["counts"]["hat_gate_removed"]["HH"] == len(range(300, 551, 50)) * 2 - 1
+    # a hat stays while the stem plays within half a second of it
+    assert hats and max(hats) < 3.6 and r.info["counts"]["hat_gate_removed"]["HH"] == len(range(375, 576, 25))

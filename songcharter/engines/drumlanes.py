@@ -8,9 +8,11 @@ hh_cy="stronger"), the baseline a better mapper must beat (M2), with DESIGN.md 2
      ride (CY F 0.16 on the stem against 0.96 on the mix), and the mix adds false kicks (54 against 26 on a
      test-song excerpt). No constant offset.
   2. **Stem evidence for the mix's hats and cymbals** (critique G3). A mix HH or CY peak is kept only where the drum
-     stem, in the bands from HAT_GATE_HZ up and over HAT_GATE_FRAMES around the peak, comes within `hat_gate_db` of
-     the mix. Where the song has no drums the stem holds only leakage, so a guitar's or a voice's transients there
-     give no hats.
+     stem plays around it: its power over the second around the peak (`hat_gate_window`, every band) within
+     `hat_gate_db` (40 dB) of the mix's. Where the song has no drums the stem holds only leakage, about 60 dB under
+     the mix, so a guitar's or a voice's transients there give no hats. The window is wide on purpose: the stem
+     often lacks the hat itself (the reason HH and CY come from the mix), and asking for the hat's own highs in the
+     stem (2 kHz up, -10 to +30 ms, 30 dB) removed a quarter of the test song's hats, all in drummed passages.
   3. **Hits.** Peaks of any class less than `merge_s` (30 ms) after a hit's first peak join that hit, each class
      keeping its strongest activation. At 100 frames a second that is two frames.
   4. **Lanes.** BD kick; SD red; HH yellow cymbal; CY blue cymbal in a regular run (at least 4 CY hits within +-2
@@ -39,9 +41,9 @@ LABELS = ("BD", "SD", "TT", "HH", "CY")
 THRESHOLDS = (0.22, 0.24, 0.32, 0.22, 0.30)   # peak heights per class (DESIGN.md 2.9)
 FROM_MIX = ("HH", "CY")
 MERGE_S = 0.030
-HAT_GATE_DB = 30.0           # G3: the stem within this many dB of the mix (the leakage gate's figure, DESIGN.md 2.2)
-HAT_GATE_HZ = 2000.0         # ... in the bands from here up, where hats and cymbals are and kicks are not
-HAT_GATE_FRAMES = (-1, 3)    # ... over these frames around the peak (10 ms frames: the attack and its first ring)
+HAT_GATE_DB = 40.0           # G3: the stem within this many dB of the mix ...
+HAT_GATE_HZ = 0.0            # ... in the bands from here up (0: every band) ...
+HAT_GATE_WINDOW = (-0.5, 0.5)  # ... over this window around the peak (s)
 RIDE_BEATS, RIDE_MIN = 2.0, 4   # CY is a ride (blue) with this many CY hits within +-2 beats, itself included
 TOM_WINDOW_S = 0.08          # tom pitch: the stem's first 80 ms after the hit ...
 TOM_BAND_HZ = (60.0, 400.0)  # ... its strongest peak in this band ...
@@ -60,6 +62,8 @@ class Settings:
     from_mix: tuple[str, ...] = FROM_MIX           # the classes read from the mix; the rest from the drum stem
     merge_s: float = MERGE_S
     hat_gate_db: float | None = HAT_GATE_DB        # None: no stem evidence asked of the mix's HH and CY
+    hat_gate_hz: float = HAT_GATE_HZ
+    hat_gate_window: tuple[float, float] = HAT_GATE_WINDOW
     beat_s: float | None = None                    # the beat period for ride or crash; None: the mix's tempo
     double_kick_rate: float | None = DOUBLE_KICK_RATE  # None: no 2x kicks
 
@@ -73,6 +77,10 @@ class Settings:
             raise ValueError(f"merge_s is 0 to 0.1 s, not {self.merge_s}")
         if self.hat_gate_db is not None and self.hat_gate_db <= 0:
             raise ValueError(f"hat_gate_db is a positive number of dB or None, not {self.hat_gate_db}")
+        a, b = self.hat_gate_window
+        if not -2 <= a <= 0 <= b <= 2 or self.hat_gate_hz < 0:
+            raise ValueError(f"hat_gate_window runs from at most 0 to at least 0 within +-2 s, and hat_gate_hz is "
+                             f"0 Hz or more, not {self.hat_gate_window} and {self.hat_gate_hz}")
         if self.beat_s is not None and not 0.2 <= self.beat_s <= 1.5:
             raise ValueError(f"beat_s is a beat period of 0.2 to 1.5 s or None, not {self.beat_s}")
         if self.double_kick_rate is not None and self.double_kick_rate <= 0:
@@ -92,17 +100,17 @@ def beat_period(mix: np.ndarray, sample_rate: int = 44100) -> float:
     return 60.0 / estimate_tempo(f.env, f.fps)
 
 
-def stem_level_db(stem_bands: np.ndarray, mix_bands: np.ndarray, band_hz: np.ndarray) -> np.ndarray:
-    """Per frame, the drum stem's power against the mix's in dB, in the bands from HAT_GATE_HZ up and summed over
-    HAT_GATE_FRAMES around the frame. Bands are log10(1 + magnitude), shape (frames, bands); -inf where the stem is
-    silent there."""
-    use = band_hz >= HAT_GATE_HZ
+def stem_level_db(stem_bands: np.ndarray, mix_bands: np.ndarray, band_hz: np.ndarray, settings: Settings,
+                  fps: int) -> np.ndarray:
+    """Per frame, the drum stem's power against the mix's in dB, in the bands from settings.hat_gate_hz up, summed
+    over settings.hat_gate_window around the frame. Bands are log10(1 + magnitude), shape (frames, bands); -inf
+    where the stem is silent there."""
+    use = band_hz >= settings.hat_gate_hz
+    a, b = (int(round(w * fps)) for w in settings.hat_gate_window)
 
     def windowed(bands):
         p = ((10.0 ** bands[:, use].astype(np.float64) - 1.0) ** 2).sum(axis=1)
-        a, b = HAT_GATE_FRAMES
-        padded = np.concatenate([np.zeros(-a), p, np.zeros(b)])
-        c = np.concatenate([[0.0], np.cumsum(padded)])
+        c = np.concatenate([[0.0], np.cumsum(np.concatenate([np.zeros(-a), p, np.zeros(b)]))])
         return c[b - a + 1:] - c[:len(p)]
 
     s, m = windowed(stem_bands), windowed(mix_bands)
