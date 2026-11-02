@@ -306,6 +306,24 @@ def test_solos_come_from_confirmed_solo_sections():
     assert place_solos(ex, tm, [(9 * M, "Solo"), (12 * M, "Verse")]) == []
 
 
+def test_solos_on_the_sections_a_person_named():
+    """names: exactly the named sections, whatever their label and whatever confirm says; the minimums still hold."""
+    tm = const_map()
+    ex = guitar(40)
+    secs = [(1 * M, "Intro"), (9 * M, "Solo 1"), (17 * M, "Verse"), (25 * M, "Solo 2"), (33 * M, "Bridge")]
+    assert solo_sections(secs, 41 * M, names=["Solo 1", "Bridge"]) == [(9 * M, 17 * M), (33 * M, 41 * M)]
+    assert solo_sections(secs, 41 * M, names=["Solo 1"], confirm=lambda a, b: False) == [(9 * M, 17 * M)]
+    assert solo_sections(secs, 41 * M, names=["Solo 3"]) == []
+    assert place_solos(ex, tm, secs, names=["Solo 2"]) == [(25 * M, 33 * M - 96)]
+    # adjacent named sections are still one solo, and a named section with too few notes gets none
+    assert solo_sections(secs, 41 * M, names=["Solo 1", "Verse"]) == [(9 * M, 25 * M)]
+    assert place_solos(guitar(40, thin=set(range(9, 17))), tm, secs, names=["Solo 1"]) == []
+    # through place_phrases: only Expert lead guitar gets them
+    chart = Chart(SongInfo("t", "a"), tm, secs, [ex, Track("Expert", "DoubleBass", list(ex.notes))])
+    placed = place_phrases(chart, solos=True, solo_names=["Solo 1", "Solo 2"])
+    assert [t.solos for t in placed.tracks] == [[(9 * M, 17 * M - 96), (25 * M, 33 * M - 96)], []]
+
+
 def test_at_most_three_solos_with_the_most_notes():
     tm = const_map()
     ex = guitar(80, thin=set(range(41, 46)))

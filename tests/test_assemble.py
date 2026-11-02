@@ -840,6 +840,12 @@ def test_config_parsing_and_errors(tmp_path):
         ({"metadata": {k: v for k, v in CONFIG["metadata"].items() if k != "year"}}, "needs 'year'"),
         ({"metadata": {**CONFIG["metadata"], "album_track": 2.5}}, "album_track must be a whole number"),
         ({"album_art": "cover.gif"}, "not a .png or .jpg"),
+        ({"solos": []}, "at least one section name"),
+        ({"solos": ["Solo 1", ""]}, r"solos\[1\] must be a non-empty string"),
+        ({"solos": "sometimes"}, "a list of section names"),
+        ({"levels": "expert"}, "levels must be a non-empty list"),
+        ({"levels": ["hard", "easy"]}, "levels must include expert"),
+        ({"levels": ["expert", "insane"]}, "unknown difficulty insane"),
         ({"parts": [{**CONFIG["parts"][1], "takes": "run2.chart"}]}, r"parts\[0\].takes must be a list"),
         ({"parts": [{**CONFIG["parts"][0], "takes": ["a.chart", "b.chart"]}]}, "takes splice Expert only"),
         ({"parts": [{**CONFIG["parts"][1], "takes": ["a.chart"]}]}, "at least two more runs"),
@@ -855,6 +861,9 @@ def test_config_parsing_and_errors(tmp_path):
             parse_config({**CONFIG, **change}, tmp_path)
     assert parse_config({**CONFIG, "sections": "from:guitar"}, tmp_path).sections == "from:guitar"
     assert parse_config(CONFIG, tmp_path).grid_secondary is None  # the default: the guitar stem, else other
+    assert parse_config(CONFIG, tmp_path).levels == ("expert", "hard", "medium", "easy")
+    named = parse_config({**CONFIG, "solos": ["Solo 1", "solo 2"], "levels": ["Easy", "expert"]}, tmp_path)
+    assert named.solos == ("Solo 1", "solo 2") and named.levels == ("expert", "easy")  # names as written; in order
     for value, want in (("None", ""), ("mix", "mix"), ("drums", "drums")):
         assert parse_config({**CONFIG, "grid_secondary": value}, tmp_path).grid_secondary == want
     meta = {k: v for k, v in CONFIG["metadata"].items() if k != "charter"}
@@ -986,3 +995,26 @@ def test_takes_must_be_other_runs(built):
         with pytest.raises(ValueError, match=f"{same}.* have the same Expert notes"):
             assemble(parse_config(cfg, root))
     assert not (root / "out" / "x").exists()
+
+
+def test_expert_only_and_solos_on_named_sections(built):
+    """levels ["expert"] writes Expert alone for every instrument; solos named by a person go exactly there (no
+    "Solo" label needed), a name no section has is warned about, and the folder passes the gate."""
+    root, first, _ = built
+    names = [n for _, _, n in first.report["sections"]["list"]]
+    pick = names[2]  # a mid-song section full of guitar notes
+    cfg = {**CONFIG, "levels": ["expert"], "solos": [pick, "Nowhere"], "output": "out/expert_only"}
+    (root / "expert_only.json").write_text(json.dumps(cfg), encoding="utf-8")
+    result = assemble(root / "expert_only.json")
+    assert result.ok, [i for i in result.issues if i.error]
+    assert {t.difficulty for t in result.chart.tracks} == {"Expert"}
+    assert {t.instrument for t in result.chart.tracks} == {"Single", "DoubleBass", "Drums"}
+    text = (result.folder / "notes.chart").read_text(encoding="utf-8")
+    assert "[ExpertSingle]" in text and "[HardSingle]" not in text and "[EasyDrums]" not in text
+    lead = next(t for t in result.chart.tracks if t.instrument == "Single")
+    secs = sorted(result.chart.sections)
+    i = next(k for k, (_, n) in enumerate(secs) if n == pick)
+    a, b = secs[i][0], secs[i + 1][0]
+    assert len(lead.solos) == 1 and a <= lead.solos[0][0] and lead.solos[0][1] < b
+    assert any("no section is named 'Nowhere'" in w for w in result.report["warnings"])
+    assert result.report["tracks"]["guitar"].keys() == {"expert"}

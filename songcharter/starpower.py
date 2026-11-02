@@ -428,16 +428,18 @@ def place_fills(expert: Track, tempo: TempoMap, sections: Sequence[int] = (),
 # ------------------------------------------------------------------------------------------------ solos
 
 def solo_sections(sections: Sequence[tuple[int, str]], end_tick: int, *,
-                  confirm: Callable[[int, int], bool] | None = None) -> list[tuple[int, int]]:
+                  confirm: Callable[[int, int], bool] | None = None,
+                  names: Sequence[str] | None = None) -> list[tuple[int, int]]:
     """Half-open tick ranges of the sections named as solos that `confirm` accepts (all if None), consecutive ones
-    joined; the last section runs to end_tick."""
+    joined; the last section runs to end_tick. names: exactly these sections instead (a person's choice, which
+    neither the "Solo" label nor confirm overrules)."""
     secs = sorted(sections)
     out: list[tuple[int, int]] = []
     for i, (tick, name) in enumerate(secs):
-        if not _SOLO.search(name):
+        if (name not in names) if names is not None else not _SOLO.search(name):
             continue
         stop = secs[i + 1][0] if i + 1 < len(secs) else max(end_tick, tick)
-        if confirm is not None and not confirm(tick, stop):
+        if names is None and confirm is not None and not confirm(tick, stop):
             continue
         if out and out[-1][1] == tick:
             out[-1] = (out[-1][0], stop)
@@ -447,19 +449,22 @@ def solo_sections(sections: Sequence[tuple[int, str]], end_tick: int, *,
 
 
 def place_solos(expert: Track, tempo: TempoMap, sections: Sequence[tuple[int, str]], *,
-                confirm: Callable[[int, int], bool] | None = None,
+                confirm: Callable[[int, int], bool] | None = None, names: Sequence[str] | None = None,
                 rules: SoloRules = SOLO_RULES) -> list[tuple[int, int]]:
     """Solos (first onset, last onset; Track.solos ends are inclusive) from the sections named as solos.
 
     confirm: a test of each solo section [start, end) in ticks, e.g. `stem_confirm` (the vocals stem is quiet).
              allin1's label alone is not reliable: on the test song most of its "solo" sections are sung.
+    names:   the sections a person named as solos (exact section names), instead of the label and confirm. The
+             test song's player named "Solo 1" and "Solo 2", which the stem test rejects (the vocals stem is active in
+             56 % and 95 % of them). The 16-onset and 4-measure minimums and the 3-solo cap still apply.
     """
     onsets = _onsets(expert)
     if not onsets:
         return []
     bars = _Bars(tempo, onsets[-1])
     picked = []
-    for a, b in solo_sections(sections, onsets[-1] + 1, confirm=confirm):
+    for a, b in solo_sections(sections, onsets[-1] + 1, confirm=confirm, names=names):
         inside = _between(onsets, a, b)
         measures = bisect.bisect_left(bars.starts, b) - bisect.bisect_left(bars.starts, a)
         if len(inside) >= rules.min_onsets and measures >= rules.min_measures:
@@ -539,6 +544,7 @@ def fit_phrases(track: Track, tempo: TempoMap, *, source: Track | None = None,
 
 
 def place_phrases(chart: Chart, *, solos: bool = False, confirm_solo: Callable[[int, int], bool] | None = None,
+                  solo_names: Sequence[str] | None = None,
                   bonus: dict[str, Bonus] | None = None, sp_rules: StarPowerRules = SP_RULES,
                   fill_rules: FillRules = FILL_RULES, solo_rules: SoloRules = SOLO_RULES) -> Chart:
     """The chart with new star power on every Expert track, fills on Expert drums and (if `solos`) solos on Expert
@@ -546,6 +552,7 @@ def place_phrases(chart: Chart, *, solos: bool = False, confirm_solo: Callable[[
 
     solos:        place solos on the sections named as solos that confirm_solo accepts (all of them without it).
                   Off by default: a section label alone is not a reliable signal (see place_solos).
+    solo_names:   with solos, exactly the sections of these names (see place_solos).
     bonus:        per instrument ("Single", "DoubleBass", "Drums", ...), extra score for a phrase [start, end).
     Run it before reduce_chart, which copies Expert's phrases down and keeps a note in each, then `fit_chart`.
     """
@@ -560,7 +567,8 @@ def place_phrases(chart: Chart, *, solos: bool = False, confirm_solo: Callable[[
             solo = list(ex.solos)
         else:
             sp, fills = place_star_power(ex, chart.tempo, starts, bonus=b, rules=sp_rules), []
-            solo = place_solos(ex, chart.tempo, chart.sections, confirm=confirm_solo, rules=solo_rules) \
+            solo = place_solos(ex, chart.tempo, chart.sections, confirm=confirm_solo, names=solo_names,
+                               rules=solo_rules) \
                 if solos and ex.instrument == "Single" else []
         other = [p for p in ex.phrases if p.kind not in (STAR_POWER, DRUM_ACTIVATION)]
         new = Track(ex.difficulty, ex.instrument, list(ex.notes),
