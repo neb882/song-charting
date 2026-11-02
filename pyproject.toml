@@ -12,6 +12,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "mido>=1.3"]
 separate = ["demucs>=4.1,<5"]   # torch, huggingface_hub, safetensors and pyyaml come with it
+bass = ["librosa>=0.10"]         # the bass rule engine (pYIN, peak picking); scipy and soxr come with it
 
 [project.scripts]
 songcharter = "songcharter.cli:main"
