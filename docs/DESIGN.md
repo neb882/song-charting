@@ -14,6 +14,10 @@ and [here, sections engine run]; the end-to-end runs [here, pipeline run]. The c
 *Updated on 2026-11-03 after a review of the integrated pipeline (errors and exit codes, devices, caches, memory
 records, test coverage); the fixes are listed at the end of §11.*
 
+*Updated again on 2026-11-03 for the pipeline's defaults (branch `pipeline-defaults`): Expert only, solos by name or
+mode, guitar takes by device, the preview, the work folder in the per-user cache (§9 Q30) and the clip at the end of
+the audio; listed at the end of §11.*
+
 **Evidence tags:**
 - **[here]**: measured by this project in the Linux dev container (4 CPUs, no GPU).
 - **[here, 5070]**: measured on the owner's RTX 5070 under WSL2 (`eval/gpu.sh`).
@@ -163,7 +167,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | `takes.py` | `splice`: a part's Expert from several runs of its source, chosen per section by the takes' agreement (§2.7, Several takes); assemble's part key `takes`. |
 | `assemble.py` | One JSON config to a gated song folder: decode, stem-lag check, grid with a second stem (§2.3), parts imported, offset-corrected and quantized, edges trimmed (§2.8), every taken level clipped 1 ms inside song.ogg's end (`clip_to_audio`, §2.13), sections, phrases, reductions, ratings (§2.12), `build_song_folder` into a staging folder, then the gate with scan-chart 8.0.1 itself (§2.13) and `report.json`. A build the gate fails goes to `<output>.failed`. `check_output` (the output folder and its `.failed` hold only what a build writes) also runs in the pipeline before any audio work. |
 | `cli.py` | `songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums] [--levels expert\|all\|LIST] [--solos stems\|labels\|off\|"NAME,NAME"] [--takes N] [--device auto\|cpu\|cuda] [--threads N] [--no-preview] [--title\|--artist\|--album\|--year\|--genre TEXT]` (pipeline.py; the work folder defaults to the song's folder in the per-user cache, `cache.py`, and `--work DIR` puts it anywhere, with autochart's scratch inside it as before) and `songcharter assemble <config.json> [--out DIR]`. Both: exit 0: the gate passed; 1: it failed (the build is in `<output>.failed`); 2: a bad config, input, option or tool (a missing component named with its fix), a failing component, or song.ogg out of sync (nothing written): an `errors.SongcharterError` or an `OSError`, one line; 3: any other exception, a bug (traceback printed, and kept in `pipeline.json` for `chart`); 130: interrupted. `chart` prints a line on stderr when each stage starts and ends, with its wall time, and the build summary and stage times on stdout. |
-| tests | 399 tests: tempo, chart, package, beatgrid, importers, quantize, reduce, starpower, sections, separate, takes, assemble and the CLI, the four engines (autochart 5, ADTOF 15, bass 14, sections 29) and the pipeline (17, with stand-ins for the heavy stages, which check the exact arrays they get, and the CLI end to end on a synthetic song). 398 pass and 1 skips without `$SONGCHARTER_ALLIN1_PYTHON` (it passes with it set); the scan-chart tests skip when `tools/scan-chart`'s node_modules are absent [here]. A passing test's temporary folders are deleted at once (`tmp_path_retention_policy = "failed"`): `tests/test_pipeline.py` peaks at about 320 MB of them and leaves none, where it used to leave about 470 MB per run, three runs kept [here]. |
+| tests | 471 tests on branch `pipeline-defaults` (468 pass and 3 skip in its worktree: the allin1 test without `$SONGCHARTER_ALLIN1_PYTHON`, and test_package's two scan-chart tests, which look for `tools/scan-chart/node_modules` in the checkout itself and pass with it [here]); `tests/conftest.py` points `$SONGCHARTER_CACHE` at a temporary folder for the whole session, so no test writes to the real per-user cache. Before this branch, 399 tests: tempo, chart, package, beatgrid, importers, quantize, reduce, starpower, sections, separate, takes, assemble and the CLI, the four engines (autochart 5, ADTOF 15, bass 14, sections 29) and the pipeline (17, with stand-ins for the heavy stages, which check the exact arrays they get, and the CLI end to end on a synthetic song). 398 pass and 1 skips without `$SONGCHARTER_ALLIN1_PYTHON` (it passes with it set); the scan-chart tests skip when `tools/scan-chart`'s node_modules are absent [here]. A passing test's temporary folders are deleted at once (`tmp_path_retention_policy = "failed"`): `tests/test_pipeline.py` peaks at about 320 MB of them and leaves none, where it used to leave about 470 MB per run, three runs kept [here]. |
 
 **Design and code, decided once.** Each difference is decided here; code changes are §5.6 tasks.
 
@@ -1729,7 +1733,7 @@ The other critique gaps are designed in this version: G4 (§2.3, code change pen
 - **Variance and references:** seed variance on the references (only same-seed GPU and CPU pairs exist); the independent human ceiling.
 - **Inputs:** degraded rips and live recordings.
 - **Listening and play:** nobody has listened to any output or played any chart.
-- **Tests:** the repo's 389 tests ran for this update: 388 pass, 1 skips (§2.0) [here].
+- **Tests:** the repo's 471 tests ran for the pipeline's defaults: 468 pass, 3 skip (§2.0) [here].
 
 ---
 
@@ -2036,3 +2040,26 @@ decides), and the p95-drift click test (critique G4).
   test [here]. A passing test's temporary folders are deleted at once (§2.0).
 - **End to end:** the test song charted again gives byte-identical engine charts, take and `notes.chart`, and passes
   the gate (§5, M3).
+
+**Changes for the pipeline's defaults** (branch `pipeline-defaults`, on `main` at 7172d80):
+- **The end of the audio:** `noteAfterAudio` is our own gate rule (scan-chart 8.0.1 measures no audio). assemble now
+  clips every taken level 1 ms inside song.ogg's end (`clip_to_audio`), with the counts in report.json; the 35-s
+  excerpt that failed it passes, and so does a new 35-s cut of Take Me Out inside a long guitar sustain (1 Expert
+  sustain clipped, guitar ending 1.8 ms before song.ogg) [here] (§2.13).
+- **Levels:** Expert only by default; `--levels expert|all|LIST` (§2.0).
+- **Solos:** `--solos stems|labels|off` or section names, `--solos "Solo 1,Solo 2"`; the default stays "stems" (§2.0).
+- **Guitar takes:** 4 by default when the guitar stage runs on CUDA, 1 on the CPU; the first CUDA take alone first,
+  that take alone when autochart moved its transcriber off CUDA; `--takes N` as asked on any device (§2.7).
+- **Preview:** written into `work/preview/` after every build, when matplotlib and librosa import; it never changes
+  the exit code; `--no-preview` (§2.0).
+- **Work folder (§9 Q30, decided):** `<cache>/work/<name>-<key>` in the per-user cache, autochart's scratch in
+  `<cache>/ac/<8 hex>` to stay under Windows' 260 characters, the least recently used pruned to 5 GB; `--work` as before
+  (`cache.py`, §2.0).
+- **Runs** [here, dev CPU]: Take Me Out with the defaults on the warm work folder: exit 0, Expert only, 1 take (the
+  CPU default, recorded with its reason), gate OK, the preview's 5 pages with nothing flagged, 300 s (the guitar take
+  ran again: 234 s). A 35-s excerpt (95–130 s): gate OK, nothing to clip; the same excerpt with the cache default:
+  `work/tmo_excerpt-d1004c46f2e46f3c` (101 MB with its scratch), deepest path 63 characters below it, and 226 below
+  the scratch on Linux, where autochart's stem folder is 70 characters long instead of Windows' 32.
+- **Tests:** 39 mutations of the new code (the clip, levels, solos, takes, the preview, the cache, the pruning), each
+  failing a test [here].
+
