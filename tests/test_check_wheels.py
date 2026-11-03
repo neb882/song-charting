@@ -3,9 +3,9 @@ cross-index exception), the comparison, and the whole check of one lane through 
 folders: find-links for PyPI and the lane's index (fake wheels, and fake sdists whose in-tree build backend needs
 nothing) and a flat index for another lane's. Wheels, the allowed sdist and cu126's torchaudio from the other index
 pass; a second sdist-only package, the allowed sdist at another version, a pin the lock misses, any other package
-from the other index, the exception on another lane, an sdist off the lock's hash or not downloadable, and an sdist
-that builds a platform wheel each fail. The real locks are checked by the 10-lanes CI hook, which needs the
-network."""
+from the other index, the exception on another lane, a pin whose lock entry has no fitting wheel (though an index
+has one), an sdist off the lock's hash or not downloadable, and an sdist that builds a platform wheel each fail. The
+real locks are checked by the 10-lanes CI hook, which needs the network."""
 import hashlib
 import importlib.util
 import io
@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("packaging")
+from packaging.utils import parse_sdist_filename, parse_wheel_filename  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_file_location("check_wheels", ROOT / "packaging" / "check_wheels.py")
@@ -189,18 +190,30 @@ def write_sdist(folder, name, version, tag="py3-none-any"):
     return path
 
 
-def write_lock(project, sdist, digest=None):
-    """A uv.lock with the antlr sdist's entry (the only part the check reads)."""
-    digest = digest or hashlib.sha256(sdist.read_bytes()).hexdigest()
-    (project / "uv.lock").write_text(textwrap.dedent(f"""\
-        version = 1
-
-        [[package]]
-        name = "{ANTLR}"
-        version = "4.9.3"
-        source = {{ registry = "https://pypi.org/simple" }}
-        sdist = {{ url = "{sdist.as_uri()}", hash = "sha256:{digest}", size = {sdist.stat().st_size} }}
-        """))
+def write_lock(project, folders, antlr_digest=None):
+    """A uv.lock recording every wheel and sdist in these folders, by package (the parts the check reads); the sdists
+    with their hash (antlr_digest replaces antlr's)."""
+    packages = {}
+    for folder in folders:
+        for path in sorted(folder.iterdir()):
+            if path.name.endswith(".whl"):
+                name, version = parse_wheel_filename(path.name)[:2]
+                packages.setdefault((name, str(version)), {"wheels": []})["wheels"].append(path)
+            elif path.name.endswith(".tar.gz"):
+                name, version = parse_sdist_filename(path.name)
+                packages.setdefault((name, str(version)), {"wheels": []})["sdist"] = path
+    lines = ["version = 1"]
+    for (name, version), files in sorted(packages.items()):
+        lines += ["", "[[package]]", f'name = "{name}"', f'version = "{version}"',
+                  'source = { registry = "https://pypi.org/simple" }']
+        if "sdist" in files:
+            sdist = files["sdist"]
+            digest = (name == ANTLR and antlr_digest) or hashlib.sha256(sdist.read_bytes()).hexdigest()
+            lines.append(f'sdist = {{ url = "{sdist.as_uri()}", hash = "sha256:{digest}", '
+                         f'size = {sdist.stat().st_size} }}')
+        if files["wheels"]:
+            lines.append("wheels = [" + ", ".join(f'{{ url = "{w.as_uri()}" }}' for w in files["wheels"]) + "]")
+    (project / "uv.lock").write_text("\n".join(lines) + "\n")
 
 
 @pytest.fixture
@@ -220,8 +233,8 @@ def uv(monkeypatch, tmp_path):
 def lane(tmp_path, monkeypatch):
     """A find-links folder for PyPI and the lane's index (torch and a wheel-only package as wheels, the allowed antlr
     and a second package as sdists only), a flat index standing for another lane's (torchaudio, and a package found
-    nowhere else), an empty default index, and a project whose lanes pin torch (and torchaudio on cu126), with
-    antlr's sdist in its lock."""
+    nowhere else), an empty default index, and a project whose lanes pin torch (and torchaudio on cu126), with all
+    of these files in its lock."""
     links, other, empty, project, work = (tmp_path / d for d in ("links", "other", "empty", "project", "work"))
     for d in (links, other, empty, project, work):
         d.mkdir()
@@ -234,10 +247,11 @@ def lane(tmp_path, monkeypatch):
     write_wheel(links, "needs-dep", "1.0", requires=["dep>=2"])
     write_wheel(links, "dep", "2.0")
     write_sdist(links, "sdist-only", "1.0")
-    write_lock(project, write_sdist(links, ANTLR, "4.9.3"))
+    write_sdist(links, ANTLR, "4.9.3")
+    write_lock(project, [links, other])
     (project / "pyproject.toml").write_text('[project.optional-dependencies]\ncpu = ["torch==2.15.0"]\n'
                                            'cu126 = ["torch==2.14.1", "torchaudio==2.11.1"]\n')
-    return {"links": links, "empty": empty, "project": project, "work": work}
+    return {"links": links, "other": other, "empty": empty, "project": project, "work": work}
 
 
 GOOD = f"{ANTLR}==4.9.3 ; sys_platform == 'linux'\ntorch==2.15.0+cpu\nwheel-only==1.0\n"
@@ -291,15 +305,57 @@ def test_a_dependency_the_lock_misses_fails(uv, lane):
         run_check(uv, lane, GOOD + "needs-dep==1.0\n")
 
 
+def test_a_pin_the_lock_has_only_as_an_sdist_fails_though_an_index_has_a_wheel(uv, lane, tmp_path):
+    # the review's case: the compile finds xpkg's wheel on the lane's index, but the lock took xpkg's sdist, so the
+    # friend's `uv sync --frozen` would build it
+    pypi = tmp_path / "pypi"
+    pypi.mkdir()
+    write_sdist(pypi, "xpkg", "1.0")
+    write_lock(lane["project"], [lane["links"], lane["other"], pypi])
+    write_wheel(lane["links"], "xpkg", "1.0", tag="cp313-cp313-manylinux_2_17_x86_64")
+    with pytest.raises(cw.CheckError, match=r"(?s)the lock's own files.*xpkg 1.0: .*\(an sdist only\)"):
+        run_check(uv, lane, GOOD + "xpkg==1.0\n")
+
+
+def test_a_pin_missing_from_the_lock_fails(uv, lane):
+    write_wheel(lane["links"], "unlocked", "1.0")  # after the fixture wrote the lock
+    with pytest.raises(cw.CheckError, match=r"unlocked 1.0: not in .*uv.lock"):
+        run_check(uv, lane, GOOD + "unlocked==1.0\n")
+
+
+def test_a_pin_whose_locked_wheels_need_a_newer_glibc_fails(uv, lane):
+    write_wheel(lane["links"], "xpkg", "1.0", tag="cp313-cp313-manylinux_2_39_x86_64")
+    write_lock(lane["project"], [lane["links"], lane["other"]])
+    with pytest.raises(cw.CheckError, match=r"xpkg 1.0: .*glibc 2.35 \(1 wheels, none for it\)"):
+        run_check(uv, lane, GOOD + "xpkg==1.0\n")
+
+
+@pytest.mark.parametrize("filename, fits", [
+    ("x-1.0-py3-none-any.whl", True),
+    ("x-1.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", True),
+    ("x-1.0-cp313-cp313-manylinux_2_35_x86_64.whl", True),
+    ("x-1.0-cp312-abi3-manylinux_2_28_x86_64.whl", True),
+    ("x-1.0-py3-none-manylinux_2_28_x86_64.whl", True),
+    ("x-1.0-cp313-cp313-manylinux_2_36_x86_64.whl", False),
+    ("x-1.0-cp313-cp313-musllinux_1_2_x86_64.whl", False),
+    ("x-1.0-cp313-cp313-manylinux_2_17_aarch64.whl", False),
+    ("x-1.0-cp313-cp313t-manylinux_2_17_x86_64.whl", False),
+    ("x-1.0-cp312-cp312-manylinux_2_17_x86_64.whl", False),
+    ("x-1.0-cp313-cp313-win_amd64.whl", False),
+    ("x-1.0-cp313-cp313-linux_x86_64.whl", False),
+])
+def test_which_locked_wheels_fit(filename, fits):
+    assert cw.wheel_fits(filename) is fits
+
+
 def test_an_sdist_off_the_locks_hash_fails(uv, lane):
-    write_lock(lane["project"], lane["links"] / "antlr4_python3_runtime-4.9.3.tar.gz", digest="0" * 64)
+    write_lock(lane["project"], [lane["links"], lane["other"]], antlr_digest="0" * 64)
     with pytest.raises(cw.CheckError, match="does not match the lock's hash"):
         run_check(uv, lane, GOOD)
 
 
 def test_an_sdist_that_does_not_download_fails(uv, lane):
     sdist = lane["links"] / "antlr4_python3_runtime-4.9.3.tar.gz"
-    write_lock(lane["project"], sdist)
     lock = lane["project"] / "uv.lock"
     lock.write_text(lock.read_text().replace(sdist.as_uri(), (lane["links"] / "gone.tar.gz").as_uri()))
     with pytest.raises(cw.CheckError, match="its sdist did not download"):
@@ -307,7 +363,7 @@ def test_an_sdist_that_does_not_download_fails(uv, lane):
 
 
 def test_an_sdist_that_builds_a_platform_wheel_fails(uv, lane):
-    sdist = write_sdist(lane["links"], ANTLR, "4.9.3", tag="cp313-cp313-manylinux_2_17_x86_64")
-    write_lock(lane["project"], sdist)
+    write_sdist(lane["links"], ANTLR, "4.9.3", tag="cp313-cp313-manylinux_2_17_x86_64")
+    write_lock(lane["project"], [lane["links"], lane["other"]])
     with pytest.raises(cw.CheckError, match="not a py3-none-any wheel"):
         run_check(uv, lane, GOOD)

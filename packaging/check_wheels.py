@@ -13,10 +13,12 @@ packaging/check_wheels.py`. For each project (default `.` and `packaging/allin1`
    index rule is named in CROSS_INDEX: that package alone may come from another lane's PyTorch index.
 
 A pair passes when the compile gives the same names at the same public versions (torch and torchaudio in full: their
-local part, `+cu132`, names the build), and every allowed sdist among its pins downloads from the lock's URL with the
-lock's hash and builds (`uv build --wheel`) to a py3-none-any wheel. Prints one `ok <project> <lane>: <n> packages,
-torch <v>` line per pair, with the lane's other pins (and the index of a cross-index one) and the sdists built;
-exit 0, or 1 with the failures.
+local part, `+cu132`, names the build); when the lock itself records, for each pin but the allowed sdists, a wheel
+that installs on CPython 3.13, Linux x86_64 with glibc 2.35 (Ubuntu 22.04's, the oldest the install meets), since
+`uv sync --frozen` installs the lock's files, not the compile's; and when every allowed sdist among its pins downloads
+from the lock's URL with the lock's hash and builds (`uv build --wheel`) to a py3-none-any wheel. Prints one
+`ok <project> <lane>: <n> packages, torch <v>` line per pair, with the lane's other pins (and the index of a
+cross-index one) and the sdists built; exit 0, or 1 with the failures.
 """
 from __future__ import annotations
 
@@ -29,10 +31,12 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 from packaging.requirements import InvalidRequirement, Requirement
+from packaging.tags import compatible_tags, cpython_tags
 from packaging.utils import canonicalize_name, parse_wheel_filename
 from packaging.version import Version
 
@@ -52,6 +56,13 @@ PURE_SDISTS = {"antlr4-python3-runtime": "4.9.3"}
 CROSS_INDEX = {"cu126": {"torchaudio": "cpu"}}
 # the packages compared with their local part, which names the build (`+cpu`, `+cu132`)
 FULL_VERSION = ("torch", "torchaudio")
+# the tags a wheel recorded in the lock may carry: CPython 3.13 (its own ABI, abi3 or none), Linux x86_64 with
+# manylinux no newer than glibc 2.35, Ubuntu 22.04's, the oldest Ubuntu the install meets (CI also runs it there)
+LOCK_GLIBC = (2, 35)
+_LOCK_PLATFORMS = [f"manylinux_{LOCK_GLIBC[0]}_{minor}_x86_64" for minor in range(LOCK_GLIBC[1], 4, -1)] + [
+    "manylinux2014_x86_64", "manylinux2010_x86_64", "manylinux1_x86_64"]
+LOCK_TAGS = frozenset([*cpython_tags((3, 13), abis=["cp313"], platforms=_LOCK_PLATFORMS),
+                       *compatible_tags((3, 13), "cp313", _LOCK_PLATFORMS)])
 # where the pins are evaluated: CPython 3.13 on Linux x86_64. python_full_version is 3.13.0, as for `uv pip compile
 # --python-version 3.13`, so the two steps agree.
 MARKER_ENV = {
@@ -167,6 +178,35 @@ def compare(want: dict[str, str], got: dict[str, str]) -> list[str]:
     return problems
 
 
+def wheel_fits(filename: str) -> bool:
+    """Whether a wheel installs on CPython 3.13, Linux x86_64, glibc 2.35 (LOCK_TAGS)."""
+    return any(tag in LOCK_TAGS for tag in parse_wheel_filename(filename)[3])
+
+
+def lock_wheel_problems(project: Path, pinned: dict[str, str]) -> list[str]:
+    """The pins, the allowed sdists aside, for which the lock itself records no wheel that fits (wheel_fits): what
+    `uv sync --frozen` would have to build or could not install, whatever an index offers at that version."""
+    lock = tomllib.loads((project / "uv.lock").read_text(encoding="utf-8"))
+    entries: dict[tuple, list[dict]] = {}
+    for package in lock.get("package", []):
+        entries.setdefault((canonicalize_name(package["name"]), Version(package["version"])), []).append(package)
+    problems = []
+    for name, version in sorted(pinned.items()):
+        if PURE_SDISTS.get(name) == version:
+            continue
+        found = entries.get((name, Version(version)))
+        if not found:
+            problems.append(f"{name} {version}: not in {project / 'uv.lock'}")
+        for package in found or []:
+            files = [urllib.parse.unquote((w.get("url") or w.get("path") or w.get("filename", "")).rsplit("/", 1)[-1])
+                     for w in package.get("wheels", [])]
+            if not any(wheel_fits(f) for f in files if f.endswith(".whl")):
+                what = f"{len(files)} wheels, none for it" if files else "an sdist only"
+                problems.append(f"{name} {version}: the lock records no wheel for CPython 3.13, Linux x86_64, glibc "
+                                f"{LOCK_GLIBC[0]}.{LOCK_GLIBC[1]} ({what})")
+    return problems
+
+
 def locked_sdist(project: Path, name: str, version: str) -> dict:
     """The lock's `sdist = {url, hash, ...}` entry for a package."""
     lock = tomllib.loads((project / "uv.lock").read_text(encoding="utf-8"))
@@ -227,6 +267,9 @@ def check(uv: str, project: Path, lane: str, work: Path, label: str, export: str
     problems = compare(want, got)
     if problems:
         raise CheckError("the compile differs from the lock:\n" + "\n".join("    " + p for p in problems))
+    problems = lock_wheel_problems(project, want)
+    if problems:
+        raise CheckError("the lock's own files do not install from wheels:\n" + "\n".join("    " + p for p in problems))
     sdists = []
     for name in sorted(n for n in want if PURE_SDISTS.get(n) == want[n]):
         entry = locked_sdist(project, name, want[name])
