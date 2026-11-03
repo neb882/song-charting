@@ -148,6 +148,8 @@ def test_build_writes_the_three_assets(tmp_path):
             'v0.1.0-test}"') in script
     assert ('UV_URL="https://github.com/astral-sh/uv/releases/download/0.13.5/uv-x86_64-unknown-linux-gnu.tar.gz"'
             in script and f'UV_SHA256="{UV_SHA256}"' in script and "@VERSION@" not in script)
+    # the launcher and every call of the install's Python keep a songcharter/ folder in the current one out (-P)
+    assert """exec "%s" -P -m songcharter.launch""" in script and '"$py" -m' not in script
     sums = (out / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
     assert sums == [f"{hashlib.sha256((out / 'install.sh').read_bytes()).hexdigest()}  install.sh",
                     f"{digest}  {tarball.name}"]

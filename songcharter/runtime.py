@@ -331,13 +331,15 @@ def step_node(s: Setup) -> None:
         raise StepFailed(f"{s.node} --version printed {got!r}, not v{NODE_VERSION}")
 
 
-def _copy_files(src: Path, dest: Path, names: tuple[str, ...]) -> None:
-    """The named files from `src` into `dest`, each copied only when its bytes differ."""
-    dest.mkdir(parents=True, exist_ok=True)
+def _copy_files(s: Setup, src: Path, dest: Path, names: tuple[str, ...]) -> None:
+    """The named files from `src` into `dest`, each copied only when its bytes differ (`check` copies nothing)."""
     for name in names:
         if not (src / name).is_file():
             raise StepFailed(f"the app has no {src / name}")
         if not (dest / name).is_file() or (dest / name).read_bytes() != (src / name).read_bytes():
+            if not s.download:
+                raise StepFailed(f"{dest / name} is not the app's")
+            dest.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(src / name, dest / name)
 
 
@@ -367,7 +369,7 @@ def _npm_ci(s: Setup, folder: Path, ready: Path, what: str, *flags: str) -> None
 def step_scan_chart(s: Setup) -> None:
     """scan-chart in runtime/scan-chart: the app's scan.cjs and package files, then npm ci."""
     folder = s.runtime / "scan-chart"
-    _copy_files(s.app / "tools" / "scan-chart", folder, SCAN_FILES)
+    _copy_files(s, s.app / "tools" / "scan-chart", folder, SCAN_FILES)
     _npm_ci(s, folder, folder / "node_modules" / "scan-chart" / "package.json", "scan-chart's packages",
             "--no-audit", "--no-fund")
 
@@ -396,7 +398,7 @@ def step_autochart(s: Setup) -> None:
                              f"{'; '.join(problems[:3])}")
         _rmtree(src)
         os.replace(part, src)
-    _copy_files(s.app / "eval" / "tools" / "autochart", s.autochart, DRIVER_FILES)
+    _copy_files(s, s.app / "eval" / "tools" / "autochart", s.autochart, DRIVER_FILES)
     _npm_ci(s, s.autochart, s.autochart / "node_modules" / "onnxruntime-node" / "package.json",
             "autochart's packages (onnxruntime-node)", "--no-audit", "--no-fund")
     step_provider(s)

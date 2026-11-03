@@ -305,9 +305,15 @@ main() {
   sync_env "allin1's environment" "$app/packaging/allin1" "$runtime/allin1"
 
   header setup 8 "Node, scan-chart, autochart and the models"
-  local code=0
-  PYTHONUNBUFFERED=1 "$py" -m songcharter.runtime setup --home "$home" --app "$app" --lane "$lane" \
+  # -P: songcharter from the install's environment, never from a songcharter/ folder in the current one
+  local code=0 started=$state/setup.started
+  touch "$started"
+  PYTHONUNBUFFERED=1 "$py" -P -m songcharter.runtime setup --home "$home" --app "$app" --lane "$lane" \
     --lane-reason "$lane_reason" || code=$?
+  if [ "$code" -eq 1 ] && ! [ "$home/doctor.json" -nt "$started" ]; then   # not doctor's problems: Python's own 1
+    fail "python -m songcharter.runtime exited 1 before doctor ran (its error is above)"
+  fi
+  rm -f "$started"
   case $code in 0 | 1) ;; *) trap - ERR; exit "$code" ;; esac   # setup's own last line said what failed
 
   local flag=$state/restart-wsl
@@ -318,19 +324,19 @@ main() {
     if [ $yes -eq 1 ]; then args+=(--yes); fi
     if [ -n "$ram_gb" ]; then args+=(--windows-ram-gb "$ram_gb"); fi
     local wcode=0
-    "$py" -m songcharter.wslsetup "${args[@]}" || wcode=$?
+    "$py" -P -m songcharter.wslsetup "${args[@]}" || wcode=$?
     [ $wcode -eq 0 ] || { trap - ERR; exit "$wcode"; }   # its own last line said what failed
   fi
 
   header launcher 10 "The launcher"
   mkdir -p "$(dirname "$launcher")" "$state"
-  printf '#!/bin/sh\nexec "%s" -m songcharter.launch "$@"\n' "$py" >"$launcher.part"
+  printf '#!/bin/sh\nexec "%s" -P -m songcharter.launch "$@"\n' "$py" >"$launcher.part"
   chmod 755 "$launcher.part"
   mv -f "$launcher.part" "$launcher"
   printf 'version=%s\nlane=%s\n' "$VERSION" "$lane" >"$state/install.done.part"
   mv -f "$state/install.done.part" "$state/install.done"
   echo "launcher: $launcher"
-  "$py" - "$home/doctor.json" <<'PY' || true
+  "$py" -P - "$home/doctor.json" <<'PY' || true
 import json, sys
 from songcharter import device
 r = json.load(open(sys.argv[1], encoding="utf-8"))

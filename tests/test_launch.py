@@ -30,6 +30,7 @@ def test_environment_fills_in_what_the_person_has_not_set():
         "SONGCHARTER_ALLIN1_PYTHON": "/h/runtime/allin1/bin/python", "SONGCHARTER_SCAN_CHART":
         "/h/runtime/scan-chart/scan.cjs", "FFMPEG": "/h/runtime/env/ffmpeg", "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
         "PYTHONUTF8": "1", "HF_HUB_OFFLINE": "1", "SONGCHARTER_OFFLINE": "1"}
+    assert env["PYTHONSAFEPATH"] == "1"
     assert base == {"PATH": "/usr/bin:/h/runtime/node/bin:/bin", "SONGCHARTER_NODE": "/my/node", "HF_HOME": "/my/hf"}
     env = launch.environment({**RUNTIME, "allin1_python": None, "models_complete": False}, {"PATH": "/bin"})
     assert "SONGCHARTER_ALLIN1_PYTHON" not in env   # the memory rule left allin1 out: the librosa fallback

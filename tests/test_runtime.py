@@ -283,7 +283,10 @@ def test_npm_ci_runs_once_per_lock(tmp_path, app):
     (folder / R.STAMP).unlink()
     with pytest.raises(R.StepFailed, match="scan-chart's packages is missing"):
         R.step_scan_chart(s)
-    assert len(runs) == 2
+    (app / "tools" / "scan-chart" / "scan.cjs").write_bytes(b"scan 2")   # nor does it copy the app's files
+    with pytest.raises(R.StepFailed, match="scan.cjs is not the app's"):
+        R.step_scan_chart(s)
+    assert len(runs) == 2 and (folder / "scan.cjs").read_bytes() == b"scan"
 
 
 def test_step_autochart_checks_every_file_of_the_archive(server, tmp_path, app, monkeypatch):

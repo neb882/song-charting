@@ -1,5 +1,6 @@
-"""The installed songcharter's entry point (M4-03): ~/.local/bin/songcharter runs `python -m songcharter.launch` in
-the install's own environment (runtime/env).
+"""The installed songcharter's entry point (M4-03): ~/.local/bin/songcharter runs `python -P -m songcharter.launch`
+in the install's own environment (runtime/env); -P keeps a songcharter/ folder in the current one (a checkout) from
+being imported instead.
 
     songcharter                         # the page (`songcharter ui`, M4-04); until M4-04 merges, doctor's summary
     songcharter chart|doctor|... ARGS   # the command line (cli.main), with the install's environment
@@ -58,15 +59,17 @@ def load_runtime(home: Path) -> dict | None:
 def environment(runtime: Mapping, base: Mapping[str, str] | None = None) -> dict[str, str]:
     """`base` (os.environ) with what the install's runtime.json says: SONGCHARTER_HOME, SONGCHARTER_NODE,
     SONGCHARTER_AUTOCHART, SONGCHARTER_ALLIN1_PYTHON (only when it is not null: the memory rule),
-    SONGCHARTER_SCAN_CHART, FFMPEG, HF_HOME, HF_HUB_DISABLE_SYMLINKS_WARNING=1, PYTHONUTF8=1, and, when
-    models_complete, HF_HUB_OFFLINE=1 and SONGCHARTER_OFFLINE=1; each only where `base` has no value of its own. PATH
-    gets Node's folder first."""
+    SONGCHARTER_SCAN_CHART, FFMPEG, HF_HOME, HF_HUB_DISABLE_SYMLINKS_WARNING=1, PYTHONUTF8=1, PYTHONSAFEPATH=1 (a
+    child Python, such as the UI's chart job, imports songcharter from the install, never from a songcharter/ folder
+    in the current one), and, when models_complete, HF_HUB_OFFLINE=1 and SONGCHARTER_OFFLINE=1; each only where
+    `base` has no value of its own. PATH gets Node's folder first."""
     env = dict(os.environ if base is None else base)
     values = {"SONGCHARTER_HOME": runtime.get("home"), "SONGCHARTER_NODE": runtime.get("node"),
               "SONGCHARTER_AUTOCHART": runtime.get("autochart"),
               "SONGCHARTER_ALLIN1_PYTHON": runtime.get("allin1_python"),
               "SONGCHARTER_SCAN_CHART": runtime.get("scan_chart"), "FFMPEG": runtime.get("ffmpeg"),
-              "HF_HOME": runtime.get("hf_home"), "HF_HUB_DISABLE_SYMLINKS_WARNING": "1", "PYTHONUTF8": "1"}
+              "HF_HOME": runtime.get("hf_home"), "HF_HUB_DISABLE_SYMLINKS_WARNING": "1", "PYTHONUTF8": "1",
+              "PYTHONSAFEPATH": "1"}
     if runtime.get("models_complete"):
         values.update(HF_HUB_OFFLINE="1", SONGCHARTER_OFFLINE="1")
     for key, value in values.items():
