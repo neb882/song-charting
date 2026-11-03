@@ -3,7 +3,7 @@
   "about": "The short state of the project. Read it first; DESIGN.md has the detail and the evidence. Update it when a milestone, a decision or a dead end lands.",
   "people": {
     "owner": "builds this; RTX 5070 under WSL2 (eval/gpu.sh)",
-    "friend": "plays Guitar on Expert; Windows 11 with Smart App Control on, RTX 4070 (12 GB), 16-32 GB of RAM; wants Expert only unless asked, and solo trackers on solos"
+    "friend": "plays Guitar on Expert; Windows 11, RTX 4070 12 GB (a driver new enough for the cu132 lane), 16-32 GB RAM, Smart App Control on, so v0.1 runs in WSL2; wants Expert only unless asked, solo trackers on solos, and on-screen lyrics from pasted text (M4-10)"
   },
   "goal1": {
     "what": "the test song (Car Seat Headrest, Beast Monster Thing (Love Isn't Love Enough)) charted for the friend",

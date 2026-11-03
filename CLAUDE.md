@@ -53,8 +53,9 @@ holds.
   what the agent may touch (its worktree or branch). Nobody pushes unless the brief says so. [A check that is not
   written down is judged by "looks done".]
 - **Reviewers report correctness only and skip style.** [A reviewer asked to find problems always finds something.]
-  - Major findings go to `sc-skeptic` before anyone fixes them. [On 2026-11-03 a skeptic refuted a "major" Windows
-    crash that would have cost a pointless fix.]
+  - Major findings that would change code go to `sc-skeptic` before anyone fixes them. [On 2026-11-03 a skeptic
+    refuted a "major" Windows crash that would have cost a pointless fix.] A test gap the reviewer proved by breaking
+    the code goes straight to the fixer: its fix is adding the test, which is never wasted.
   - The fixer reproduces each minor finding itself, fixes the cheap ones, and lists the rest under `deferred` in
     `docs/PROGRESS.json`.
 - **Short reports:** agents write the full detail to a file and return about 1–2k tokens, with the file's path.
