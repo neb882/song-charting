@@ -16,11 +16,11 @@
   * **Weights** at a pinned URL with a pinned SHA-256, in models/lyrics/ (adtof.models_dir()), downloaded on first
     use and checked whenever they are loaded, then loaded with torch.load(weights_only=True). SONGCHARTER_OFFLINE=1
     forbids the download.
-  * **Confidence** (info["confidence"]): per word, the mean probability of its characters on the path. The median
-    over the song, and the share of words under LOW_SCORE (on the references a word under 0.05 is off by more than
-    250 ms four times as often as the others). A median under LOW_MEDIAN warns: on the references every song's median
-    was well above it on the stems, and the English bundle's was below it on most of the full mixes, where its
-    alignment had collapsed.
+  * **Confidence** (info["confidence"]): per word, the mean probability of its characters on the path; the median
+    over the song, its 10th percentile, and the share of words under LOW_SCORE (on the six references' stems a word
+    under 0.05 is off by more than 250 ms in 0.19 of cases, the others in 0.08). A median under LOW_MEDIAN (0.25) is
+    warned about: the stems' song medians were 0.31 to 0.89 (0.874 to 0.983 of their words within 250 ms), the full
+    mixes', where the alignment collapsed, 0.09 to 0.18.
   * **Cache.** out/lyrics.json holds the key (the stem's samples, the text's SHA-256, every setting, the weights'
     SHA-256 and the libraries' versions) and the times by syllable index, never the text: a hit is a file with this
     key and as many syllables as the text parses into.
@@ -55,7 +55,7 @@ SAMPLE_RATE = A.SAMPLE_RATE
 RATE = 16000             # the bundles' sample rate
 HOP = 320                # samples per frame: 20 ms
 LOW_SCORE = 0.05         # a word whose characters average under this on the path is a weak one
-LOW_MEDIAN = 0.10        # a song whose words' median is under this is warned about
+LOW_MEDIAN = 0.25        # a song whose words' median is under this is warned about
 
 
 @dataclass(frozen=True)

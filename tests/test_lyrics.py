@@ -214,8 +214,8 @@ class Aligner:
     gets loud, 0.4 s apart; one the aligner cannot spell gets no time; every character scores 0.6. Counts its
     runs."""
 
-    def __init__(self):
-        self.runs = 0
+    def __init__(self, score: float = 0.6):
+        self.runs, self.score = 0, score
 
     def versions(self):
         return {"songcharter": "test", "stand-in": "1"}
@@ -229,7 +229,7 @@ class Aligner:
             j = 0 if i == 0 or s.line != lyrics.syllables[i - 1].line else j + 1
             starts.append(first + 0.5 + 3 * s.line + 0.4 * j if s.spelling else None)
         ends = [None if t is None else t + 0.2 for t in starts]
-        scores = [[0.6] * len(s.spelling) for s in lyrics.syllables]
+        scores = [[self.score] * len(s.spelling) for s in lyrics.syllables]
         return starts, ends, scores, {"device": settings.device, "frames": len(level) // 320, "labels": 0,
                                       "timings_s": {"load": 0.0, "emissions": 0.0, "align": 0.0}}
 
@@ -464,6 +464,15 @@ def test_a_missing_aligner_never_fails_a_chart(song, tmp_path, monkeypatch, caps
         assert f"lyrics: not added ({why})" in result.warnings
         assert "lyric" not in (result.folder / "notes.chart").read_text(encoding="utf-8")
     assert report["lyrics"]["error"] == "RuntimeError" and report["lyrics"]["where"]
+
+
+def test_an_unsure_alignment_is_warned_about(song, tmp_path, monkeypatch):
+    conf = E.confidence(L.parse("zorp blen dak"), [[0.3, 0.2], [0.24], [0.26]])
+    assert conf["median"] == 0.25 and conf["low"] is False and conf["low_share"] == 0.0
+    assert E.confidence(L.parse("zorp blen"), [[0.01], [0.24]])["low"] is True
+    result, report, _ = run(song, tmp_path, monkeypatch, with_lyrics(aligner=Aligner(score=0.2))())
+    assert result.ok and report["lyrics"]["added"] and report["lyrics"]["confidence"]["low"] is True
+    assert any(w.startswith("lyrics: the alignment is unsure (median word score 0.2)") for w in result.warnings)
 
 
 def test_without_lyrics_nothing_changes(song, tmp_path, monkeypatch):
