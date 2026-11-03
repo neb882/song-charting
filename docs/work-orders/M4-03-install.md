@@ -322,3 +322,9 @@ Steps:
 - **No lane, no sync.** `uv sync` with no lane extra installs PyPI's CUDA torch (about 3 GB), and allin1's project then
   has no torchaudio (M4-01 review, F2). The install always passes exactly one lane. Make `install.sh` and any helper
   that syncs refuse with a clear message when no lane is chosen, and test that refusal.
+- **No silent downgrade of the lane** (M4-02 review, R1). The install picks the lane from nvidia-smi on every run.
+  When nvidia-smi is there but fails (for example "GPU access blocked by the operating system" after a Windows
+  update), refuse to move an existing cu132 or cu126 install to the cpu lane, and say why: the GPU is out of reach,
+  not missing. Use `songcharter.device`'s distinction between a missing and a failing nvidia-smi.
+- **Write `.wslconfig` only through `wsl.update_wslconfig`** (M4-02 review, R3). It keeps every other line, cuts inline
+  comments and quotes as WSL reads them, and never leaves a second `memory=` line.

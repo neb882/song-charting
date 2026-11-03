@@ -157,3 +157,9 @@ M4-07, the full review workflow, and the owner's and the friend's time.
 - **The cu126 allin1 pairing is untested on real hardware:** torch 2.14.1+cu126 with torchaudio 2.11.1+cpu. A cpu
   stand-in passed. If either PC gets the cu126 lane (a driver under 580), run allin1's probe there once
   (`songcharter doctor` reports it) and record the result. On the cu132 lane this does not apply.
+- **The guitar engine's own memory** (the M4-02 golden run saw autochart's node engine killed at 12.8 GB once, against
+  4.2–5.7 GB in reruns of the same song). A plausible cause, from its code: on the CPU, the decode loop leaves the
+  past key and value tensors, about 77 MB a step at 1,914 tokens, to V8's garbage collector, which a busy CPU can
+  starve; and its sessions set no intra-op thread limit. Measure the node process's own VmRSS and VmHWM every second
+  from `/proc/<pid>/status`, with `NODE_OPTIONS=--trace-gc`, over at least 5 runs of one song, idle and under CPU
+  load, on the cuda lane and, if time allows, forced to the CPU. A peak near the WSL memory cap blocks the release.
