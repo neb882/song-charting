@@ -346,6 +346,11 @@ def test_sse_replays_to_a_late_client_and_streams_to_an_early_one(served, monkey
     assert [i for i, _ in items] == list(range(len(job.events))) == [0, 1, 2, 3]
     assert [e["event"] for _, e in items] == ["plan", "stage_start", "stage_end", "result"]
     assert items == [(n, e) for n, e in enumerate(job.events)]
+    # a stream that closed means a final state (the job's process has exited), so the next job may start at once
+    ctx.mode = "ok"
+    for _ in range(3):
+        assert call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))[0] == 202
+        assert sse(port)[-1][1]["event"] == "result" and ctx.app.jobs.current.state == "done"
     assert [e["event"] for _, e in sse(port, last_id=1)] == ["stage_end", "result"]   # resumed after id 1
     # an early client gets the events as they come, a keepalive comment while it waits, and the end
     monkeypatch.setattr(S, "KEEPALIVE_S", 0.2)
@@ -356,7 +361,7 @@ def test_sse_replays_to_a_late_client_and_streams_to_an_early_one(served, monkey
     assert kinds[:2] == ["plan", "stage_start"] and kinds[-2:] == ["stage_end", "result"]
     assert ": keepalive" in kinds[2:-2] and set(kinds[2:-2]) == {": keepalive"}   # while the stage ran
     # a cancelled job's stream ends with "cancelled"
-    wait_state(ctx, "done")   # the stream ends at the result, the job when its process has exited
+    assert ctx.app.jobs.current.state == "done"
     ctx.mode = "hang"
     assert call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))[0] == 202
     ctx.app.jobs.cancel()

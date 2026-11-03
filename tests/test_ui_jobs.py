@@ -35,6 +35,10 @@ if mode == "gate_failed":
 if mode == "ok":
     ev(event="result", ok=True, exit=0, folder=out, work="/w", preview="/w/preview", summary="gate: OK")
     sys.exit(0)
+if mode == "linger":   # the result out, then a second of exiting (the interpreter's shutdown, say)
+    ev(event="result", ok=True, exit=0, folder=out, work="/w", preview="/w/preview", summary="gate: OK")
+    time.sleep(1.0)
+    sys.exit(0)
 if mode == "bad_input":
     sys.stderr.write("songcharter: error: no instruments to chart\n")
     ev(event="error", kind="input", message="no instruments to chart")
@@ -235,6 +239,19 @@ def test_a_chart_that_fails_ends_with_an_error(tmp_path, standin, mode, kind, he
     assert last["event"] == "error" and last["kind"] == kind, last
     assert last["message"].startswith(head) and last["message"].endswith(tail), last["message"]
     assert sum(e["event"] in J.CLOSING for e in job.events) == 1
+
+
+def test_a_new_job_waits_for_one_whose_result_is_out(tmp_path, standin):
+    """The page offers the next song once the result is in; the chart's process may take a moment more to exit.
+    A start then waits for it instead of answering 409."""
+    jobs = J.Jobs(tmp_path, command=standin("linger"))
+    first = jobs.start(upload(tmp_path), {})
+    wait_event(first, "result")
+    assert first.state == "running"   # still exiting
+    t0 = time.monotonic()
+    second = jobs.start(upload(tmp_path), {})
+    assert first.state == "done" and 0.3 < time.monotonic() - t0 < 5 and jobs.current is second
+    assert wait_state(second) == "done"
 
 
 def test_one_job_at_a_time(tmp_path, standin):

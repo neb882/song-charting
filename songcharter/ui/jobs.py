@@ -49,6 +49,7 @@ CLOSING = ("result", "error", "cancelled")   # the events after which a job's st
 META_FLAGS = {"title": "--title", "artist": "--artist", "album": "--album", "year": "--year", "genre": "--genre"}
 OPTION_KEYS = (*META_FLAGS, "instruments", "levels", "solos", "takes", "device", "threads", "preview")
 TAIL_LINES = 8                     # the log's last lines in an error the job writes itself
+END_WAIT_S = 10.0                  # how long a new job waits for one whose closing event is out to exit
 
 
 class JobRunning(Exception):
@@ -210,6 +211,12 @@ class Job:
                 self.cond.wait(timeout)
             return list(self.events[after:]), self.state != "running"
 
+    def wait_end(self, timeout: float) -> bool:
+        """Wait up to `timeout` s for the job to end (its closing event comes just before its process exits);
+        whether it has."""
+        with self.cond:
+            return self.cond.wait_for(lambda: self.state != "running", timeout)
+
     def snapshot(self, events: bool = True) -> dict:
         with self.cond:
             out = {"job": self.id, "state": self.state, "upload": {"id": self.upload["id"],
@@ -251,11 +258,19 @@ class Jobs:
 
     def start(self, upload: Mapping[str, Any], options: Any, auto_device: str | None = None) -> Job:
         """Start the chart of `upload` ({"id", "path", "name", "metadata"}) with the page's `options` (parse_options;
-        an InputError for bad ones). JobRunning while a job runs."""
+        an InputError for bad ones). JobRunning while a job runs; a job that has sent its result or error but whose
+        process is still exiting (a second or so) is waited for first, up to END_WAIT_S, as the page offers the next
+        song as soon as the result is in."""
         opts = options if isinstance(options, ChartOptions) else parse_options(options)
         with self._lock:
-            if self.current is not None and self.current.state == "running":
-                raise JobRunning(self.current.id)
+            current = self.current
+            if current is not None and current.state == "running":
+                with current.cond:
+                    closed = current._closed()
+                if closed:
+                    current.wait_end(END_WAIT_S)
+            if current is not None and current.state == "running":
+                raise JobRunning(current.id)
             song = Path(upload["path"])
             out = output_folder(self.home, upload, opts)
             cmd = [str(c) for c in self.command(song, out, opts, threads_for(opts, auto_device))]

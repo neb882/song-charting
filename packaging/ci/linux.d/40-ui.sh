@@ -68,7 +68,11 @@ id=$("$CI_PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$
 expect 202 "a job started on the clip" -X POST "${ours[@]}" -H "Content-Type: application/json" \
   --data "{\"upload\": \"$id\", \"options\": {}}" "$base/api/jobs"
 timeout 600 curl -sN "$base/api/jobs/current/events" >"$CI_ART/40-ui-events.txt"   # it closes at the end
-curl -s "$base/api/jobs/current" >"$CI_ART/40-ui-job.json"
+for _ in $(seq 100); do   # the stream closes once the job has ended; this only makes sure
+  curl -s "$base/api/jobs/current" >"$CI_ART/40-ui-job.json"
+  grep -q '"state": "running"' "$CI_ART/40-ui-job.json" || break
+  sleep 0.1
+done
 "$CI_PY" - "$CI_ART/40-ui-job.json" <<'PY'
 import json, sys
 job = json.load(open(sys.argv[1], encoding="utf-8"))

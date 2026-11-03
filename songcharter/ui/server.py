@@ -45,8 +45,9 @@ one chart runs at a time as a child process group (jobs.py). In WSL the Windows 
     message) or an unknown upload.
   * GET /api/jobs/current: its state (running, done, failed, cancelled) and events; 404 before the first job.
   * GET /api/jobs/current/events: Server-Sent Events. Every event so far, then each new one, as `id: <index>` and
-    `data: <json>`; a comment every 15 s keeps the connection open; it closes after `result`, `error` or `cancelled`.
-    A Last-Event-ID header resumes after that index.
+    `data: <json>`; a comment every 15 s keeps the connection open; it closes after `result`, `error` or `cancelled`,
+    once the job's process has exited (up to 10 s more), so the state is final then. A Last-Event-ID header resumes
+    after that index.
   * POST /api/jobs/current/cancel: 200 with the job's state after the cancel; 409 when no job runs.
 """
 from __future__ import annotations
@@ -89,6 +90,7 @@ MAX_JSON = 1 << 20                 # a JSON request body
 DRAIN = 16 << 20                   # a refused body this small is read first, so the client sees the answer
 UPLOAD_DAYS = 7                    # uploads older than this go when the server starts
 KEEPALIVE_S = 15.0
+END_WAIT_S = 10.0                  # after a closing event, the stream waits this long for the job's process to exit
 HELLO_TIMEOUT_S = 0.5
 CHUNK = 1 << 20
 STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -488,6 +490,7 @@ class Handler(BaseHTTPRequestHandler):
                 n += 1
                 if event.get("event") in CLOSING:
                     self.wfile.flush()
+                    job.wait_end(END_WAIT_S)   # so a closed stream means a final state: a new job may start
                     return
             self.wfile.flush()
             if ended and not new:
