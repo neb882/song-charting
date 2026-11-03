@@ -5,15 +5,15 @@
 name = "songcharter-allin1"
 version = "0.1.0"
 requires-python = "==3.13.*"
-# torchaudio 2.11.1 asks only for torch>=2.11, so it runs beside the lane's torch (the runner's probe and a fold-0
-# run passed with torch 2.15 on Linux)
-dependencies = ["all-in-one-infer==3.1.0", "torchaudio==2.11.1"]
+dependencies = ["all-in-one-infer==3.1.0"]
 
 [project.optional-dependencies]
 # The torch lanes, as in the root pyproject.toml; cu132 needs no curand here (that is for autochart's provider).
-cpu = ["torch==2.15.0"]    # no NVIDIA GPU
-cu126 = ["torch==2.14.1"]  # an NVIDIA driver under 580
-cu132 = ["torch==2.15.0"]  # a driver of 580 or newer
+# torchaudio 2.11.1 (all-in-one-infer imports it) asks only for torch>=2.11, so it runs beside each lane's torch; it
+# sits in the lanes because its build differs by lane (the sources below).
+cpu = ["torch==2.15.0", "torchaudio==2.11.1"]    # no NVIDIA GPU
+cu126 = ["torch==2.14.1", "torchaudio==2.11.1"]  # an NVIDIA driver under 580
+cu132 = ["torch==2.15.0", "torchaudio==2.11.1"]  # a driver of 580 or newer
 
 [tool.uv]
 package = false
@@ -25,6 +25,15 @@ environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 torch = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cu126", extra = "cu126" },
+    { index = "pytorch-cu132", extra = "cu132" },
+]
+# torchaudio by lane, not from PyPI: PyPI's 2.11.1 is a CUDA 13 build (it needs libcudart.so.13 and torch's CUDA
+# libraries), so it cannot load beside the cpu or cu126 torch. allin1 only imports torchaudio, so the cpu index's
+# build (libtorch and libc10 alone) serves cpu and cu126, whose own index has no 2.11.1; cu132 takes its own build.
+# check_wheels.py names the cu126 lane's torchaudio from the cpu index as its one cross-index exception.
+torchaudio = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cpu", extra = "cu126" },
     { index = "pytorch-cu132", extra = "cu132" },
 ]
 
