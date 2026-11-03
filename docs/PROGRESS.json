@@ -112,8 +112,12 @@
     "M4-01: torch 2.14.1+cu126 with allin1's torchaudio 2.11.1+cpu is untested on a real cu126 environment (too big for the dev disk); a cpu stand-in passed. Run allin1's probe once in M4-08 or on any machine with room.",
     "M4-01 review F2: `uv sync` with no lane extra installs PyPI's CUDA torch (and allin1 then lacks torchaudio). The installer always passes a lane; M4-03 should refuse or warn when none is given, or the docs say so.",
     "DESIGN.md has not yet absorbed wave 1 (the lanes, doctor and the device rows of §2.0, §4, the VRAM note): the builders' reports list the edits (scratchpad briefs m4-01/m4-02/m4-05a.report.md); fold them in with the release's doc pass (M4-07) at the latest.",
-    "M4-02: doctor does not count a missing torch or demucs as a problem, and the guitar's reason is 'no GPU' on the cpu lane even when a GPU is present (both per the spec's wording)."
+    "M4-02: doctor does not count a missing torch or demucs as a problem, and the guitar's reason is 'no GPU' on the cpu lane even when a GPU is present (both per the spec's wording).",
+    "Pin the build backend in both locks (process-quality review, supply-1): add `build-constraint-dependencies = [\"setuptools==<the version in use>\"]` under [tool.uv] in pyproject.toml and packaging/allin1/pyproject.toml, then `uv lock` both, so a frozen sync no longer builds songcharter and the antlr4 sdist with whatever setuptools PyPI has that day. Do it after wave 2 merges (M4-03 may relock)."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
-  "how_work_is_run": "CLAUDE.md, section 'How work is run'. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices"
+  "how_work_is_run": "CLAUDE.md, section 'How work is run'. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices",
+  "process_notes": [
+    "2026-11-03: a four-lens re-review of merged wave 1 (10 agents) found 3 real findings, all minor, none of them major, after the single-reviewer process; 2 of the 3 were checks whose tests could be gutted. Decision: keep one reviewer per order, with a mutation pass on new checks (.claude/agents/sc-reviewer.md step 3), and the full workflow once over the integrated v0.1."
+  ]
 }
