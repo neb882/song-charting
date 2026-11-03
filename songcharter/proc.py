@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import IO, Mapping, Sequence
 
 KILL_TIMEOUT_S = 5.0     # from SIGTERM to SIGKILL
+REAP_S = 2.0             # after SIGKILL, how long kill() waits for the group's last process to be gone
 POLL_S = 0.05
 
 
@@ -95,7 +96,8 @@ class Tree:
 
     def kill(self, timeout: float = KILL_TIMEOUT_S) -> int:
         """SIGTERM to the whole group; SIGKILL to it when the leader or any member is still running after `timeout`
-        seconds; then wait() for the leader. Its exit code (negative: the signal). Idempotent: a second call (from
+        seconds; then wait() for the leader, and (up to REAP_S) for the group to be empty, as a signal is delivered
+        when the process next runs. The leader's exit code (negative: the signal). Idempotent: a second call (from
         another thread too) waits for the first and returns the same code. A leader that has exited by itself has its
         group signalled all the same, for what it left running."""
         with self._lock:
@@ -111,6 +113,9 @@ class Tree:
             else:
                 self._signal(signal.SIGKILL)
             code = self.popen.wait()
+            deadline = time.monotonic() + REAP_S
+            while group_alive(self.pgid) and time.monotonic() < deadline:
+                time.sleep(POLL_S)
             self._done = True
             return code
 

@@ -271,7 +271,9 @@ def test_uploads(served, monkeypatch):
     with socket.create_connection(("127.0.0.1", port), timeout=10) as s:
         s.sendall(req)
         s.shutdown(socket.SHUT_WR)
-        answer = s.recv(65536)
+        answer = b""
+        while chunk := s.recv(65536):
+            answer += chunk
     assert answer.startswith(b"HTTP/1.0 400") and b"stopped after 3 of 9 bytes" in answer
     assert not list((ctx.home / "uploads").glob(".incoming-*"))
     status, body = upload(ctx, b"x", "x.mp3")

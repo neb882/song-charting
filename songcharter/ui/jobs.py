@@ -319,27 +319,31 @@ class Jobs:
 
     def cancel(self) -> Job:
         """Kill the running job's whole tree, mark it cancelled, delete assemble's staging beside its output. A job
-        that finished by itself meanwhile keeps its own state. NotRunning when none runs."""
+        that ended by itself meanwhile keeps its own state (done, or failed with its error). NotRunning when none
+        runs, also for a second cancel while the first is at work (the lock is held throughout, so one cancel, one
+        `cancelled` event, and no job starts until the staging is gone)."""
         with self._lock:
             job = self.current
             if job is None or job.state != "running" or job.tree is None:
                 raise NotRunning()
             with job.cond:
                 job.cancelling = True
-        code = job.tree.kill(self.kill_timeout)
-        if job.reader is not None:
-            job.reader.join(timeout=10)   # the pipe closes with the last process of the group
-        for folder in partial_folders(job.out):
-            shutil.rmtree(folder, ignore_errors=True)
-        with job.cond:
-            job.returncode = code
-            if code in (0, 1) and any(e["event"] == "result" for e in job.events):
-                job.state = "done"      # it finished before the kill reached it
-            else:
-                job.state = "cancelled"
-                job.events.append({"event": "cancelled", "at": round(time.time(), 3)})
-            job.ended = time.time()
-            job.cond.notify_all()
+            code = job.tree.kill(self.kill_timeout)
+            if job.reader is not None:
+                job.reader.join(timeout=10)   # the pipe closes with the last process of the group
+            for folder in partial_folders(job.out):
+                shutil.rmtree(folder, ignore_errors=True)
+            with job.cond:
+                job.returncode = code
+                if code in (0, 1) and any(e["event"] == "result" for e in job.events):
+                    job.state = "done"      # it finished before the kill reached it
+                elif code in (2, 3) and job._closed():
+                    job.state = "failed"    # so did this one, with its error
+                else:
+                    job.state = "cancelled"
+                    job.events.append({"event": "cancelled", "at": round(time.time(), 3)})
+                job.ended = time.time()
+                job.cond.notify_all()
         self.log(f"job {job.id}: {job.state} (exit {code}); the work folder's caches stay")
         return job
 

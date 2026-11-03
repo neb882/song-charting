@@ -109,7 +109,7 @@ def test_parse_line():
         "event": "take", "index": 1, "count": 4, "seed": 101}
     for line in ("[1/8] decode: song.flac", '@@songcharter {"event": 1}', "@@songcharter [1, 2]",
                  "@@songcharter {not json", '  @@songcharter {"event": "plan"}', '@@songcharter{"event": "plan"}',
-                 '@@songcharte {"event": "plan"}', ""):
+                 '@@songcharte {"event": "plan"}', '@@songchartex {"event": "plan"}', '{"event": "plan"}', ""):
         assert J.parse_line(line) is None, line
 
 
@@ -271,6 +271,25 @@ def test_cancel_kills_the_tree_and_deletes_the_staging(tmp_path, standin):
     assert [e["event"] for e in job.events][-2:] == ["take", "cancelled"]
     new, ended = job.wait_events(len(job.events), 0.1)
     assert new == [] and ended
+    # two cancels at once (a click, and the server stopping): one kill, one "cancelled", the other NotRunning
+    import threading
+    job3 = jobs.start(upload(tmp_path), {})
+    wait_event(job3, "take")
+    answers = []
+
+    def cancel():
+        try:
+            answers.append(jobs.cancel().state)
+        except J.NotRunning:
+            answers.append("not running")
+
+    both = [threading.Thread(target=cancel) for _ in range(2)]
+    for t in both:
+        t.start()
+    for t in both:
+        t.join(20)
+    assert sorted(answers) == ["cancelled", "not running"]
+    assert [e["event"] for e in job3.events].count("cancelled") == 1
     # a stopped server stops its job the same way
     jobs2 = J.Jobs(tmp_path, command=standin("hang"))
     job2 = jobs2.start(upload(tmp_path), {})

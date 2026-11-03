@@ -1059,6 +1059,14 @@ def test_chart_events_when_the_first_take_moved_and_without_a_preview(charted, t
     assert [(e["index"], e["count"]) for e in events if e["event"] == "take"] == [(1, 4)]
     assert [e["stage"] for e in events if e["event"] == "fallback"] == ["guitar"]
     assert events[-1]["event"] == "result" and events[-1]["preview"] is None
+    # "auto" on a machine with no GPU: a fallback only recorded, not warned about, is sent all the same
+    monkeypatch.setattr(P, "Engines", standins())
+    assert main(["chart", str(root / "song.flac"), "--work", str(warm_work(result, tmp_path, "v")), "--out",
+                 str(tmp_path / "T"), "--events", "--instruments", "drums", "--no-preview"]) == 0
+    events = events_in(capsys.readouterr().err)
+    assert [e for e in events if e["event"] == "fallback"] == [
+        {"event": "fallback", "stage": "device", "from": "cuda", "to": "cpu", "reason": D.NO_GPU}]
+    assert not any(D.NO_GPU in e["text"] for e in events if e["event"] == "warning")
 
 
 def test_chart_events_on_errors(charted, tmp_path, monkeypatch, capsys):
