@@ -1,0 +1,49 @@
+{
+  "updated": "2026-11-03",
+  "about": "The short state of the project. Read it first; DESIGN.md has the detail and the evidence. Update it when a milestone, a decision or a dead end lands.",
+  "people": {
+    "owner": "builds this; RTX 5070 under WSL2 (eval/gpu.sh)",
+    "friend": "plays Guitar on Expert; native Windows, RTX 4070; wants Expert only unless asked, and solo trackers on solos"
+  },
+  "goal1": {
+    "what": "the test song (Car Seat Headrest, Beast Monster Thing (Love Isn't Love Enough)) charted for the friend",
+    "status": "delivered: v1 (guitar, bass, drums, all levels), then v1.1 (Expert only, guitar solos on Solo 1 and Solo 2)",
+    "feedback": "v1 'played pretty well'. A sparse stretch around 2:28-2:35 of the original recording: the friend said to disregard it. A beat-rate re-strum of that stretch was offered as a test version; no answer yet."
+  },
+  "milestones": [
+    {"id": "M1a", "status": "partly done", "done": "Goal 1 delivered and played", "open": "the Windows spike on the friend's PC"},
+    {"id": "M1b", "status": "done", "done": "bass and drums of the test song (in v1)"},
+    {"id": "M2", "status": "done", "done": "evidence before gates: tool comparison, engine evaluations on six human-charted references"},
+    {"id": "M3", "status": "built", "done": "songcharter chart runs end to end in the dev container on the test song and Take Me Out; Take Me Out Expert F1@50 guitar 0.909, bass 0.912, drums 0.944",
+     "open": ["beat F1 0.962 on Take Me Out, 0.008 short of the rule (autochart 0.990 minus 0.02)", "drum lanes: exact-lane agreement 0.285 against STRUM's 0.667", "no run on a GPU yet"]},
+    {"id": "M4", "status": "not started", "what": "a Windows release the friend can use: packaging, first-run model downloads, a simple way to run it, tested on his PC"},
+    {"id": "M5", "status": "not started", "what": "quality iteration"}
+  ],
+  "in_flight": [
+    "branch pipeline-defaults: Expert only by default, 4 guitar takes on CUDA and 1 on the CPU, solos by allin1's label, a preview after each build, sustains clipped 1 ms inside the end of the audio, the work folder in the per-user cache with pruning (Q30). Reviewed (19 findings confirmed, 1 refuted); the fix stage is running; then merge into main."
+  ],
+  "next": [
+    "Merge pipeline-defaults once its fixes pass the suite.",
+    "DESIGN 2.7: add the takes verifier's 4-against-3 margin: +0.022 [+0.001, +0.055], median +0.008, same starting take (the verifier's notes were kept in the session's scratch folder, not committed).",
+    "A real GPU run of songcharter chart on the owner's 5070 (needs Demucs and allin1's own Python there).",
+    "M4: a short Windows spike on the friend's PC first, then the packaging.",
+    "Before the next quality decision: grow the reference set to 20 or more human charts, with human-charted solos among them.",
+    "README.md is stale: it credits the song wrongly and its status predates the engines."
+  ],
+  "dead_ends": [
+    {"what": "filling sparse guitar stretches from pick-noise strumming", "why": "held-out precision 0.22 (6/27); an audio-free baseline did as well (10/39); 16th-note detection 0/22. No fill built.", "where": "DESIGN 2.7"},
+    {"what": "solos by the stems rule (vocals quiet, guitar loud)", "why": "it rejects the real Car Seat Headrest solos (vocal stem active 0.56-0.95 of their frames); the default is now allin1's solo label", "where": "DESIGN 2.10"},
+    {"what": "3 spliced guitar takes", "why": "+0.006 over 1 with the default start and riskier; 4 beat 3 by +0.022. Use 4 on a GPU, 1 on a CPU.", "where": "DESIGN 2.7"},
+    {"what": "autochart's transcriber on WebGPU under WSL", "why": "the adapter is lavapipe, software Vulkan on the CPU (1031 s against 319 s on CUDA); the transcriber is pinned to the requested device", "where": "engines/autochart.py"},
+    {"what": "separating the MP3 file directly", "why": "the stems came out 1105 samples (the encoder delay) late; separate the decoded array", "where": "separate.py"}
+  ],
+  "deferred": [
+    "The preview's overview does not draw the solo spans.",
+    "A 1 s, 4 s or silent song exits 3 (a bug) when the librosa sections fallback raises its ParameterError; it should be a clean exit 2, perhaps with a minimum song length.",
+    "autochart's engine reports no memory peak of its own.",
+    "Q26: the build's grid period does not reach the ADTOF engine as beat_s.",
+    "The minor review findings on pipeline-defaults that its fixer leaves unfixed: add them here from its report."
+  ],
+  "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache, on pipeline-defaults). Check the others' status there before relying on them.",
+  "how_work_is_run": "CLAUDE.md, section 'How work is run'. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices"
+}
