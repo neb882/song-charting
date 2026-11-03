@@ -1026,6 +1026,39 @@ def test_every_fallback_is_recorded_and_warned(charted, tmp_path):
                                                     f"({other})"]
 
 
+def test_a_failing_nvidia_smi_is_warned_about(charted, tmp_path, monkeypatch):
+    """The real Engines.device with CUDA not available: an nvidia-smi that is there but fails (WSL's after a driver
+    or Windows update: exit 255) is a GPU out of reach, so "auto" taking the CPU is warned about and pipeline.json
+    records nvidia-smi's error; with no nvidia-smi at all it is "no NVIDIA GPU found", recorded without a warning."""
+    torch = pytest.importorskip("torch")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    smi = tmp_path / "bin" / "nvidia-smi"
+    smi.parent.mkdir()
+    smi.write_text('#!/bin/sh\necho "Failed to initialize NVML: GPU access blocked by the operating system"\nexit 255\n')
+    smi.chmod(0o755)
+    root, result, _, _ = charted
+
+    class Real(standins()):
+        device = Engines.device
+
+    error = "nvidia-smi failed (exit 255): Failed to initialize NVML: GPU access blocked by the operating system"
+    for path, reason, warning in (
+            (str(smi), f"nvidia-smi failed, so CUDA cannot run: {error}",
+             f"CUDA does not run here ({error}): the models run on the CPU"),
+            (None, "no NVIDIA GPU found", None)):
+        monkeypatch.setattr(D, "nvidia_smi_path", lambda: path)
+        lines = []
+        chart(root / "song.flac", tmp_path / f"Song{len(reason)}", Options(work=result.work, instruments=("drums",),
+                                                                          metadata={"genre": "Test"}),
+              engines=Real(), log=lines.append, sampler=None)
+        report = json.loads((result.work / "pipeline.json").read_text(encoding="utf-8"))
+        assert report["device"] == {"asked": "auto", "chosen": "cpu", "reason": reason}
+        assert report["fallbacks"] == [{"stage": "device", "from": "cuda", "to": "cpu", "reason": reason}]
+        warned = [x for x in report["warnings"] if "CUDA" in x]
+        assert warned == ([warning] if warning else []), warned
+        assert (f"songcharter: warning: {warning}" in lines) == bool(warning)
+
+
 def test_the_sampler_records_each_stage(charted, tmp_path):
     """chart starts the sampler, gives it each stage as it begins and ends, puts what it saw into the stage's record
     in pipeline.json, and stops it in its finally, also when a stage raises."""

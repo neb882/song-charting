@@ -11,7 +11,10 @@ pipeline's memory sampler (M4-02).
     a 580 or newer driver). So the guitar can be on the CPU while torch is on the GPU, each with its reason.
   * **The device "auto" takes** (`choose_device`) is the pipeline's (Engines.device calls it): CUDA only when a CUDA
     kernel runs (separate.cuda_works), else the CPU with one sentence for why: asked for, no GPU at all, a torch with
-    no CUDA (the cpu lane), or CUDA that did not run on the GPU nvidia-smi names (and the error).
+    no CUDA (the cpu lane), CUDA that did not run on the GPU nvidia-smi names (and the error), or an nvidia-smi that
+    is there but fails (WSL's comes with the Windows driver, so a GPU is there: "Failed to initialize NVML: GPU access
+    blocked by the operating system" after a driver or Windows update, or a timeout). Only a missing nvidia-smi, or
+    one that lists no GPU, means no GPU.
   * **Sizes.** The report gives MB (2^20 bytes). The limits (6 GB free, 8 and 11 GB of WSL memory, 16 GB of Windows
     RAM) are in units of 10^9 bytes, which leaves room for the few percent firmware and the kernel keep: a 16 GB PC
     reports about 15.9 GB of RAM, and WSL with memory=8GB about 7.8 GB.
@@ -37,6 +40,9 @@ ASKED_CPU = "asked for the CPU"
 NO_GPU = "no NVIDIA GPU found"
 CPU_LANE = "this install's torch has no CUDA (the cpu lane)"
 NO_TORCH = "torch is not installed"
+SMI_FAILED = "nvidia-smi failed, so CUDA cannot run"   # nvidia-smi is there but fails: a GPU it cannot reach
+SMI_MISSING = "nvidia-smi not found"
+SMI_NO_GPU = "nvidia-smi listed no GPU"
 GUITAR_NO_GPU = "no GPU"
 GUITAR_CU126 = ("the cu126 lane: onnxruntime-node needs CUDA 13, so a 580 or newer driver. Then paste the install line "
                 "again: it switches to the GPU build (about 3 GB)")
@@ -78,7 +84,7 @@ def _smi(fields: str) -> tuple[list[str] | None, str | None]:
     """nvidia-smi's first GPU line for the fields (csv, no header, no units) split at commas, or (None, why)."""
     exe = nvidia_smi_path()
     if exe is None:
-        return None, "nvidia-smi not found"
+        return None, SMI_MISSING
     try:
         proc = subprocess.run([exe, f"--query-gpu={fields}", "--format=csv,noheader,nounits"], capture_output=True,
                               text=True, timeout=SMI_TIMEOUT_S, stdin=subprocess.DEVNULL)
@@ -89,7 +95,7 @@ def _smi(fields: str) -> tuple[list[str] | None, str | None]:
         return None, f"nvidia-smi failed (exit {proc.returncode}){': ' + tail if tail else ''}"
     lines = [line for line in (proc.stdout or "").splitlines() if line.strip()]
     if not lines:
-        return None, "nvidia-smi listed no GPU"
+        return None, SMI_NO_GPU
     return [x.strip() for x in lines[0].split(",")], None
 
 
@@ -172,7 +178,8 @@ class Choice(NamedTuple):
     error: str | None         # the CUDA error when CUDA is there but did not run, else None
 
 
-def _decide(asked: str, torch_info: dict, gpu: dict | None) -> Choice:
+def _decide(asked: str, torch_info: dict, gpu: dict | None, gpu_error: str | None = None) -> Choice:
+    """The device for `asked` from torch's report, nvidia-smi's GPU and, when it has none, why (nvidia_smi())."""
     if asked == "cpu":
         return Choice("cpu", ASKED_CPU, None)
     if asked == "cuda":   # asked for: Engines.missing has named a CUDA that does not run
@@ -183,6 +190,8 @@ def _decide(asked: str, torch_info: dict, gpu: dict | None) -> Choice:
         return Choice("cuda", None, None)
     error = torch_info.get("cuda_error")
     if error is None:   # CUDA not available at all: no GPU, the cpu lane, or a driver this torch cannot use
+        if gpu is None and gpu_error not in (None, SMI_MISSING, SMI_NO_GPU):   # a GPU nvidia-smi cannot reach
+            return Choice("cpu", f"{SMI_FAILED}: {gpu_error}", gpu_error)
         if torch_info.get("cuda") is None:
             return Choice("cpu", NO_GPU if gpu is None else CPU_LANE, None)
         if gpu is None:
@@ -199,14 +208,15 @@ def choose(asked: str) -> Choice:
     if asked != "auto":
         return _decide(asked, {}, None)
     t = torch_report(full=False)
-    gpu = None if t.get("cuda_works") else nvidia_smi()[0]
-    return _decide(asked, t, gpu)
+    gpu, gpu_error = (None, None) if t.get("cuda_works") else nvidia_smi()
+    return _decide(asked, t, gpu, gpu_error)
 
 
 def choose_device(asked: str) -> tuple[str, str | None]:
     """The torch device for `asked` ("auto", "cpu", "cuda"), as the pipeline takes it, and for the CPU the reason:
-    "asked for the CPU", "no NVIDIA GPU found", "this install's torch has no CUDA (the cpu lane)" or "CUDA did not
-    run on <name>: <error>". "auto" is CUDA only when a CUDA kernel runs here (separate.cuda_works)."""
+    "asked for the CPU", "no NVIDIA GPU found", "this install's torch has no CUDA (the cpu lane)", "CUDA did not
+    run on <name>: <error>" or "nvidia-smi failed, so CUDA cannot run: <its error>". "auto" is CUDA only when a CUDA
+    kernel runs here (separate.cuda_works)."""
     c = choose(asked)
     return c.device, c.reason
 
@@ -559,7 +569,7 @@ def report(full: bool = True) -> dict:
     ram = memory()
     gpu, gpu_error = nvidia_smi()
     t = torch_report(full)
-    chosen = _decide("auto", t, gpu)
+    chosen = _decide("auto", t, gpu, gpu_error)
     comps = components(full)
     ac = comps.get("autochart_cuda")
     gdev, greason = guitar_device(chosen.device, ac["ok"] if ac else None, ac.get("detail") if ac else None,

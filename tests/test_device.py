@@ -112,6 +112,51 @@ def test_nvidia_smi(tmp_path, monkeypatch):
     assert D.nvidia_smi() == (None, "nvidia-smi listed no GPU")
 
 
+BLOCKED = ('echo "Failed to initialize NVML: GPU access blocked by the operating system"; exit 255')
+FAILED = ("nvidia-smi failed, so CUDA cannot run: nvidia-smi failed (exit 255): Failed to initialize NVML: GPU access "
+          "blocked by the operating system")
+
+
+def test_an_nvidia_smi_that_fails_is_a_gpu_out_of_reach(tmp_path, monkeypatch):
+    """An nvidia-smi that is there but fails (WSL's, after a driver or Windows update: exit 255, "GPU access blocked
+    by the operating system"; or one that hangs) means a GPU CUDA cannot reach, not no GPU, on either lane; only a
+    missing nvidia-smi or one that lists no GPU is "no NVIDIA GPU found"."""
+    monkeypatch.setattr(D, "WSL_NVIDIA_SMI", tmp_path / "none")
+    facts = {"torch": torch_info()}
+    monkeypatch.setattr(D, "torch_report", lambda full=True: facts["torch"])
+    real_path = D.nvidia_smi_path
+    for cuda in ("13.2", None):   # a CUDA build that finds no usable GPU, and the cpu lane
+        facts["torch"] = torch_info(cuda=cuda)
+        monkeypatch.setattr(D, "nvidia_smi_path", real_path)
+        monkeypatch.setattr(D, "SMI_TIMEOUT_S", 15.0)
+        fake_smi(tmp_path, monkeypatch, BLOCKED)
+        assert D.choose("auto") == ("cpu", FAILED, "nvidia-smi failed (exit 255): Failed to initialize NVML: GPU "
+                                                   "access blocked by the operating system"), cuda
+        fake_smi(tmp_path, monkeypatch, "exec sleep 5")
+        monkeypatch.setattr(D, "SMI_TIMEOUT_S", 0.2)
+        reason = D.choose_device("auto")[1]
+        assert reason.startswith("nvidia-smi failed, so CUDA cannot run: nvidia-smi did not run (TimeoutExpired"), reason
+        fake_smi(tmp_path, monkeypatch, "exit 0")   # it lists no GPU
+        assert D.choose_device("auto") == ("cpu", "no NVIDIA GPU found"), cuda
+        monkeypatch.setattr(D, "nvidia_smi_path", lambda: None)   # none at all
+        assert D.choose_device("auto") == ("cpu", "no NVIDIA GPU found"), cuda
+
+
+def test_doctor_gives_the_same_reason(tmp_path, monkeypatch):
+    """report() hands nvidia-smi's failure to the device choice too: doctor's device line, its note and doctor.json
+    say what choose_device says."""
+    torch = pytest.importorskip("torch")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(D, "WSL_NVIDIA_SMI", tmp_path / "none")
+    fake_smi(tmp_path, monkeypatch, BLOCKED)
+    monkeypatch.setattr(D, "components", lambda full=True: {})
+    r = D.report(full=False)
+    assert r["gpu"] is None and r["gpu_error"] == ("nvidia-smi failed (exit 255): Failed to initialize NVML: GPU access "
+                                                   "blocked by the operating system")
+    assert r["device"] == {"chosen": "cpu", "reason": FAILED} and f"CPU mode: {FAILED}" in r["notes"]
+    assert f"device: CPU mode: {FAILED}" in D.summary(r)
+
+
 def provider_install(tmp_path):
     models = tmp_path / "ac" / "models" / "fretformer-v2"
     models.mkdir(parents=True)
