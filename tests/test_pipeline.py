@@ -682,6 +682,10 @@ def test_each_run_prunes_the_cache(charted, tmp_path, own_cache, monkeypatch, ca
     assert main(["chart", str(song), "--out", str(tmp_path / "B"), "--instruments", "drums", "--work", str(work)]) == 0
     assert P.cache.read_marker(work)["pinned"] and not old["older-2222222222222222"].exists()
     assert sorted(p.name for p in (own_cache / "work").iterdir()) == sorted([work.name, "recent-3333333333333333"])
+    # the run's own folder stays even when nothing counts as recent: it is kept by name, not only by its time
+    monkeypatch.setattr(P.cache, "RECENT_S", 0)
+    assert main(["chart", str(song), "--out", str(tmp_path / "C"), "--instruments", "drums"]) == 0
+    assert [p.name for p in (own_cache / "work").iterdir()] == [work.name] and (work / "pipeline.json").is_file()
 
 
 def test_the_preview_never_fails_a_chart(charted, tmp_path, monkeypatch, capsys):
