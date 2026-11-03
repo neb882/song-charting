@@ -148,12 +148,20 @@ def test_a_wslconfig_without_memory_keeps_its_other_lines_and_is_backed_up(windo
 
 
 def test_twelve_gb_or_more_is_kept(windows):
+    """Whatever Windows' RAM: unknown, or a 12 GB PC, whose target (8 GB) would otherwise be refused."""
     w = windows
     w.config.write_text("[wsl2]\nmemory=16GB\n", encoding="utf-8")
     out, said, asked = apply(w)
     assert not out["changed"] and out["memory_bytes"] == 16 * GIB and not asked
     assert w.config.read_text(encoding="utf-8") == "[wsl2]\nmemory=16GB\n" and backups(w) == []
-    assert any("memory=16GB kept" in s for s in said), said
+    assert said[0] == ".wslconfig: memory=16GB kept (12 GB or more is enough)"
+    w.cfg["ram"] = None
+    w.write()
+    out, said, asked = apply(w)
+    assert said[0] == ".wslconfig: memory=16GB kept (12 GB or more is enough)" and out["allin1"]
+    w.config.write_text("[wsl2]\nmemory=12GB\n", encoding="utf-8")
+    out, said, asked = apply(w, ram=12 * GIB)
+    assert said[0] == ".wslconfig: memory=12GB kept (12 GB or more is enough)" and not out["changed"]
 
 
 def test_under_twelve_gb_asks_before_raising(windows):
