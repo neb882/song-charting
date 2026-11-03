@@ -19,6 +19,9 @@ sections named Solo (or by name), guitar takes by device, the preview, the work 
 and the clip at the end of the audio; with three research results: the takes experiment and the strumming detector
 (§2.7) and the solo evaluation (§2.10). Listed at the end of §11, with the fixes after that branch's review.*
 
+*Updated on 2026-11-03 for the golden charts (branch `golden`, `eval/golden.py`, §3.6): the reference set built
+before and after a change, every part's track hash compared.*
+
 **Evidence tags:**
 - **[here]**: measured by this project in the Linux dev container (4 CPUs, no GPU).
 - **[here, 5070]**: measured on the owner's RTX 5070 under WSL2 (`eval/gpu.sh`).
@@ -49,6 +52,7 @@ and the clip at the end of the audio; with three research results: the takes exp
 | solo evaluation | every solo rule (off, labels, stems, the stem test on every section, their union and intersection) through `starpower.place_solos` on pipeline-shaped builds of the six references and the test song, on fold-0, ensemble and librosa sections, against the human solos and the two the friend confirmed (§2.10) |
 | defaults review | the review of branch `pipeline-defaults` (options, cache, tests, docs), each finding reproduced by a verifier: among them a real autochart take traced with strace, a prune that fails partway with NTFS's name order imitated, and two real runs racing a prune |
 | pipeline-defaults runs | `songcharter chart` with branch `pipeline-defaults`'s defaults in the dev container: Take Me Out and the test song on copies of their warm work folders, two 35-s cuts of Take Me Out (one with the work folder in the cache), and the clip's before-and-after on the excerpt that failed (§5, M3) |
+| golden runs | `python -m eval.golden` in the dev container (CPU, 2 threads): the baseline of `main` at 11615e2 on the seven songs, two warm runs of it, a deliberate one-line change to the bass Hard reduction on a scratch branch, and `main` and that change built at the same time (§3.6) |
 
 ---
 
@@ -1369,6 +1373,7 @@ v1's absolute targets, kept as information only:
 - **Exists** [code]:
   - `eval/scorer/score.py` (scan-chart parse through `eval/scorer/scan_notes.cjs`; onset P/R/F1 at ±50 and ±100 ms, density, chord/HOPO/tap/sustain shares, lane direction, exact lane agreement, drum per-pad F1, beat F1, scan-chart issues);
   - `eval/scorecard.py`; `eval/drive.sh`; `eval/gpu.sh` (check, start, status, results); `eval/build_refs.sh`; per-tool `setup.sh` and `run.sh` under `eval/tools/`;
+  - `eval/golden.py`, the golden charts: songcharter's own charts of the reference set before and after a change (§3.6);
   - `eval/refs/` (`build_ref.py`, `offset_check.py`, `sng_unpack.py`, `strip_lyrics.py`).
 - **Fixes the harness still needs** (found with data in v1 or in this review; none is in the files yet [code]):
   - un-flip Harmonix disco sections in both charts (19 % of Take Me Out's drums are disco-flagged; without the fix a correct chart scores class F 0.604);
@@ -1412,6 +1417,73 @@ v1's absolute targets, kept as information only:
 | sections | 5 references, boundary F at ±1 s / ±3 s after assemble's rules: allin1 fold 0 0.626 / 0.718, ensemble 0.592 / 0.714, librosa fallback 0.455 / 0.524 (labels 0.615 / 0.589 / 0.475); v1, one song: librosa F@3 s 0.80 / 0.70 against IaSg14; All-In-One ensemble 0.730 on Harmonix (in-domain) | [here, M2 row 7] / [here, v1] / [doc] |
 | literature | STRUM paper: drums F1 0.838, guitar 0.651, bass 0.694 at ±100 ms | [doc, arXiv 2605.12135] |
 | `songcharter chart`, Take Me Out (1 song, 1 CPU guitar take) | Expert F1@50 guitar 0.909, bass 0.912, drums 0.944 (kick 0.976, exact lanes 0.285); beat F1 0.962; scan-chart 0 issues | [here, pipeline run] |
+
+### 3.6 Golden charts (`eval/golden.py`)
+- **Why.** A change can move charts it was not meant to touch, and neither the unit tests nor a reviewer reading the
+  diff sees that. The Overclock project caught such regressions with golden frames: fixed outputs rendered before and
+  after a change, any change outside the expected ranges flagged. Here the outputs are the reference set's charts. A
+  build is byte-identical for one input and the engines cache their outputs, so after a song's first build each one
+  costs mostly assemble [code].
+- **What is compared** [code]:
+  - the seven songs of §3.3 (the six references and the test song), each built by `songcharter chart` with every
+    level, one guitar take, no preview, on the CPU;
+  - per song, part and difficulty: the onsets (a chord is one), the notes, and scan-chart's `calculateTrackHash`,
+    Chorus Encore's hash of a track (resolution, tempo map, time signatures, star power, solos, flex lanes, drum fills,
+    every note's tick, length, type and flags), taken on the parse `scan_notes.cjs` makes with song.ini's modifiers,
+    so as Clone Hero reads the folder. The chart's delay (song.ini `delay`, the `.chart` Offset), which the hash
+    leaves out, is compared beside it;
+  - for the six human-charted songs, `score.py`'s F1@50 and F1@100 per part and difficulty, and the beat F1.
+- **`diff OLD NEW --expect PARTS`.** A part and difficulty whose hash changed (or that appeared or vanished) is
+  "changed" when `--expect` names it and UNEXPECTED when not; a song missing from either summary, whose build failed
+  or whose gate changed is UNEXPECTED whatever is expected. F1 is pooled per part and difficulty as
+  2 × matched ÷ (reference + candidate onsets) over the songs. Exit 0, or 1 when anything is UNEXPECTED.
+- **Kept folders and the build's own folder** [decision]. The heavy stages run once per song into a kept
+  `songcharter chart --work` folder outside the repository, its stems hard-linked from a separation cache where the
+  key fits, autochart's scratch folder deleted once the take is built. Every build then runs in a folder of its own:
+  the decode and the stems hard-linked (only read), every engine's folder copied, because an engine whose cache
+  misses writes its files in place (`engine.json` by `write_text`, the stems by soundfile), which through a hard link
+  would reach the kept file. Every kept file's size, time and inode are checked after each build, a lock per song
+  orders the runs while a kept folder is made or read, and the build's per-user cache is an empty folder, so its
+  pruning touches nothing.
+- **Not keyed by code.** The engines' caches are keyed by their inputs and settings, not their code, so an engine's
+  code change shows only with `--rerun` (drums, bass, sections, guitar) on both runs, which runs it again in each
+  build's own folder and leaves the kept one. Rerun in one run only, it compares the kept commit's output with that
+  run's own, and `diff` fails, naming the engine and the kept commit. For every engine not rerun, `run` asks git
+  whether its files (`ENGINE_FILES`) differ between the kept folders' commit and its code, warns, and `diff` fails. An
+  engine that runs without being asked (its kept output did not answer: new settings or version, another autochart
+  install, the librosa fallback when `SONGCHARTER_ALLIN1_PYTHON` is unset) stops the run with exit 2 and says which
+  variable or option. The separation is never run again: a change to its code does not show.
+- **No stale summary.** `run` locks its output folder and clears what an earlier run or diff left there before any
+  check, so a run that is refused, fails or is killed leaves no summary for a diff to pass on; the gate's commands are
+  chained with `&&` from a `rm -rf` of both output folders. Bad input exits 2, a bug 3 (never 1, which is a failed
+  build or an UNEXPECTED diff).
+- **Runs** [here, golden runs]:
+  - **The baseline**, `main` at 11615e2 on the seven songs: every gate OK; Expert F1@50 pooled over the songs guitar
+    0.853 (6 songs), bass 0.825 (5), drums 0.962 (5), beat F1 0.876 (6); Take Me Out's guitar 0.909, bass 0.912,
+    drums 0.944, as in §3.5.
+  - **Cold** (a kept folder made, the stems hard-linked from the seeded separation cache, so no separation ran): 474 s
+    (Drunk Drivers, 3:45) to 1081 s (the test song, 6:52) a song, 80 min for the set; autochart's take is 253–650 s of
+    it, allin1 105–188 s. **Warm:** 44–76 s a song: assemble with its gate 19–42 s, the cache checks 13–30 s (the
+    sections engine's allin1 probe 6–10 s of it), score.py 6–8 s; 6.5 min for the set.
+  - **Determinism:** two warm runs of `main` gave identical summaries but for their `run` sections, and so did the cold
+    baseline; `diff --expect none` exits 0 on each pair.
+  - **A deliberate change** on a scratch branch, one line in `_reduce_frets`'s HOPO step: every bass Hard note a HOPO
+    (Take Me Out's bass Hard went from 0 to 540 HOPOs of 540). `--expect bass:hard` exits 0 with bass Hard changed on
+    all seven songs and the other 77 part-levels unchanged; `--expect guitar` exits 1 with those seven UNEXPECTED. The
+    pooled F1 did not move: onset F1 does not see HOPOs.
+  - **Two checkouts at once:** `main` (built through `--code`) and the change (built by its own checkout's
+    `golden.py`) ran at the same time, 399 s each, and each matched its own run made alone; the kept folders' 217
+    files had the same size, time, inode, link count and SHA-256 before and after, and no run folder was left.
+  - **`--rerun` with the real engines:** drums, bass and sections run again on the seven songs reproduced the
+    baseline exactly (24 min for the set); so did the guitar on All the Small Things (its take 211 s, autochart's own
+    separation included). The kept folders were unchanged both times.
+  - **Disk:** 0.71 GB in all, nearly all of it the kept decodes (59–139 MB a song); the stems are links to the
+    separation cache.
+- **Limits:** Linux or WSL only (`fcntl` locks, hard links). One CPU take: the CUDA default of 4 spliced takes is not
+  covered. The kept engine outputs are the code of whichever commit made them; a change to an engine's code without
+  `--rerun` compares that old output on both sides, which `report.md` shows as "kept folders made by".
+- **Confidence:** high for what it compares. **Would change it:** a change the hashes miss that a playtest finds
+  (song.ini values, the audio, section names are not compared).
 
 ---
 
@@ -2367,3 +2439,27 @@ decides), and the p95-drift click test (critique G4).
   the prune's move, re-reads, trash and sweep; a separation cache with a stem missing or cut short; the home
   folder test setting `USERPROFILE`, which Windows' `Path.home()` reads instead of `HOME` (it failed under
   Windows' lookup, emulated, and passes with it) [here].
+
+**Golden charts** (branch `golden`, on `main` at 11615e2) [here, golden runs]:
+- `eval/golden.py` (`run`, `diff`) and `tests/test_golden.py`; `eval/scorer/scan_notes.cjs` prints each track's
+  `calculateTrackHash` and finds scan-chart beside `$SONGCHARTER_SCAN_CHART` (§3.6).
+- The release gate (`CLAUDE.md`) and the inspector (`.claude/agents/sc-inspector.md`) name the commands;
+  `eval/README.md` says how to run them.
+- Tests: the hash (the same notes give the same hash; one changed fret, tick, sustain or star-power phrase changes
+  that track's hash only), `--expect`, the diff's statuses, tables and exit codes, and `run`'s kept and private
+  folders with stand-ins for the build, scan and scorer (two runs at once, a build writing into a linked stem
+  caught). 35 mutations of `golden.py` and one of `scan_notes.cjs` (a constant hash), each failing a test.
+
+**Fixes after the review of `golden`** (four findings; a skeptic reproduced both majors):
+- **G1:** the gate reran engines in the new run only, so the old side's came from the kept folders' commit while the
+  summary named the old commit: a reverted bass change passed as "identical". Now `--rerun` goes to both runs (the
+  gate, the inspector and eval/README say so, with the cost), `diff` fails when the two runs reran different engines
+  or when an engine not rerun no longer matches the kept folders' code (`run` checks it with git), and names the
+  engine and the kept commit above the verdict (§3.6).
+- **G2:** a refused, failed or killed run left the earlier `summary.json` in `--out`, which a diff could pass. `run`
+  now clears the folder first, and the gate's commands are chained with `&&` after a `rm -rf`.
+- **G3:** without `SONGCHARTER_ALLIN1_PYTHON` the sections fell back to librosa unasked and every part's hash moved
+  against the baseline. An engine that runs without being asked now stops the run (exit 2), naming the variable, and
+  `diff` fails on sections from different backends.
+- **G4:** bad input that is not one of golden's own refusals (an `--out` that is a file) exits 2, and a bug 3.
+- Tests: each fix has one that fails without it (16 mutations of the fixes, each failing a test) [here].

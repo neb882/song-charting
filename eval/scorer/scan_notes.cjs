@@ -3,10 +3,16 @@
 //  - the chart file is picked the way scan-chart/Clone Hero picks it (notes.mid preferred over notes.chart),
 //  - the song.ini chart modifiers (hopo_frequency, eighthnote_hopo, sustain_cutoff_threshold, chord_snap_threshold,
 //    multiplier_note, song_length, pro_drums, five_lane_drums) are passed to parseChartFile,
-//  - each note also carries msLength, and the top level carries delay / chart_offset / chartFile.
+//  - each note also carries msLength, and the top level carries delay / chart_offset / chartFile,
+//  - each track also carries its hash, scan-chart's calculateTrackHash (the hash Chorus Encore gives a track: the
+//    resolution, tempos, time signatures, star power, solos, flex lanes, drum fills and every note's tick, length,
+//    type and flags) of this parse.
 // Sections, lyrics and vocal tracks are NOT printed.
+// scan-chart is the one installed in tools/scan-chart, or beside $SONGCHARTER_SCAN_CHART (a scan.cjs) when it is set.
 const path = require('path'), fs = require('fs');
-const sc = require(path.join(__dirname, '..', '..', 'tools', 'scan-chart', 'node_modules', 'scan-chart'));
+const base = process.env.SONGCHARTER_SCAN_CHART ? path.resolve(path.dirname(process.env.SONGCHARTER_SCAN_CHART))
+  : path.join(__dirname, '..', '..', 'tools', 'scan-chart');
+const sc = require(path.join(base, 'node_modules', 'scan-chart'));
 const dir = process.argv[2];
 const files = fs.readdirSync(dir).filter(f => fs.statSync(path.join(dir, f)).isFile())
   .map(f => ({ fileName: f, data: new Uint8Array(fs.readFileSync(path.join(dir, f))) }));
@@ -36,7 +42,7 @@ if (cands.length) {
     out.resolution = p.resolution;
     out.tempos = p.tempos; out.timeSignatures = p.timeSignatures;
     out.tracks = p.trackData.map(t => ({
-      instrument: t.instrument, difficulty: t.difficulty,
+      instrument: t.instrument, difficulty: t.difficulty, hash: sc.calculateTrackHash(p, t.instrument, t.difficulty).hash,
       notes: t.noteEventGroups.flatMap(g => g.map(n => ({ tick: n.tick, ms: n.msTime, type: types[n.type], length: n.length,
         msLength: n.msLength, flags: flags(n.flags) }))),
     }));
