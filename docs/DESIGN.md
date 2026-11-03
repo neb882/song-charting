@@ -707,8 +707,10 @@ sections, scored with `score.py` against the six human charts [here, takes exper
     against a bad draw (Kimochi Warui's 0.600 take becomes 0.804 spliced).
   - The windows hardly matter: human sections beat allin1's by +0.004, plain 8-measure windows by +0.0055.
 - **How many takes** (corrected by the experiment's verifier): **3 takes give about +0.006 to +0.0105 over one, not
-  worse than one** (REPORT.md had −0.017), and **4 takes are better than 3**. 2 takes do nothing: assemble refuses
-  them and `splice` returns the base.
+  worse than one** (REPORT.md had −0.017): +0.006 [−0.014, +0.025] with the default base (median +0.003), +0.0105
+  [−0.0005, +0.023] over all 12 base × pair combinations (32 better, 20 worse, 8 equal of 60; worst −0.099). **4 takes
+  beat 3** with the same base by +0.022 [+0.001, +0.055] (median +0.008, carried by Kimochi Warui), so 3 is the
+  riskier choice. 2 takes do nothing: assemble refuses them and `splice` returns the base.
 - **Cost on the owner's GPU** (RTX 5070): 4 takes are **3.41×** the guitar stage (1001 s for one take over seven
   songs, 3414 s for four; 2.3–4.4× per song), **+5.75 min a song** on average (1.6–11.4). CPU times were not
   measured in the experiment; on the dev container one more take is one more transcription, 217 s for the test song
@@ -1582,13 +1584,16 @@ Tolerances come from the measured spreads: autochart run to run up to 0.035 on E
 - **Before fixing the tempo-median and drum-timing rows:** measure, on the test song, the offset between the guitar audit's rising-edge picker (tempo rows) and the drums/bass audit's band-flux proxy (drum timing rows). Drum notes snap onto the grid, so both rows can hold only if that offset matches the calibrations'. On Take Me Out the two calibrations differ by about 22 ms (humans 13.5 ms before rising-edge onsets; +8.75 ms after the proxy) [inference]; on the test song it is unmeasured.
 - A playtest on the friend's PC. While there: `nvidia-smi`, RAM, an autochart app install, and SmartScreen and Smart App Control behaviour.
 
-**Status: the v1 chart is delivered, not yet played.**
+**Status: delivered and played.** v1 was played by the friend; v1.1 followed his feedback.
 - The v1 chart of the test song was delivered with all three instruments: guitar from the spliced autochart takes
   (§2.7), bass and drums from STRUM, all re-timed onto our grid. A second folder, the same but with ADTOF's drums,
   was built beside it.
 - It passes the gate, and scan-chart 8.0.1 finds it playable with 0 chart issues (§2.13).
-- Nobody has played it yet: the friend's playtest is the next gate. Q1 is answered (Guitar, on Expert; §9 Q1), so
-  the guitar and "all" rows below are judged first.
+- The friend played v1 (Guitar, on Expert; §9 Q1): "Everything played pretty well". He asked for Expert only unless
+  asked otherwise, and for solo trackers on the two solos. v1.1 (Expert only, guitar solos on Solo 1 and Solo 2,
+  Expert notes identical to v1) was delivered after that. He also named a sparse stretch around 2:32–2:35 of the
+  recording, then said to disregard it; the strumming research on it is in §2.7.
+- Still open in M1a: the Windows spike on the friend's PC (above).
 
 **Acceptance (test song).** "Source" means the autochart GPU take for guitar and STRUM's GPU output for drums and bass, measured with the audits' methods. Rows apply to the friend's instrument(s); "all" rows always apply.
 
