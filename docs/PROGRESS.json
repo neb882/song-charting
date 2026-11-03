@@ -3,7 +3,7 @@
   "about": "The short state of the project. Read it first; DESIGN.md has the detail and the evidence. Update it when a milestone, a decision or a dead end lands.",
   "people": {
     "owner": "builds this; RTX 5070 under WSL2 (eval/gpu.sh)",
-    "friend": "plays Guitar on Expert; native Windows, RTX 4070; wants Expert only unless asked, and solo trackers on solos"
+    "friend": "plays Guitar on Expert; Windows 11 with Smart App Control on, RTX 4070 (12 GB), 16-32 GB of RAM; wants Expert only unless asked, and solo trackers on solos"
   },
   "goal1": {
     "what": "the test song (Car Seat Headrest, Beast Monster Thing (Love Isn't Love Enough)) charted for the friend",
@@ -39,13 +39,19 @@
     },
     {
       "id": "M4",
-      "status": "planned; work orders in docs/work-orders/",
-      "what": "a Windows release the friend can use: packaging, first-run model downloads, a simple way to run it, tested on his PC",
-      "plan": "docs/work-orders/M4-00-plan.md: v0.1 is the installer and portable zip, the first-launch bootstrap (uv lanes cu132/cu126/cpu, allin1's own Python, Node, autochart's engine and models, doctor.json), device checks with the CPU fallback shown, a local UI (drop, options, progress with cancel, the static preview, zip and install into Clone Hero), a diagnostics bundle and CI on Linux and windows-latest. The rest is M4-99.",
+      "status": "planned for WSL2; work orders in docs/work-orders/",
+      "what": "a release the friend can use on his Windows PC, running in WSL2: a guided WSL setup, a one-line install, a Start-menu shortcut, a local UI, tested on his PC",
+      "plan": "docs/work-orders/M4-00-plan.md: v0.1 is a guide to set up WSL, install.sh fetched from the pre-release and checked by hash (uv lanes cu132/cu126/cpu, allin1's own Python, Node, autochart with its models and its CUDA 13 provider, doctor.json, a .wslconfig with Windows' RAM minus 4 GB, a Start-menu shortcut), device checks with the CPU fallback shown, the local UI in WSL opened in the Windows browser (drop, options, progress with cancel, the static preview, zip and install into the Windows Songs folder), diagnostics, and CI end to end in ubuntu:26.04. Native Windows and the rest are M4-99; the native plan is commit f9f9377 and M4-00's appendix.",
       "risks": [
-        "autochart's temporary files reach 290-309 characters of path on Windows, over the 260 limit: Node usually copes with long paths, the cache's deletion uses the \\\\?\\ form; the bootstrap checks it (M4-02, M4-03) and moves the cache root to %SystemDrive%\\songcharter-cache when the deep cache would not fit",
-        "the guitar has no CUDA on native Windows: onnxruntime-node 1.27.0's Windows build has only the CPU, DirectML and WebGPU providers (its README; the binding names no cuda), so the guitar runs on WebGPU there (M4-02); its speed on a 4070, and so the 4-take default there, is unmeasured (M4-08)",
-        "torch's CUDA lanes (cu132, cu126) and demucs on CUDA have run only on the owner's WSL GPU, never on native Windows; allin1's environment pairs torch 2.15 with torchaudio 2.11.1 (passed on Linux, untested on Windows)"
+        "peak RAM with CUDA inside 12 GB of WSL memory (a 16 GB PC) is unmeasured: on the CPU the tree peaked at 10.1 GB, allin1's runner 7.8 GB; M4-08 measures it with memory=12GB, swap 8 GB absorbs short peaks, and under 11 GB of WSL memory allin1 is left out (librosa sections)",
+        "autochart's CUDA provider in WSL needs CUDA 13 libraries (cublas 13, cudart 13, nvrtc 13, cufft 12, curand 10, cuDNN 9): the cu132 lane's wheels plus nvidia-curand hold them; never run on the friend's driver, and a driver under 580 leaves the guitar on the CPU",
+        "the Start-menu shortcut under Smart App Control: a .lnk written from WSL has no Mark of the Web and targets the signed wsl.exe, so it should run; untested until M4-08 (fallback: open Ubuntu, type songcharter)",
+        "the Windows browser reaches the server through WSL's localhost forwarding (default on); the server checks it from Windows with curl.exe and falls back to WSL's own address"
+      ],
+      "decisions": [
+        "route: WSL2, not native Windows (the owner, 2026-11-03): the friend's PC has Smart App Control on, which blocks unsigned DLLs and Python modules with no per-app exception; Linux programs in WSL2 are outside it, and onnxruntime-node's Linux build gives the guitar CUDA again",
+        "delivery: a GitHub pre-release on neb882/song-charting (the owner)",
+        "licence: MIT for songcharter's own code, LICENSE on main (the owner); NOTICE lists the third parties"
       ]
     },
     {
@@ -63,9 +69,8 @@
   "in_flight": [],
   "next": [
     "Use the golden charts for every change that can move a chart (the inspector runs them; the release gate needs them).",
-    "A real GPU run of songcharter chart on the owner's 5070 (needs Demucs and allin1's own Python there).",
-    "M4: build the work orders in docs/work-orders/ in waves (M4-01 and M4-02, then M4-03 and M4-04, then M4-05 and M4-06, then M4-07), the full review workflow over the integrated v0.1, then M4-08: the owner's native run on the 5070, then the friend's install, which is also M1a's Windows spike.",
-    "Owner: delete the GitHub branch m4-workflow-push-probe (a session pushed it to test workflow-file pushes and may not delete branches), and answer the M4 plan's two open questions (how the friend gets the installer; songcharter's licence).",
+    "M4: build the work orders in docs/work-orders/ in waves (M4-01, M4-02 and M4-05a; then M4-03 and M4-04; then M4-05 and M4-06; then M4-07), the full review workflow over the integrated v0.1, then M4-08: the owner's 5070 in a fresh Ubuntu-26.04 distro with WSL memory at 12 GB, then the friend's PC, which is also M1a's Windows spike.",
+    "Owner: delete the GitHub branch m4-workflow-push-probe (a session cannot), and answer M4-00's two questions (Smart App Control on for the test; whether the friend's Ubuntu is only for songcharter).",
     "Before the next quality decision: grow the reference set to 20 or more human charts, with human-charted solos among them."
   ],
   "dead_ends": [

@@ -1,116 +1,125 @@
-# M4-08: the hardware runs (the owner's PC, then the friend's)
+# M4-08: the hardware runs (the owner's 5070, then the friend's PC)
 
-**Not a build order.** No agent can do it: it needs real Windows PCs with NVIDIA GPUs. The director prepares it,
-the owner runs part A, the friend runs part B, and the director reads the diagnostics bundles and writes the
-results into DESIGN and PROGRESS.
+**Not a build order.** It needs real Windows PCs with NVIDIA GPUs. The director prepares it, the owner runs part A,
+the friend runs part B, and the director reads the diagnostics zips and writes `M4-08-results.md`, DESIGN and
+PROGRESS.
 
-**Input:** the `songcharter-setup-X.exe` and `songcharter-X-portable.zip` from M4-07's green CI run, after the full
-review workflow over the integrated v0.1 (M4-00, section 4).
+**Input:** a green `main` after M4-07, and the full review workflow over the integrated v0.1 (M4-00, section 5). The
+release assets come from `build.sh` on `main`: the director attaches them to a draft, or the owner builds them in
+WSL with `bash packaging/release/build.sh 0.1.0-rc1 dist`. Before the pre-release exists, part A uses `install.sh
+--from <folder>`.
 
 ## Intent
 
-Nothing of v0.1 has run on a Windows PC with a GPU. CI proves the CPU lane on a server image with no display adapter.
-These two runs answer what only hardware can:
-- the cu132 lane on native Windows;
-- the guitar on WebGPU and its speed, and so the 4-take default there;
-- VRAM and RAM;
-- path lengths on real profiles;
-- SmartScreen and Smart App Control;
-- Clone Hero's own folders.
+CI proves the cpu lane on Ubuntu 26.04 in a container. Only the PCs can show:
+- the cu132 lane and autochart's CUDA provider in WSL;
+- the time of a 7-minute song with 1 and 4 takes;
+- peak RAM inside a 12 GB WSL (the friend's 16 GB PC), and VRAM;
+- the localhost route to the Windows browser;
+- the Start-menu shortcut under Smart App Control;
+- the Songs folder on Windows;
+- antivirus effects;
+- whether the guide can be followed.
 
-Part B is also the Windows spike PROGRESS still lists under M1a.
+## Part A: the owner's RTX 5070 PC, a fresh distro that mimics the friend's
 
-## Part A: the owner's RTX 5070 PC, native Windows (not WSL)
+Run as written; note each answer (A1–A12).
 
-**Before:**
-- `nvidia-smi` in a Windows terminal shows driver 580 or newer. The 5070 needs it for the cu132 lane; the cu126
-  build has no kernels for it.
-- Clone Hero is installed.
-- The test song's MP3, the one the friend plays, and Take Me Out's `input.wav` are copied to the Windows side, for
-  example `Downloads\`.
+**Prepare (Windows):**
 
-**Steps.** Write down each answer.
+1. `nvidia-smi` in a Windows terminal shows driver 580 or newer.
+2. **Mimic the friend's memory.** Copy `%UserProfile%\.wslconfig` to `.wslconfig.owner` (if it exists), then set
+   `[wsl2]` to `memory=12GB` and `swap=8GB`. Then `wsl --shutdown`. Your other distros get 12 GB until step 15
+   restores the file.
+3. *(Only if you agreed, M4-00 question 1)* Windows Security > App & browser control > Smart App Control: **On**.
+4. Terminal (Admin): `wsl --install -d Ubuntu-26.04`. This is the same Ubuntu 26.04.1 image the friend's "Ubuntu"
+   gets, as a separately named distro [doc: Microsoft's DistributionInfo.json]. Make a user.
 
-1. Run the setup. Does SmartScreen show "Windows protected your PC"? Install without admin; the bootstrap window
-   runs.
-   - **A1:** the bootstrap's time, and its last lines (lane and reason; expected `cu132`).
-2. The page opens. **A2:** the header text. Expected "GPU: NVIDIA GeForce RTX 5070 (12 GB)" and "guitar on WebGPU".
-3. Chart the test song with **Guitar takes: 1**, everything else default.
-   - **A3:** the total time, and the guitar stage's time (the progress page shows both).
-4. Chart it again with the defaults: 4 takes on a GPU. The caches make every stage but the guitar quick.
-   - **A4:** the guitar stage's time.
-   - Rule [decision, M4-00 risk 1]: if A4 minus A3's guitar time is over 12 min, the default on WebGPU becomes 1
-     take.
-5. During one more run of any song, press Cancel during the guitar stage.
-   - **A5:** does the page say cancelled within 30 s? Are any `node.exe` or `python.exe` from songcharter still in
-     Task Manager's Details tab after that?
-6. Chart Take Me Out with the defaults. The director scores it on Linux against the human chart with
+**Install and use (follow the guide, M4-07, from its section 3):**
+
+5. Paste the guide's install line, or `bash install.sh --from <folder>` before the pre-release exists.
+   - **A1:** total time, and the download size it announced.
+   - **A2:** the lane and reason (expected `cu132`).
+   - Did it keep the 12 GB `.wslconfig`? It should keep any memory of 12 GB or more.
+   - At the end, the window closes (WSL restarts).
+6. Start menu > "songcharter".
+   - **A3:** does the page open in the browser? (With SAC on: does the shortcut run at all?)
+   - **A4:** the header: expected "GPU: NVIDIA GeForce RTX 5070 (12 GB)" and "guitar on the GPU".
+7. Chart the test song's MP3 (the friend's file) with **Guitar takes: 1**. **A5:** the total and the guitar stage's
+   time.
+8. Chart it again with the defaults (4 takes on the GPU). **A6:** the guitar stage's time.
+9. Chart Take Me Out (`input.wav`) with the defaults. The director scores it on Linux with
    `eval/scorer/score.py`.
-7. Install the test song into Clone Hero with the button. Did it find the Songs folder by itself?
-   - In Clone Hero: Settings > General > Scan Songs, then play it on Expert.
-   - **A7:** in sync? Anything odd?
-8. Turn the network off (Wi-Fi off, or unplug), close the songcharter window, start songcharter again from the
-   Start Menu, and chart a song never charted before.
-   - **A8:** does it finish?
-9. Open `Documents\Clone Hero\settings.ini` in Notepad. **A9:** copy only the lines that name a folder (the song
-   folder settings), with their key names.
-10. Start Menu, "songcharter: diagnostics". Send the zip from the desktop with A1–A9.
-11. Uninstall from Settings > Apps, and answer No to the question. Then reinstall: the bootstrap should take
-    minutes, not the first time's.
+10. Start any song, and press Cancel once the guitar row shows "take 1".
+    - **A7:** cancelled within 30 s?
+    - Afterwards, in the distro, does `ps -eo args | grep -E 'node|songcharter.cli'` show anything?
+11. "Install into Clone Hero". **A8:** did it find the Songs folder by itself (is your Documents in OneDrive)?
+    - Then in Clone Hero: Scan Songs, and play the test song on Expert. **A9:** in sync? Anything odd?
+12. Turn Windows' network off, close the songcharter window, start it again from the Start menu, and chart a song
+    not charted before. **A10:** does it finish?
+13. Copy only the song-folder lines of `Documents\Clone Hero\settings.ini`, with their key names. **A11.**
+14. The page's "Diagnostics" link. Send the zip with A1–A12.
+
+**Uninstall and clean up:**
+
+15. In the distro: `songcharter uninstall`, answer **No**. Then paste the install line again.
+    - **A12:** time; did it download anything?
+    - Then:
+      - `wsl --unregister Ubuntu-26.04`;
+      - restore `.wslconfig.owner` to `.wslconfig`, and `wsl --shutdown`;
+      - turn Smart App Control back off if step 3 turned it on.
 
 **Pass** (DESIGN 5, M4, for what v0.1 covers):
-- install and run without errors; the lane is `cu132`, and the guitar is on `webgpu` (`pipeline.json`: the
-  transcriber's device for every take);
-- the test song passes the gate, with the same section and star-power counts as the Linux build within ±10 %
-  [decision];
-- Take Me Out against the human chart:
-  - guitar F1@50 at least 0.880 − 0.035 = 0.845 (M3's rule: the best tool's 0.880 minus the 0.035 spread);
-  - drums at least 0.947 − 0.02 = 0.927 (M3's rule against ADTOF);
-  - bass reported;
-- no CPU fallback that `doctor` did not predict;
-- the lowest available RAM over each run is 4 GB or more (DESIGN's "peak RAM within the PC's RAM minus 4 GB"), and
-  no stage ran out of GPU memory;
-- cancel leaves no process behind; the offline run finishes; the song plays in Clone Hero after a rescan.
+- the install finishes without help; lane `cu132`;
+- every take's transcriber ran on `cuda` (`pipeline.json`, in the zip);
+- `doctor`'s `autochart_cuda` is ok;
+- the test song with 1 take in **8 min or less**: the 4070's target, so the 5070 should beat it. A6 is recorded.
+  - Rule [decision]: if 4 takes add more than 12 min to the guitar stage, the default on CUDA under WSL goes to 1
+    take, a one-line change in `guitar_takes`.
+- **Memory:** inside 12 GB, no stage is killed (no "Killed", no OOM line in the logs), and the lowest available RAM
+  and peak swap per stage are recorded. If swap passes 4 GB in a stage, the director decides between the librosa
+  sections and a smaller WSL margin before the friend's run.
+- VRAM per stage is recorded; no CUDA out-of-memory fallback.
+- **Take Me Out against the human chart:** guitar F1@50 ≥ 0.845 (0.880 − 0.035), drums ≥ 0.927 (0.947 − 0.02), bass
+  reported (M3's rules).
+- Cancel leaves no process; the offline run finishes; the song plays in Clone Hero after a rescan; the reinstall
+  downloads nothing.
+- Every guide step was clear, or the unclear ones are listed for M4-07.
 
-## Part B: the friend's RTX 4070 PC
+**Then** the owner (or a session, if allowed) creates the pre-release (M4-07).
 
-**Before**, the director writes and the owner sends:
-- the setup file, through whichever channel M4-00 open question 1 settles;
-- the test song's MP3, if he does not have it, with the same file rule as v1;
-- five lines of instructions:
-  1. "Run the file. If Windows says 'Windows protected your PC', click More info, then Run anyway."
-  2. "Let the setup finish; it downloads about 3 GB."
-  3. "Drop a song into the page that opens, then press Chart it."
-  4. "When it is done, press Install into Clone Hero, then Scan Songs in Clone Hero."
-  5. "Send us the file from Start Menu > songcharter: diagnostics."
+## Part B: the friend's PC (Smart App Control on, 16–32 GB)
 
-**Steps for him**, with no help unless he is stuck. Note every question he asks: each one is a v0.2 fix.
+**Before**, the owner sends him the pre-release link: its notes are the guide.
 
-1. Install and let the setup finish.
-2. Chart the test song once with **Guitar takes: 1**, and once with the defaults.
-3. Chart one song of his own choice with the defaults; install it into Clone Hero and play it.
-4. Send the diagnostics zip, and say what felt wrong or slow.
+**He follows the guide alone.** Note every question he asks: each one is a guide fix.
 
-**Pass:** DESIGN 5, M4's acceptance for the friend's 4070, for what v0.1 covers. The director reads each from the
-bundle:
-- it installs and runs without help;
-- the 1-take test song finishes in 8 min or less (the 6:52 song; DESIGN's target names a 7-min song);
-- the 4-take run's time is recorded;
-- the lowest available RAM is 4 GB or more at every stage, and no CUDA out-of-memory fallback happened;
-- `doctor.json`'s path check is ok on his profile, with no path error in any log;
-- every CPU fallback that happened was shown (in `pipeline.json`'s `fallbacks` and the UI);
-- the songs play in Clone Hero after a rescan.
+1. He sets up WSL and installs songcharter.
+2. He charts the test song once with **Guitar takes: 1** and once with the defaults.
+3. He charts one song of his choice, installs it into Clone Hero, and plays it.
+4. He sends the diagnostics zip, and what felt wrong or slow.
 
-**Also record for PROGRESS** (the M1a spike): the GPU, driver and compute capability; his RAM; the Smart App Control
-state; SmartScreen's behaviour.
+**Pass** (DESIGN 5, M4, for what v0.1 covers), read from his zip:
+- installed and ran without help;
+- the shortcut worked under Smart App Control (or the Ubuntu fallback, noted);
+- the 1-take test song in 8 min or less, and the 4-take time recorded;
+- no stage killed for memory; RAM, swap and VRAM per stage recorded; no CUDA out-of-memory;
+- every CPU fallback shown;
+- the songs play after a rescan.
+
+Also record for PROGRESS (the M1a spike): GPU, driver, compute capability, Windows build, RAM (`windows_ram_mb`),
+and WSL memory.
 
 ## Done means
 
-- A report in `docs/work-orders/M4-08-results.md`, written by the director from the two bundles and the answers:
-  each pass line with its number, and the decisions it triggers (the WebGPU takes default; `settings.ini` parsing
-  for M4-99; Smart App Control instructions).
+- `docs/work-orders/M4-08-results.md`, written by the director: each pass line with its number, and the decisions it
+  triggers:
+  - the 4-take default under WSL;
+  - the memory margin;
+  - parsing Clone Hero's `settings.ini` (M4-99);
+  - guide fixes.
 - PROGRESS: M4 "done" if both parts pass, or the fix orders it needs.
 
 ## Depends on
 
-M4-07 (a CI-built installer), and the owner's and the friend's time.
+M4-07, the full review workflow, and the owner's and the friend's time.

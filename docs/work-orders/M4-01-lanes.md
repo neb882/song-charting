@@ -1,79 +1,68 @@
-# M4-01: the lanes and the locks
+# M4-01: the lanes and the locks (Linux, for WSL2)
 
-**Branch:** `m4-01-lanes`, from `main`. **Wave 1**, beside M4-02. **Agent:** `sc-builder`, then `sc-reviewer` and
-`sc-inspector`.
+**Branch:** `m4-01-lanes`, from `main`. **Wave 1**, beside M4-02 and M4-05a. **Agent:** `sc-builder`, then
+`sc-reviewer` and `sc-inspector`. May push its branch to run CI.
 
 ## Intent
 
-The Windows install is one `uv sync --frozen` against a committed lock, in one of three torch lanes (DESIGN 4.3):
-`cu132`, `cu126` and `cpu`. allin1 runs in a Python of its own (engines/sections.py), so it gets a locked project of
-its own, on the same lanes. A check proves, on Linux, that every package each lane needs on Windows has a wheel for
-CPython 3.13 win_amd64, or is one of the named pure-Python sdists, so nothing needs a compiler on the friend's PC.
+The friend's install is one `uv sync --frozen` against a committed lock, in one of three torch lanes:
+- **cu132:** a driver of 580 or newer;
+- **cu126:** an older driver;
+- **cpu:** no NVIDIA GPU.
+
+allin1 runs in a Python of its own (engines/sections.py), so it gets a locked project too, on the same lanes. On cu132
+the lane must also carry everything autochart's CUDA provider needs (M4-00, finding 4), so the guitar runs on the GPU
+with no extra environment.
 
 ## Scope
 
 Creates or changes:
-- `pyproject.toml`: new extras and `[tool.uv]` tables (below). Existing extras keep their meaning, so
-  `pip install -e ".[dev,separate,drums,bass,sections,preview]"` still works.
-- `uv.lock` (new).
-- `packaging/allin1/pyproject.toml`, `packaging/allin1/uv.lock` (new).
-- `packaging/check_wheels.py` (new), with `tests/test_check_wheels.py` for its marker filter.
+- `pyproject.toml`: extras and `[tool.uv]` tables. The existing extras keep their meaning, so CLAUDE.md's pip
+  command still works.
+- `uv.lock` (new);
+- `packaging/allin1/pyproject.toml`, `packaging/allin1/uv.lock` (new);
+- `packaging/check_wheels.py` and `tests/test_check_wheels.py` (new);
+- `packaging/ci/linux.d/10-lanes.sh` (new; the hook folder comes from M4-05a, same wave: a new file, no overlap).
 
-Must not touch:
-- any module under `songcharter/` or `tests/` other than the new test;
-- `docs/` and `README.md` (the director folds the doc changes in).
+Must not touch: `songcharter/`, other tests, `docs/`, `README.md`.
 
 ## Spec
 
-### The root project (`pyproject.toml`)
+### The root project
 
-- Keep `requires-python = ">=3.11,<3.14"` and every existing extra.
-- Add `packaging>=24` to the `dev` extra (for `check_wheels.py`).
-- Add these extras:
-  ```toml
-  ffmpeg = ["imageio-ffmpeg>=0.6"]                 # ffmpeg for Windows installs (audio.ffmpeg_exe's last resort)
-  app = ["songcharter[separate,drums,bass,sections,preview,ffmpeg]"]   # everything `songcharter chart` and the UI use
-  cpu = ["torch==2.15.0"]
-  cu126 = ["torch==2.14.1"]
-  cu132 = ["torch==2.15.0"]
-  ```
-- `[tool.uv]`:
-  ```toml
-  required-version = "==0.13.5"
-  conflicts = [[{ extra = "cpu" }, { extra = "cu126" }, { extra = "cu132" }]]
-  environments = ["sys_platform == 'win32'", "sys_platform == 'linux' and platform_machine == 'x86_64'"]
-  required-environments = ["sys_platform == 'win32' and platform_machine == 'AMD64'",
-                           "sys_platform == 'linux' and platform_machine == 'x86_64'"]
-  ```
-- `[tool.uv.sources]`: `torch = [{ index = "pytorch-cpu", extra = "cpu" }, { index = "pytorch-cu126", extra =
-  "cu126" }, { index = "pytorch-cu132", extra = "cu132" }]`.
-- Three `[[tool.uv.index]]` tables, each with `explicit = true`, named `pytorch-cpu`, `pytorch-cu126` and
-  `pytorch-cu132`, with the URLs `https://download.pytorch.org/whl/<lane>`.
-- Then run `uv lock` (uv 0.13.5) and commit `uv.lock`.
-- Why these versions:
-  - DESIGN 4.3's table, checked on 2026-11-03: the newest win_amd64 cp313 torch per index is 2.15.0 on cpu and
-    cu132, and 2.14.1 on cu126.
-  - uv 0.13.5 was released on 2026-10-22. The installer ships the same version (M4-07), and CI installs it (M4-05).
+Keep `requires-python = ">=3.11,<3.14"` and every existing extra. Add `packaging>=24` to `dev`, then:
+
+```toml
+ffmpeg = ["imageio-ffmpeg>=0.6"]
+app = ["songcharter[separate,drums,bass,sections,preview,ffmpeg]"]
+cpu = ["torch==2.15.0"]
+cu126 = ["torch==2.14.1"]
+cu132 = ["torch==2.15.0", "nvidia-curand==10.4.4.72; sys_platform == 'linux'"]
+```
+
+- **The curand pin:** `libcurand.so.10` for onnxruntime-node's CUDA provider, which needs CUDA 13. The cu132 torch
+  wheel brings every other library it needs (M4-00, finding 4).
+- **`[tool.uv]`:**
+  - `required-version = "==0.13.5"`;
+  - `conflicts = [[{ extra = "cpu" }, { extra = "cu126" }, { extra = "cu132" }]]`;
+  - `environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]`.
+- **`[tool.uv.sources]`:** torch per lane extra, from three `explicit = true` indexes named `pytorch-cpu`,
+  `pytorch-cu126` and `pytorch-cu132`, with the URLs `https://download.pytorch.org/whl/<lane>`.
+- **`uv lock`** with uv 0.13.5 (released 2026-10-22; the installer pins the same version).
+- **Versions** (2026-11-03): the newest Linux cp313 torch on each index is 2.15.0 for cpu and cu132, and 2.14.1 for
+  cu126.
+- The native-Windows environment (win32) was dropped with the route. M4-99 brings it back with a native release.
 
 ### allin1's project (`packaging/allin1/pyproject.toml`)
 
-- A virtual project: `[tool.uv] package = false`, so it installs only its dependencies.
-- `name = "songcharter-allin1"`, `version = "0.1.0"`, `requires-python = "==3.13.*"`.
-- `dependencies = ["all-in-one-infer==3.1.0", "torchaudio==2.11.1"]`.
-  - torchaudio is needed because all-in-one-infer 3.1.0 imports it at the top level (`allin1_infer/stems.py`)
-    without declaring it (DESIGN 4.3).
-  - 2.11.1 because it is the PyPI build that needs only `torch>=2.11`, so it sits beside the lane's own torch: on
-    Linux, torch 2.15.0+cpu with it passed the real runner's probe and a fold-0 run [here, planning job].
-- The same `cpu`, `cu126` and `cu132` extras, `conflicts`, `environments`, `required-environments`, `sources` and
-  indexes as the root. Same torch pins, so both environments link the same torch files from uv's cache.
-- `[tool.uv] required-version = "==0.13.5"`; run `uv lock` in that folder and commit its `uv.lock`.
-- **Fallback, only if M4-05 shows torchaudio 2.11.1 failing on Windows:**
-  - pin `torch==2.11.0` in all three extras of this project;
-  - pin `torchaudio==2.11.0` per extra, from the lane's index (cpu, cu126; and cu130 in place of cu132, since the
-    cu132 index has no torchaudio);
-  - relock.
-
-  Not now.
+- A virtual project: `[tool.uv] package = false`, `name = "songcharter-allin1"`, `version = "0.1.0"`,
+  `requires-python = "==3.13.*"`.
+- `dependencies = ["all-in-one-infer==3.1.0", "torchaudio==2.11.1"]`. torchaudio 2.11.1 needs only `torch>=2.11`, so
+  it sits beside the lane's torch 2.15. On Linux, that pairing passed the real runner's probe and a fold-0 run [here,
+  planning job].
+- The same three extras (cu132 without curand: allin1 needs none), conflicts, environments, sources and indexes. The
+  same torch pins, so both environments hardlink the same torch files from uv's cache.
+- `uv lock` there. It resolved 105 packages in the planning job.
 
 ### `packaging/check_wheels.py`
 
@@ -81,67 +70,54 @@ Must not touch:
 usage: python packaging/check_wheels.py [--project DIR ...] [--lanes cpu,cu126,cu132]
 ```
 
-- For each project (default: `.` and `packaging/allin1`) and each lane:
-  1. `uv export --frozen --project DIR --extra <lane> [--extra app, root only] --no-hashes --no-emit-project
-     --format requirements-txt`.
-  2. Keep the requirements whose marker is true for Windows. Evaluate with `packaging.markers` against
-     `{"sys_platform": "win32", "platform_machine": "AMD64", "platform_system": "Windows", "os_name": "nt",
-     "python_version": "3.13", "python_full_version": "3.13.17", "implementation_name": "cpython",
-     "platform_python_implementation": "CPython"}`. Drop the marker text.
-  3. `uv pip compile <that file> --python-platform x86_64-pc-windows-msvc --python-version 3.13 --index-strategy
-     unsafe-best-match --extra-index-url https://download.pytorch.org/whl/<lane>`, into a temporary file, with
-     `--only-binary <name>` for every package in the file except the allowed pure-Python sdists below. Not
-     `--only-binary :all:`.
-- **Allowed sdists:** `PURE_SDISTS = {"antlr4-python3-runtime": "4.9.3"}`.
-  - all-in-one-infer requires hydra-core 1.3.8, which pins `antlr4-python3-runtime==4.9.*`, and 4.9.3 is on PyPI
-    as an sdist only.
-  - It is pure Python (its `setup.py` has no `ext_modules`), and `uv build --wheel` turns it into
-    `antlr4_python3_runtime-4.9.3-py3-none-any.whl` with no compiler [here, planning job]. So uv builds it on the
-    friend's PC at the bootstrap with setuptools alone.
-  - The check proves it: for each allowed sdist, download it from PyPI, check it against the lock's SHA-256, build
-    it with `uv build --wheel`, and assert the wheel's tag is `py3-none-any`.
-  - Any other sdist is a failure.
-- **Pass:** the compile succeeds, and it pins the same package names as the export, with the same public versions
-  (`packaging.version.Version(v).public`). torch must match in full, local version included.
-  - With the extra index, the compile may take `torchaudio 2.11.1+cpu` (or `+cu132`) where the lock has PyPI's
-    `2.11.1` [here]: both install the same release.
-  - Expected counts on 2026-11-03: 62 Windows packages per lane for the root, 64 for allin1's project [here].
-- Print one line per project and lane: `ok <project> <lane>: <n> packages, torch <version>`, or `FAIL ...` with uv's
-  last lines.
-- Exit 0 when all pass, 1 otherwise.
-- Why filter the markers yourself: uv's `windows` target did not match real Windows' `platform_machine == 'AMD64'`
-  markers when tried, and resolved nothing [here, planning job].
+For each project (default `.` and `packaging/allin1`) and lane:
+1. Export: `uv export --frozen --project DIR --extra <lane> [--extra app] --no-hashes --no-emit-project`.
+2. Keep the lines whose marker is true for `{"sys_platform": "linux", "platform_machine": "x86_64",
+   "python_version": "3.13", ...}`, evaluated with `packaging.markers`.
+3. `uv pip compile` that file with `--python-platform x86_64-manylinux_2_39 --python-version 3.13
+   --index-strategy unsafe-best-match --extra-index-url https://download.pytorch.org/whl/<lane>`, and `--only-binary
+   <name>` for every package except the allowed pure-Python sdists. glibc 2.39 is CI's Ubuntu 24.04; the friend's
+   Ubuntu 26.04 has 2.43, so a wheel that passes here installs there.
 
-### Linux development
+**Allowed sdists:** `PURE_SDISTS = {"antlr4-python3-runtime": "4.9.3"}`.
+- hydra-core 1.3.8, which all-in-one-infer needs, pins `==4.9.*`, and 4.9.3 is an sdist only.
+- It has no `ext_modules`, and `uv build --wheel` gives `py3-none-any` with no compiler [here].
+- The check downloads it, compares it with the lock's hash, builds it, and asserts the tag.
 
-Unchanged: the pip command in CLAUDE.md keeps working. For uv users, `uv sync --extra cpu --extra app --extra dev`
-gives the same environment. The director adds that line to CLAUDE.md and README at the merge.
+**Pass:** the same names with the same public versions (`Version(v).public`; torch in full, local part included).
+
+**Output:** one `ok <project> <lane>: <n> packages, torch <v>` line per project and lane. Exit 0, or 1 with the
+failures.
+
+### Hook `packaging/ci/linux.d/10-lanes.sh`
+
+- `uv lock --check` for both projects;
+- `uv run --no-project --with packaging python packaging/check_wheels.py`;
+- for each lane, `uv sync --frozen --dry-run --extra <lane> --extra app`;
+- `uv sync --frozen --dry-run --project packaging/allin1 --extra <lane>`.
 
 ## Done means
 
-All of these run in the dev container [dev] (and again in M4-05's Linux job [CI-linux]):
+[dev] In the dev container:
 
-1. `uv --version` prints `uv 0.13.5`, then `uv lock --check` exits 0, and so does `uv lock --check --project
+1. `uv --version` is `uv 0.13.5`. `uv lock --check` exits 0, and so does `uv lock --check --project
    packaging/allin1`.
-2. `python packaging/check_wheels.py` exits 0 and prints six `ok` lines.
-   - Expected torch versions per lane: `2.15.0+cpu`, `2.14.1+cu126`, `2.15.0+cu132`, in both projects.
-   - Plus one line saying `antlr4-python3-runtime 4.9.3` built as `py3-none-any`.
-   - A test with a stand-in export that holds a second sdist-only package (a fixture file, no network) fails.
-3. `UV_PROJECT_ENVIRONMENT=/dev/shm/m4-01/env uv sync --frozen --extra cpu --extra app --extra dev` then, with that
-   env's Python, the full suite as CLAUDE.md runs it:
-   `SONGCHARTER_SCAN_CHART=$PWD/tools/scan-chart/scan.cjs python -m pytest -q -p no:cacheprovider --basetemp=/dev/shm/pt`
-   passes with the same counts as `main`, apart from the new test.
-4. `UV_PROJECT_ENVIRONMENT=/dev/shm/m4-01/allin1 uv sync --frozen --project packaging/allin1 --extra cpu`, then
-   `SONGCHARTER_ALLIN1_PYTHON=/dev/shm/m4-01/allin1/bin/python python -m pytest -q -p no:cacheprovider
-   tests/test_engines_sections.py -k probe` (in the env of step 3) passes its real-probe test, which skips without
-   that variable.
-5. For each lane, `uv sync --frozen --dry-run --extra <lane> --extra app` exits 0.
-6. `pip install -e ".[dev,separate,drums,bass,sections,preview]"` in a fresh venv still succeeds (the pip route is
-   unchanged).
-7. Report: both `uv.lock` sizes and package counts, the six `ok` lines, and the suite's counts.
+2. `uv run --no-project --with packaging python packaging/check_wheels.py` exits 0 with six `ok` lines:
+   - torch `2.15.0+cpu`, `2.14.1+cu126` and `2.15.0+cu132`;
+   - the cu132 root line lists `nvidia-curand 10.4.4.72`;
+   - the antlr sdist is built.
+   - Its test fails a fixture export that holds a second sdist-only package.
+3. `UV_PROJECT_ENVIRONMENT=/dev/shm/m4-01/env uv sync --frozen --extra cpu --extra app --extra dev`, then the
+   suite with that environment's Python, as CLAUDE.md runs it: the same counts as `main`, plus the new test.
+4. `UV_PROJECT_ENVIRONMENT=/dev/shm/m4-01/allin1 uv sync --frozen --project packaging/allin1 --extra cpu`. Then, from
+   step 3's environment, `SONGCHARTER_ALLIN1_PYTHON=/dev/shm/m4-01/allin1/bin/python python -m pytest -q
+   tests/test_engines_sections.py -k probe` passes its real-probe test.
+5. Each lane's `uv sync --frozen --dry-run` exits 0. Report the download size per lane from the lock: expected about
+   0.45, 3.9 and 3.2 GB [here, planning job].
+6. Every dependency still installs in a fresh venv: `pip install -e ".[dev,separate,drums,bass,sections,preview]"`.
 
-[CI-windows] M4-05 runs step 5 on `windows-latest` too, and the real `uv sync` of the cpu lane.
+[CI] The `10-lanes` hook passes on `ubuntu-latest` (M4-05a's workflow).
 
 ## Depends on
 
-Nothing.
+Nothing. M4-05a's hook folder lands in the same wave.

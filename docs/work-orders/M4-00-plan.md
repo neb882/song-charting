@@ -1,189 +1,222 @@
-# M4 plan: the Windows app, v0.1
+# M4 plan: songcharter v0.1 for the friend, on WSL2
 
-*Written 2026-11-03 on branch `m4-plan` from `main` at 11615e2. The scope below was decided before this plan and is
-not reopened here. Evidence tags follow DESIGN.md: [here] measured in this dev container, [doc] read from
-documentation or a package, [code] read from this repository, [inference], [untested], [decision] a choice made
-here.*
+*Rewritten 2026-11-03 on branch `m4-plan`, after the owner moved v0.1 from native Windows to WSL2. The native plan's
+orders are kept in this branch's history (commit f9f9377); its findings are in the appendix. Evidence tags follow
+DESIGN.md: [here] measured in this dev container, [doc] read from documentation or a package, [code] read from this
+repository, [inference], [untested], [decision] a choice made here.*
 
-## 1. What v0.1 is
+## 1. Decisions and facts this plan starts from
 
-The friend plays Clone Hero (Guitar, Expert) on a native Windows PC with an RTX 4070 (12 GB of VRAM; RAM unknown).
-With v0.1 he can:
+| | what | from |
+|---|---|---|
+| route | v0.1 runs in WSL2 on the friend's Windows PC, not natively | the owner, 2026-11-03 |
+| delivery | a GitHub pre-release on neb882/song-charting | the owner |
+| licence | MIT for songcharter's own code (LICENSE on `main`, 12ebf10); NOTICE lists the third parties | the owner |
+| the friend's PC | Windows 11 with Smart App Control **on**; RTX 4070, 12 GB; 16–32 GB of RAM (plan for 16) | the friend, through the owner |
 
-1. install songcharter without help (a per-user `setup.exe`, or a portable zip);
-2. drop a song file into a page in his browser;
-3. keep the defaults or change the options the command line has;
-4. watch one progress line per stage, with cancel, and every CPU fallback shown;
-5. look at the static preview (`preview.py`'s overview and pages);
-6. click once to put the chart into his Clone Hero Songs folder (or save a zip).
+**Why WSL2.**
+- **Smart App Control.** It "evaluates trust/signatures of all code (DLLs, scripts, etc) that is loaded by the
+  Windows OS Loader and script engines". An unsigned file loads only when Microsoft's cloud knows it. There is no
+  per-app exception [doc: textslashplain.com/2026/04/28/smart-app-control/; windowslatest.com, 2025-12-16].
+- A native install loads hundreds of unsigned files (uv's CPython, torch's DLLs, numpy's and scipy's compiled
+  modules); signing our installer would not cover them.
+- Linux programs in WSL2 run in a Linux VM and never pass the Windows loader.
+- WSL2 also gives autochart's engine CUDA back (onnxruntime-node's Linux build has it; its Windows build does not:
+  appendix).
+- And it reuses the Linux build that has run end to end, including on the owner's 5070 under WSL (`eval/gpu.sh`).
 
-The first launch sets everything up: a uv-managed Python, one of three torch lanes (cu132, cu126, cpu), allin1's own
-Python, Node, autochart's engine and models, every model the pipeline uses, and `doctor.json`. A diagnostics bundle
-with no audio, and CI on Linux and on GitHub's `windows-latest`, come with it. Everything in M4-99 waits for v0.2.
+## 2. What v0.1 is
 
-## 2. Findings that shape the plan
+The friend can:
+1. set up WSL with a short guide, then install songcharter with one line pasted into Ubuntu;
+2. start it from a Start-menu shortcut (or by typing `songcharter` in Ubuntu);
+3. drop a song file into the page that opens in his Windows browser;
+4. keep the defaults or change the options the command line has;
+5. watch one line per stage, with cancel, and every CPU fallback shown;
+6. look at the static preview;
+7. click once to put the chart into his Clone Hero Songs folder on Windows (or save a zip);
+8. send a diagnostics zip with no audio when something goes wrong.
 
-Each is detailed, with its sources, in the report of this planning job and in the order that acts on it.
+**Under the hood:**
+- uv's Python and one torch lane (cu132, cu126 or cpu);
+- allin1's own environment;
+- Node 24, scan-chart, autochart's engine and models, and onnxruntime-node's CUDA provider;
+- `doctor`;
+- a `.wslconfig` that gives WSL enough memory.
 
-1. **No CUDA for the guitar on native Windows.** onnxruntime-node 1.27.0 (autochart's pin) ships Windows binaries
-   with the CPU, DirectML and WebGPU execution providers only. Its README: "Right now, the Windows version supports
-   WebGPU execution provider and DML execution provider. Linux x64 can use CUDA and TensorRT." [doc]. Its install
-   script lists no CUDA download for `win32/x64` (`install-metadata.js`), and the Windows binding's strings name
-   `cpu`, `dml` and `webgpu` and never `cuda` [here]. autochart's session loader sends a `cuda` request that fails
-   to the CPU for the rest of the job (`sessionLoader.cjs` `latchRuntimeFallback`) [code, autochart b5a41e8].
-   - So no CUDA or cuDNN DLLs are needed on Windows at all, admin or not: nothing could load them.
-   - The Windows GPU route for the guitar is **WebGPU** (Dawn on Direct3D 12, through the NVIDIA display driver;
-     its `dxcompiler.dll` and `dxil.dll` ship in the package). It is autochart's own default on Windows
-     ("Automatic" tries WebGPU, then the CPU). WSL's WebGPU dead end (PROGRESS) was a software Vulkan adapter;
-     a native D3D12 adapter is a different case, untested here [untested].
-   - M4-02 maps the guitar's GPU device to `webgpu` on Windows. Its speed on a 4070 is the main unknown of v0.1:
-     the owner's run (M4-08) measures it.
-2. **The lanes resolve for Windows.** A three-lane uv lock (torch 2.15.0+cpu, 2.14.1+cu126, 2.15.0+cu132, as
-   DESIGN 4.3's table says) of the current dependency set plus matplotlib and imageio-ffmpeg resolves: 114 packages
-   with the project's Python range and M4-01's extras.
-   - Each lane's 62 Windows packages resolve to wheels only for CPython 3.13 win_amd64, by the check M4-01
-     specifies [here, uv 0.13.5; also 0.11.32].
-   - Each lane passes `uv sync --frozen --dry-run` [here, Linux].
-   - Downloads: torch 126 MB (cpu), 2.60 GB (cu126), 2.11 GB (cu132), plus 183 MB for the rest [here, sizes read
-     from the indexes].
-3. **allin1's Python can share the lane's torch.** torchaudio stops at 2.11 (2.11.0 on the PyTorch indexes, pinned to
-   torch 2.11.0), but PyPI's torchaudio 2.11.1 is a `py3-none-win_amd64` wheel that needs only `torch>=2.11`.
-   - On Linux, torch 2.15.0+cpu with torchaudio 2.11.1 and all-in-one-infer 3.1.0 passed the real runner's probe and
-     the repository's probe test, and segmented a synthetic song with fold 0 on the CPU [here].
-   - So allin1's own environment uses the same torch wheel as the main one, and uv's hardlinks make it cost almost
-     no extra disk [inference: uv links from its cache].
-   - Its lock (105 packages) resolves for Windows in every lane, with one exception to "wheels only":
-     hydra-core 1.3.8 pins `antlr4-python3-runtime==4.9.*`, whose 4.9.3 is an sdist. It is pure Python, and uv
-     builds it into a `py3-none-any` wheel with no compiler [here]. M4-01's check allows exactly that one sdist,
-     and proves it builds.
-   - The Windows build of that pairing is untested: CI catches it (M4-05). If it fails, the allin1 environment pins
-     torch 2.11.0 with torchaudio 2.11.0 from the lane's index, a second torch download (M4-01 says how).
-4. **One Node serves both.** scan-chart's dependencies need Node 18 or newer, and autochart pins Node 24.19.0, with
-   the SHA-256 of each archive (`scripts/runtime-artifacts.json`) [code, autochart]. The bootstrap fetches that one
-   Node and checks its archive.
-5. **autochart's engine is more than `engine/`.** It loads `config/`, `shared/` and three files of `electron/`
-   [code]. The bootstrap downloads the whole repository at the pinned commit (346 files, a 6.7 MB archive [here]) and
-   checks every file against a committed hash list. We never redistribute the AGPL engine: each PC fetches it from
-   its upstream.
-6. **A synthetic clip charts end to end.** A 30-s clip made by code (drums, bass, distorted power chords, a hummed
-   line; no recording) went through `songcharter chart` with every real engine on the CPU (2 threads) in 144 s. It
-   passed the gate: scan-chart playable, 0 chart issues, guitar 23, bass 120 and drums 119 Expert onsets, 1 section
-   from allin1 [here]. CI uses this clip (M4-05).
-7. **Paths fit, except autochart's staging files.** torch's deepest file under
-   `C:\Users\<20 characters>\AppData\Local\songcharter\runtime\env\Lib\site-packages\` is at most 223 characters
-   (measured on the cpu wheel with a 6-character-longer prefix) [here]. The
-   autochart checkout, its models and the `node_modules` are all shallow (62, 55 and 94 characters below their
-   folders) [here]. The open risk stays the one PROGRESS names: autochart's scratch and staging files (section 5,
-   risk 4).
-8. **GitHub's runners.**
-   - `windows-latest` is Windows Server 2025 with Inno Setup 6.7.1 and PowerShell 7.6.7 [doc: runner-images
-     README and Windows2025-Readme, image 20261021]. Windows PowerShell 5.1 is `shell: powershell` ("PowerShell
-     Desktop") [doc: workflow syntax].
-   - A public repository's Windows runner has 4 processors, 16 GB of RAM and 14 GB of SSD [doc: GitHub's runner
-     table]. A job may run for 6 hours [doc: Actions limits].
-   - The repository is public [here, GitHub API].
-9. **This session can push a workflow file, but cannot delete a branch.**
-   - A commit adding `.github/workflows/m4-probe.yml` (manual trigger only) was pushed to a new branch
-     `m4-workflow-push-probe` and the file is on GitHub [here].
-   - Deleting the branch was refused twice: by the proxy for `gh api -X DELETE .../git/refs/...` ("Write access to
-     this GitHub API path is not permitted through this proxy"), and with HTTP 403 for `git push --delete`.
-   - **The branch is still on GitHub; the owner deletes it** (section 6).
-   - The Actions API is partly closed to sessions: `actions/permissions` was refused, while listing the
-     repository's runs answered (0 runs). Reading job logs is untested.
+CI runs the install from scratch in an Ubuntu 26.04 container. Everything in M4-99 waits for v0.2.
 
-## 3. The orders, in build order
+## 3. Findings that shape the plan
+
+1. **`wsl --install` now installs Ubuntu 26.04.1 LTS.** Microsoft's distribution list marks "Ubuntu" as the
+   default and points it at `ubuntu-26.04.1-wsl-amd64.wsl` [doc: github.com/microsoft/WSL
+   `distributions/DistributionInfo.json`].
+   - That image ships `curl`, `wget`, `git`, `tar`, `xz-utils`, `ca-certificates` and `sudo`, Python 3.14, and
+     glibc 2.43 [doc: releases.ubuntu.com/26.04.1, `ubuntu-26.04.1-wsl-amd64.manifest`].
+   - So the install needs no `apt`: uv brings Python 3.13, and the manylinux_2_28 wheels run on glibc 2.43.
+   - CI uses Docker's `ubuntu:26.04` (it exists [doc: Docker Hub]).
+2. **WSL's facts** [doc: MicrosoftDocs/WSL on GitHub, the source of learn.microsoft.com/windows/wsl, both
+   reachable from here]:
+   - **Install:** Windows 10 2004 (build 19041) or later, or Windows 11; `wsl --install` in an administrator
+     PowerShell, then a restart, then a Linux user and password. Errors 0x80070003 or 0x80370102 mean
+     virtualization is off in the BIOS, or the Virtual Machine Platform is missing (`install.md`,
+     `troubleshooting.md`).
+   - **`.wslconfig`:** lives in `%UserProfile%`. `memory` defaults to 50 % of Windows' RAM, so 8 GB on a 16 GB PC;
+     `swap` to 25 % of it. Changes apply after `wsl --shutdown`, or about 8 s after every distro window closes
+     (`wsl-config.md`).
+   - **The browser's route:** `localhostForwarding` defaults to true: "ports bound to wildcard or localhost in the
+     WSL 2 VM should be connectable from the host via localhost:port". In mirrored networking mode, localhost is
+     shared (`wsl-config.md`, `networking.md`).
+   - **Disk:** the distro lives in an `ext4.vhdx` that grows to a 1 TB maximum "even if the amount of disk space on
+     your actual Windows device is less", so free space must be checked on the Windows drive too (`disk-space.md`).
+   - **Interop:** `[interop] enabled` and `appendWindowsPath` default to true; drives are mounted at `/mnt/c`.
+3. **NVIDIA on WSL:** the Windows driver provides CUDA inside WSL as a stubbed `libcuda`; "users must not install any
+   NVIDIA GPU Linux driver within WSL 2"; `nvidia-smi` is `/usr/lib/wsl/lib/nvidia-smi` [doc:
+   docs.nvidia.com/cuda/wsl-user-guide].
+4. **autochart on CUDA under WSL reuses torch's own libraries.**
+   - onnxruntime-node 1.27.0's Linux CUDA provider (`libonnxruntime_providers_cuda.so`, from NuGet
+     `Microsoft.ML.OnnxRuntime.Gpu.Linux` 1.27.0, 212 MB) needs `libcublas(Lt).so.13`, `libcudart.so.13`,
+     `libnvrtc.so.13`, `libcufft.so.12`, `libcurand.so.10`, `libcudnn.so.9` and `libcuda.so.1`: CUDA 13, not 12
+     [here, `readelf -d`].
+   - The cu132 lane's wheels hold all of them in `site-packages/nvidia/cu13/lib` and `nvidia/cudnn/lib`, except
+     curand. `nvidia-curand` 10.4.4.72 (62 MB) adds `nvidia/cu13/lib/libcurand.so.10` [here, the wheels' file
+     lists].
+   - So the cu132 lane plus that wheel runs the guitar on CUDA, with the node child's `LD_LIBRARY_PATH` pointing
+     there. No separate cuDNN environment is needed.
+   - On cu126 (a driver under 580), the CUDA 13 provider cannot load: there the guitar runs on the CPU, and
+     `doctor` says to update the driver.
+5. **Downloads, Linux** [here: the lock's wheel sizes, and HEAD on the PyTorch index]:
+   - cpu lane about 0.45 GB, cu126 about 3.9 GB, cu132 about 3.2 GB;
+   - plus the CUDA provider (0.21 GB, CUDA lanes), onnxruntime-node (271 MB unpacked), autochart's models (478 MB),
+     the pipeline's models (about 70 MB) and Node (57 MB).
+6. **Smart App Control on the Windows side.**
+   - SAC blocks a list of risky file types from ShellExecute "if a file is from an untrusted origin" (Mark of the
+     Web). `.lnk`, `.bat`, `.cmd`, `.ps1` and `.url` are on that list [doc: textslashplain.com, 2026-04-28].
+   - A Start-menu `.lnk` that songcharter writes from WSL carries no Mark of the Web, and its target `wsl.exe` is
+     Microsoft-signed, so it should run [inference; tested in M4-08].
+   - No script file is written on Windows. Interop calls only signed system tools (`cmd.exe`, `reg.exe`,
+     `explorer.exe`, `curl.exe`), and PowerShell for one read-only query, with a fallback.
+   - Since KB5083769 (April 2026, Windows 11 25H2), SAC can be turned on and off in Windows Security without
+     reinstalling; a manual toggle never returns it to Evaluation [doc: admin365.blog, 2026-10-11]. So the owner can
+     mimic the friend's SAC for the test (question 1, section 8).
+7. **Memory.** On the CPU, the test song peaked at 10.1 GB for the process tree, 7.8 GB of it allin1's runner (DESIGN
+   5, M3). With CUDA, allin1's ensemble runs on the GPU: the host peak is unmeasured.
+   - With the default 50 %, a 16 GB PC gives WSL 8 GB: too little.
+   - So the install writes `memory` = Windows' RAM − 4 GB (12 GB on 16) and `swap=8GB`.
+   - M4-08 measures the CUDA peak inside exactly 12 GB.
+8. **The `.lnk` writer.** pylnk3 is LGPL; LnkParse3 (a parser) is MIT [doc: PyPI]. songcharter writes the small
+   [MS-SHLLINK] structure itself and tests it with LnkParse3, and with Windows itself on `windows-latest`.
+9. **Pushes from sessions.** This session pushed a workflow file to a new branch, but could not delete the branch
+   (proxy refusal, then HTTP 403). The owner deletes `m4-workflow-push-probe`.
+
+## 4. The orders, in build order
 
 | order | name | one line | size |
 |---|---|---|---|
-| M4-01 | [lanes](M4-01-lanes.md) | three torch lanes (cpu, cu126, cu132) as uv extras, a lock for win_amd64 and Linux, allin1's own locked project, a Windows-wheel check | half a day |
-| M4-02 | [device](M4-02-device.md) | `device.py` and `songcharter doctor`: GPU, driver, CUDA kernel, RAM, disk, paths, Smart App Control; the guitar on WebGPU on Windows; every CPU fallback recorded; GPU memory freed and its peaks sampled | 1 day |
-| M4-03 | [bootstrap](M4-03-bootstrap.md) | `bootstrap.ps1` (PowerShell 5.1: Python, lane, the two environments), `songcharter.runtime` (Node, npm, autochart's engine and models, every model, `runtime.json`, the path check), the `songcharter.cmd` launcher | 1 day |
-| M4-04 | [ui-server](M4-04-ui-server.md) | `songcharter ui`: a stdlib server on 127.0.0.1 with DESIGN 4.5's guards; upload, options, one job at a time as a child process, progress by events over SSE, cancel that kills the whole process tree | 1 day |
-| M4-05 | [ci](M4-05-ci.md) | GitHub Actions: Linux (lock and wheel checks, the suite with scan-chart and allin1, the clip end to end, offline re-run) and `windows-latest` (the lane picker under PowerShell 5.1, the bootstrap on the cpu lane, doctor, the clip, offline re-run, the guards), with hook folders for later orders | 1 day |
-| M4-06 | [ui-results](M4-06-ui-results.md) | the preview pages, zip export, install into Clone Hero (detect, remember, 409, Controlled Folder Access), the diagnostics bundle (UI and `songcharter diagnostics`) | 1 day |
-| M4-07 | [installer](M4-07-installer.md) | Inno Setup per-user `setup.exe` and the portable zip (`build.ps1`), with a pinned `uv.exe` and NOTICE; silent install, first run and silent uninstall in CI | 1 day |
-| M4-08 | [hardware](M4-08-hardware.md) | not a build: the owner's native run on the 5070, then the friend's install, with exactly what to run and send back | owner's time |
-| M4-99 | [later](M4-99-later.md) | v0.2 and on: the deferred items, nothing to build | — |
+| M4-01 | [lanes](M4-01-lanes.md) | Linux torch lanes cpu/cu126/cu132 as uv extras (cu132 with `nvidia-curand` for autochart's CUDA provider), one Linux lock, allin1's own locked project, a wheels-only check | half a day |
+| M4-02 | [device](M4-02-device.md) | `songcharter/wsl.py` (read-only interop) and `songcharter doctor`: WSL, Windows build, memory against `.wslconfig`, GPU, CUDA in torch and in onnxruntime-node, disk in WSL and on C:, localhost forwarding; the pipeline records fallbacks, frees GPU memory and samples RAM, swap and VRAM; autochart's node gets the CUDA 13 library path | 1 day |
+| M4-05a | [ci-skeleton](M4-05a-ci-skeleton.md) | the CI workflow from day one: the suite on `ubuntu-latest`, a `windows-latest` job for Windows-side files, hook folders that every later order fills | half a day |
+| M4-03 | [install](M4-03-install.md) | `install.sh` (from the release, checked by hash, rerunnable: uv, Python, the lane, two environments), `songcharter.runtime` (Node, npm, autochart and its CUDA provider, models, `runtime.json`), the launcher, `.wslconfig`, the Start-menu shortcut, `songcharter uninstall`, the release build script | 1 day |
+| M4-04 | [ui-server](M4-04-ui-server.md) | `songcharter ui` in WSL: guards, upload, one job as a child process group, events over SSE, cancel; the localhost-forwarding self-check from Windows, the browser opened with `explorer.exe` | 1 day |
+| M4-05 | [ci](M4-05-ci.md) | end to end in `ubuntu:26.04` as a plain user: the release assets, the install from scratch, doctor (also with a fake `nvidia-smi`), the clip, the guards, cancel on the first take, offline, uninstall and reinstall | 1 day |
+| M4-06 | [ui-results](M4-06-ui-results.md) | preview, zip, install into the Windows Songs folder under `/mnt/c` (Documents and OneDrive from the registry, rename retried), the diagnostics bundle | 1 day |
+| M4-07 | [release](M4-07-release.md) | the friend's guide (WSL setup, the driver, the one install line), NOTICE, the pre-release assets and their check | half a day |
+| M4-08 | [hardware](M4-08-hardware.md) | not a build: the owner's 5070 in a fresh Ubuntu-26.04 distro with 12 GB, then the friend's PC | owner's time |
+| M4-99 | [later](M4-99-later.md) | native Windows, signing, the highway preview, quick fixes and the rest; nothing to build | — |
 
-That is seven build orders, one more than the brief expected: the UI is split in two (M4-04, M4-06) so that each
-fits in a day, and the device checks stay apart from the bootstrap because they change `pipeline.py` and `cli.py`,
-which the bootstrap does not touch.
+## 5. Waves (parallel builds only for orders whose files do not overlap)
 
-## 4. Build waves (what can run at the same time)
-
-Parallel builds only for orders whose files do not overlap (CLAUDE.md), each in its own worktree.
-
-| wave | orders | why they do not overlap |
+| wave | orders | files |
 |---|---|---|
-| 1 | **M4-01** ∥ **M4-02** | M4-01: `pyproject.toml`, `uv.lock`, `packaging/allin1/`, `packaging/check_wheels.py`. M4-02: `songcharter/device.py`, `cli.py`, `pipeline.py`, their tests. |
-| 2 | **M4-03** ∥ **M4-04** | M4-03: `packaging/windows/`, `packaging/autochart/`, `songcharter/runtime.py`, `songcharter/launch.py`. M4-04: `songcharter/ui/`, `songcharter/proc.py`, `cli.py`, `pipeline.py`, `engines/autochart.py`, `pyproject.toml` (package data). M4-03 needs M4-01's lock and M4-02's `doctor`; M4-04 needs M4-02's `cli.py` and `pipeline.py` merged first. |
-| 3 | **M4-05** ∥ **M4-06** | M4-05: `.github/workflows/ci.yml`, `packaging/ci/`. M4-06: `songcharter/ui/` (after M4-04), `songcharter/clonehero.py`, `songcharter/diagnostics.py`, `cli.py`. M4-06's CI checks go in later as hook files (below). |
-| 4 | **M4-07** | `packaging/windows/songcharter.iss`, `build.ps1`, `packaging/NOTICE.txt`, `packaging/ci/windows.d/20-installer.ps1`. |
-| then | **M4-08** | on the owner's PC, then the friend's |
+| 1 | **M4-01** ∥ **M4-02** ∥ **M4-05a** | `pyproject.toml`, locks, `packaging/allin1/`, `packaging/check_wheels.py` ∥ `wsl.py`, `device.py`, `cli.py`, `pipeline.py`, `engines/autochart.py` ∥ `.github/workflows/ci.yml`, `packaging/ci/` |
+| 2 | **M4-03** ∥ **M4-04** | `packaging/linux/`, `packaging/release/`, `runtime.py`, `launch.py`, `wslsetup.py`, `winshortcut.py` ∥ `ui/`, `proc.py`, `cli.py`, `pipeline.py`, `engines/autochart.py` (the take callback), `pyproject.toml` (package data) |
+| 3 | **M4-05** ∥ **M4-06** | `packaging/ci/linux.d/50-*` and `ui_guards.py` ∥ `ui/`, `clonehero.py`, `diagnostics.py`, `cli.py` |
+| 4 | **M4-07** | `docs/guide/`, `packaging/NOTICE.txt`, `packaging/release/build.sh` (after M4-03), `packaging/ci/linux.d/70-release.sh` |
+| then | the full review workflow over the integrated v0.1, then **M4-08** | |
 
-- **CI hooks keep the waves apart.** M4-05's workflow runs every `packaging/ci/linux.d/*.sh` and
-  `packaging/ci/windows.d/*.ps1` in name order. Later orders add a file there, never edit `ci.yml`.
-- **Docs.** Parallel orders do not edit `docs/DESIGN.md`, `docs/PROGRESS.json` or `README.md`. Each writes what
-  changed into its report, and the director folds it in at the merge (CLAUDE.md: doc edits are done directly).
-- **Worktrees and branches.** One per order, named in its file (`m4-01-lanes`, ...), from `main` after the orders
-  it depends on have merged. Nobody pushes, except M4-05 and M4-07, whose checks run on GitHub. Their briefs must
-  allow the push (CLAUDE.md).
-- **Process** [decision]. Each build order gets `sc-builder`, then `sc-reviewer` and `sc-inspector`, as for an
-  ordinary change. Before M4-08, the integrated v0.1 gets the full workflow once (build lenses, verify, fix), since
-  CLAUDE.md names the Windows release as big or risky. Read the usage meter before that run and give it a budget.
-- **Golden charts.** M4-02 and M4-04 touch `pipeline.py` and must not change any chart on Linux. Once
-  `eval/golden.py` is on `main`, each runs it, and its acceptance is no UNEXPECTED change.
+- **Each order lands its own CI checks as hook files** in `packaging/ci/linux.d/` and `windows.d/`. Nobody but
+  M4-05a edits `ci.yml`.
+- **M4-02 to M4-07 may push their branches to run CI.** Their briefs must say so (CLAUDE.md).
+- **Docs:** parallel orders do not edit DESIGN, PROGRESS or README; each reports what changed, and the director folds
+  it in at the merge.
+- **Process** [decision]:
+  - each order gets `sc-builder`, then `sc-reviewer` and `sc-inspector`;
+  - the full workflow runs once over the integrated v0.1 before M4-08;
+  - the golden charts run for every order that touches `pipeline.py` or an engine (M4-02, M4-04), as
+    `eval/README.md` says, with `EXPECT=none`.
 
-## 5. Risks, and what catches each
+## 6. Risks, and what catches each
 
-| # | risk | caught by | fallback or plan |
+| # | risk | caught by | plan |
 |---|---|---|---|
-| 1 | The guitar on WebGPU is slow or unstable on the 4070, or the 4-take default costs too much there | M4-08 (owner's 5070, then the friend's 4070): guitar stage time, 1 take and 4 | autochart falls back to the CPU by itself, and the first-take-alone check keeps it to 1 take (warned). [decision] If 4 WebGPU takes of the test song add more than 12 min to its guitar stage on the owner's PC, the default on `webgpu` becomes 1 take, a one-line change in `guitar_takes`. |
-| 2 | torchaudio 2.11.1 does not load with torch 2.15 on Windows (allin1's environment) | M4-05 windows job: the allin1 probe and the clip's sections stage on the cpu lane | allin1's project pins torch 2.11.0 and torchaudio 2.11.0 per lane (M4-01, "fallback"); until then the librosa fallback runs, warned |
-| 3 | The cu132 or cu126 lane does not install or run on native Windows with a GPU | M4-08 (the owner's 5070 is the first GPU on native Windows); `doctor` reports `cuda_works` | the pipeline already falls back to the CPU when no CUDA kernel runs (`separate.cuda_works`), warned. The weekly cu132 CI job is M4-99. |
-| 4 | Path length: work folders (182 + root), autochart's deep cache (188 + scratch root) and its staging files (241 + scratch root) | `doctor`'s path check on every install (M4-02, M4-03); CI on the runner's profile; M4-08 on real profiles | Node writes the staging files. Node's `fs` passes Windows paths to the system in their `\\?\` form [doc: Node's `path.toNamespacedPath`; untested], and pruning deletes in that form (`cache.long_path`). If the deep cache would pass 259 (a profile name over about 22 characters), the bootstrap moves the cache root to `%SystemDrive%\songcharter-cache` (M4-03) [decision]. If that cannot be created, it says how to turn on long paths. |
-| 5 | PowerShell 5.1 differences (no `??`, encodings, `ConvertFrom-Json`) | M4-05 runs the lane tests and the bootstrap under `shell: powershell` | the bootstrap downloads nothing itself: uv and Python do all fetching, so PowerShell's TLS defaults never matter |
-| 6 | SmartScreen on the unsigned `setup.exe`; Smart App Control blocking the unsigned Python, torch DLLs or Node modules | only M4-08 (the friend's PC: SAC is on only on some clean Windows 11 installs) | `doctor` reads SAC's state and says what it means. Instructions are written after M4-08. Signing is M4-99. |
-| 7 | Defender scanning makes `uv sync` of a 3 GB lane slow; Controlled Folder Access blocks the write into `Documents\Clone Hero` | M4-08 (times the bootstrap); M4-06's install catches `PermissionError` | the UI offers the zip and "open folder" when the write is blocked |
-| 8 | Host RAM: the test song peaked at 10.1 GB for the process tree on the CPU, 7.8 GB of it allin1's runner (DESIGN 5, M3); the friend's RAM is unknown | `doctor` records RAM; M4-02's sampler records the lowest available RAM per stage; M4-08 | on CUDA allin1 runs its ensemble on the GPU [doc]; if RAM is short on the friend's PC, `--threads` and the sections fold come next (v0.2) |
-| 9 | VRAM: torch keeps its cache after separation while autochart and allin1 need the GPU | M4-02 frees torch's cache after separation and drums and samples GPU memory per stage; M4-08 reads it | separation already retries on the CPU when CUDA runs out of memory |
-| 10 | Clone Hero's Songs folder is not where we look | M4-06 tests; M4-08 on real installs (the owner reports Clone Hero's `settings.ini` keys) | the UI asks for the folder once and remembers it |
-| 11 | Port 8765 is busy, or a second launch starts a second server | M4-04 tests | the next free port of 8766–8784; a second launch finds the first through `/api/hello` and opens it |
-| 12 | Offline launches still reach the network (the Hugging Face hub) | M4-05: a second clip run with `HF_HUB_OFFLINE=1` and `SONGCHARTER_OFFLINE=1` | the launcher sets both once the bootstrap has every model |
-| 13 | CI results cannot be read from a session | M4-05's first push | the owner reads the Actions tab, or sends a run's log zip |
+| 1 | Peak RAM with CUDA does not fit 12 GB of WSL memory on a 16 GB PC | M4-08 A (owner, with `memory=12GB`), sampled per stage | `swap=8GB` absorbs short peaks. If WSL gets under 11 GB (a PC under 16 GB), the install leaves allin1 out, so the sections use the librosa fallback (warned) [decision]. Under 8 GB, the install refuses (M4-03, the memory rule). |
+| 2 | The CUDA 13 provider does not load in WSL (driver, library path) | `doctor`'s provider check (M4-02); M4-08 | the engine falls back to the CPU by itself, and the first-take check keeps that to 1 take (warned) |
+| 3 | Localhost forwarding is off, or port 8765 is taken on the Windows side | M4-04's self-check: `curl.exe` from Windows fetches `/api/hello` and compares an instance token | the next port up to 8784. If none works, the server also binds WSL's own address and opens that URL (M4-04, startup step 3). |
+| 4 | Interop is off (no `cmd.exe` in WSL) | `doctor` | the page asks for the Songs folder as a `/mnt/c/...` path; the Start-menu shortcut is skipped (the guide's fallback: open Ubuntu, type `songcharter`) |
+| 5 | Smart App Control blocks the shortcut or an interop tool | only hardware: M4-08 A with SAC on (if the owner agrees), then the friend | fallback: open Ubuntu from the Start menu and type `songcharter` |
+| 6 | A large download fails halfway (3+ GB on cu132) | uv's progress, `UV_HTTP_TIMEOUT=300`, `UV_HTTP_RETRIES=5`; `runtime.fetch` resumes; M4-05 kills a download and reruns | every step reruns safely; the script ends with "run the same line again to continue" |
+| 7 | The disk fills: the vhdx grows on C: while WSL reports 1 TB free | the install checks `df` of `$HOME` and of `/mnt/c` before downloading | it stops with the numbers |
+| 8 | OneDrive or security software locks the Songs folder during the rename | M4-06's retry (about 5 s) and its "blocked" message | the zip, and "open folder" |
+| 9 | Ubuntu 26.04 differs from what CI tests | CI runs in `ubuntu:26.04` as a plain user | M4-08 A on a fresh Ubuntu-26.04 distro |
+| 10 | Antivirus slows the install or the runs on the Windows side (vhdx scanning) | only M4-08 (CI has no Defender) | recorded; no fix planned for v0.1 |
+| 11 | The friend's driver is under 580 | `doctor`, from `nvidia-smi` | cu126 lane (torch on the GPU, guitar on the CPU), with "update the NVIDIA driver to 580 or newer" shown |
 
-## 6. What needs the owner
+## 7. What needs the owner, and when
 
-1. **Delete the probe branch** `m4-workflow-push-probe` on GitHub, which this session could not delete. It holds
-   one manual-only workflow and never runs on its own. In the branch list, or `git push origin --delete
-   m4-workflow-push-probe` from your machine.
-2. **Allow the CI pushes.** M4-05 and M4-07 push their branches so the workflows run, and the Actions tab must
-   accept workflows on this public repository.
-3. **Your Windows 5070 PC, natively** (M4-08, part A), once M4-07 has a CI-built installer:
-   - install, then run the clip, the test song with 1 take and with the default 4, and Take Me Out;
-   - play the test song in Clone Hero;
-   - send back the diagnostics bundle and the four numbers M4-08 lists.
-   - Your driver must be 580 or newer for the cu132 lane: the 5070 has no kernels in the cu126 build
-     [inference, DESIGN 4.3's lane table].
-4. **Then the friend's PC** (M4-08, part B): install from the same file without help, chart one song he chose,
-   play it, and send the diagnostics bundle. This doubles as the Windows spike PROGRESS still lists under M1a
-   (`nvidia-smi`, RAM, Smart App Control).
-5. **Answer the open questions** in section 7.
+1. **Now:** delete the branch `m4-workflow-push-probe` on GitHub (a session cannot), and answer section 8.
+2. **During the build:** allow the order branches to push for CI, and read the Actions tab when a session cannot.
+3. **After M4-07, on the 5070 PC (M4-08 part A, about two hours):**
+   - a fresh `Ubuntu-26.04` distro, with WSL's memory set to 12 GB like the friend's PC (and Smart App Control on,
+     if you agree);
+   - the install, the test song with 1 and 4 takes, Take Me Out, cancel, Clone Hero, offline, the diagnostics zip,
+     uninstall and reinstall.
+4. **Then the friend's PC (part B):** you send him the pre-release link and the guide, and he sends back the
+   diagnostics zip.
+5. **Create the pre-release** when part A passes. `gh release create` may be blocked from a session; by hand otherwise.
 
-## 7. Open questions only the owner can answer
+## 8. Questions only the owner can answer
 
-1. **How does the friend get the installer?** A GitHub Release on this public repository (anyone can download it;
-   it holds our code, a bundled `uv.exe` and NOTICE, and fetches the AGPL engine and the non-commercial weights on
-   first launch), or a file you pass to him privately from the CI artifacts. M4-07 builds the files either way;
-   only the last step differs.
-2. **songcharter's own licence.** The repository is public and has no LICENSE file. DESIGN 4.2 says "MIT
-   (intended)", with the ADTOF port treated as BY-NC-SA. M4-07's NOTICE states whichever you choose. Until then it
-   says "no licence chosen yet".
+1. **For the test, will you turn Smart App Control on on your PC** (Windows Security > App & browser control > Smart
+   App Control), then off again after? It needs Windows 11 25H2 with the April 2026 update. It is the only way to try
+   the Start-menu shortcut under SAC before the friend does. While it is on, your own unsigned tools may be blocked.
+2. **Is the friend's Ubuntu only for songcharter?** If yes, the guide can offer `wsl --unregister Ubuntu` as the
+   complete uninstall. If he uses it for other things, only `songcharter uninstall` is offered.
 
-## 8. Done for v0.1
+## 9. Done for v0.1
 
-- Every order's "Done means" passes, CI is green on `main` on both jobs, and the release gate in CLAUDE.md holds:
-  the suite, the golden charts (once they exist), the test song end to end with its preview looked at, and your
-  approval.
-- M4-08 part A passes on your PC, and part B on the friend's: the M4 acceptance of DESIGN 5 for everything v0.1
-  covers. The highway preview, metronome, quick fixes and edits are v0.2 (M4-99).
+- Every order's "Done means" passes, CI is green on `main`, and CLAUDE.md's release gate holds:
+  - the suite;
+  - the golden charts;
+  - the test song end to end with its preview looked at;
+  - the owner's approval.
+- M4-08 parts A and B pass, against DESIGN 5 M4's acceptance for what v0.1 covers. The highway preview, metronome,
+  quick fixes and edits are v0.2 (M4-99).
+
+## Appendix: why not native Windows on this PC
+
+The native plan (commit f9f9377) remains the route for a PC without Smart App Control, or for a signed release
+(M4-99). What it found:
+- **Smart App Control on** blocks unsigned code loaded by the Windows loader and script engines, with no per-app
+  exception (section 1). Every Python extension module and torch DLL is such a file.
+- **No CUDA for the guitar on native Windows.**
+  - onnxruntime-node 1.27.0's Windows build has only the CPU, DirectML and WebGPU providers. Its README says so, its
+    install script lists no CUDA files for win32/x64, and its binding names no `cuda` [doc; here].
+  - autochart's engine falls back to the CPU on a failed `cuda` request [code, autochart b5a41e8].
+  - The GPU route would be WebGPU (Direct3D 12), unmeasured on a 4070.
+- **The lanes resolve for win_amd64:**
+  - 62 Windows packages per lane, all wheels;
+  - allin1's project has 64, with one pure-Python sdist (`antlr4-python3-runtime` 4.9.3, built to `py3-none-any`
+    without a compiler);
+  - torch on Windows: 126 MB (cpu), 2.60 GB (cu126), 2.11 GB (cu132) [here].
+- **torchaudio:** 2.11.1 from PyPI (`py3-none`, `torch>=2.11`) works with torch 2.15 for allin1 (Linux: the runner's
+  probe, a fold-0 run) [here]. This carries over to WSL unchanged.
+- **Paths:** torch's deepest file under a 20-character profile is at most 223 characters. autochart's staging files
+  pass 259 on every profile; Node's `\\?\` handling is untested.
+- **The runners:**
+  - `windows-latest` has Inno Setup 6.7.1 and PowerShell 7.6.7; `shell: powershell` is 5.1;
+  - the image turns long paths on and Defender's real-time protection off, so CI cannot prove either
+    [doc: runner-images].
+- **autochart's archive is checked file by file.** The engine needs `config/`, `shared/` and three `electron/`
+  files besides `engine/`, so the whole repository at the pinned commit is fetched and checked against
+  `packaging/autochart/engine-files.sha256` (346 files; `make_engine_list.py` writes it). The WSL install uses the
+  same check.
