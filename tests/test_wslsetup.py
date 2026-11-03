@@ -234,6 +234,10 @@ def test_the_ram_override(windows, monkeypatch):
     assert w.config.read_bytes() == b"[wsl2]\r\nmemory=20GB\r\nswap=8GB\r\n" and flag.is_file()
     with pytest.raises(wslsetup.Refused, match="positive number"):
         wslsetup.ram_override("lots")
+    monkeypatch.setenv("SONGCHARTER_FAILURE", str(w.home / "failure"))   # install.sh's: the line was said
+    assert wslsetup.main(["apply", "--home", str(w.home), "--windows-ram-gb", "lots"]) == 2
+    assert (w.home / "failure").read_text(encoding="utf-8").startswith(
+        "songcharter: memory failed: --windows-ram-gb is Windows' RAM in GB")
 
 
 def test_the_shortcut(windows):

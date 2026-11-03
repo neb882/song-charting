@@ -28,6 +28,7 @@ UV_SHA256="@UV_SHA256@"
 UV_VERSION=0.13.5
 PYTHON_VERSION=3.13.17
 WSL_NVIDIA_SMI=/usr/lib/wsl/lib/nvidia-smi   # WSL's, from the Windows driver [doc: NVIDIA's WSL guide]
+SMI_TIMEOUT_S=15                             # songcharter.device's: a slower nvidia-smi is a GPU out of reach
 GB=1000000000
 # free disk each lane needs, in GB: the downloads unpacked plus the work folders' 5 GB [decision; M4-05, M4-08 measure]
 need_gb() { case $1 in cpu) echo 6 ;; *) echo 15 ;; esac; }
@@ -106,8 +107,12 @@ choose_lane() {   # ASKED (auto or a lane): sets lane, lane_reason and lane_warn
   if [ -z "$smi" ]; then
     state=missing
   else
-    out=$(timeout 15 "$smi" --query-gpu=name,driver_version,compute_cap --format=csv,noheader,nounits 2>&1) || code=$?
-    if [ "$code" -ne 0 ]; then
+    out=$(timeout "$SMI_TIMEOUT_S" "$smi" --query-gpu=name,driver_version,compute_cap --format=csv,noheader,nounits \
+      2>&1) || code=$?
+    if [ "$code" -eq 124 ]; then
+      state=failed   # a timeout too: songcharter.device counts it as a GPU out of reach
+      out="nvidia-smi did not answer within $SMI_TIMEOUT_S s"
+    elif [ "$code" -ne 0 ]; then
       state=failed   # there but failing: a GPU it cannot reach (songcharter.device's SMI_FAILED), not no GPU
       out="nvidia-smi failed (exit $code): $(printf '%s' "$out" | tr -s '\r\n\t ' ' ' | cut -c1-200)"
     elif [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
@@ -152,6 +157,26 @@ choose_lane() {   # ASKED (auto or a lane): sets lane, lane_reason and lane_warn
       fi
       ;;
   esac
+}
+
+helper() {   # WHAT COMMAND...: one of the install's Python helpers (steps 8 and 9), its exit status in helper_code
+  # 0 and 1 come back. Any other end (an error, a bug, a signal such as the out-of-memory killer's SIGKILL) ends the
+  # install with the one failure line: the helper's own, when it wrote it to $SONGCHARTER_FAILURE as it printed it
+  # last, else this one.
+  local what=$1 failure=$state/failure
+  shift
+  rm -f "$failure"
+  helper_code=0
+  SONGCHARTER_FAILURE=$failure "$@" || helper_code=$?
+  case $helper_code in 0 | 1) return 0 ;; esac
+  if [ -s "$failure" ]; then trap - ERR; exit "$helper_code"; fi
+  local why="exit $helper_code"
+  if [ "$helper_code" -gt 128 ]; then
+    local sig=$((helper_code - 128))
+    why="killed by signal $sig ($(kill -l "$sig" 2>/dev/null || echo ?))"
+    if [ "$sig" -eq 9 ]; then why="$why: perhaps Linux ran out of memory"; fi
+  fi
+  fail "$what stopped before it finished ($why)"
 }
 
 sync_env() {   # WHAT PROJECT ENVIRONMENT [OPTIONS...]: `uv sync --frozen` of one environment on the chosen lane
@@ -269,7 +294,7 @@ main() {
     case $answer in [nN]*) echo "songcharter: stopped; nothing was downloaded."; exit 1 ;; esac
   fi
 
-  header uv 6 "uv, Python and the app"
+  header downloads 6 "uv, Python and the app"
   export UV_HTTP_TIMEOUT=300 UV_HTTP_RETRIES=5 UV_PYTHON_INSTALL_DIR="$runtime/python"
   if [ -x "$uv" ] && [ "$("$uv" --version 2>/dev/null | cut -d' ' -f2)" = "$UV_VERSION" ]; then
     echo "uv $UV_VERSION: already here"
@@ -306,15 +331,16 @@ main() {
 
   header setup 8 "Node, scan-chart, autochart and the models"
   # -P: songcharter from the install's environment, never from a songcharter/ folder in the current one
-  local code=0 started=$state/setup.started
-  touch "$started"
-  PYTHONUNBUFFERED=1 "$py" -P -m songcharter.runtime setup --home "$home" --app "$app" --lane "$lane" \
-    --lane-reason "$lane_reason" || code=$?
-  if [ "$code" -eq 1 ] && ! [ "$home/doctor.json" -nt "$started" ]; then   # not doctor's problems: Python's own 1
-    fail "python -m songcharter.runtime exited 1 before doctor ran (its error is above)"
+  local code doctor_before
+  doctor_before=$(stat -c %y "$home/doctor.json" 2>/dev/null || echo none)
+  export PYTHONUNBUFFERED=1
+  helper "python -m songcharter.runtime setup" "$py" -P -m songcharter.runtime setup --home "$home" --app "$app" \
+    --lane "$lane" --lane-reason "$lane_reason"
+  code=$helper_code
+  # 1 is doctor's problems only when doctor.json is this run's (its mtime, to the nanosecond); else Python's own 1
+  if [ "$code" -eq 1 ] && [ "$(stat -c %y "$home/doctor.json" 2>/dev/null || echo none)" = "$doctor_before" ]; then
+    fail "python -m songcharter.runtime setup exited 1 before doctor ran (its error is above)"
   fi
-  rm -f "$started"
-  case $code in 0 | 1) ;; *) trap - ERR; exit "$code" ;; esac   # setup's own last line said what failed
 
   local flag=$state/restart-wsl
   rm -f "$flag"
@@ -323,9 +349,7 @@ main() {
     local args=(apply --home "$home" --launcher "$launcher" --restart-flag "$flag")
     if [ $yes -eq 1 ]; then args+=(--yes); fi
     if [ -n "$ram_gb" ]; then args+=(--windows-ram-gb "$ram_gb"); fi
-    local wcode=0
-    "$py" -P -m songcharter.wslsetup "${args[@]}" || wcode=$?
-    [ $wcode -eq 0 ] || { trap - ERR; exit "$wcode"; }   # its own last line said what failed
+    helper "python -m songcharter.wslsetup apply" "$py" -P -m songcharter.wslsetup "${args[@]}"
   fi
 
   header launcher 10 "The launcher"

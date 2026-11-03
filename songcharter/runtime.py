@@ -25,8 +25,8 @@ pipeline's models, then runtime.json and doctor.json.
     lane it is removed; on cu126 it is installed too, though it needs CUDA 13 (cu132) to load, so the switch to cu132
     after a driver update downloads less.
   * **Exit status** of setup: 0 ok; 1 doctor found problems (doctor.json lists them); 2 a step failed (`songcharter:
-    <step> failed: <one line>. Run the same command again to continue.`); 3 a bug, with its traceback. check: 0, or 2
-    with each step that failed.
+    <step> failed: <one line>. Run the same command again to continue.`, also written to $SONGCHARTER_FAILURE when
+    install.sh sets it); 3 a bug, with its traceback and that line. check: 0, or 2 with each step that failed.
 """
 from __future__ import annotations
 
@@ -582,6 +582,17 @@ def check(home: Path, say: Callable[[str], None] = _say,
     return 0 if not failed else 2
 
 
+def say_failed(line: str) -> None:
+    """The one failure line, last on stderr; also into $SONGCHARTER_FAILURE when install.sh set it, which is how it
+    knows the line was said (install.sh's `helper`: any other end of a helper gets its own line)."""
+    print(line, file=sys.stderr, flush=True)
+    if os.environ.get("SONGCHARTER_FAILURE"):
+        try:
+            Path(os.environ["SONGCHARTER_FAILURE"]).write_text(line + "\n", encoding="utf-8")
+        except OSError:
+            pass
+
+
 def _one_line(e: BaseException) -> str:
     lines = [x.strip() for x in str(e).splitlines() if x.strip()]
     return lines[0] if lines else type(e).__name__
@@ -605,16 +616,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return setup(s)
     except (SongcharterError, OSError) as e:
-        print(f"songcharter: {getattr(e, 'step', 'setup')} failed: {_one_line(e)}. Run the same command again to "
-              "continue.", file=sys.stderr)
+        say_failed(f"songcharter: {getattr(e, 'step', 'setup')} failed: {_one_line(e)}. Run the same command again "
+                   "to continue.")
         return 2
     except KeyboardInterrupt:
-        print("songcharter: setup failed: interrupted. Run the same command again to continue.", file=sys.stderr)
+        say_failed("songcharter: setup failed: interrupted. Run the same command again to continue.")
         return 2
     except Exception:  # noqa: BLE001  a bug: its traceback, then the line install.sh ends with
         traceback.print_exc()
-        print("songcharter: setup failed: an internal error (a bug: please report it with the traceback above). "
-              "Run the same command again to continue.", file=sys.stderr)
+        say_failed("songcharter: setup failed: an internal error (a bug: please report it with the traceback above). "
+                   "Run the same command again to continue.")
         return 3
 
 

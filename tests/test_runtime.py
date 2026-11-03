@@ -310,6 +310,25 @@ def test_step_autochart_checks_every_file_of_the_archive(server, tmp_path, app, 
     assert len(server.requests) == 2 and len(runs) == 1   # verified, nothing fetched or run again
 
 
+def test_a_corrupt_archive_is_downloaded_again_on_the_rerun(server, tmp_path, app, monkeypatch):
+    """The archive has no hash to check it by, so a zip that is not whole (here, its first bytes only) is deleted when
+    it fails to open: the rerun downloads it again, and succeeds."""
+    files = {"engine/bin/autochart-engine.cjs": b"engine", "engine/catalog.json": b"{}"}
+    (app / "packaging" / "autochart").mkdir(parents=True)
+    (app / R.ENGINE_LIST).write_text(listing({rel: (sha(d), len(d)) for rel, d in files.items()}), encoding="utf-8")
+    good = zip_of(files)
+    server.files["/ac.zip"] = good[:40]
+    monkeypatch.setenv("SONGCHARTER_AUTOCHART_URL", server.url + "/ac.zip")
+    s = setup_for(tmp_path, app, runs=[])
+    with pytest.raises(R.StepFailed, match="is not a whole zip .*: it is downloaded again next time"):
+        R.step_autochart(s)
+    assert list(s.downloads.iterdir()) == [] and not (s.autochart / "src").exists()
+    server.files["/ac.zip"] = good
+    R.step_autochart(s)
+    assert (s.autochart / "src" / "engine" / "catalog.json").read_bytes() == b"{}"
+    assert [p for p, _ in server.requests] == ["/ac.zip", "/ac.zip"]
+
+
 def test_the_cuda_provider_by_lane(tmp_path, app, monkeypatch):
     """A GPU lane runs onnxruntime-node's installer when the two libraries are not as pinned, and checks what it
     wrote; the cpu lane removes them (and the installer's third file)."""
@@ -430,6 +449,12 @@ def test_check_says_each_step_and_the_failure_line(tmp_path, app, capsys):
     assert said == ["node: ok", "models: FAILED: models/x is missing or not as pinned",
                     "check: 1 step failed: run the install line again"]
     # setup refuses with no lane (uv sync with none installs PyPI's CUDA torch: install.sh refuses too)
-    assert R.main(["setup", "--home", str(tmp_path / "h"), "--app", str(app), "--lane", ""]) == 2
-    assert capsys.readouterr().err == ("songcharter: setup failed: no torch lane is chosen (''): it is one of cpu, "
-                                       "cu126, cu132. Run the same command again to continue.\n")
+    failure = tmp_path / "failure"
+    os.environ["SONGCHARTER_FAILURE"] = str(failure)   # install.sh's: the line was said
+    try:
+        assert R.main(["setup", "--home", str(tmp_path / "h"), "--app", str(app), "--lane", ""]) == 2
+    finally:
+        del os.environ["SONGCHARTER_FAILURE"]
+    line = ("songcharter: setup failed: no torch lane is chosen (''): it is one of cpu, cu126, cu132. Run the same "
+            "command again to continue.\n")
+    assert capsys.readouterr().err == line and failure.read_text(encoding="utf-8") == line

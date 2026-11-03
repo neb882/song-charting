@@ -274,19 +274,20 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--launcher", type=Path, default=Path("~/.local/bin/songcharter"))
     a.add_argument("--restart-flag", type=Path, help="a file to write when .wslconfig changed")
     args = parser.parse_args(argv)
+    from .runtime import say_failed
     try:
         result = apply(args.home.expanduser(), args.launcher.expanduser(), args.yes,
                        ram_override(args.windows_ram_gb))
     except Refused as e:
-        print(f"songcharter: memory failed: {e}. Run the same command again to continue.", file=sys.stderr)
+        say_failed(f"songcharter: memory failed: {e}. Run the same command again to continue.")
         return 2
     except KeyboardInterrupt:
-        print("songcharter: memory failed: interrupted. Run the same command again to continue.", file=sys.stderr)
+        say_failed("songcharter: memory failed: interrupted. Run the same command again to continue.")
         return 2
     except Exception:  # noqa: BLE001  a bug
         traceback.print_exc()
-        print("songcharter: the Windows side failed: an internal error (a bug: please report it with the traceback "
-              "above). Run the same command again to continue.", file=sys.stderr)
+        say_failed("songcharter: the Windows side failed: an internal error (a bug: please report it with the "
+                   "traceback above). Run the same command again to continue.")
         return 3
     if result["changed"] and args.restart_flag is not None:
         args.restart_flag.parent.mkdir(parents=True, exist_ok=True)
