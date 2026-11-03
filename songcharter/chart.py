@@ -7,7 +7,8 @@ Clone Hero, YARG, Moonscraper and scan-chart all read:
   * two-space indent, `KEY = VALUE` with exactly one space each side of `=`, single spaces between fields,
   * every section sorted by tick, a length on every `N` and `S` line, quoted global events.
 
-Lyrics and vocals are not part of this model: the tool charts instruments only.
+Lyrics are global events in [Events] beside the sections (`Chart.lyrics`, rows made by lyrics.events): phrase_start,
+`lyric <syllable>` and phrase_end. Vocals (pitched notes) are not part of this model.
 """
 from __future__ import annotations
 
@@ -159,6 +160,7 @@ class Chart:
     tempo: TempoMap
     sections: list[tuple[int, str]] = field(default_factory=list)  # (tick, name), practice sections
     tracks: list[Track] = field(default_factory=list)
+    lyrics: list[tuple[int, int, str]] = field(default_factory=list)  # (tick, order on the tick, event text)
 
     @property
     def resolution(self) -> int:
@@ -207,6 +209,9 @@ def write_chart(chart: Chart) -> str:
     out = ["[Song]", "{"] + [f"  {s}" for s in song] + ["}"]
     out += ["[SyncTrack]", "{"] + [f"  {t} = {s}" for t, s in chart.tempo.sync_track_lines()] + ["}"]
     events = sorted((t, f'E "section {_text(name)}"') for t, name in chart.sections)
+    if chart.lyrics:  # after the sections on their tick, in their own order (a stable sort keeps both orders)
+        rows = [(t, 0, s) for t, s in events] + [(t, o, f'E "{_text(text)}"') for t, o, text in chart.lyrics]
+        events = [(t, s) for t, _, s in sorted(rows, key=lambda r: (r[0], r[1]))]
     out += ["[Events]", "{"] + [f"  {t} = {s}" for t, s in events] + ["}"]
     order = {(d, i): (INSTRUMENTS.index(i), DIFFICULTIES.index(d)) for d in DIFFICULTIES for i in INSTRUMENTS}
     names = set()
