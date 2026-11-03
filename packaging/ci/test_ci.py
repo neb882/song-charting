@@ -303,6 +303,27 @@ def test_an_archive_nested_too_deep_or_unreadable_fails(tmp_path):
     assert code == 1 and "nested deeper than 4 levels" in out and "broken.zip: a zip archive that cannot be read" in out
 
 
+def test_a_wma_fails_by_its_extension(tmp_path):
+    """WMA (ASF) has no MAGIC entry, so its extension is all that catches it."""
+    (tmp_path / "take.wma").write_bytes(b"\x30\x26\xb2\x75\x8e\x66\xcf\x11\xa6\xd9\x00\xaa\x00\x62\xce\x6c" + bytes(64))
+    code, out = check_no_audio(tmp_path)
+    assert code == 1 and "take.wma: an audio extension (.wma)" in out, out
+
+
+def test_audio_in_a_symlinked_folder_fails(tmp_path):
+    """actions/upload-artifact follows symlinks, so a linked folder's audio would be uploaded."""
+    (tmp_path / "elsewhere" / "Clip").mkdir(parents=True)
+    (tmp_path / "elsewhere" / "Clip" / "song.ogg").write_bytes(HEADERS["ogg"])
+    (tmp_path / "art").mkdir()
+    (tmp_path / "art" / "report.json").write_text("{}", encoding="utf-8")
+    try:
+        os.symlink(tmp_path / "elsewhere" / "Clip", tmp_path / "art" / "Clip", target_is_directory=True)
+    except (OSError, NotImplementedError) as e:
+        pytest.skip(f"no symlinks here ({e})")
+    code, out = check_no_audio(tmp_path / "art")
+    assert code == 1 and f"{tmp_path / 'art' / 'Clip' / 'song.ogg'}: an audio extension" in out, out
+
+
 def test_a_path_that_does_not_exist_is_bad_input(tmp_path):
     code, out = check_no_audio(tmp_path / "nowhere")
     assert code == 2 and "no such file or folder" in out, out
@@ -350,6 +371,48 @@ def test_a_build_that_only_went_to_failed_fails_and_says_why(tmp_path):
 def test_no_folder_at_all_fails(tmp_path):
     code, out = check_gate(tmp_path / "Clip")
     assert code == 1 and "no song folder" in out, out
+
+
+def no_scan(report):        # what assemble's gate records when scan-chart cannot run; it does not fail that build
+    report["gate"]["scan_chart"] = {"ran": False, "reason": "node is not on PATH"}
+
+
+def no_guitar(report):      # an empty Expert guitar, which assemble's gate also lets through
+    report["tracks"]["guitar"]["expert"]["onsets"] = 0
+
+
+def unplayable(report):
+    report["gate"]["scan_chart"]["playable"] = False
+
+
+def chart_issues(report):
+    report["gate"]["scan_chart"]["chart_issues"] = 3
+
+
+GATE_FAILURES = {   # name: (an edit to report.json, a file to delete, the one failure check_gate must list)
+    "NoScan": (no_scan, None, "scan-chart did not run (node is not on PATH)"),
+    "NoGuitar": (no_guitar, None, "guitar: no Expert onsets (0)"),
+    "NoAudio": (None, "song.ogg", "no song.ogg"),
+    "NoChart": (None, "notes.chart", "no notes.chart"),
+    "Unplayable": (unplayable, None, "scan-chart: playable is False"),
+    "ChartIssues": (chart_issues, None, "scan-chart: 3 chart issues, not 0"),
+}
+
+
+@pytest.mark.parametrize("name", list(GATE_FAILURES))
+def test_a_folder_its_gate_passed_still_fails_each_check(tmp_path, name):
+    """A build in its own folder, with gate.ok true and no .failed beside it, that fails one of check_gate's own
+    checks. check_gate is CI's only guard for NoScan and NoGuitar, which assemble's gate passes."""
+    edit, delete, failure = GATE_FAILURES[name]
+    folder = song_folder(tmp_path / "Clip")
+    if edit:
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        edit(report)
+        (folder / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    if delete:
+        (folder / delete).unlink()
+    code, out = check_gate(folder)
+    assert code == 1 and out.splitlines()[1:] == [f"  {failure}"], out
 
 
 # ------------------------------------------------------------------------------------------------ make_clip.py
