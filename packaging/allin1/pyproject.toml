@@ -1,0 +1,53 @@
+# allin1's own Python (engines/sections.py runs it as $SONGCHARTER_ALLIN1_PYTHON): a virtual project, locked on the
+# same torch lanes as the root project, with the same pins, so the two environments share torch's files in uv's
+# cache. Install: UV_PROJECT_ENVIRONMENT=<dir> uv sync --frozen --project packaging/allin1 --extra <lane>
+[project]
+name = "songcharter-allin1"
+version = "0.1.0"
+requires-python = "==3.13.*"
+dependencies = ["all-in-one-infer==3.1.0"]
+
+[project.optional-dependencies]
+# The torch lanes, as in the root pyproject.toml; cu132 needs no curand here (that is for autochart's provider).
+# torchaudio 2.11.1 (all-in-one-infer imports it) asks only for torch>=2.11, so it runs beside each lane's torch; it
+# sits in the lanes because its build differs by lane (the sources below).
+cpu = ["torch==2.15.0", "torchaudio==2.11.1"]    # no NVIDIA GPU
+cu126 = ["torch==2.14.1", "torchaudio==2.11.1"]  # an NVIDIA driver under 580
+cu132 = ["torch==2.15.0", "torchaudio==2.11.1"]  # a driver of 580 or newer
+
+[tool.uv]
+package = false
+required-version = "==0.13.5"   # the installer's uv, as in the root project
+conflicts = [[{ extra = "cpu" }, { extra = "cu126" }, { extra = "cu132" }]]
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu126", extra = "cu126" },
+    { index = "pytorch-cu132", extra = "cu132" },
+]
+# torchaudio by lane, not from PyPI: PyPI's 2.11.1 is a CUDA 13 build (it needs libcudart.so.13 and torch's CUDA
+# libraries), so it cannot load beside the cpu or cu126 torch. allin1 only imports torchaudio, so the cpu index's
+# build (libtorch and libc10 alone) serves cpu and cu126, whose own index has no 2.11.1; cu132 takes its own build.
+# check_wheels.py names the cu126 lane's torchaudio from the cpu index as its one cross-index exception.
+torchaudio = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cpu", extra = "cu126" },
+    { index = "pytorch-cu132", extra = "cu132" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu132"
+url = "https://download.pytorch.org/whl/cu132"
+explicit = true

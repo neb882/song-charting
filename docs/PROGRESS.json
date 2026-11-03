@@ -39,7 +39,7 @@
     },
     {
       "id": "M4",
-      "status": "planned for WSL2; work orders in docs/work-orders/",
+      "status": "building: wave 1 (M4-01 lanes and M4-05a CI merged; M4-02 device building); M4-00b spike passed on the 5070",
       "what": "a release the friend can use on his Windows PC, running in WSL2: a guided WSL setup, a one-line install, a Start-menu shortcut, a local UI, tested on his PC",
       "plan": "docs/work-orders/M4-00-plan.md: v0.1 is a guide to set up WSL, install.sh fetched from the pre-release and checked by hash (uv lanes cu132/cu126/cpu, allin1's own Python, Node, autochart with its models and its CUDA 13 provider, doctor.json, a .wslconfig with Windows' RAM minus 4 GB, a Start-menu shortcut), device checks with the CPU fallback shown, the local UI in WSL opened in the Windows browser (drop, options, progress with cancel, the static preview, zip and install into the Windows Songs folder), diagnostics, and CI end to end in ubuntu:26.04. Native Windows and the rest are M4-99; the native plan is commit f9f9377 and M4-00's appendix.",
       "risks": [
@@ -69,7 +69,7 @@
   },
   "in_flight": [],
   "next": [
-    "Use the golden charts for every change that can move a chart (the inspector runs them; the release gate needs them).",
+    "M4: wave 1 ends with M4-02 (device). The M4-00b spike PASSED on the owner's 5070 (driver 599.10: autochart's CUDA provider ran on the cu132 lane's CUDA 13 libraries, 357 of 388 nodes on CUDA). Then M4-03 and M4-04; M4-05 and M4-06; M4-07; the full review; M4-08: the owner's 5070 in a fresh Ubuntu-26.04 distro, then the friend's PC.",
     "M4: the owner runs M4-00b (packaging/spike/cuda13-provider.sh in the existing WSL on the 5070, about 20 min) while wave 1 builds (M4-01, M4-02, M4-05a); it must pass before wave 1 ends. Then M4-03 and M4-04; M4-05 and M4-06; M4-07; the full review workflow; M4-08: the owner's 5070 in a fresh Ubuntu-26.04 distro with the friend's 16 GB .wslconfig written by the install, then the friend's PC (also M1a's Windows spike).",
     "Owner: run M4-00b and send cuda13-result.json; answer M4-00's question (Smart App Control on for the test, only if its switch is not greyed out).",
     "Before the next quality decision: grow the reference set to 20 or more human charts, with human-charted solos among them."
@@ -108,7 +108,9 @@
     "Q26: the build's grid period does not reach the ADTOF engine as beat_s.",
     "Pruning: a run whose work folder is moved to the trash between its mkdir and its first marker write (a window of microseconds) fails with exit 2.",
     "Not run on Windows: the \\\\?\\ deletion, a rename refused while a file is open (emulated), Node's long paths.",
-    "Golden charts: a change to the separation's code does not show (every run reads the kept stems; delete the kept folders to make them again); sections, song.ini and the audio are not compared; one CPU take, so the CUDA default of 4 spliced takes is not covered."
+    "Golden charts: a change to the separation's code does not show (every run reads the kept stems; delete the kept folders to make them again); sections, song.ini and the audio are not compared; one CPU take, so the CUDA default of 4 spliced takes is not covered.",
+    "M4-01: torch 2.14.1+cu126 with allin1's torchaudio 2.11.1+cpu is untested on a real cu126 environment (too big for the dev disk); a cpu stand-in passed. Run allin1's probe once in M4-08 or on any machine with room.",
+    "M4-01 review F2: `uv sync` with no lane extra installs PyPI's CUDA torch (and allin1 then lacks torchaudio). The installer always passes a lane; M4-03 should refuse or warn when none is given, or the docs say so."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
   "how_work_is_run": "CLAUDE.md, section 'How work is run'. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices"
