@@ -1,10 +1,11 @@
 """Importers: small synthetic .chart and .mid files read back as TimedSong, with Clone Hero's rules as scan-chart
 implements them (HOPO thresholds and forcing, sustain cut-off, cymbals and tom markers, phrase overlaps)."""
+import numpy as np
 import pytest
 
 from songcharter.chart import Chart, DrumHit, FretNote, Phrase, SongInfo, Track, write_chart
 from songcharter.importers import ChartModifiers, read_chart, read_ini_modifiers, read_mid, read_song
-from songcharter.tempo import Tempo, TempoMap
+from songcharter.tempo import Tempo, TempoMap, TimeSignature
 from songcharter.timed import OPEN
 
 mido = pytest.importorskip("mido")
@@ -40,10 +41,16 @@ def text(tick, s):
     return [(tick, mido.MetaMessage("text", text=s))]
 
 
-def write_mid_file(path, tracks, tpb=480, tempo=500000):
-    """Format-1 MIDI: a tempo track, then one named track per entry of {name: [(abs tick, message), ...]}."""
+def write_mid_file(path, tracks, tpb=480, tempo=500000, signatures=()):
+    """Format-1 MIDI: a tempo track (with time signatures (tick, numerator, denominator)), then one named track per
+    entry of {name: [(abs tick, message), ...]}."""
     mf = mido.MidiFile(type=1, ticks_per_beat=tpb)
-    mf.tracks.append(mido.MidiTrack([mido.MetaMessage("set_tempo", tempo=tempo, time=0)]))
+    head = mido.MidiTrack([mido.MetaMessage("set_tempo", tempo=tempo, time=0)])
+    last = 0
+    for tick, num, den in signatures:
+        head.append(mido.MetaMessage("time_signature", numerator=num, denominator=den, time=tick - last))
+        last = tick
+    mf.tracks.append(head)
     for name, events in tracks.items():
         tr = mido.MidiTrack([mido.MetaMessage("track_name", name=name, time=0)])
         last = 0
@@ -196,6 +203,39 @@ def test_round_trip_through_the_chart_writer(tmp_path):
     assert s.sections == [(pytest.approx(tm.tick_to_sec(768)), "Verse")]
 
 
+def test_chart_measures_follow_the_time_signatures(tmp_path):
+    """Measure lines in song seconds: `TS n d` is n/2^d, each signature opens a measure on its own tick (as
+    Moonscraper does, even off the current measure line), and a UTF-16 chart is read the same. 120 BPM: 0.5 s a beat."""
+    notes = {"ExpertSingle": [f"{k * 192} = N 0 0" for k in range(24)]}
+
+    def measures(*signatures, name="a.chart", utf16=False):
+        f = write_chart_file(tmp_path / name, notes, sync=(*signatures, "0 = B 120000"))
+        if utf16:
+            f.write_bytes(b"\xff\xfe" + f.read_text(encoding="utf-8").encode("utf-16-le"))
+        return read_chart(f).measures
+
+    assert measures("0 = TS 6 3")[:5] == pytest.approx([0, 1.5, 3.0, 4.5, 6.0])           # 6/8
+    assert measures("0 = TS 7 3", "672 = TS 4")[:4] == pytest.approx([0, 1.75, 3.75, 5.75])  # 7/8, then 4/4
+    assert measures("0 = TS 4", "1920 = TS 3")[:6] == pytest.approx([0, 2, 4, 5, 6.5, 8])   # 3/4 from beat 10
+    assert measures("0 = TS 4", "1536 = TS 3", name="b.chart", utf16=True)[:5] == pytest.approx([0, 2, 4, 5.5, 7])
+    m = measures()  # no signature: 4/4, to the last beat (23) and one line past it
+    assert m == pytest.approx([0, 2, 4, 6, 8, 10, 12])
+    assert read_chart(tmp_path / "a.chart").beats[-1] == pytest.approx(11.5)
+
+
+def test_measures_match_the_tempo_map_they_were_written_from(tmp_path):
+    """A chart songcharter writes (TempoMap.from_beats: x/4, bars changing) gives TempoMap.measure_starts' lines."""
+    beats = np.cumsum([0.0] + [0.5 + 0.01 * (k % 7) for k in range(39)])
+    tm = TempoMap.from_beats(beats, bars=[(0, 4), (8, 3), (14, 4), (30, 5)])
+    chart = Chart(SongInfo("T", "A"), tm, [], [Track("Expert", "Single", [FretNote(k * 192, (0,)) for k in range(39)])])
+    f = tmp_path / "notes.chart"
+    f.write_text(write_chart(chart), encoding="utf-8")
+    s = read_chart(f)
+    end = (len(s.beats) - 1) * 192
+    assert s.measures[:-1] == pytest.approx([tm.tick_to_sec(t) for t in tm.measure_starts(end)], abs=1e-9)
+    assert s.measures[-2] <= s.beats[-1] < s.measures[-1]
+
+
 def test_bad_chart_is_rejected(tmp_path):
     f = tmp_path / "notes.chart"
     f.write_text("[Song]\r\n{\r\n  Name = \"x\"\r\n}\r\n")
@@ -302,6 +342,15 @@ def test_mid_running_status_and_velocity_zero_note_off(tmp_path):
     part = read_mid(f).parts[("guitar", "expert")]
     assert [(n.time, n.frets, n.end, n.hopo) for n in part.notes] == [
         (0.0, (0,), pytest.approx(0.5), False), (pytest.approx(0.5), (1,), pytest.approx(1.0), False)]
+
+
+def test_mid_measures_with_a_pickup_and_an_odd_meter(tmp_path):
+    """A .mid's own time signatures (Lucretia's opening): a 1/4 pickup, 4/4, then a 15/16 bar whose end falls between
+    beats. 120 BPM, 480 ticks a beat."""
+    f = write_mid_file(tmp_path / "notes.mid", {"PART GUITAR": [e for k in range(20) for e in note(k * 480, 96, 60)]},
+                       signatures=[(0, 1, 4), (480, 4, 4), (4320, 15, 16), (6120, 4, 4)])
+    assert read_mid(f).measures[:7] == pytest.approx([0, 0.5, 2.5, 4.5, 6.375, 8.375, 10.375])
+    assert read_mid(f, time_offset=1.0).measures[1] == pytest.approx(1.5)
 
 
 def test_mid_format_zero_is_rejected(tmp_path):
