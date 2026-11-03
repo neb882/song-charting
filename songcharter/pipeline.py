@@ -30,8 +30,14 @@
     not write) and so is every component the instruments need: a missing one fails with what to install or set,
     never a traceback. Where DESIGN.md has a fallback the stage takes it and says so: sections fall back to
     librosa when allin1 is absent or fails; device "auto" takes CUDA only when a CUDA kernel runs here (else every
-    model runs on the CPU), separation moves to the CPU when CUDA runs out of memory, and allin1, which runs in a
-    Python of its own, uses CUDA when that Python has it and the CPU when not, even for device "cuda".
+    model runs on the CPU, for device.choose_device's reason), separation moves to the CPU when CUDA runs out of
+    memory, and allin1, which runs in a Python of its own, uses CUDA when that Python has it and the CPU when not,
+    even for device "cuda". Every move to the CPU is a **fallback**: recorded (stage, from, to, reason) in
+    pipeline.json's `fallbacks` and ChartResult.fallbacks, and warned about, but for device "auto" on a machine with
+    no NVIDIA GPU at all (recorded only): "auto" choosing the CPU, separation's fallback, allin1 on the CPU while
+    torch here runs on CUDA, and a guitar take whose transcriber autochart ran on the CPU.
+  * **GPU memory.** On CUDA, torch's cache is emptied after the separation and after the drums, and each stage
+    that runs in this process records torch's own peak (`torch_peak_vram_mb`: reset as it begins).
   * **Solos** ("labels" by default): every section the sections engine names "Solo" (allin1's solo label), within
     starpower.place_solos's rules (16 Expert onsets, 4 measures, at most 3 a song); a list of section names
     (`--solos "Solo 1,Solo 2"`) puts them exactly there instead. Not "stems", the label confirmed by the stems
@@ -57,9 +63,12 @@
     run made one.
   * **Re-runs.** The decode is rewritten only when the samples change; separation and every engine reuse their
     caches, so a re-run with the same file and options costs the decode, the cache checks and the build.
-  * **Report.** work/pipeline.json: the options, the metadata and where each value came from, every stage's wall
-    time, cache use, device and fallback, the process's peak RSS after each stage (where the OS reports it) and,
-    for the sections, the peak allin1's runner reports for itself.
+  * **Report.** work/pipeline.json: the options, the metadata and where each value came from, the device and why
+    (`device`), every stage's wall time, cache use, device and fallback, the process's peak RSS after each stage
+    (where the OS reports it) and, for the sections, the peak allin1's runner reports for itself; the fallbacks;
+    and per stage the whole system's memory as a sampler thread saw it (device.Sampler: every second
+    `min_available_ram_mb` and `max_swap_used_mb`, every two seconds `max_gpu_used_mb` when nvidia-smi exists;
+    children included), for the peak-memory checks on a 16 GB PC (M4-08).
     Progress goes to `log` (stderr on the command line), a line when a stage starts and one when it ends.
 
 The heavy stages are the methods of `Engines`, so tests stand in for them; importing this module loads no model.
@@ -85,6 +94,7 @@ import numpy as np
 from . import __version__
 from . import audio as A
 from . import cache
+from . import device as D
 from .assemble import AssembleResult, assemble, check_output, failed_folder, load_config
 from .errors import InputError, ToolError
 from .importers import read_song
@@ -183,6 +193,7 @@ class ChartResult:
     preview: dict | None = None  # what the preview wrote and flagged (Engines.preview); None when it did not run
     scratch: Path | None = None  # autochart's scratch folder when it is not inside the work folder (cache.py)
     work_bytes: int = 0          # the work folder's size after the run, its scratch folder's included
+    fallbacks: list[dict] = field(default_factory=list)  # every move to the CPU: {"stage", "from", "to", "reason"}
 
     @property
     def ok(self) -> bool:
@@ -348,14 +359,29 @@ class Engines:
                                 f"{'CUDA' if why is None else f'working CUDA ({why})'}: use --device auto or cpu")
         return problems
 
-    def device(self, asked: str) -> tuple[str, str | None]:
-        """The torch device the options mean, and why "auto" chose the CPU although torch here has CUDA (else None):
-        "auto" is CUDA only when a CUDA kernel runs (separate.cuda_works)."""
-        if asked != "auto":
-            return asked, None
-        from .separate import cuda_works
-        works, why = cuda_works()
-        return ("cuda" if works else "cpu"), why
+    def device(self, asked: str) -> tuple[str, str | None, str | None]:
+        """The torch device the options mean, why it is the CPU (device.choose_device's sentence, else None), and
+        the CUDA error when torch here has CUDA that did not run (else None): "auto" is CUDA only when a CUDA kernel
+        runs (separate.cuda_works)."""
+        return tuple(D.choose(asked))
+
+    def free_gpu(self, device: str) -> None:
+        """Empty torch's CUDA cache (between the stages that use it)."""
+        if device == "cuda":
+            import torch
+            torch.cuda.empty_cache()
+
+    def vram_reset(self, device: str) -> None:
+        if device == "cuda":
+            import torch
+            torch.cuda.reset_peak_memory_stats()
+
+    def vram_peak_mb(self, device: str) -> float | None:
+        """torch's peak CUDA memory in this process since vram_reset, in MB; None off CUDA."""
+        if device != "cuda":
+            return None
+        import torch
+        return round(torch.cuda.max_memory_allocated() / 2 ** 20, 1)
 
     def threads(self, n: int | None) -> None:
         if n is not None:
@@ -486,11 +512,13 @@ def _distinct_takes(runs: list[Run], warn: Callable[[str], None]) -> list[Run]:
 
 
 def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, engines: Engines | None = None,
-          log: Callable[[str], None] | None = None) -> ChartResult:
+          log: Callable[[str], None] | None = None,
+          sampler: Callable[[], D.Sampler] | None = D.Sampler) -> ChartResult:
     """Chart the song file `audio` into the song folder `out` (the module docstring). Bad inputs and missing
     components raise (errors.InputError, errors.ToolError, OSError) before any audio work; a stage that fails for
     a reason the user can act on raises the same kinds, and any other exception is a bug; a build the gate fails
-    does not raise: it is in <out>.failed and `ok` is False."""
+    does not raise: it is in <out>.failed and `ok` is False. `sampler` makes the memory sampler (device.Sampler;
+    None: no sampling, as in tests)."""
     engines = engines or Engines()
     log = log or (lambda line: print(line, file=sys.stderr, flush=True))
     options.check()
@@ -520,27 +548,46 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
     order += ["preview"] * (options.preview and no_preview is None)
     stages: list[Stage] = []
     warnings: list[str] = []
+    fallbacks: list[dict] = []
     report: dict[str, Any] = {"songcharter": __version__, "input": str(audio), "output": str(out), "work": str(work),
                               "scratch": None if scratch is None else str(scratch), "cache_key": key,
                               "options": {**{k: v for k, v in options.__dict__.items() if k != "work"},
                                           "instruments": instruments, "metadata": dict(options.metadata)},
                               "versions": {"python": platform.python_version(), "numpy": np.__version__,
                                            "platform": platform.platform()},
-                              "stages": []}
+                              "stages": [], "fallbacks": fallbacks}
+    smp = sampler() if sampler is not None else None
 
     def warn(text: str) -> None:
         warnings.append(text)
         log(f"songcharter: warning: {text}")
 
+    def fallback(stage: str, frm: str, to: str, reason: str, *, warning: str | None = "") -> None:
+        """Record a move to the CPU (or off the device asked for) and warn: `warning` is the line ("": "<stage>:
+        <reason>"; None: recorded only)."""
+        fallbacks.append({"stage": stage, "from": frm, "to": to, "reason": reason})
+        if warning is not None:
+            warn(warning or f"{stage}: {reason}")
+
+    def on_gpu() -> str:
+        return (report.get("device") or {}).get("chosen") or "cpu"   # the torch device, once it is chosen
+
     def begin(name: str, what: str) -> float:
         log(f"[{order.index(name) + 1}/{len(order)}] {name}: {what}")
+        if smp is not None:
+            smp.begin(name)
+        if name != "guitar":   # a child process of its own: torch's peak here says nothing about it
+            engines.vram_reset(on_gpu())
         return time.perf_counter()  # wall times are reported only; nothing depends on them
 
     def end(name: str, t0: float, cached: bool, detail: str, info: dict | None = None) -> Stage:
         s = Stage(name, round(time.perf_counter() - t0, 2), cached, detail, info or {})
         stages.append(s)
+        memory = {} if name == "guitar" else {"torch_peak_vram_mb": engines.vram_peak_mb(on_gpu())}
+        if smp is not None:
+            memory.update(smp.end(name))
         report["stages"].append({"stage": s.name, "seconds": s.seconds, "cached": s.cached, "detail": s.detail,
-                                 **s.info, "peak_rss_mb": _peak_rss_mb()})
+                                 **s.info, "peak_rss_mb": _peak_rss_mb(), **memory})
         log(f"[{order.index(name) + 1}/{len(order)}] {name}: {detail}{' (cached)' if cached else ''}, "
             f"{s.seconds:.1f} s")
         return s
@@ -552,11 +599,13 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
     elif old is not None:      # a cache folder a --work run uses is the person's from now on; its scratch stays its
         cache.mark(work, audio, old.get("key"), Path(old["scratch"]) if old.get("scratch") else None, pinned=True)
     try:
+        if smp is not None:
+            smp.start()
         tags = read_tags(audio)
         meta, origin = song_metadata(audio, tags, options.metadata)
         report["metadata"], report["metadata_from"], report["tags"] = meta, origin, tags
         parts, sections, stem_files, stem_folder = _engine_stages(audio, work, scratch, options, engines, meta, begin,
-                                                                  end, warn, report)
+                                                                  end, warn, fallback, report)
         if not parts:
             raise InputError(f"no instrument has notes ({', '.join(instruments)} all came out empty): nothing to "
                              "chart")
@@ -605,12 +654,14 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
             warn(f"the cache in {root} was not pruned (interrupted)")
         size = cache.tree_size(work) + (cache.tree_size(scratch) if scratch is not None else 0)
         report["work_bytes"] = size
-        return ChartResult(result, stages, work, config, meta, warnings, preview, scratch, size)
+        return ChartResult(result, stages, work, config, meta, warnings, preview, scratch, size, fallbacks)
     except BaseException as e:
         report["error"] = f"{type(e).__name__}: {e}"
         report["traceback"] = traceback.format_exc()
         raise
     finally:
+        if smp is not None:
+            smp.stop()
         report["warnings"] = warnings
         report["total_seconds"] = round(sum(s.seconds for s in stages), 2)
         report["peak_rss_mb"] = _peak_rss_mb()
@@ -619,27 +670,30 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
 
 
 def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Options, engines: Engines, meta: dict,
-                   begin, end, warn, record: dict) -> tuple[list[dict], str | None, dict[str, str], Path]:
+                   begin, end, warn, fallback, record: dict) -> tuple[list[dict], str | None, dict[str, str], Path]:
     """Decode, separation and the engines: the assemble parts, the sections file, the stem files assemble reads
-    and the folder of every stem (the preview's); `record`
-    (pipeline.json) gets the guitar takes chosen and why. The audio arrays live only here, so they are freed before
-    assemble reads its own."""
+    and the folder of every stem (the preview's); `record` (pipeline.json) gets the device and why, and the guitar
+    takes chosen and why; `fallback` records each move to the CPU. The audio arrays live only here, so they are
+    freed before assemble reads its own."""
     t0 = begin("decode", audio.name)
     mix, wav, same = _decode(audio, work)
     end("decode", t0, same, f"{mix.shape[1] / SAMPLE_RATE:.2f} s of audio in {wav.name}",
         {"samples": int(mix.shape[1])})
 
-    device, cuda_error = engines.device(options.device)
-    if cuda_error:
-        warn(f"CUDA does not run here ({cuda_error}): the models run on the CPU")
+    device, why, cuda_error = engines.device(options.device)
+    record["device"] = {"asked": options.device, "chosen": device, "reason": why}
+    if options.device == "auto" and device == "cpu":   # no GPU at all: recorded, but nothing to warn about
+        fallback("device", "cuda", "cpu", why, warning=None if why in (None, D.NO_GPU) else
+                 f"CUDA does not run here ({cuda_error or why}): the models run on the CPU")
     engines.threads(options.threads)
     t0 = begin("separate", f"htdemucs_6s on {device}")
     stems, folder, info = engines.separate(mix, work / "stems", device)
-    fallback = info.get("fallback")
-    if fallback:
-        warn(f"separation: {fallback}")
+    moved = info.get("fallback")
+    if moved:
+        fallback("separate", device, info.get("device") or "cpu", moved, warning=f"separation: {moved}")
     end("separate", t0, bool(info.get("cached")), f"{len(stems)} stems on {info.get('device', device)}",
-        {"device": info.get("device"), "fallback": fallback, "cuda_error": cuda_error, "key": info.get("key")})
+        {"device": info.get("device"), "fallback": moved, "cuda_error": cuda_error, "key": info.get("key")})
+    engines.free_gpu(device)
     stem_files = {s: str(folder / f"{s}.wav") for s in STEMS if s in stems}
 
     parts: list[dict] = []
@@ -657,6 +711,7 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
         run = engines.drums(mix, stems["drums"], work / "drums", device)
         n = take("drums", run, {"instrument": "drums", "source": str(run.path)})
         end("drums", t0, run.cached, f"{n} Expert onsets", {"onsets": n})
+        engines.free_gpu(device)
     if "bass" in options.instruments:
         t0 = begin("bass", "rule engine (HFC onsets, pYIN pitch)")
         run = engines.bass(mix, stems["bass"], work / "bass")
@@ -675,9 +730,10 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
         how = f"allin1 {a.get('model', '')} on {a.get('device', '?')}".replace("  ", " ")
         child = None if run.cached else a.get("peak_rss_mb")  # a hit ran only the probe
         if a.get("fallback"):
-            warn(f"sections: {a['fallback']}")
-        elif options.device == "cuda" and a.get("device") != "cuda":
-            warn("sections: allin1 ran on the CPU (its Python has no working CUDA)")
+            fallback("sections", "cuda", a.get("device") or "cpu", a["fallback"], warning=f"sections: {a['fallback']}")
+        elif device == "cuda" and a.get("device") != "cuda":   # asked for, or "auto" found CUDA here
+            fallback("sections", "cuda", a.get("device") or "cpu", "allin1 ran on the CPU (its Python has no working "
+                     "CUDA)")
     elif run.info.get("why"):
         warn(f"sections: the librosa fallback ({run.info['why']})")
     n_seg = run.info.get("segments")
@@ -702,8 +758,8 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
             used = (runs[0].info.get("devices") or {}).get("transcriber")  # not reported: taken as on CUDA
             if used not in (None, gdev):
                 moved = used
-                warn(f"guitar: autochart's transcriber ran on {used}, not {gdev}, for the first take "
-                     f"({runs[0].info.get('devices')}): that take is used alone")
+                fallback("guitar", gdev, used, f"autochart's transcriber ran on {used}, not {gdev}, for the first take "
+                         f"({runs[0].info.get('devices')}): that take is used alone")
                 n_takes, seeds = 1, seeds[:1]
                 why = f"{why}; but autochart's transcriber ran on {used} for the first take, so that take alone"
             else:
@@ -712,7 +768,12 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
         for r in runs[1 if moved else 0:]:
             used = (r.info.get("devices") or {})
             if gdev == "cuda" and used and any(v == "cpu" for v in used.values()):
-                warn(f"guitar take {r.path.parent.name}: autochart ran on the CPU ({used})")
+                text = f"autochart ran on the CPU ({used})"
+                if used.get("transcriber") == "cpu":
+                    fallback("guitar", "cuda", "cpu", f"take {r.path.parent.name}: {text}",
+                             warning=f"guitar take {r.path.parent.name}: {text}")
+                else:   # another of its stages only (its separation or beat map): warned, as the take is not moved
+                    warn(f"guitar take {r.path.parent.name}: {text}")
         record["takes"] = {"asked": options.takes, "takes": n_takes, "auto": options.takes is None, "why": why,
                            "seeds": list(seeds), "transcriber_moved_to": moved}
         runs = _distinct_takes(runs, warn)

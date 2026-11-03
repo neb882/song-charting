@@ -16,6 +16,7 @@ import pytest
 
 import songcharter.assemble as assemble_module
 from songcharter import audio as A
+from songcharter import device as D
 from songcharter import pipeline as P
 from songcharter.assemble import find_scan_chart
 from songcharter.chart import Chart, DrumHit, FretNote, SongInfo, Track, write_chart
@@ -122,27 +123,42 @@ SCRATCH_BYTES = 3_000_000   # what the stand-in guitar keeps in autochart's scra
 def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: BaseException | None = None,
              cuda_error: str | None = None, allin1_device: str | None = None, repeat: bool = False,
              auto: str = "cpu", moved: str | None = None, no_preview: str | None = None, segments=None,
-             devices="summary"):
+             devices="summary", reason: str | None = None, separation_fallback: str | None = None):
     """Engines that write what the real ones write, and record each call (with the arrays it got) in `calls`.
     `empty`: engines that find no notes; `bug`: a stage that raises `error` (by default a KeyError: a bug);
-    `cuda_error`: device "auto" finds CUDA that does not run; `allin1_device`: the sections come from allin1 on
-    this device; `repeat`: the guitar take of seed 101 repeats the first take's notes; `auto`: the device "auto"
+    `cuda_error`: device "auto" finds CUDA that does not run; `reason`: why "auto" took the CPU (by default "no
+    NVIDIA GPU found", or CUDA that did not run when `cuda_error` is given); `separation_fallback`: the separation
+    moved to the CPU, saying this; `allin1_device`: the sections come from allin1 on this device; `repeat`: the guitar take of seed 101 repeats the first take's notes; `auto`: the device "auto"
     resolves to; `moved`: the device autochart reports for every guitar take whatever it was asked for (its own
     fallback); `devices`: the devices every guitar take reports, by default as autochart's summary has them
     ({"demucs": None, "timing": None, "transcriber": the device}: None for a stage its cache answered);
     `no_preview`: why the preview cannot run (its libraries do not import); `segments`: the sections engine's
     segments instead of SEGMENTS (written over different ones already there). The guitar keeps SCRATCH_BYTES in
-    its scratch folder, as autochart keeps its engine cache there."""
+    its scratch folder, as autochart keeps its engine cache there. The GPU memory calls (free_gpu, vram_reset,
+    vram_peak_mb) go to `gpu_calls`, and torch's peak on CUDA is 100 MB more for each reset."""
     segments = SEGMENTS if segments is None else segments
+    why = reason or (None if auto == "cuda" else
+                     f"CUDA did not run on the GPU: {cuda_error}" if cuda_error else D.NO_GPU)
 
     class StandIns(Engines):
         calls: list[tuple] = []
+        gpu_calls: list[tuple] = []
 
         def missing(self, options):
             return []
 
         def device(self, asked):
-            return (auto, cuda_error) if asked == "auto" else (asked, None)
+            return (auto, why, cuda_error) if asked == "auto" else (asked, D.ASKED_CPU if asked == "cpu" else None,
+                                                                    None)
+
+        def free_gpu(self, device):
+            self.gpu_calls.append(("free_gpu", device))
+
+        def vram_reset(self, device):
+            self.gpu_calls.append(("vram_reset", device))
+
+        def vram_peak_mb(self, device):
+            return 100.0 * sum(c[0] == "vram_reset" for c in self.gpu_calls) if device == "cuda" else None
 
         def threads(self, n):
             self.calls.append(("threads", n))
@@ -165,6 +181,8 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: BaseExc
                     A.write_wav(y, folder / f"{s}.wav")
                 (folder / "info.json").write_text(json.dumps(list(out)))
             self.calls.append(("separate", mix.shape, cache_dir, device))
+            if separation_fallback:
+                return out, folder, {"device": "cpu", "cached": cached, "key": key, "fallback": separation_fallback}
             return out, folder, {"device": device, "cached": cached, "key": key, "fallback": None}
 
         def drums(self, mix, drums, out, device):
@@ -233,6 +251,7 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: BaseExc
             return runs
 
     StandIns.calls = []
+    StandIns.gpu_calls = []
     return StandIns
 
 
@@ -259,7 +278,7 @@ def charted(tmp_path_factory):
         mp.setenv("SONGCHARTER_CACHE", str(root / "cache"))
         result = chart(root / "song.flac", root / "out" / "Click Song", Options(takes=3, threads=2,
                                                                               metadata={"genre": "Test"}),
-                       engines=engines, log=lines.append)
+                       engines=engines, log=lines.append, sampler=None)
         yield root, result, engines, lines
 
 
@@ -332,6 +351,14 @@ def test_the_work_folder_and_the_assemble_config(charted):
     assert report["assemble"]["ok"] and report["options"]["takes"] == 3 and "error" not in report
     assert report["options"]["levels"] == ["expert"]
     assert report["stages"][1]["key"] == key and report["stages"][1]["cuda_error"] is None
+    # no GPU at all: "auto" took the CPU, recorded as a fallback without a warning; torch's peak only on CUDA, and
+    # no memory samples without a sampler
+    assert report["device"] == {"asked": "auto", "chosen": "cpu", "reason": "no NVIDIA GPU found"}
+    assert report["fallbacks"] == [{"stage": "device", "from": "cuda", "to": "cpu", "reason": "no NVIDIA GPU found"}]
+    assert result.fallbacks == report["fallbacks"] and not any("CUDA" in w for w in report["warnings"])
+    assert all(s["torch_peak_vram_mb"] is None for s in report["stages"] if s["stage"] != "guitar")
+    guitar = next(s for s in report["stages"] if s["stage"] == "guitar")
+    assert "torch_peak_vram_mb" not in guitar and not any("min_available_ram_mb" in s for s in report["stages"])
     if sys.platform != "win32":  # this process's own peak only: RUSAGE_CHILDREN is at least its size, not a child's
         assert report["peak_rss_mb"]["self"] > 0 and set(report["peak_rss_mb"]) == {"self"}
         assert all(set(s["peak_rss_mb"]) == {"self"} for s in report["stages"])
@@ -392,6 +419,9 @@ def test_a_rerun_reuses_every_stage(charted, monkeypatch, capsys):
     assert abs(size - report["work_bytes"]) < 100_000  # but for pipeline.json, which holds it and is written last
     assert any(line.startswith("guitar: onsets E ") for line in out.splitlines())  # Expert only, labelled so
     assert (wav.stat().st_mtime_ns, (result.folder / "notes.chart").read_bytes()) == before
+    if Path("/proc/meminfo").is_file():  # the command line samples the memory (device.Sampler), stage by stage
+        assert all(isinstance(s["min_available_ram_mb"], int) and isinstance(s["max_swap_used_mb"], int)
+                   and "max_gpu_used_mb" in s for s in report["stages"]), report["stages"]
 
 
 def test_an_engine_without_notes_leaves_its_part_out(tmp_path, own_cache, monkeypatch, capsys):
@@ -576,6 +606,9 @@ def test_auto_runs_on_the_cpu_when_cuda_does_not_run(charted, tmp_path, monkeypa
     assert calls["separate"][2] == calls["drums"][3] == calls["guitar"][3] == "cpu"
     report = json.loads((result.work / "pipeline.json").read_text(encoding="utf-8"))
     assert report["stages"][1]["cuda_error"] == why and why in report["warnings"][0]
+    assert report["fallbacks"] == [{"stage": "device", "from": "cuda", "to": "cpu",
+                                    "reason": f"CUDA did not run on the GPU: {why}"}]
+    assert report["device"] == {"asked": "auto", "chosen": "cpu", "reason": f"CUDA did not run on the GPU: {why}"}
 
 
 def test_a_second_song_in_the_same_folders_is_decoded_and_separated_anew(charted, tmp_path, monkeypatch, capsys):
@@ -938,6 +971,133 @@ def test_takes_follow_the_guitar_stages_device(charted, monkeypatch, capsys):
     assert calls == [(DEFAULT_SEED, 101, 202, 303)] and devices == {"cpu"} and part == others and not takes["auto"]
 
 
+def test_every_fallback_is_recorded_and_warned(charted, tmp_path):
+    """Each move to the CPU goes into pipeline.json's fallbacks and ChartResult.fallbacks (stage, from, to, reason)
+    and is warned about as before: separation's own fallback, allin1 on the CPU while torch here runs on CUDA (found
+    by "auto", not only asked for), the first CUDA take whose transcriber autochart moved to the CPU, a take asked for
+    on CUDA whose transcriber ran on the CPU, and "auto" on the cpu lane of a machine with a GPU. A take whose other
+    stages alone ran on the CPU is warned about, not recorded. On CUDA, torch's cache is emptied after the separation
+    and after the drums, and every stage in this process records torch's peak since it began (not the guitar's, a
+    child process's)."""
+    root, result, _, _ = charted
+
+    def run(name, options, **kw):
+        engines = standins(**kw)()
+        lines = []
+        done = chart(root / "song.flac", tmp_path / name, Options(work=result.work, metadata={"genre": "Test"},
+                                                                  **options),
+                     engines=engines, log=lines.append, sampler=None)
+        report = json.loads((result.work / "pipeline.json").read_text(encoding="utf-8"))
+        assert done.ok and done.fallbacks == report["fallbacks"]
+        warned = [x.removeprefix("songcharter: warning: ") for x in lines if "warning: " in x]
+        return report, [w for w in warned if not w.startswith("sections: the librosa fallback")], engines
+
+    oom = "CUDA ran out of memory (CUDA out of memory. Tried to allocate 2.00 GiB); separated on the CPU"
+    shown = {"demucs": None, "timing": None, "transcriber": "cpu"}
+    moved = f"autochart's transcriber ran on cpu, not cuda, for the first take ({shown}): that take is used alone"
+    report, warned, engines = run("Cuda", {}, auto="cuda", separation_fallback=oom, allin1_device="cpu", moved="cpu")
+    assert report["device"] == {"asked": "auto", "chosen": "cuda", "reason": None}
+    assert report["fallbacks"] == [
+        {"stage": "separate", "from": "cuda", "to": "cpu", "reason": oom},
+        {"stage": "sections", "from": "cuda", "to": "cpu", "reason": "allin1 ran on the CPU (its Python has no "
+                                                                     "working CUDA)"},
+        {"stage": "guitar", "from": "cuda", "to": "cpu", "reason": moved}]
+    for text in (f"separation: {oom}", "sections: allin1 ran on the CPU (its Python has no working CUDA)",
+                 f"guitar: {moved}"):
+        assert warned.count(text) == 1, (text, warned)
+    calls = engines.gpu_calls
+    assert calls[:5] == [("vram_reset", "cpu"), ("vram_reset", "cuda"), ("free_gpu", "cuda"), ("vram_reset", "cuda"),
+                         ("free_gpu", "cuda")]   # decode before the device is chosen; separate; drums
+    assert calls.count(("free_gpu", "cuda")) == 2 and len(calls) == 9   # 7 stages reset: not the guitar
+    peaks = {s["stage"]: s.get("torch_peak_vram_mb", "none") for s in report["stages"]}
+    assert peaks == {"decode": None, "separate": 200.0, "drums": 300.0, "bass": 400.0, "sections": 500.0,
+                     "guitar": "none", "assemble": 600.0, "preview": 700.0}
+
+    report, warned, _ = run("Lane", {"instruments": ("drums",)}, reason=D.CPU_LANE)
+    assert report["fallbacks"] == [{"stage": "device", "from": "cuda", "to": "cpu", "reason": D.CPU_LANE}]
+    assert warned == [f"CUDA does not run here ({D.CPU_LANE}): the models run on the CPU"]
+    report, warned, engines = run("One", {"instruments": ("guitar",), "takes": 1}, auto="cuda", moved="cpu")
+    take = f"take seed_{DEFAULT_SEED}: autochart ran on the CPU ({shown})"
+    assert report["fallbacks"] == [{"stage": "guitar", "from": "cuda", "to": "cpu", "reason": take}]
+    assert warned == [f"guitar take seed_{DEFAULT_SEED}: autochart ran on the CPU ({shown})"]
+    other = {"demucs": "cpu", "timing": "cuda", "transcriber": "cuda"}
+    report, warned, _ = run("Other", {"instruments": ("guitar",), "takes": 1}, auto="cuda", devices=other)
+    assert report["fallbacks"] == [] and warned == [f"guitar take seed_{DEFAULT_SEED}: autochart ran on the CPU "
+                                                    f"({other})"]
+
+
+def test_a_failing_nvidia_smi_is_warned_about(charted, tmp_path, monkeypatch):
+    """The real Engines.device with CUDA not available: an nvidia-smi that is there but fails (WSL's after a driver
+    or Windows update: exit 255) is a GPU out of reach, so "auto" taking the CPU is warned about and pipeline.json
+    records nvidia-smi's error; with no nvidia-smi at all it is "no NVIDIA GPU found", recorded without a warning."""
+    torch = pytest.importorskip("torch")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    smi = tmp_path / "bin" / "nvidia-smi"
+    smi.parent.mkdir()
+    smi.write_text('#!/bin/sh\necho "Failed to initialize NVML: GPU access blocked by the operating system"\nexit 255\n')
+    smi.chmod(0o755)
+    root, result, _, _ = charted
+
+    class Real(standins()):
+        device = Engines.device
+
+    error = "nvidia-smi failed (exit 255): Failed to initialize NVML: GPU access blocked by the operating system"
+    for path, reason, warning in (
+            (str(smi), f"nvidia-smi failed, so CUDA cannot run: {error}",
+             f"CUDA does not run here ({error}): the models run on the CPU"),
+            (None, "no NVIDIA GPU found", None)):
+        monkeypatch.setattr(D, "nvidia_smi_path", lambda: path)
+        lines = []
+        chart(root / "song.flac", tmp_path / f"Song{len(reason)}", Options(work=result.work, instruments=("drums",),
+                                                                          metadata={"genre": "Test"}),
+              engines=Real(), log=lines.append, sampler=None)
+        report = json.loads((result.work / "pipeline.json").read_text(encoding="utf-8"))
+        assert report["device"] == {"asked": "auto", "chosen": "cpu", "reason": reason}
+        assert report["fallbacks"] == [{"stage": "device", "from": "cuda", "to": "cpu", "reason": reason}]
+        warned = [x for x in report["warnings"] if "CUDA" in x]
+        assert warned == ([warning] if warning else []), warned
+        assert (f"songcharter: warning: {warning}" in lines) == bool(warning)
+
+
+def test_the_sampler_records_each_stage(charted, tmp_path):
+    """chart starts the sampler, gives it each stage as it begins and ends, puts what it saw into the stage's record
+    in pipeline.json, and stops it in its finally, also when a stage raises."""
+    root, result, _, _ = charted
+
+    class Stand:
+        def __init__(self):
+            self.events = []
+
+        def start(self):
+            self.events.append("start")
+
+        def stop(self):
+            self.events.append("stop")
+
+        def begin(self, stage):
+            self.events.append(("begin", stage))
+
+        def end(self, stage):
+            self.events.append(("end", stage))
+            return {"min_available_ram_mb": 1000 + len(self.events), "max_swap_used_mb": 7, "max_gpu_used_mb": None}
+
+    stand = Stand()
+    options = Options(work=result.work, instruments=("drums",), metadata={"genre": "Test"})
+    chart(root / "song.flac", tmp_path / "Song", options, engines=standins()(), log=lambda line: None,
+          sampler=lambda: stand)
+    report = json.loads((result.work / "pipeline.json").read_text(encoding="utf-8"))
+    stages = [s["stage"] for s in report["stages"]]
+    assert stages == ["decode", "separate", "drums", "sections", "assemble", "preview"]
+    assert stand.events == ["start", *[e for st in stages for e in (("begin", st), ("end", st))], "stop"]
+    for i, s in enumerate(report["stages"]):
+        assert (s["min_available_ram_mb"], s["max_swap_used_mb"], s["max_gpu_used_mb"]) == (1000 + 3 + 2 * i, 7, None)
+    stand = Stand()
+    with pytest.raises(KeyError, match="a bug in drums"):
+        chart(root / "song.flac", tmp_path / "Bug", options, engines=standins(bug="drums")(), log=lambda line: None,
+              sampler=lambda: stand)
+    assert stand.events[0] == "start" and stand.events[-2:] == [("begin", "drums"), "stop"]
+
+
 # ------------------------------------------------------------------------------------------------ the parts
 
 def test_ffmetadata_is_parsed_with_its_escapes():
@@ -1054,10 +1214,13 @@ def test_auto_means_cuda_only_when_a_cuda_kernel_runs(monkeypatch):
 
     monkeypatch.setattr(torch, "ones", ones)
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(D, "nvidia_smi", lambda: ({"name": "NVIDIA GeForce RTX 5070", "driver": "599.10",
+                                                   "vram_mb": 12227, "compute_cap": "12.0"}, None))
     works = False
     why = "RuntimeError: CUDA error: no kernel image is available for execution on the device"
-    assert Engines().device("auto") == ("cpu", why) and Engines().device("cpu") == ("cpu", None)
-    assert Engines().device("cuda") == ("cuda", None)  # asked for: missing() has named the problem already
+    assert Engines().device("auto") == ("cpu", f"CUDA did not run on NVIDIA GeForce RTX 5070: {why}", why)
+    assert Engines().device("cpu") == ("cpu", "asked for the CPU", None)
+    assert Engines().device("cuda") == ("cuda", None, None)  # asked for: missing() has named the problem already
 
     def cuda_problems():
         return [p for p in Engines().missing(Options(instruments=("drums",), device="cuda")) if "device cuda" in p]
@@ -1065,9 +1228,18 @@ def test_auto_means_cuda_only_when_a_cuda_kernel_runs(monkeypatch):
     assert cuda_problems() == [f"device cuda asked for, but torch {torch.__version__} here has no working CUDA "
                                f"({why}): use --device auto or cpu"]
     works = True
-    assert Engines().device("auto") == ("cuda", None) and cuda_problems() == []
+    assert Engines().device("auto") == ("cuda", None, None) and cuda_problems() == []
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    assert Engines().device("auto") == ("cpu", None)
+    # CUDA not available on a GPU nvidia-smi sees: the cpu lane's torch, or a CUDA build that cannot use it (an old
+    # driver: torch.cuda.init's error); with no GPU at all, no GPU, whatever torch's build
+    monkeypatch.setattr(D, "_unavailable_why", lambda: "RuntimeError: The NVIDIA driver on your system is too old")
+    assert Engines().device("auto") == (("cpu", "this install's torch has no CUDA (the cpu lane)", None)
+                                        if torch.version.cuda is None else
+                                        ("cpu", "CUDA did not run on NVIDIA GeForce RTX 5070: RuntimeError: The NVIDIA "
+                                         "driver on your system is too old",
+                                         "RuntimeError: The NVIDIA driver on your system is too old"))
+    monkeypatch.setattr(D, "nvidia_smi", lambda: (None, "nvidia-smi not found"))
+    assert Engines().device("auto") == ("cpu", "no NVIDIA GPU found", None)
 
 
 def test_the_real_engines_are_called_with_the_pipelines_settings(tmp_path, monkeypatch):

@@ -21,10 +21,18 @@ per take, behind a process boundary, so no AGPL code is imported.
     in WSL: 1031 s for a take that took 319 s on CUDA), so the transcriber is pinned to the requested device with the
     engine's AUTOCHART_ONNX_TRANSCRIBER_DEVICE (unless it is set already). The engine still falls back to the CPU by
     itself when a provider fails to load; the devices it used are in each take's summary.
+  * **CUDA libraries.** onnxruntime-node 1.27.0's CUDA provider needs CUDA 13 (cuBLAS, cudart, NVRTC, cuFFT, cuRAND)
+    and cuDNN 9, which the cu132 torch lane's wheels bring in this Python's `nvidia` package (nvidia-curand adds
+    cuRAND), and the driver's libcuda (/usr/lib/wsl/lib in WSL). For "cuda" those folders (`cuda_library_path`) go
+    first on the node child's LD_LIBRARY_PATH, and only there: songcharter's own torch loads its own copies. With
+    that path (cu13/lib, cudnn/lib, /usr/lib/wsl/lib) the provider ran Fretformer 2's encoder in WSL on an RTX 5070,
+    driver 599.10: 357 nodes on CUDA, 31 on the CPU [here, 5070 spike: M4-00b]. The path is not part of a take's
+    key: it changes where the provider loads from, not the chart.
 """
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -32,7 +40,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Mapping, Sequence
 
 from .. import audio as A
 from ..errors import ToolError
@@ -41,6 +49,8 @@ DEFAULT_SEED = 20260609          # the engine's own default seed
 TEMPERATURE, TOP_P = 0.95, 0.98   # the app's "Standard" preset (the driver's defaults)
 REPO_INSTALL = Path(__file__).resolve().parents[2] / "eval" / "tools" / "autochart"
 TAKE = "take.json"               # in each take's folder: the key it was made with, written once the run succeeded
+WSL_LIB = Path("/usr/lib/wsl/lib")  # WSL's driver libraries (libcuda.so.1), from the Windows NVIDIA driver
+CUDA_LIB_DIRS = ("cu13/lib", "cudnn/lib")  # in each folder of the nvidia namespace package: CUDA 13, cuDNN 9
 
 
 @dataclass(frozen=True)
@@ -85,6 +95,35 @@ def find_install(root: Path | str | None = None, node: str | None = None) -> Ins
     if missing:
         raise FileNotFoundError("autochart engine not ready: " + "; ".join(missing))
     return inst
+
+
+def cuda_library_path() -> list[str]:
+    """The folders onnxruntime-node's CUDA provider loads its libraries from: for each folder of this Python's
+    `nvidia` namespace package (the torch lane's CUDA wheels), its cu13/lib and cudnn/lib where they exist, then
+    /usr/lib/wsl/lib where it exists."""
+    try:
+        spec = importlib.util.find_spec("nvidia")
+    except (ImportError, ValueError):
+        spec = None
+    folders = []
+    for base in list(spec.submodule_search_locations or []) if spec is not None else []:
+        for sub in CUDA_LIB_DIRS:
+            d = Path(base) / sub
+            if d.is_dir() and str(d) not in folders:
+                folders.append(str(d))
+    if WSL_LIB.is_dir():
+        folders.append(str(WSL_LIB))
+    return folders
+
+
+def cuda_environment(env: Mapping[str, str]) -> dict[str, str]:
+    """`env` with cuda_library_path() put first on LD_LIBRARY_PATH (unchanged when there is none): for a node child
+    that loads the CUDA provider, never for this process."""
+    out = dict(env)
+    folders = cuda_library_path()
+    if folders:
+        out["LD_LIBRARY_PATH"] = ":".join(folders + [p for p in [env.get("LD_LIBRARY_PATH")] if p])
+    return out
 
 
 def sha256(path: Path) -> str:
@@ -164,8 +203,8 @@ def generate(install: Install, audio: Path | str, out: Path | str, seeds: Sequen
              run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> list[Take]:
     """One Expert take per seed of `audio` (a WAV of the gapless decode), in out/seed_<seed>/ (a song folder:
     notes.chart, song.ini, song.ogg, autochart_run/, take.json). Takes already there with the same key (input,
-    seed, sampling settings, install) are reused. A failed run raises errors.ToolError (a RuntimeError) with the
-    driver's last lines."""
+    seed, sampling settings, install) are reused. For "cuda" the driver's environment has cuda_library_path() first
+    on LD_LIBRARY_PATH. A failed run raises errors.ToolError (a RuntimeError) with the driver's last lines."""
     audio, out = Path(audio).resolve(), Path(out).resolve()
     if not audio.is_file():
         raise FileNotFoundError(f"autochart input {audio} does not exist")
@@ -191,6 +230,8 @@ def generate(install: Install, audio: Path | str, out: Path | str, seeds: Sequen
                "AUTOCHART_FFMPEG_PATH": ffmpeg or A.ffmpeg_exe()}
         if device in ("cpu", "cuda"):
             env.setdefault("AUTOCHART_ONNX_TRANSCRIBER_DEVICE", device)
+        if device == "cuda":
+            env = cuda_environment(env)
         if title:
             env["AC_TITLE"] = title
         if artist:
