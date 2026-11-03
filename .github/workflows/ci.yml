@@ -1,0 +1,142 @@
+# CI: the suite on Linux, then each work order's hooks (packaging/ci/linux.d/, windows.d/; the contract is in their
+# README.txt). Only M4-05a edits this file: a later order adds hook files, never a step here.
+name: ci
+
+on:
+  push:
+    branches: [main, "m4-*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash   # bash -eo pipefail
+    env:
+      SONGCHARTER_SCAN_CHART: ${{ github.workspace }}/tools/scan-chart/scan.cjs
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare the CI folders
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci-artifacts" "$RUNNER_TEMP/ci-tmp"
+          echo "CI_ART=$RUNNER_TEMP/ci-artifacts" >> "$GITHUB_ENV"
+          echo "CI_TMP=$RUNNER_TEMP/ci-tmp" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+          cache-dependency-path: tools/scan-chart/package-lock.json
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/uv
+          key: python-${{ runner.os }}-3.13-${{ hashFiles('pyproject.toml', 'uv.lock', 'packaging/allin1/uv.lock') }}
+          restore-keys: |
+            python-${{ runner.os }}-3.13-
+
+      # Until uv.lock exists, pip, with torch from PyTorch's cpu index first, so pip never pulls the 3 GB CUDA build
+      # from PyPI. Once M4-01's uv.lock is there: the cpu lane from the lock, in .venv, on setup-python's 3.13.
+      - name: Install songcharter
+        run: |
+          if [ -f uv.lock ]; then
+            python -m pip install uv==0.13.5
+            UV_PYTHON="$(command -v python)" uv sync --frozen --extra cpu --extra app --extra dev
+            CI_PY="$GITHUB_WORKSPACE/.venv/bin/python"
+          else
+            python -m pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
+            python -m pip install -e ".[dev,separate,drums,bass,sections,preview]"
+            CI_PY="$(command -v python)"
+          fi
+          "$CI_PY" - <<'EOF'
+          import sys, torch
+          assert torch.version.cuda is None, f"not torch's CPU build: {torch.__version__}"
+          print("python", sys.version.split()[0], "torch", torch.__version__)
+          EOF
+          echo "CI_PY=$CI_PY" >> "$GITHUB_ENV"
+
+      - name: Install scan-chart
+        working-directory: tools/scan-chart
+        run: npm ci
+
+      - name: Suite
+        run: |
+          "$CI_PY" -m pytest -q -p no:cacheprovider --basetemp="$RUNNER_TEMP/pt" -rs
+
+      - name: Hooks
+        run: bash packaging/ci/run-hooks.sh linux
+
+      - name: Check the artifacts hold no audio
+        id: no_audio
+        if: always() && env.CI_ART != ''
+        run: python packaging/ci/check_no_audio.py "$CI_ART"
+
+      - name: Upload the artifacts
+        if: always() && steps.no_audio.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-linux
+          path: ${{ env.CI_ART }}/
+          if-no-files-found: ignore
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare the CI folders
+        run: |
+          $art = New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP 'ci-artifacts')
+          $tmp = New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP 'ci-tmp')
+          "CI_ART=$($art.FullName)" >> $env:GITHUB_ENV
+          "CI_TMP=$($tmp.FullName)" >> $env:GITHUB_ENV
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install the test tools
+        run: |
+          python -m pip install pytest LnkParse3
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          "CI_PY=$((Get-Command python -CommandType Application | Select-Object -First 1).Source)" >> $env:GITHUB_ENV
+
+      - name: Hooks
+        run: ./packaging/ci/run-hooks.ps1 windows
+
+      - name: Check the artifacts hold no audio
+        id: no_audio
+        if: always() && env.CI_ART != ''
+        run: python packaging/ci/check_no_audio.py $env:CI_ART
+
+      - name: Upload the artifacts
+        if: always() && steps.no_audio.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-windows
+          path: ${{ env.CI_ART }}/
+          if-no-files-found: ignore
