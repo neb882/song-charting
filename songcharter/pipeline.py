@@ -10,7 +10,8 @@
      (engines/adtof.py), bass from the rule engine (engines/bass.py), sections from allin1 or its librosa fallback
      (engines/sections.py), and guitar from autochart's engine (engines/autochart.py), one take per seed: the
      engine's default seed and, for `takes` > 1, seeds 101, 202, ... for the others, which assemble splices
-     section by section (takes.py). An engine that charts no note leaves its part out (DESIGN.md 2, absent parts).
+     section by section (takes.py). By default 4 takes when the guitar stage runs on CUDA and 1 on the CPU
+     (`guitar_takes`). An engine that charts no note leaves its part out (DESIGN.md 2, absent parts).
   4. **Assemble** from a config written into the work folder (work/assemble.json): our beat grid and tempo map, the
      parts quantized onto it, star power, fills, solos and sections, then the gate (assemble.py). Only Expert is
      written by default (`levels`: the friend plays Expert, and asks for the others when he wants them); the lower
@@ -65,6 +66,7 @@ from .timed import DIFFICULTIES, INSTRUMENTS
 SAMPLE_RATE = A.SAMPLE_RATE
 STEMS = ("drums", "bass", "guitar", "other", "vocals")   # the stems assemble reads (piano only reaches allin1)
 EXTRA_SEED_STEP = 101    # takes after the first use seeds 101, 202, 303, ... (the v1 chart's seeds)
+CUDA_TAKES = 4           # guitar takes by default when the guitar stage runs on CUDA (guitar_takes); 1 on the CPU
 WORK_SUFFIX = ".work"    # the default work folder: <output>.work beside the output
 SOLO_MODES = ("stems", "labels", "off")  # assemble's solos modes; a list of section names is the other kind
 DEFAULTS = {"artist": "Unknown", "album": "Unknown", "genre": "Unknown", "year": "Unknown", "charter": "songcharter"}
@@ -77,7 +79,8 @@ OVERRIDES = ("name", "artist", "album", "genre", "year")
 @dataclass(frozen=True)
 class Options:
     instruments: tuple[str, ...] = INSTRUMENTS   # which parts to chart: guitar, bass, drums
-    takes: int = 1                               # guitar takes: 1, or 3 and more (a splice needs three runs)
+    takes: int | None = None                     # guitar takes: 1, or 3 and more (a splice needs three runs); None:
+                                                 # 4 when the guitar stage runs on CUDA, else 1 (guitar_takes)
     device: str = "auto"                         # "auto" (CUDA when a CUDA kernel runs here), "cpu" or "cuda"
     threads: int | None = None                   # torch's threads here and in allin1 (None: their defaults)
     work: Path | None = None                     # the work folder (None: <output>.work beside the output)
@@ -92,10 +95,11 @@ class Options:
         unknown = [i for i in self.instruments if i not in INSTRUMENTS]
         if unknown or len(set(self.instruments)) != len(self.instruments):
             raise InputError(f"instruments are {', '.join(INSTRUMENTS)}, each once, not {', '.join(self.instruments)}")
-        if isinstance(self.takes, bool) or not isinstance(self.takes, int) or self.takes < 1 or self.takes == 2:
+        if self.takes is not None and (isinstance(self.takes, bool) or not isinstance(self.takes, int)
+                                       or self.takes < 1 or self.takes == 2):
             raise InputError(f"takes is 1, or 3 or more (takes are spliced by agreement, and two cannot outvote "
                              f"each other), not {self.takes!r}")
-        if self.takes > 1 and "guitar" not in self.instruments:
+        if self.takes is not None and self.takes > 1 and "guitar" not in self.instruments:
             raise InputError("takes are guitar takes: chart the guitar too, or leave takes at 1")
         if self.device not in ("auto", "cpu", "cuda"):
             raise InputError(f"device is auto, cpu or cuda, not {self.device!r}")
@@ -151,6 +155,22 @@ class ChartResult:
     @property
     def folder(self) -> Path:
         return self.assembled.folder
+
+
+def guitar_takes(asked: int | None, device: str) -> tuple[int, str]:
+    """How many guitar takes to run, and why: the number asked for, on any device; by default CUDA_TAKES (4) when
+    the guitar stage runs on CUDA (`device`: "cuda" or "cpu", the device resolved for it) and 1 otherwise.
+
+    The evidence behind the default [takes experiment]: 4 takes spliced by agreement gave +0.013 Expert F1@50 over 1
+    take on 5 reference songs; on the owner's GPU 4 takes cost 3.41x the guitar stage (+5.75 min a song), worth it;
+    on a CPU one take takes about 3-7 min, so 3 more would add 9-21 min for that small gain. 2 or 3 takes are never
+    the default (2 cannot outvote each other; 3 scored below 1 on that set)."""
+    if asked is not None:
+        return asked, f"{asked} asked for"
+    if device == "cuda":
+        return CUDA_TAKES, (f"the default on cuda: {CUDA_TAKES} takes spliced gave +0.013 Expert F1@50 over 1, for "
+                            "3.41x the guitar stage's time")
+    return 1, "the default on the cpu: 1 take (each one more is about 3-7 min there)"
 
 
 def take_seeds(takes: int) -> tuple[int, ...]:
@@ -454,7 +474,7 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         tags = read_tags(audio)
         meta, origin = song_metadata(audio, tags, options.metadata)
         report["metadata"], report["metadata_from"], report["tags"] = meta, origin, tags
-        parts, sections, stem_files = _engine_stages(audio, work, options, engines, meta, begin, end, warn)
+        parts, sections, stem_files = _engine_stages(audio, work, options, engines, meta, begin, end, warn, report)
         if not parts:
             raise InputError(f"no instrument has notes ({', '.join(instruments)} all came out empty): nothing to "
                              "chart")
@@ -486,10 +506,11 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
                                             encoding="utf-8")
 
 
-def _engine_stages(audio: Path, work: Path, options: Options, engines: Engines, meta: dict, begin, end, warn
-                   ) -> tuple[list[dict], str | None, dict[str, str]]:
-    """Decode, separation and the engines: the assemble parts, the sections file and the stem files. The audio
-    arrays live only here, so they are freed before assemble reads its own."""
+def _engine_stages(audio: Path, work: Path, options: Options, engines: Engines, meta: dict, begin, end, warn,
+                   record: dict) -> tuple[list[dict], str | None, dict[str, str]]:
+    """Decode, separation and the engines: the assemble parts, the sections file and the stem files; `record`
+    (pipeline.json) gets the guitar takes chosen and why. The audio arrays live only here, so they are freed before
+    assemble reads its own."""
     t0 = begin("decode", audio.name)
     mix, wav, same = _decode(audio, work)
     end("decode", t0, same, f"{mix.shape[1] / SAMPLE_RATE:.2f} s of audio in {wav.name}",
@@ -552,16 +573,33 @@ def _engine_stages(audio: Path, work: Path, options: Options, engines: Engines, 
     sections = str(run.path)
 
     if "guitar" in options.instruments:
-        seeds = take_seeds(options.takes)
         gdev = "cuda" if device == "cuda" else "cpu"
+        n_takes, why = guitar_takes(options.takes, gdev)
+        seeds = take_seeds(n_takes)
+        # the CUDA default first runs one take alone: when autochart moved its transcriber off CUDA by itself (a
+        # provider that failed to load), the other three would cost CPU minutes each
+        probe = options.takes is None and n_takes > 1
         t0 = begin("guitar", f"autochart, {len(seeds)} take{'s' * (len(seeds) > 1)} (seed{'s' * (len(seeds) > 1)} "
-                             f"{', '.join(map(str, seeds))}) on {gdev}")
+                             f"{', '.join(map(str, seeds))}) on {gdev}" + (", the first alone first" if probe else ""))
         del mix, stems   # autochart reads decode.wav; the arrays are not needed again
-        runs = engines.guitar(wav, work / "guitar", seeds, gdev, meta["name"], meta["artist"])
-        for r in runs:
+        runs = engines.guitar(wav, work / "guitar", seeds[:1] if probe else seeds, gdev, meta["name"], meta["artist"])
+        moved = None
+        if probe:
+            used = (runs[0].info.get("devices") or {}).get("transcriber")  # not reported: taken as on CUDA
+            if used not in (None, gdev):
+                moved = used
+                warn(f"guitar: autochart's transcriber ran on {used}, not {gdev}, for the first take "
+                     f"({runs[0].info.get('devices')}): that take is used alone")
+                n_takes, seeds = 1, seeds[:1]
+                why = f"{why}; but autochart's transcriber ran on {used} for the first take, so that take alone"
+            else:
+                runs += engines.guitar(wav, work / "guitar", seeds[1:], gdev, meta["name"], meta["artist"])
+        for r in runs[1 if moved else 0:]:
             used = (r.info.get("devices") or {})
             if gdev == "cuda" and used and any(v == "cpu" for v in used.values()):
                 warn(f"guitar take {r.path.parent.name}: autochart ran on the CPU ({used})")
+        record["takes"] = {"asked": options.takes, "takes": n_takes, "auto": options.takes is None, "why": why,
+                           "seeds": list(seeds), "transcriber_moved_to": moved}
         runs = _distinct_takes(runs, warn)
         n = _expert_onsets(runs[0].path, "guitar")
         part = {"instrument": "guitar", "source": str(runs[0].path), "hopo": "forced"}
@@ -569,7 +607,8 @@ def _engine_stages(audio: Path, work: Path, options: Options, engines: Engines, 
             part["takes"] = [str(r.path) for r in runs[1:]]
         take("guitar", runs[0], part)
         end("guitar", t0, all(r.cached for r in runs), f"{len(runs)} take{'s' * (len(runs) > 1)}, {n} Expert onsets "
-            "in the first", {"seeds": list(seeds), "takes": [str(r.path) for r in runs], "onsets": n})
+            "in the first", {"seeds": list(seeds), "takes": [str(r.path) for r in runs], "onsets": n,
+                             "chosen": record["takes"]})
     parts.sort(key=lambda p: INSTRUMENTS.index(p["instrument"]))
     return parts, sections, stem_files
 

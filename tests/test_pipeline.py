@@ -117,11 +117,14 @@ def standin_key(mix: np.ndarray) -> str:
 
 
 def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: Exception | None = None,
-             cuda_error: str | None = None, allin1_device: str | None = None, repeat: bool = False):
+             cuda_error: str | None = None, allin1_device: str | None = None, repeat: bool = False,
+             auto: str = "cpu", moved: str | None = None):
     """Engines that write what the real ones write, and record each call (with the arrays it got) in `calls`.
     `empty`: engines that find no notes; `bug`: a stage that raises `error` (by default a KeyError: a bug);
     `cuda_error`: device "auto" finds CUDA that does not run; `allin1_device`: the sections come from allin1 on
-    this device; `repeat`: the guitar take of seed 101 repeats the first take's notes."""
+    this device; `repeat`: the guitar take of seed 101 repeats the first take's notes; `auto`: the device "auto"
+    resolves to; `moved`: the device autochart reports for every guitar take whatever it was asked for (its own
+    fallback)."""
 
     class StandIns(Engines):
         calls: list[tuple] = []
@@ -130,7 +133,7 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: Excepti
             return []
 
         def device(self, asked):
-            return ("cpu", cuda_error) if asked == "auto" else (asked, None)
+            return (auto, cuda_error) if asked == "auto" else (asked, None)
 
         def threads(self, n):
             self.calls.append(("threads", n))
@@ -191,15 +194,16 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: Excepti
             self._bug("guitar")
             self.calls.append(("guitar", audio, out, tuple(seeds), device, title, artist))
             runs = []
-            for k, seed in enumerate(seeds):
+            for seed in seeds:
                 path = out / f"seed_{seed}" / "notes.chart"
                 cached = path.is_file()
                 if not cached:  # each take after the first misses one note, in a section of its own
-                    miss = 0 if repeat and seed == 101 else k
+                    miss = 0 if seed == DEFAULT_SEED or repeat and seed == 101 else seed // 101
                     notes = [FretNote(tick(t), (lane,)) for j, (t, lane) in enumerate(guitar_times())
                              if not (miss and j == 40 * miss) and "guitar" not in empty]
                     _write(path, Track("Expert", "Single", notes))
-                runs.append(Run(path, cached, {"devices": {"transcriber": device}}))
+                used = moved or device
+                runs.append(Run(path, cached, {"devices": {"demucs": used, "timing": used, "transcriber": used}}))
             return runs
 
     StandIns.calls = []
@@ -537,6 +541,52 @@ def test_solos_on_named_sections(charted, monkeypatch, capsys):
     assert "solos as section names needs one name or more" in capsys.readouterr().err
 
 
+def test_takes_follow_the_guitar_stages_device(charted, monkeypatch, capsys):
+    """By default 4 takes when the guitar stage runs on CUDA, the first alone first, and 1 on the CPU; when
+    autochart moved its transcriber off CUDA by itself for that first take, the take alone, with one warning. A
+    number asked for runs as asked on either device, all at once. pipeline.json says how many, whether by default,
+    and why."""
+    root, result, _, _ = charted
+    args = ["chart", str(root / "song.flac"), "--work", str(result.work), "--instruments", "guitar", "--genre", "Test"]
+
+    def run(name, *extra, **kw):
+        engines = standins(**kw)
+        monkeypatch.setattr(P, "Engines", engines)
+        code = main([*args, "--out", str(root / name), *extra])
+        out, err = capsys.readouterr()
+        assert code == 0, err
+        report = json.loads((result.work / "pipeline.json").read_text(encoding="utf-8"))
+        part = json.loads(result.config.read_text(encoding="utf-8"))["parts"][0]
+        calls = [c for c in engines.calls if c[0] == "guitar"]
+        guitar = next(s for s in report["stages"] if s["stage"] == "guitar")
+        assert guitar["chosen"] == report["takes"]
+        return report["takes"], [c[3] for c in calls], {c[4] for c in calls}, part.get("takes", []), err
+
+    others = [str(result.work / "guitar" / f"seed_{s}" / "notes.chart") for s in (101, 202, 303)]
+    takes, calls, devices, part, err = run("Cpu")
+    assert takes == {"asked": None, "takes": 1, "auto": True, "seeds": [DEFAULT_SEED], "transcriber_moved_to": None,
+                     "why": "the default on the cpu: 1 take (each one more is about 3-7 min there)"}
+    assert calls == [(DEFAULT_SEED,)] and devices == {"cpu"} and part == []
+    takes, calls, devices, part, err = run("Cuda", auto="cuda")
+    assert takes["takes"] == 4 and takes["auto"] and takes["why"].startswith("the default on cuda: 4 takes")
+    assert calls == [(DEFAULT_SEED,), (101, 202, 303)] and devices == {"cuda"} and part == others
+    assert "on cuda, the first alone first" in err and "warning: guitar" not in err
+    takes, calls, devices, part, err = run("Moved", auto="cuda", moved="cpu")
+    assert takes["takes"] == 1 and takes["auto"] and takes["transcriber_moved_to"] == "cpu"
+    assert "but autochart's transcriber ran on cpu for the first take, so that take alone" in takes["why"]
+    assert calls == [(DEFAULT_SEED,)] and part == [] and err.count("warning: guitar") == 1
+    assert "warning: guitar: autochart's transcriber ran on cpu, not cuda, for the first take" in err
+    takes, calls, devices, part, err = run("Asked", "--takes", "3", auto="cuda")
+    assert takes == {"asked": 3, "takes": 3, "auto": False, "why": "3 asked for", "seeds": [DEFAULT_SEED, 101, 202],
+                     "transcriber_moved_to": None}
+    assert calls == [(DEFAULT_SEED, 101, 202)] and devices == {"cuda"} and part == others[:2]
+    takes, calls, devices, part, err = run("One", "--takes", "1", auto="cuda", moved="cpu")
+    assert (takes["takes"], takes["auto"], calls) == (1, False, [(DEFAULT_SEED,)])
+    assert "autochart ran on the CPU" in err  # the take's own report of the fallback, as before
+    takes, calls, devices, part, err = run("Cpu4", "--takes", "4")
+    assert calls == [(DEFAULT_SEED, 101, 202, 303)] and devices == {"cpu"} and part == others and not takes["auto"]
+
+
 # ------------------------------------------------------------------------------------------------ the parts
 
 def test_ffmetadata_is_parsed_with_its_escapes():
@@ -586,7 +636,9 @@ def test_options_and_seeds():
     for bad, message in (({"instruments": ()}, "no instruments"),
                          ({"instruments": ("drums", "drums")}, "each once"),
                          ({"takes": 2}, "two cannot outvote"), ({"takes": 0}, "takes is 1"),
-                         ({"takes": True}, "takes is 1"), ({"device": "tpu"}, "device is"),
+                         ({"takes": True}, "takes is 1"), ({"takes": 3.0}, "takes is 1"),
+                         ({"instruments": ("bass",), "takes": 4}, "takes are guitar takes"),
+                         ({"device": "tpu"}, "device is"),
                          ({"threads": 1.5}, "threads must"), ({"solos": "Stems"}, "solos is"),
                          ({"solos": 5}, "solos is"), ({"solos": ()}, "one name or more"),
                          ({"solos": ("Solo 1", " ")}, "none of them blank"),
@@ -596,6 +648,10 @@ def test_options_and_seeds():
         with pytest.raises(ValueError, match=message):
             Options(**bad).check()
     assert P.take_seeds(1) == (DEFAULT_SEED,) and P.take_seeds(4) == (DEFAULT_SEED, 101, 202, 303)
+    assert Options().takes is None
+    Options(instruments=("bass",)).check()  # the default needs no guitar
+    assert [P.guitar_takes(None, d)[0] for d in ("cuda", "cpu")] == [4, 1]
+    assert [P.guitar_takes(n, d)[0] for n in (1, 3, 5) for d in ("cuda", "cpu")] == [1, 1, 3, 3, 5, 5]
 
 
 def test_a_missing_component_is_named_with_its_fix(monkeypatch):

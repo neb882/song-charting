@@ -144,9 +144,9 @@ def main(argv: list[str] | None = None) -> int:
                         "guitar loud), labels (sections named Solo), off, or the solo sections' names, comma-"
                         "separated and quoted as one argument when a name holds a space: --solos \"Solo 1,Solo 2\" "
                         "(names as the build's sections are called; solos need the guitar charted)")
-    c.add_argument("--takes", type=int, default=1, metavar="N",
-                   help="guitar takes, spliced by agreement: 1 (default), or 3 or more (each about one more "
-                        "autochart run)")
+    c.add_argument("--takes", type=int, default=None, metavar="N",
+                   help="guitar takes, spliced by agreement: 1, or 3 or more, each about one more autochart run "
+                        "(default: 4 when the guitar runs on CUDA, 1 on the CPU)")
     c.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto",
                    help="where the models run (default: auto, CUDA when available)")
     c.add_argument("--threads", type=int, metavar="N", help="CPU threads for the models (default: theirs)")
