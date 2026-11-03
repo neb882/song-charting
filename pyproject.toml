@@ -28,3 +28,4 @@ packages = ["songcharter", "songcharter.engines"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+tmp_path_retention_policy = "failed"   # a passing test's folders go at once: the pipeline tests write ~0.5 GB

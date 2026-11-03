@@ -32,7 +32,8 @@ after the music. songcharter.sections snaps them to measures, merges, splits and
     repeats is the chorus, a cluster heard once between two choruses the bridge, the rest verses. Without stems:
     intro, outro, the most repeated cluster as the chorus, verses. The naming rules are untested guesses.
   * **Choice.** `backend="auto"` takes allin1 when its Python is set, its probe passes and the run succeeds, else
-    the fallback; engine.json records the backend and why. `backend="allin1"` raises instead of falling back.
+    the fallback; engine.json records the backend and why. `backend="allin1"` raises instead of falling back, and
+    so does "auto" when allin1 failed and librosa is not installed (an errors.ToolError naming both).
   * **Cache.** engine.json holds a key of the samples the backend read and every setting that changes the result
     (the allin1 package and version, the model and its weights' hashes, the device; the librosa version and the
     fallback's parameters and constants). A call whose key matches the folder's engine.json returns the files
@@ -62,6 +63,7 @@ from typing import Callable, Mapping
 import numpy as np
 
 from .. import audio as A
+from ..errors import InputError, ToolError
 from ..sections import Segment, read_allin1
 
 SAMPLE_RATE = A.SAMPLE_RATE
@@ -120,8 +122,8 @@ def _fallback_constants() -> tuple:
             SOLO_DB, QUIET_DB, BLOCK_S)
 
 
-class Allin1Error(RuntimeError):
-    """allin1 is not available here, or its run failed."""
+class Allin1Error(ToolError):
+    """allin1 is not available here, or its run failed (a RuntimeError, as errors.ToolError is)."""
 
 
 class _RunFailed(Allin1Error):
@@ -340,6 +342,11 @@ def find_sections(mix: np.ndarray, stems: Mapping[str, np.ndarray] | None, out: 
         except Allin1Error as e:
             if settings.backend == "allin1":
                 raise
+            try:  # the fallback's own import, here so that its absence also names why allin1 failed
+                import librosa  # noqa: F401
+            except ImportError:
+                raise ToolError(f"allin1 failed ({e}) and the librosa fallback is not installed: pip install "
+                                "songcharter[sections]") from e
             why.append(str(e))
     elif settings.backend == "librosa":
         why.append("backend librosa asked for")
@@ -417,7 +424,8 @@ def _allin1_job(mix, stems, payload: np.ndarray, out: Path, s: Settings, python:
             "allin1": {**found, "model": model, "device": res.get("device", device),
                        "fallback": res.get("fallback") or fallback, "threads": res.get("threads"),
                        "repo": ALLIN1_REPO, "revision": ALLIN1_REVISION, "weights": weights,
-                       "attention": res.get("attention", found.get("attention"))},
+                       "attention": res.get("attention", found.get("attention")),
+                       "peak_rss_mb": res.get("peak_rss_mb")},   # the runner's own peak (allin1_runner.peak_rss_mb)
             "seconds": {"total": seconds,  # the runner's own total as "runner"
                         **{("runner" if k == "total" else k): v for k, v in (res.get("seconds") or {}).items()}},
             "segments": len(res["segments"])}
@@ -590,7 +598,7 @@ def _librosa(mix, stems, out: Path, s: Settings, beats, why: list[str]) -> Secti
     rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=HOP)[0]
     loud = np.flatnonzero(_db(rms ** 2) >= _db(float(np.max(rms)) ** 2) + SILENCE_DB)
     if not len(loud):
-        raise ValueError("the mix is silent")
+        raise InputError("the mix is silent")
     first = float(librosa.frames_to_time(loud[0], sr=FEATURE_RATE, hop_length=HOP))
     last = min(duration, float(librosa.frames_to_time(loud[-1] + 1, sr=FEATURE_RATE, hop_length=HOP)))
     if beats is None:

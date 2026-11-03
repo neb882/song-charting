@@ -39,6 +39,7 @@ from typing import Sequence
 
 import numpy as np
 
+from .errors import InputError
 from .tempo import TempoMap
 
 # allin1 labels as Clone Hero charts name them; "start" and "end" are silence and never become sections
@@ -62,14 +63,14 @@ def read_allin1(path) -> list[Segment]:
     a result is a ValueError."""
     data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     if not isinstance(data, dict) or not isinstance(data.get("segments"), list):
-        raise ValueError(f"{path}: no 'segments' list")
+        raise InputError(f"{path}: no 'segments' list")
     out = []
     for i, s in enumerate(data["segments"]):
         try:
             start, end, label = (s["start"], s["end"], s["label"]) if isinstance(s, dict) else s
             out.append(Segment(float(start), float(end), str(label).strip().lower()))
         except (KeyError, TypeError, ValueError) as e:
-            raise ValueError(f"{path}: segment {i} is not [start, end, label] ({type(e).__name__}: {e})") from e
+            raise InputError(f"{path}: segment {i} is not [start, end, label] ({type(e).__name__}: {e})") from e
     return sorted(out, key=lambda s: (s.start, s.end))
 
 

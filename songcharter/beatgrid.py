@@ -43,6 +43,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .errors import InputError
+
 REF_RATE = 22050           # the onset envelope's reference rate: librosa's default and the calibration's detector
 REF_N_FFT = 2048           # ~93 ms frames
 REF_HOP = 128              # ~5.8 ms hop
@@ -200,17 +202,23 @@ def _interp(x: np.ndarray, pos) -> np.ndarray:
     return np.interp(pos, np.arange(len(x)), x, left=0.0, right=0.0)
 
 
+def _same(x: np.ndarray, k: np.ndarray) -> np.ndarray:
+    """np.convolve(x, k, mode="same"), but as long as x also when the kernel is longer (numpy then returns the
+    kernel's length): an envelope shorter than a kernel, from audio under a second, is no shape error."""
+    return np.convolve(x, k)[(len(k) - 1) // 2:][:len(x)]
+
+
 def _smooth(x: np.ndarray, sigma_frames: float) -> np.ndarray:
     r = int(np.ceil(3 * sigma_frames))
     k = np.exp(-0.5 * (np.arange(-r, r + 1) / sigma_frames) ** 2)
-    return np.convolve(x, k / k.sum(), mode="same")
+    return _same(x, k / k.sum())
 
 
 # ---------------------------------------------------------------------------------------------------- start grid
 
 def _autocorrelation(env: np.ndarray, fps: float, max_lag: int) -> np.ndarray:
     """The onset envelope's autocorrelation up to max_lag frames, normalised to 1 at lag 0."""
-    x = _smooth(env, 2.0) - np.convolve(env, np.ones(int(fps)) / int(fps), mode="same")  # drop the loudness trend
+    x = _smooth(env, 2.0) - _same(env, np.ones(int(fps)) / int(fps))  # drop the loudness trend
     n = len(x)
     nfft = 1 << int(np.ceil(np.log2(2 * n)))
     ac = np.fft.irfft(np.abs(np.fft.rfft(x, nfft)) ** 2, nfft)[:max_lag]
@@ -739,7 +747,7 @@ def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None
     ev = trk_ev if use_tracker else line_ev
     conf = ev.confidence * ev.confident
     if conf.sum() < 3:
-        raise ValueError("no confident drum evidence: pass a tracker's beats as start")
+        raise InputError("no confident drum evidence: pass a tracker's beats as start")
     if use_tracker:
         k = np.arange(len(tracker), dtype=np.float64)
         base, _ = loess(tracker, np.ones(len(tracker)), half_width=8, iterations=1)

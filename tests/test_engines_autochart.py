@@ -1,5 +1,6 @@
 """The autochart engine wrapper (songcharter.engines.autochart) with a stand-in for the driver: the command and its
-environment, one shared work folder, the take cache, failures and the install check. autochart itself never runs."""
+environment, one shared work folder, the take cache and its key (the input, the seed and the install), failures and
+the install check. autochart itself never runs."""
 import json
 import subprocess
 
@@ -7,12 +8,18 @@ import pytest
 
 from songcharter.engines import autochart as AC
 from songcharter.engines.autochart import DEFAULT_SEED, Install, find_install, generate
+from songcharter.errors import ToolError
+
+ENGINE_VERSION = "2026.06.16-cross-platform-runtime"
 
 
 def install(tmp_path):
     root = tmp_path / "ac"
     (root / "src" / "engine" / "bin").mkdir(parents=True)
     (root / "src" / "engine" / "bin" / "autochart-engine.cjs").write_text("//", encoding="utf-8")
+    (root / "src" / "engine" / "manifest.json").write_text(json.dumps({"engineVersion": ENGINE_VERSION}),
+                                                           encoding="utf-8")
+    (root / "src" / "engine" / "catalog.json").write_text('{"components": []}', encoding="utf-8")
     (root / "models" / "fretformer-v2").mkdir(parents=True)
     (root / "models" / "fretformer-v2" / "manifest.json").write_text("{}", encoding="utf-8")
     (root / "node_modules" / "onnxruntime-node").mkdir(parents=True)
@@ -77,15 +84,50 @@ def test_finished_takes_are_reused_and_a_changed_input_is_not(tmp_path):
     assert not fresh[0].cached and len(drv.calls) == 4
     # a take cut off before its summary was written is not reused
     (tmp_path / "out" / "seed_2" / "autochart_run" / "summary.json").unlink()
-    assert AC._done(tmp_path / "out" / "seed_2", AC.sha256(audio), 2) is None
+    assert AC._done(tmp_path / "out" / "seed_2", AC.take_key(AC.sha256(audio), 2, AC.install_key(inst))) is None
+
+
+def test_a_take_is_keyed_by_the_install_too(tmp_path):
+    """A take made by another engine, model set or driver is not reused (a re-run after an update would otherwise
+    build from the old engine's notes, or splice takes of two engines), and neither is one without take.json."""
+    root = install(tmp_path)
+    inst = find_install(root, node="node")
+    audio, out = tmp_path / "input.wav", tmp_path / "out"
+    audio.write_bytes(b"one")
+    drv = FakeDriver()
+    generate(inst, audio, out, (1, 2), run=drv)
+    made = json.loads((out / "seed_1" / AC.TAKE).read_text(encoding="utf-8"))
+    assert made == AC.take_key(AC.sha256(audio), 1, AC.install_key(inst)) and made["engineVersion"] == ENGINE_VERSION
+    assert [t.cached for t in generate(inst, audio, out, (1, 2), run=drv)] == [True, True] and len(drv.calls) == 2
+    updates = [(root / "src" / "engine" / "manifest.json", json.dumps({"engineVersion": "2027.02.01-new-engine"})),
+               (root / "src" / "engine" / "catalog.json", '{"components": [{"id": "fretformer-2-onnx"}]}'),
+               (root / "models" / "fretformer-v2" / "manifest.json", '{"revision": "new"}'),
+               (root / "node_modules" / "onnxruntime-node" / "package.json", '{"version": "1.99.0"}'),
+               (root / "ac_headless.cjs", "// driver B")]
+    for path, text in updates:
+        path.write_text(text, encoding="utf-8")
+        calls = len(drv.calls)
+        takes = generate(inst, audio, out, (1, 2, 3), run=drv)  # none mixed in from before the update
+        assert [t.cached for t in takes] == [False] * 3 and len(drv.calls) == calls + 3, path
+    made = json.loads((out / "seed_3" / AC.TAKE).read_text(encoding="utf-8"))
+    assert made["engineVersion"] == "2027.02.01-new-engine"
+    (out / "seed_1" / AC.TAKE).unlink()  # a take from before take.json (an older songcharter): run again
+    assert [t.cached for t in generate(inst, audio, out, (1, 2), run=drv)] == [False, True]
 
 
 def test_a_failed_take_raises_with_the_drivers_last_lines(tmp_path):
     inst = find_install(install(tmp_path), node="node")
     audio = tmp_path / "input.wav"
     audio.write_bytes(b"x")
-    with pytest.raises(RuntimeError, match=r"(?s)seed 7 failed \(exit 1\):\n.*model crashed"):
+    with pytest.raises(ToolError, match=r"(?s)seed 7 failed \(exit 1\):\n.*model crashed"):
         generate(inst, audio, tmp_path / "out", (6, 7), run=FakeDriver(fail_seed=7))
+    assert not (tmp_path / "out" / "seed_7" / AC.TAKE).exists() and (tmp_path / "out" / "seed_6" / AC.TAKE).is_file()
+
+    def slow(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+
+    with pytest.raises(ToolError, match="seed 8 did not finish within 4200 s"):  # a user-facing error, not a bug
+        generate(inst, audio, tmp_path / "out", (8,), timeout_s=3600, run=slow)
     with pytest.raises(ValueError, match="distinct"):
         generate(inst, audio, tmp_path / "out", (6, 6), run=FakeDriver())
     with pytest.raises(ValueError, match="device"):

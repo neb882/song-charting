@@ -9,8 +9,12 @@ per take, behind a process boundary, so no AGPL code is imported.
     and splices the takes (takes.py). All takes share one work folder, where the engine caches its separation and
     beat map per audio file, so every take after the first pays only for the transcription.
   * **Input.** The gapless decode written as WAV, not the user's MP3, so the takes' times are seconds of our decode.
-  * **Cache.** A take whose folder holds notes.chart and a summary.json for the same input (SHA-256), seed, sampling
-    settings and engine version is reused.
+  * **Cache.** A take is reused when its folder holds notes.chart, the driver's summary.json of a completed run and
+    our take.json, written after the run, with the same key: the input (SHA-256), the seed, the sampling settings
+    and the install (`install_key`: engine/manifest.json's engineVersion, and a SHA-256 over the engine's manifest
+    and catalog, which pins every model file's SHA-256, the models' manifest, onnxruntime-node's package.json and
+    the driver). So an updated engine, model set or driver runs every take again, and a take without take.json (an
+    older songcharter's) is run again too.
   * **Devices.** "cpu", "cuda" or "webgpu" (the engine's own names). The engine falls back to the CPU by itself; the
     devices it used are in each take's summary.
 """
@@ -27,10 +31,12 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from .. import audio as A
+from ..errors import ToolError
 
 DEFAULT_SEED = 20260609          # the engine's own default seed
 TEMPERATURE, TOP_P = 0.95, 0.98   # the app's "Standard" preset (the driver's defaults)
 REPO_INSTALL = Path(__file__).resolve().parents[2] / "eval" / "tools" / "autochart"
+TAKE = "take.json"               # in each take's folder: the key it was made with, written once the run succeeded
 
 
 @dataclass(frozen=True)
@@ -85,8 +91,36 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _done(folder: Path, input_sha: str, seed: int) -> dict | None:
-    """The summary of a finished take in `folder` for this input and seed, else None."""
+def install_key(install: Install) -> dict:
+    """What a take depends on in the install: engine/manifest.json's engineVersion (a date-based name that may stay
+    the same across commits) and a SHA-256 over the files that define the engine, the models and the job: the
+    engine's manifest and catalog (the catalog pins every model file's SHA-256, which fetch_models.sh checks), the
+    models' manifest, onnxruntime-node's package.json and our driver. A missing file counts as absent."""
+    engine, root = install.app_root / "engine", install.driver.parent
+    files = {"engine/manifest.json": engine / "manifest.json", "engine/catalog.json": engine / "catalog.json",
+             "models/fretformer-v2/manifest.json": install.models / "fretformer-v2" / "manifest.json",
+             "onnxruntime-node/package.json": root / "node_modules" / "onnxruntime-node" / "package.json",
+             "driver": install.driver}
+    h = hashlib.sha256()
+    for name, path in files.items():
+        data = path.read_bytes() if path.is_file() else None
+        h.update(f"{name}:{-1 if data is None else len(data)}:".encode())
+        h.update(data or b"")
+    try:
+        version = json.loads(files["engine/manifest.json"].read_text(encoding="utf-8")).get("engineVersion")
+    except (OSError, ValueError, AttributeError):
+        version = None
+    return {"engineVersion": version, "install": h.hexdigest()}
+
+
+def take_key(input_sha: str, seed: int, install: dict) -> dict:
+    """A take's key (take.json): the input, the seed, the sampling settings and the install (install_key)."""
+    return {"inputSha256": input_sha, "seed": seed, "difficulties": ["expert"], "temperature": TEMPERATURE,
+            "topP": TOP_P, **install}
+
+
+def _summary(folder: Path, key: dict) -> dict | None:
+    """The driver's summary of a completed run in `folder` for the key's input, seed and settings, else None."""
     chart, summary = folder / "notes.chart", folder / "autochart_run" / "summary.json"
     if not (chart.is_file() and summary.is_file()):
         return None
@@ -95,10 +129,19 @@ def _done(folder: Path, input_sha: str, seed: int) -> dict | None:
     except ValueError:
         return None
     runs = s.get("runs") or []
-    ok = (s.get("inputSha256") == input_sha and s.get("seed") == seed and s.get("difficulties") == ["expert"]
-          and s.get("temperature") == TEMPERATURE and s.get("topP") == TOP_P
-          and runs and all(r.get("status") == "completed" for r in runs))
+    ok = (s.get("inputSha256") == key["inputSha256"] and s.get("seed") == key["seed"]
+          and s.get("difficulties") == key["difficulties"] and s.get("temperature") == key["temperature"]
+          and s.get("topP") == key["topP"] and runs and all(r.get("status") == "completed" for r in runs))
     return s if ok else None
+
+
+def _done(folder: Path, key: dict) -> dict | None:
+    """The summary of a finished take in `folder` made with this key (its take.json), else None."""
+    try:
+        made = json.loads((folder / TAKE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return _summary(folder, key) if made == key else None
 
 
 def generate(install: Install, audio: Path | str, out: Path | str, seeds: Sequence[int] = (DEFAULT_SEED,), *,
@@ -106,8 +149,9 @@ def generate(install: Install, audio: Path | str, out: Path | str, seeds: Sequen
              title: str | None = None, artist: str | None = None,
              run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> list[Take]:
     """One Expert take per seed of `audio` (a WAV of the gapless decode), in out/seed_<seed>/ (a song folder:
-    notes.chart, song.ini, song.ogg, autochart_run/). Takes already there for the same input and seed are reused.
-    A failed run raises RuntimeError with the driver's last lines."""
+    notes.chart, song.ini, song.ogg, autochart_run/, take.json). Takes already there with the same key (input,
+    seed, sampling settings, install) are reused. A failed run raises errors.ToolError (a RuntimeError) with the
+    driver's last lines."""
     audio, out = Path(audio).resolve(), Path(out).resolve()
     if not audio.is_file():
         raise FileNotFoundError(f"autochart input {audio} does not exist")
@@ -116,15 +160,16 @@ def generate(install: Install, audio: Path | str, out: Path | str, seeds: Sequen
     if device not in ("cpu", "cuda", "webgpu"):
         raise ValueError(f"device is cpu, cuda or webgpu, not {device!r}")
     work = Path(work).resolve() if work else out / "work"
-    input_sha = sha256(audio)
+    input_sha, installed = sha256(audio), install_key(install)
     takes = []
     for seed in seeds:
-        folder = out / f"seed_{seed}"
-        summary = _done(folder, input_sha, seed)
+        folder, key = out / f"seed_{seed}", take_key(input_sha, seed, installed)
+        summary = _done(folder, key)
         if summary is not None:
             takes.append(Take(seed, folder / "notes.chart", summary, True, 0.0))
             continue
         folder.mkdir(parents=True, exist_ok=True)
+        (folder / TAKE).unlink(missing_ok=True)  # a run cut off from here on leaves no hit
         work.mkdir(parents=True, exist_ok=True)
         env = {**os.environ, "AC_SEED": str(seed), "AC_DIFFICULTIES": "expert", "AC_DEVICE": device,
                "AC_TEMPERATURE": str(TEMPERATURE), "AC_TOP_P": str(TOP_P), "AC_TIMEOUT_S": str(int(timeout_s)),
@@ -135,13 +180,17 @@ def generate(install: Install, audio: Path | str, out: Path | str, seeds: Sequen
         if artist:
             env["AC_ARTIST"] = artist
         t0 = time.perf_counter()  # reported only
-        proc = run([install.node, str(install.driver), "--audio", str(audio), "--out", str(folder), "--work", str(work)],
-                   env=env, cwd=str(install.driver.parent), capture_output=True, text=True,
-                   timeout=timeout_s + 600)
+        try:
+            proc = run([install.node, str(install.driver), "--audio", str(audio), "--out", str(folder), "--work",
+                        str(work)], env=env, cwd=str(install.driver.parent), capture_output=True, text=True,
+                       timeout=timeout_s + 600)
+        except subprocess.TimeoutExpired as e:
+            raise ToolError(f"autochart seed {seed} did not finish within {e.timeout:.0f} s") from e
         seconds = round(time.perf_counter() - t0, 1)
-        summary = _done(folder, input_sha, seed)
+        summary = _summary(folder, key)
         if proc.returncode != 0 or summary is None:
             tail = "\n".join((proc.stderr or "").strip().splitlines()[-8:])
-            raise RuntimeError(f"autochart seed {seed} failed (exit {proc.returncode}):\n{tail}")
+            raise ToolError(f"autochart seed {seed} failed (exit {proc.returncode}):\n{tail}")
+        (folder / TAKE).write_text(json.dumps(key, indent=1), encoding="utf-8")
         takes.append(Take(seed, folder / "notes.chart", summary, False, seconds))
     return takes

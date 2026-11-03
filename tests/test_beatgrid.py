@@ -2,9 +2,11 @@
 import numpy as np
 import pytest
 
-from songcharter.beatgrid import (BeatGrid, OnsetFeatures, beat_grid, estimate_tempo, local_beats, local_periods,
-                                  loess, mel_filterbank, onset_features, onset_phase, onset_times, robust_line,
-                                  track_beats)
+import songcharter.beatgrid as B
+from songcharter.beatgrid import (BPM_RANGE, BeatGrid, OnsetFeatures, beat_grid, estimate_tempo, local_beats,
+                                  local_periods, loess, mel_filterbank, onset_features, onset_phase, onset_times,
+                                  robust_line, track_beats)
+from songcharter.errors import InputError
 from songcharter.tempo import TempoMap, plan_lead_in
 
 SR = 22050  # the onset envelope's reference rate; one test runs at 44100
@@ -329,8 +331,21 @@ def test_deterministic(steady):
 
 
 def test_silence_has_no_evidence():
-    with pytest.raises(ValueError):
+    with pytest.raises(InputError, match="no confident drum evidence"):  # the song's, not a bug: exit 2
         beat_grid(np.zeros(SR * 20, dtype=np.float32), SR)
+
+
+def test_an_envelope_shorter_than_its_kernels_is_no_shape_error():
+    """Audio under a second gives an onset envelope shorter than the 1-s trend kernel (and, under a tenth of one,
+    than the smoothing kernel); numpy's mode "same" returns the longer of the two, which broke the subtraction."""
+    rng = np.random.default_rng(0)
+    for n in (5, 30, 99):
+        env = np.abs(rng.standard_normal(n))
+        assert len(B._smooth(env, 2.0)) == n and np.isfinite(B._autocorrelation(env, 100.0, 270)).all()
+        assert BPM_RANGE[0] <= estimate_tempo(env, 100.0) < BPM_RANGE[1]
+    env = np.abs(rng.standard_normal(500))  # as long as the kernels or longer: numpy's "same" exactly
+    for k in (np.ones(100) / 100, np.ones(13) / 13):
+        assert np.array_equal(B._same(env, k), np.convolve(env, k, mode="same"))
 
 
 def test_robust_line_and_loess_ignore_outliers():

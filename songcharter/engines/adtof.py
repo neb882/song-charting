@@ -45,6 +45,7 @@ import numpy as np
 
 from .. import audio as A
 from ..chart import Chart, SongInfo, Track, write_chart
+from ..errors import ToolError
 from ..ini import write_ini
 from ..tempo import Tempo, TempoMap
 from . import drumlanes as L
@@ -129,13 +130,13 @@ def weights_path(models: Path | str | None = None, download: Callable[[str, Path
         got = _sha256(part)
         if got != WEIGHTS.sha256:
             part.unlink()
-            raise RuntimeError(f"the ADTOF weights from {WEIGHTS.url} have SHA-256 {got}, not the pinned "
+            raise ToolError(f"the ADTOF weights from {WEIGHTS.url} have SHA-256 {got}, not the pinned "
                                f"{WEIGHTS.sha256}")
         os.replace(part, path)
         return path
     got = _sha256(path)
     if got != WEIGHTS.sha256:
-        raise RuntimeError(f"{path} has SHA-256 {got}, not the pinned {WEIGHTS.sha256}; delete it and run again")
+        raise ToolError(f"{path} has SHA-256 {got}, not the pinned {WEIGHTS.sha256}; delete it and run again")
     return path
 
 

@@ -9,6 +9,7 @@ import numpy as np
 
 from . import audio as A
 from .chart import Chart, write_chart
+from .errors import InputError, ToolError
 from .ini import write_ini
 
 
@@ -40,11 +41,11 @@ def build_song_folder(out_dir, chart: Chart, song_audio: np.ndarray, pad_samples
     A.encode_ogg(padded, ogg, sample_rate, quality)
     sync = A.verify_sync(padded, ogg, sample_rate)
     if not sync.ok:
-        raise RuntimeError(f"song.ogg is out of sync with the chart: {sync.summary()}")
+        raise ToolError(f"song.ogg is out of sync with the chart: {sync.summary()}")
     if album_art is not None:
         suffix = Path(album_art).suffix.lower()
         if suffix not in (".png", ".jpg", ".jpeg"):
-            raise ValueError("album art must be .png or .jpg")
+            raise InputError("album art must be .png or .jpg")
         (folder / f"album{suffix}").write_bytes(Path(album_art).read_bytes())
     return PackageResult(folder, sync)
 

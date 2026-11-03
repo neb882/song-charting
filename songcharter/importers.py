@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
 
+from .errors import InputError
 from .timed import DIFFICULTIES, INSTRUMENTS, OPEN, TimedHit, TimedNote, TimedPart, TimedSong, TimedSpan
 
 
@@ -257,7 +258,7 @@ def _sort_track(t: _RawTrack, events: list[_Ev], first_coda: int | None) -> _Raw
 
 def _tempo_list(tempos: list[tuple[int, float]]) -> list[tuple[int, float]]:
     if any(bpm <= 0 for _, bpm in tempos):
-        raise ValueError("tempo marker of zero BPM")
+        raise InputError("tempo marker of zero BPM")
     if not tempos or tempos[0][0] != 0:
         tempos.insert(0, (0, 120.0))  # the default tempo before the first marker
     return sorted(tempos, key=lambda t: t[0])
@@ -304,12 +305,12 @@ def _chart_sections(text: str) -> dict[str, list[str]]:
                 break
             if c == "}":
                 if name is None:
-                    raise ValueError("not a .chart: a block ends before any [section] name")
+                    raise InputError("not a .chart: a block ends before any [section] name")
                 out[name] = [s.strip() for s in text[start:pos + i].split("\n") if s.strip()]
             elif c == "[":
                 j = line.find("]", i + 1)
                 if j < 0:
-                    raise ValueError("not a .chart: unterminated [section] name")
+                    raise InputError("not a .chart: unterminated [section] name")
                 name, start, i = line[i + 1:j], pos + i + 1, j
             i += 1
         pos += len(line) + 1
@@ -326,11 +327,11 @@ def _number(s: str | None) -> float:
 def _parse_chart(text: str) -> _Raw:
     sections = _chart_sections(text)
     if not sections:
-        raise ValueError("not a .chart: no sections")
+        raise InputError("not a .chart: no sections")
     meta = dict(m.groups() for m in map(_RE_META.fullmatch, sections.get("Song", [])) if m)
     res = _number(meta.get("Resolution"))
     if not res:
-        raise ValueError("not a .chart: no Resolution")
+        raise InputError("not a .chart: no Resolution")
     res = int(res) if res.is_integer() else res
     sync = sections.get("SyncTrack", [])
     tempos = _tempo_list([(int(m[1]), int(m[2]) / 1000) for m in map(_RE_TEMPO.fullmatch, sync) if m])
@@ -397,12 +398,12 @@ def _read_smf(data: bytes) -> tuple[int, list[list[tuple]]]:
     the events an importer needs: tempo, name, text, on, off (channel, note, velocity) and sysex. As in scan-chart's
     MIDI library, a note on with velocity 0 is a note off and running status carries across meta and SysEx events."""
     if len(data) < 14 or data[:4] != b"MThd":
-        raise ValueError("not a MIDI file")
+        raise InputError("not a MIDI file")
     fmt, count, division = struct.unpack(">HHH", data[8:14])
     if fmt != 1:
-        raise ValueError(f"MIDI format {fmt}: charts are format 1")
+        raise InputError(f"MIDI format {fmt}: charts are format 1")
     if division & 0x8000:
-        raise ValueError("MIDI time in SMPTE frames is not supported")
+        raise InputError("MIDI time in SMPTE frames is not supported")
     pos = 8 + int.from_bytes(data[4:8], "big")
     tracks = []
     while pos + 8 <= len(data) and len(tracks) < count:
@@ -411,7 +412,7 @@ def _read_smf(data: bytes) -> tuple[int, list[list[tuple]]]:
             tracks.append(_read_track(data[pos + 8:pos + 8 + size]))
         pos += 8 + size
     if not tracks:
-        raise ValueError("MIDI file without tracks")
+        raise InputError("MIDI file without tracks")
     return division, tracks
 
 
@@ -448,11 +449,11 @@ def _read_track(b: bytes) -> list[tuple]:
                 out.append((tick, "sysex", b[pos:pos + n]))
                 pos += n
             elif st > 0xF0:
-                raise ValueError(f"bad MIDI status byte {st:#x}")
+                raise InputError(f"bad MIDI status byte {st:#x}")
             else:
                 if st < 0x80:  # running status: this byte is the first data byte
                     if status is None:
-                        raise ValueError("MIDI running status before any status byte")
+                        raise InputError("MIDI running status before any status byte")
                     p1, st = st, status
                 else:
                     status, p1 = st, b[pos]
@@ -485,7 +486,7 @@ def _parse_mid(data: bytes, mods: ChartModifiers) -> _Raw:
     for tick, kind, *v in tracks[0]:
         if kind == "tempo":
             if not v[0]:
-                raise ValueError("MIDI tempo of zero microseconds per beat")
+                raise InputError("MIDI tempo of zero microseconds per beat")
             tempos.append((tick, 60000000 / v[0]))
     named: dict[str, list[tuple]] = {}
     for track in tracks:

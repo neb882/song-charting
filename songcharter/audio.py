@@ -21,6 +21,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .errors import InputError, ToolError
+
 SAMPLE_RATE = 44100
 
 
@@ -33,7 +35,7 @@ def ffmpeg_exe() -> str:
         import imageio_ffmpeg
         return imageio_ffmpeg.get_ffmpeg_exe()
     except ImportError as e:
-        raise RuntimeError("ffmpeg not found: install it or `pip install imageio-ffmpeg`") from e
+        raise ToolError("ffmpeg not found: install it or `pip install imageio-ffmpeg`") from e
 
 
 def ffmpeg_error(e: subprocess.CalledProcessError) -> str:
@@ -44,17 +46,17 @@ def ffmpeg_error(e: subprocess.CalledProcessError) -> str:
 
 
 def decode(path, sample_rate: int = SAMPLE_RATE, channels: int = 2) -> np.ndarray:
-    """Gapless float32 decode of the first audio stream, shape (channels, samples). A file ffmpeg cannot read is a
-    ValueError."""
+    """Gapless float32 decode of the first audio stream, shape (channels, samples). A file ffmpeg cannot read is an
+    InputError."""
     cmd = [ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", str(path), "-map", "0:a:0",
            "-ac", str(channels), "-ar", str(sample_rate), "-f", "f32le", "-c:a", "pcm_f32le", "pipe:1"]
     try:
         raw = subprocess.run(cmd, check=True, capture_output=True).stdout
     except subprocess.CalledProcessError as e:
-        raise ValueError(f"ffmpeg could not read {path}: {ffmpeg_error(e)}") from e
+        raise InputError(f"ffmpeg could not read {path}: {ffmpeg_error(e)}") from e
     y = np.frombuffer(raw, dtype="<f4")
     if y.size == 0:
-        raise ValueError(f"no audio decoded from {path}")
+        raise InputError(f"no audio decoded from {path}")
     return y.reshape(-1, channels).T.copy()
 
 
@@ -63,7 +65,7 @@ def pad_front(audio: np.ndarray, samples: int) -> np.ndarray:
 
 
 def encode_ogg(audio: np.ndarray, path, sample_rate: int = SAMPLE_RATE, quality: float = 7.0) -> None:
-    """Ogg Vorbis (libvorbis, VBR quality 0-10; 7 is about 224 kbps stereo). ffmpeg failing is a RuntimeError."""
+    """Ogg Vorbis (libvorbis, VBR quality 0-10; 7 is about 224 kbps stereo). ffmpeg failing is a ToolError."""
     ch = audio.shape[0]
     cmd = [ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "f32le", "-ar", str(sample_rate),
            "-ac", str(ch), "-i", "pipe:0", "-c:a", "libvorbis", "-q:a", str(quality), str(path)]
@@ -71,7 +73,7 @@ def encode_ogg(audio: np.ndarray, path, sample_rate: int = SAMPLE_RATE, quality:
     try:
         subprocess.run(cmd, input=data, check=True, capture_output=True)
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"ffmpeg could not write {path}: {ffmpeg_error(e)}") from e
+        raise ToolError(f"ffmpeg could not write {path}: {ffmpeg_error(e)}") from e
 
 
 @dataclass

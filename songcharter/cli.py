@@ -14,8 +14,10 @@ Exit status (both commands):
   1  the build failed the gate: it is in <output>.failed for inspection (see its report.json), and the output folder
      keeps what it held;
   2  the build could not run: the config, an input or the environment is bad (a missing component is named with
-     its fix), or song.ogg came out of sync (nothing is written);
-  3  an internal error, a bug (the traceback is printed);
+     its fix), a component failed, or song.ogg came out of sync (nothing is written): an errors.SongcharterError
+     or an OSError, printed as one line;
+  3  an internal error, a bug: any other exception, numpy's and torch's included (the traceback is printed, and
+     for `chart` also kept in the work folder's pipeline.json);
   130  interrupted (Ctrl+C): the output folder keeps what it held.
 """
 from __future__ import annotations
@@ -26,6 +28,7 @@ import traceback
 from pathlib import Path
 
 from . import __version__
+from .errors import SongcharterError
 
 
 def _summary(result) -> str:
@@ -138,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
             from .assemble import assemble, load_config
             cfg = load_config(args.config, args.out.resolve() if args.out else None)
             result, extra = assemble(cfg), None
-    except (ValueError, OSError, RuntimeError) as e:  # bad input, a missing tool, song.ogg out of sync
+    except (SongcharterError, OSError) as e:  # a bad input, a missing or failing tool, song.ogg out of sync
         print(f"songcharter: error: {e}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:

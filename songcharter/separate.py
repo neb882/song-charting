@@ -11,8 +11,9 @@
     late; the decoded array has the delay removed, so the stems line up with it.
   * **Deterministic.** Demucs's random time shift draws from Python's `random`; it and torch are seeded right before
     the call, so two runs on one device give the same stems.
-  * **Device.** CUDA when torch has it, else the CPU. CUDA running out of memory falls back to the CPU, and `info`
-    says so (the UI tells the user).
+  * **Device.** CUDA when a CUDA kernel runs here (`cuda_works`), else the CPU: torch.cuda.is_available() alone is
+    also true on a GPU the torch build has no kernels for. CUDA running out of memory falls back to the CPU too, and
+    `info` says why the CPU was used (the UI tells the user).
   * **Cache.** Stems are cached as float32 WAV (the decoded mix peaks above 1.0, which an integer format would clip),
     keyed by the samples and every setting that changes the result. A cached run returns the same arrays.
 
@@ -31,6 +32,7 @@ from typing import Any, Callable
 import numpy as np
 
 from . import audio as A
+from .errors import ToolError
 
 SAMPLE_RATE = A.SAMPLE_RATE
 DEFAULT_MODEL = "htdemucs_6s"
@@ -96,7 +98,7 @@ def model_paths(name: str, download: Callable[..., str] | None = None) -> dict[s
         path = Path(download(spec.repo, file, revision=spec.revision))
         got = _sha256(path)
         if got != sha:
-            raise RuntimeError(f"{name}: {file} has SHA-256 {got}, not the pinned {sha}; delete it and run again")
+            raise ToolError(f"{name}: {file} has SHA-256 {got}, not the pinned {sha}; delete it and run again")
         out[file] = path
     return out
 
@@ -123,6 +125,20 @@ def cache_key(mix: np.ndarray, model: str, revision: str | None, seed: int, shif
     return h.hexdigest()[:24]
 
 
+def cuda_works() -> tuple[bool, str | None]:
+    """Whether a CUDA kernel runs here, and the error's first line when torch has CUDA but the kernel failed (as on a
+    GPU this torch build has no kernels for: "no kernel image is available"). The sections runner probes the same
+    way in allin1's Python."""
+    import torch
+    if not torch.cuda.is_available():
+        return False, None
+    try:
+        torch.ones(1, device="cuda").add_(1).item()
+        return True, None
+    except Exception as e:  # noqa: BLE001  any failure means "not on this GPU"; the caller says why
+        return False, f"{type(e).__name__}: {(str(e).strip().splitlines() or [''])[0][:200]}"
+
+
 def _run(model, mix: np.ndarray, device: str, seed: int, shifts: int, overlap: float, progress: bool) -> dict:
     import torch
     from demucs.apply import apply_model
@@ -144,7 +160,7 @@ def separate(mix: np.ndarray, sample_rate: int = SAMPLE_RATE, *, model: Any = DE
     """Stems of the decoded mix (float32, (2, n) at 44.1 kHz), each as long as the mix, and how they were made.
 
     model:  a name in MODELS (loaded from its pinned files) or a Demucs model object (tests).
-    device: "auto" (CUDA if available), "cuda" or "cpu". CUDA out of memory retries on the CPU.
+    device: "auto" (CUDA if a kernel runs: cuda_works), "cuda" or "cpu". CUDA out of memory retries on the CPU.
     cache_dir: if given, stems are read from and written to cache_dir/<key>/ (float32 WAV and info.json).
     """
     if sample_rate != SAMPLE_RATE:
@@ -164,11 +180,14 @@ def separate(mix: np.ndarray, sample_rate: int = SAMPLE_RATE, *, model: Any = DE
             return stems, SeparationInfo(**{**meta["info"], "seconds": 0.0, "cached": True})
 
     import torch
+    fallback = None
     if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        works, why = cuda_works()
+        device = "cuda" if works else "cpu"
+        if why:
+            fallback = f"CUDA does not run here ({why}); separated on the CPU"
     net = load_model(model) if isinstance(model, str) else model
     t0 = time.perf_counter()  # wall time is reported only; nothing depends on it
-    fallback = None
     try:
         stems = _run(net, mix, device, seed, shifts, overlap, progress)
     except torch.cuda.OutOfMemoryError as e:

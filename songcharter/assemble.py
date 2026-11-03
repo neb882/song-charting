@@ -94,6 +94,7 @@ import numpy as np
 from . import audio as A
 from .beatgrid import FREE_SHARE, BeatGrid, beat_grid
 from .chart import DRUM_ACTIVATION, OPEN, STAR_POWER, Chart, DrumHit, FretNote, SongInfo, Track
+from .errors import InputError, ToolError
 from .importers import read_chart, read_song
 from .package import PackageResult, build_song_folder
 from .quantize import (RULES, TRACK_DIFFICULTY, TRACK_INSTRUMENT, QuantizeReport, estimate_offset, quantize_part)
@@ -208,11 +209,11 @@ _METADATA_KEYS = {"name", "artist", "album", "genre", "year", "charter", "album_
 
 def _keys(d: dict, allowed: set[str], where: str) -> dict:
     if not isinstance(d, dict):
-        raise ValueError(f"{where} must be an object")
+        raise InputError(f"{where} must be an object")
     d = {k: v for k, v in d.items() if not str(k).startswith("_")}
     unknown = sorted(set(d) - allowed)
     if unknown:
-        raise ValueError(f"unknown key(s) in {where}: {', '.join(unknown)}")
+        raise InputError(f"unknown key(s) in {where}: {', '.join(unknown)}")
     return d
 
 
@@ -220,7 +221,7 @@ def _number(v, what: str, *, low: float | None = None, above: float | None = Non
             integer: bool = False) -> Any:
     """A JSON number (a bool is not one) in range, as a float (or an int with `integer`)."""
     if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or (integer and v != int(v)):
-        raise ValueError(f"{what} must be {'a whole number' if integer else 'a number'}, not {v!r}")
+        raise InputError(f"{what} must be {'a whole number' if integer else 'a number'}, not {v!r}")
     bounds = []
     if low is not None and v < low:
         bounds.append(f"at least {low}")
@@ -229,7 +230,7 @@ def _number(v, what: str, *, low: float | None = None, above: float | None = Non
     if high is not None and v > high:
         bounds.append(f"at most {high}")
     if bounds:
-        raise ValueError(f"{what} must be {' and '.join(bounds)}, not {v!r}")
+        raise InputError(f"{what} must be {' and '.join(bounds)}, not {v!r}")
     return int(v) if integer else float(v)
 
 
@@ -238,13 +239,13 @@ def _string(v, what: str, optional: bool = False) -> str | None:
     if v is None and optional:
         return None
     if not isinstance(v, str) or not v.strip():
-        raise ValueError(f"{what} must be {'a string or null' if optional else 'a non-empty string'}, not {v!r}")
+        raise InputError(f"{what} must be {'a string or null' if optional else 'a non-empty string'}, not {v!r}")
     return v
 
 
 def parse_config(data: dict, base: Path | str = ".", output: Path | str | None = None) -> AssembleConfig:
     """An AssembleConfig from the JSON object; relative paths are taken from `base`. `output` overrides the
-    config's output folder (the CLI's --out). Every value is type- and range-checked here (a ValueError naming the
+    config's output folder (the CLI's --out). Every value is type- and range-checked here (an InputError naming the
     key); whether the files exist is `check_inputs`'s job."""
     base = Path(base)
     d = _keys(data, _CONFIG_KEYS, "the config")
@@ -258,27 +259,27 @@ def parse_config(data: dict, base: Path | str = ".", output: Path | str | None =
 
     for key in ("audio", "parts", "metadata"):
         if key not in d:
-            raise ValueError(f"the config needs '{key}'")
+            raise InputError(f"the config needs '{key}'")
     if output is None and "output" not in d:
-        raise ValueError("the config needs 'output' (or pass --out)")
+        raise InputError("the config needs 'output' (or pass --out)")
     if not isinstance(d["parts"], list):
-        raise ValueError("parts must be a list of objects")
+        raise InputError("parts must be a list of objects")
     parts = []
     for i, p in enumerate(d["parts"]):
         where = f"parts[{i}]"
         p = _keys(p, _PART_KEYS, where)
         if "instrument" not in p or "source" not in p:
-            raise ValueError(f"{where} needs 'instrument' and 'source'")
+            raise InputError(f"{where} needs 'instrument' and 'source'")
         offset = p.get("offset", "auto")
         if isinstance(offset, str) and offset.strip().lower() == "auto":
             offset = "auto"
         elif isinstance(offset, bool) or not isinstance(offset, (int, float)) or not math.isfinite(offset):
-            raise ValueError(f"{where}.offset must be 'auto' or a number of seconds, not {offset!r}")
+            raise InputError(f"{where}.offset must be 'auto' or a number of seconds, not {offset!r}")
         takes = p.get("takes", [])
         if not isinstance(takes, list):
-            raise ValueError(f"{where}.takes must be a list of paths, not {takes!r}")
+            raise InputError(f"{where}.takes must be a list of paths, not {takes!r}")
         if not isinstance(p.get("trim_silence", True), bool):
-            raise ValueError(f"{where}.trim_silence must be true or false, not {p['trim_silence']!r}")
+            raise InputError(f"{where}.trim_silence must be true or false, not {p['trim_silence']!r}")
         source_instrument = _string(p.get("source_instrument"), f"{where}.source_instrument", True)
         part = PartConfig(instrument=_string(p["instrument"], f"{where}.instrument").lower(),
                           source=path(p["source"], f"{where}.source"),
@@ -292,34 +293,34 @@ def parse_config(data: dict, base: Path | str = ".", output: Path | str | None =
                           trim_silence=p.get("trim_silence", True),
                           takes=tuple(path(t, f"{where}.takes[{j}]") for j, t in enumerate(takes)))
         if part.instrument not in INSTRUMENTS or part.from_instrument not in INSTRUMENTS:
-            raise ValueError(f"parts[{i}]: instruments are {', '.join(INSTRUMENTS)}")
+            raise InputError(f"parts[{i}]: instruments are {', '.join(INSTRUMENTS)}")
         if (part.instrument == "drums") != (part.from_instrument == "drums"):
-            raise ValueError(f"parts[{i}]: drums come only from drums, and 5-fret parts only from 5-fret parts")
+            raise InputError(f"parts[{i}]: drums come only from drums, and 5-fret parts only from 5-fret parts")
         if part.take_difficulties not in ("expert", "all"):
-            raise ValueError(f"parts[{i}]: take_difficulties is 'expert' or 'all'")
+            raise InputError(f"parts[{i}]: take_difficulties is 'expert' or 'all'")
         if part.hopo not in HOPO_RULES:
-            raise ValueError(f"parts[{i}]: hopo is {', '.join(repr(k) for k in HOPO_RULES)}")
+            raise InputError(f"parts[{i}]: hopo is {', '.join(repr(k) for k in HOPO_RULES)}")
         if part.takes and part.take_difficulties != "expert":
-            raise ValueError(f"parts[{i}]: takes splice Expert only, so they need take_difficulties 'expert'")
+            raise InputError(f"parts[{i}]: takes splice Expert only, so they need take_difficulties 'expert'")
         if len(part.takes) == 1:
-            raise ValueError(f"parts[{i}]: takes need at least two more runs (three in all) to agree on anything")
+            raise InputError(f"parts[{i}]: takes need at least two more runs (three in all) to agree on anything")
         runs = [part.source, *part.takes]  # a run listed twice always agrees with itself and outvotes the rest
         again = next((r for j, r in enumerate(runs) if r.resolve() in [q.resolve() for q in runs[:j]]), None)
         if again is not None:
-            raise ValueError(f"parts[{i}]: {again} is listed twice: the source and its takes must be different runs")
+            raise InputError(f"parts[{i}]: {again} is listed twice: the source and its takes must be different runs")
         parts.append(part)
     if not parts:
-        raise ValueError("the config has no parts")
+        raise InputError("the config has no parts")
     for attr in ("instrument", "key"):
         seen = [getattr(p, attr) for p in parts]
         dup = sorted({x for x in seen if seen.count(x) > 1})
         if dup:
-            raise ValueError(f"more than one part with {attr} {', '.join(dup)}")
+            raise InputError(f"more than one part with {attr} {', '.join(dup)}")
     meta = _keys(d["metadata"], _METADATA_KEYS, "metadata")
     meta.setdefault("charter", "songcharter")
     for key in INI_REQUIRED:  # scan-chart's required song.ini values (missingValue)
         if meta.get(key) is None or meta.get(key) == "":
-            raise ValueError(f"metadata needs '{key}' (scan-chart requires it in song.ini)")
+            raise InputError(f"metadata needs '{key}' (scan-chart requires it in song.ini)")
         if key == "year" and isinstance(meta[key], int) and not isinstance(meta[key], bool):
             meta[key] = str(meta[key])
         _string(meta[key], f"metadata.{key}")
@@ -332,7 +333,7 @@ def parse_config(data: dict, base: Path | str = ".", output: Path | str | None =
     bpm, first_beat = hints.get("bpm"), hints.get("first_beat")
     stems = d.get("stems") or {}
     if not isinstance(stems, dict):
-        raise ValueError("stems must be an object of stem name: path")
+        raise InputError("stems must be an object of stem name: path")
 
     def opt(key, default=None, **bounds):
         v = d.get(key, default)
@@ -352,25 +353,25 @@ def parse_config(data: dict, base: Path | str = ".", output: Path | str | None =
         sections=_string(d.get("sections"), "sections", True), solos=_string(d.get("solos", "off"), "solos").lower(),
         album_art=path(d.get("album_art"), "album_art", True), quality=opt("quality", 7.0, low=0, high=10))
     if cfg.album_art is not None and cfg.album_art.suffix.lower() not in (".png", ".jpg", ".jpeg"):
-        raise ValueError(f"album_art {cfg.album_art} is not a .png or .jpg")
+        raise InputError(f"album_art {cfg.album_art} is not a .png or .jpg")
     if cfg.grid_mode not in (None, "free", "click"):
-        raise ValueError("grid_mode is 'free', 'click' or null")
+        raise InputError("grid_mode is 'free', 'click' or null")
     if cfg.grid_source is not None and cfg.grid_source != "mix" and cfg.grid_source not in cfg.stems:
-        raise ValueError(f"grid_source {cfg.grid_source!r} is not 'mix' or one of the stems")
+        raise InputError(f"grid_source {cfg.grid_source!r} is not 'mix' or one of the stems")
     if cfg.grid_secondary and cfg.grid_secondary != "mix" and cfg.grid_secondary not in cfg.stems:
-        raise ValueError(f"grid_secondary {cfg.grid_secondary!r} is not 'mix', 'none' or one of the stems")
+        raise InputError(f"grid_secondary {cfg.grid_secondary!r} is not 'mix', 'none' or one of the stems")
     if cfg.solos not in ("off", "stems", "labels"):
-        raise ValueError("solos is 'off', 'stems' or 'labels'")
+        raise InputError("solos is 'off', 'stems' or 'labels'")
     if cfg.sections is not None and str(cfg.sections).startswith("from:"):
         if cfg.sections[5:] not in {p.key for p in parts}:
-            raise ValueError(f"sections {cfg.sections!r}: no part is named {cfg.sections[5:]!r}")
+            raise InputError(f"sections {cfg.sections!r}: no part is named {cfg.sections[5:]!r}")
     elif cfg.sections is not None:
         cfg.sections = str(path(cfg.sections, "sections"))
     out = cfg.output.resolve()
     for p in parts:
         for what, src in [("source", p.source)] + [("take", t) for t in p.takes]:
             if out == (src.parent if src.suffix.lower() in (".chart", ".mid") else src).resolve():
-                raise ValueError(f"the output folder {cfg.output} holds part {p.key}'s {what}: it would be "
+                raise InputError(f"the output folder {cfg.output} holds part {p.key}'s {what}: it would be "
                                  "overwritten")
     return cfg
 
@@ -381,7 +382,7 @@ def load_config(path, output: Path | str | None = None) -> AssembleConfig:
     try:
         data = json.loads(p.read_text(encoding="utf-8-sig"))
     except ValueError as e:  # not JSON, or not UTF-8
-        raise ValueError(f"{p} is not a JSON config: {e}") from e
+        raise InputError(f"{p} is not a JSON config: {e}") from e
     return parse_config(data, p.resolve().parent, output)
 
 
@@ -390,7 +391,7 @@ def _read_sections(path) -> list:
     try:
         return read_allin1(path)
     except (KeyError, TypeError, IndexError, ValueError) as e:
-        raise ValueError(f"sections {path}: not an allin1 result ({type(e).__name__}: {e})") from e
+        raise InputError(f"sections {path}: not an allin1 result ({type(e).__name__}: {e})") from e
 
 
 def failed_folder(output: Path) -> Path:
@@ -422,7 +423,7 @@ def check_inputs(cfg: AssembleConfig) -> None:
         raise FileNotFoundError(f"not found: {'; '.join(missing)}")
     for what, p in named:
         if not p.is_file() and not what.startswith("part "):  # a part's source may be a song folder
-            raise ValueError(f"{what} {p} is not a file")
+            raise InputError(f"{what} {p} is not a file")
     if cfg.sections is not None and not cfg.sections.startswith("from:"):
         _read_sections(cfg.sections)
     for folder in (cfg.output, failed_folder(cfg.output)):
@@ -433,10 +434,10 @@ def check_output(folder: Path) -> None:
     """Raise when `folder` (an output, or its .failed) is a file or holds anything a build does not write."""
     folder = Path(folder)
     if folder.exists() and not folder.is_dir():
-        raise ValueError(f"the output {folder} is a file, not a folder")
+        raise InputError(f"the output {folder} is a file, not a folder")
     other = _foreign(folder)
     if other:
-        raise ValueError(f"{folder} holds what a build does not write ({', '.join(other[:5])}"
+        raise InputError(f"{folder} holds what a build does not write ({', '.join(other[:5])}"
                          f"{', ...' if len(other) > 5 else ''}): give a new or empty folder as the output")
 
 
@@ -830,7 +831,7 @@ def run_scan_chart(folder, command: list[str]) -> dict:
     r = subprocess.run([*command, str(folder), "--notes"], capture_output=True, text=True, encoding="utf-8",
                        timeout=SCAN_CHART_TIMEOUT_S)
     if r.returncode:
-        raise RuntimeError(f"scan-chart exited with {r.returncode}: {r.stderr.strip()[-300:]}")
+        raise ToolError(f"scan-chart exited with {r.returncode}: {r.stderr.strip()[-300:]}")
     return json.loads(r.stdout)
 
 
@@ -1027,7 +1028,7 @@ def _import(part: PartConfig, source: Path | None = None) -> TimedSong:
     song = read_song(source, part.time_shift, source=f"{part.key}:{source}")
     if (part.from_instrument, "expert") not in song.parts:
         found = sorted({i for i, _ in song.parts})
-        raise ValueError(f"part {part.key}: {source} has no Expert {part.from_instrument} "
+        raise InputError(f"part {part.key}: {source} has no Expert {part.from_instrument} "
                          f"(it has {', '.join(found) or 'no parts'})")
     return song
 
@@ -1041,7 +1042,7 @@ def _import_takes(part: PartConfig, song: TimedSong) -> list[TimedSong]:
     for j, (path, run) in enumerate(runs):
         same = next((p for p, r in runs[:j] if r.parts[key].notes == run.parts[key].notes), None)
         if same is not None:
-            raise ValueError(f"part {part.key}: {same} and {path} have the same Expert notes: takes must be other "
+            raise InputError(f"part {part.key}: {same} and {path} have the same Expert notes: takes must be other "
                              "runs (another seed), not the same one again")
     return takes
 
@@ -1155,7 +1156,7 @@ def assemble(config: AssembleConfig | dict | str | Path) -> AssembleResult:
     warnings: list[str] = []
     report: dict[str, Any] = {"config": _jsonable({**asdict(cfg), "parts": [asdict(p) for p in cfg.parts]})}
 
-    # 1. audio and stems (a file ffmpeg cannot read is a ValueError)
+    # 1. audio and stems (a file ffmpeg cannot read is an InputError)
     mix = A.decode(cfg.audio, sr)
     duration = mix.shape[1] / sr
     report["audio"] = {"path": str(cfg.audio), "sample_rate": sr, "samples": int(mix.shape[1]),
@@ -1165,7 +1166,7 @@ def assemble(config: AssembleConfig | dict | str | Path) -> AssembleResult:
     for name, path in sorted(cfg.stems.items()):
         y, rate = A.read_wav(path)
         if rate != sr:
-            raise ValueError(f"stem {name}: {rate} Hz, not {sr} Hz")
+            raise InputError(f"stem {name}: {rate} Hz, not {sr} Hz")
         stems[name] = y
         check = stem_alignment(mix, y, sr)
         report["stems"][name] = {"path": str(path), **check}
@@ -1318,7 +1319,7 @@ def assemble(config: AssembleConfig | dict | str | Path) -> AssembleResult:
     staging = Path(tempfile.mkdtemp(prefix=f".{cfg.output.name}.", suffix=".partial", dir=cfg.output.parent))
     try:
         pkg = build_song_folder(staging, chart, mix, lead.pad_samples, sr, difficulty=ratings,
-                                album_art=cfg.album_art, quality=cfg.quality)  # ffmpeg failing: a RuntimeError
+                                album_art=cfg.album_art, quality=cfg.quality)  # ffmpeg failing: a ToolError
         report["sync"] = {"ok": pkg.sync.ok, "summary": pkg.sync.summary(),
                           "max_abs_lag_samples": pkg.sync.max_abs_lag, "min_correlation": pkg.sync.min_correlation,
                           "length_difference": pkg.sync.length_difference}

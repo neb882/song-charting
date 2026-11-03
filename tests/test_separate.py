@@ -79,6 +79,28 @@ def test_cuda_out_of_memory_falls_back_to_the_cpu(tiny, monkeypatch):
     assert list(stems) == list(tiny.sources)
 
 
+def test_auto_separates_on_the_cpu_when_cuda_does_not_run(tiny, monkeypatch):
+    """torch.cuda.is_available() is also true on a GPU the torch build has no kernels for: "auto" probes with a
+    kernel (cuda_works), takes the CPU when it fails, and says why."""
+    real = torch.ones
+
+    def ones(*a, device=None, **k):
+        if str(device).startswith("cuda"):
+            raise RuntimeError("CUDA error: no kernel image is available for execution on the device")
+        return real(*a, **k) if device is None else real(*a, device=device, **k)
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch, "ones", ones)
+    assert S.cuda_works() == (False, "RuntimeError: CUDA error: no kernel image is available for execution on the "
+                                     "device")
+    stems, info = separate(mix(), model=tiny, device="auto")
+    assert info.device == "cpu" and list(stems) == list(tiny.sources)
+    assert info.fallback == ("CUDA does not run here (RuntimeError: CUDA error: no kernel image is available for "
+                             "execution on the device); separated on the CPU")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)  # no CUDA at all: the CPU, nothing to report
+    assert S.cuda_works() == (False, None) and separate(mix(), model=tiny, device="auto")[1].fallback is None
+
+
 def test_pinned_files_are_hash_checked(tmp_path, monkeypatch):
     good = tmp_path / "model.yaml"
     good.write_text("models: ['abc']\n", encoding="utf-8")

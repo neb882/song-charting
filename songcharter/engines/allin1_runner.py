@@ -24,9 +24,9 @@ extra, so install torchaudio with it) first, then the original allin1 (`allin1` 
 
 The stems come on stdin, not as files: bass, drums, other and vocals, each the mono int16 array madmom reads from
 a stem WAV that Demucs wrote for allin1 (the caller makes them), little-endian, one after the other. Nothing is
-written but the result. `analyze()` is not used: it would separate the song again with its own Demucs and download
-unpinned weights. Only the standard library, numpy, torch, omegaconf and the package are imported here, never
-songcharter.
+written but the result, which also reports the runner's own peak memory (`peak_rss_mb`). `analyze()` is not
+used: it would separate the song again with its own Demucs and download unpinned weights. Only the standard
+library, numpy, torch, omegaconf and the package are imported here, never songcharter.
 """
 from __future__ import annotations
 
@@ -78,6 +78,37 @@ def _write(path: Path, data: dict) -> None:
     tmp = path.with_name(path.name + ".part")
     tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
     os.replace(tmp, path)
+
+
+def peak_rss_mb() -> float | None:
+    """This process's own peak resident memory in MB: VmHWM on Linux, PeakWorkingSetSize on Windows, else None. Not
+    ru_maxrss, which in a spawned process starts from its parent's peak at the time of the spawn."""
+    try:
+        if sys.platform.startswith("linux"):
+            with open("/proc/self/status", encoding="ascii", errors="replace") as f:
+                for line in f:
+                    if line.startswith("VmHWM:"):
+                        return round(int(line.split()[1]) / 1024, 1)
+        elif sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+
+            class Counters(ctypes.Structure):  # PROCESS_MEMORY_COUNTERS
+                _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD)] + [
+                    (name, ctypes.c_size_t) for name in (
+                        "PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage", "QuotaPagedPoolUsage",
+                        "QuotaPeakNonPagedPoolUsage", "QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage")]
+
+            kernel32 = ctypes.WinDLL("kernel32")
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            kernel32.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+            c = Counters()
+            c.cb = ctypes.sizeof(c)
+            if kernel32.K32GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(c), c.cb):
+                return round(c.PeakWorkingSetSize / 2 ** 20, 1)
+    except (OSError, ValueError, AttributeError):  # a peak is reported only; none is no error
+        pass
+    return None
 
 
 def cuda_check() -> tuple[bool, str | None]:
@@ -187,7 +218,7 @@ def run(job_path: Path, stream=None) -> None:
     _write(Path(job["out"]), {
         **result, "package": dist, "version": _version(dist), "torch": torch.__version__,
         "attention": attention(module), "device": device, "fallback": fallback, "threads": torch.get_num_threads(),
-        "frames": int(spec.shape[1]),
+        "frames": int(spec.shape[1]), "peak_rss_mb": peak_rss_mb(),
         "seconds": {"spectrogram": t_spec, "load": t_load, "inference": t_infer,
                     "total": round(time.perf_counter() - t0, 2)}})
 

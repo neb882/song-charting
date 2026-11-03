@@ -10,6 +10,7 @@ import pytest
 
 from songcharter import audio as A
 from songcharter.chart import STAR_POWER, Chart, DrumHit, FretNote, Phrase, SongInfo, Track
+from songcharter.errors import ToolError
 from songcharter.package import build_song_folder, zip_folder
 from songcharter.tempo import TempoMap, plan_lead_in
 
@@ -103,6 +104,20 @@ def test_sync_check_catches_a_shift(tmp_path):
     assert all(abs(l - 100) < 0.5 for _, l, _ in lags)
     A.encode_ogg(y, tmp_path / "x.ogg")
     assert A.verify_sync(y, tmp_path / "x.ogg").ok
+
+
+def test_a_song_ogg_out_of_sync_is_refused(song, tmp_path, monkeypatch):
+    """A song.ogg that does not line up (simulated: the decode-back three samples late) raises a ToolError, the
+    command line's exit 2, not a bare RuntimeError (a bug, exit 3)."""
+    _, chart, li, beats = song
+    real = A.verify_sync
+
+    def late(ref, path, sr):
+        return real(A.pad_front(ref, 3)[:, :ref.shape[1]], path, sr)
+
+    monkeypatch.setattr(A, "verify_sync", late)
+    with pytest.raises(ToolError, match="song.ogg is out of sync with the chart: sync FAILED"):
+        build_song_folder(tmp_path / "x", chart, clicks(beats, beats[-1] + 1.0), li.pad_samples)
 
 
 def test_zip(song, tmp_path):

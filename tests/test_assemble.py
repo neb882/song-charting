@@ -18,6 +18,7 @@ from songcharter.assemble import (HOPO_RULES, GateIssue, active_span, assemble, 
 from songcharter.chart import (DRUM_ACTIVATION, STAR_POWER, Chart, DrumHit, FretNote, Phrase, SongInfo, Track,
                                write_chart)
 from songcharter.cli import main
+from songcharter.errors import ToolError
 from songcharter.importers import read_chart, read_song
 from songcharter.quantize import play_states, quantize_part
 from songcharter.tempo import Tempo, TempoMap
@@ -481,9 +482,9 @@ def test_a_build_that_raises_writes_nothing(built, tmp_path, monkeypatch, capsys
     shutil.copytree(result.folder, out)
     before = _contents(out)
 
-    def out_of_sync(folder, *args, **kwargs):
+    def out_of_sync(folder, *args, **kwargs):  # what build_song_folder raises
         (folder / "notes.chart").write_text("half written", encoding="utf-8")
-        raise RuntimeError("song.ogg is out of sync with the chart: simulated")
+        raise ToolError("song.ogg is out of sync with the chart: simulated")
 
     monkeypatch.setattr(assemble_module, "build_song_folder", out_of_sync)
     assert main(["assemble", str(root / "song.json"), "--out", str(out)]) == 2

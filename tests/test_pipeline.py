@@ -1,9 +1,12 @@
 """The pipeline (songcharter.pipeline) and `songcharter chart`, with stand-ins for the heavy stages: a synthetic
 song (click drums, a bass line, a guitar line, a sung part) in a tagged FLAC, a separation that returns the stems it
-was mixed from, and engines that write what each engine writes (a chart on a constant 120 BPM map, a song.ini for
-drums, segments.json) at the song's own note times. The decode, the tags, the work folder, the assemble config,
-assemble and the gate run for real. No model runs here, and none is downloaded."""
+was mixed from (cached by a hash of the mix), and engines that write what each engine writes (a chart on a constant
+120 BPM map, a song.ini for drums, segments.json) at the song's own note times and record the arrays they get. The
+decode, the tags, the work folder, the assemble config, assemble and the gate run for real. No model runs here, and
+none is downloaded."""
+import hashlib
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +21,7 @@ from songcharter.assemble import find_scan_chart
 from songcharter.chart import Chart, DrumHit, FretNote, SongInfo, Track, write_chart
 from songcharter.cli import main
 from songcharter.engines.autochart import DEFAULT_SEED
+from songcharter.errors import ToolError
 from songcharter.importers import read_song
 from songcharter.pipeline import Engines, Options, Run, chart, parse_ffmetadata, read_tags, song_metadata
 from songcharter.tempo import Tempo, TempoMap
@@ -81,11 +85,11 @@ def stems(n: int) -> dict[str, np.ndarray]:
     return {k: np.stack([v, v]).astype(np.float32) for k, v in out.items()}
 
 
-def write_song(path: Path, tags=TAGS) -> dict[str, np.ndarray]:
+def write_song(path: Path, tags=TAGS, gain: float = 1.0) -> dict[str, np.ndarray]:
     """The song as a tagged FLAC (lossless, so the decode is the mix to 24 bits), and its stems."""
     n = int(DURATION * SR)
     parts = stems(n)
-    mix = np.sum(list(parts.values()), axis=0)
+    mix = gain * np.sum(list(parts.values()), axis=0)
     wav = path.with_suffix(".src.wav")
     A.write_wav(mix, wav)
     meta = [x for k, v in tags.items() for x in ("-metadata", f"{k}={v}")]
@@ -107,9 +111,17 @@ def tick(t: float) -> int:
     return int(round(t * 960))   # the engines' constant map: 120 BPM at resolution 480
 
 
-def standins(empty: tuple[str, ...] = (), bug: str | None = None):
-    """Engines that write what the real ones write, and record each call in `calls`. `empty`: engines that find
-    no notes; `bug`: a stage that raises KeyError (a bug)."""
+def standin_key(mix: np.ndarray) -> str:
+    """The stand-in separation's cache key: a hash of the mix, as separate.cache_key's."""
+    return "standin-" + hashlib.sha256(np.ascontiguousarray(mix, dtype="<f4").tobytes()).hexdigest()[:12]
+
+
+def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: Exception | None = None,
+             cuda_error: str | None = None, allin1_device: str | None = None, repeat: bool = False):
+    """Engines that write what the real ones write, and record each call (with the arrays it got) in `calls`.
+    `empty`: engines that find no notes; `bug`: a stage that raises `error` (by default a KeyError: a bug);
+    `cuda_error`: device "auto" finds CUDA that does not run; `allin1_device`: the sections come from allin1 on
+    this device; `repeat`: the guitar take of seed 101 repeats the first take's notes."""
 
     class StandIns(Engines):
         calls: list[tuple] = []
@@ -118,18 +130,19 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None):
             return []
 
         def device(self, asked):
-            return "cpu" if asked == "auto" else asked
+            return ("cpu", cuda_error) if asked == "auto" else (asked, None)
 
         def threads(self, n):
             self.calls.append(("threads", n))
 
         def _bug(self, stage):
             if bug == stage:
-                raise KeyError(f"a bug in {stage}")
+                raise error or KeyError(f"a bug in {stage}")
 
         def separate(self, mix, cache_dir, device):
             self._bug("separate")
-            folder = cache_dir / "standin"
+            key = standin_key(mix)
+            folder = cache_dir / key
             cached = (folder / "info.json").is_file()
             if cached:
                 out = {s: A.read_wav(folder / f"{s}.wav")[0] for s in json.loads((folder / "info.json").read_text())}
@@ -140,11 +153,11 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None):
                     A.write_wav(y, folder / f"{s}.wav")
                 (folder / "info.json").write_text(json.dumps(list(out)))
             self.calls.append(("separate", mix.shape, cache_dir, device))
-            return out, folder, {"device": device, "cached": cached, "key": "standin", "fallback": None}
+            return out, folder, {"device": device, "cached": cached, "key": key, "fallback": None}
 
         def drums(self, mix, drums, out, device):
             self._bug("drums")
-            self.calls.append(("drums", mix.shape, float(np.abs(drums).max()), out, device))
+            self.calls.append(("drums", mix, drums, out, device))
             cached = (out / "notes.chart").is_file()
             if not cached:
                 hits = [] if "drums" in empty else [DrumHit(tick(t), p, c) for t, p, c in drum_times()]
@@ -154,7 +167,7 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None):
 
         def bass(self, mix, bass, out):
             self._bug("bass")
-            self.calls.append(("bass", mix.shape, float(np.abs(bass).max()), out))
+            self.calls.append(("bass", mix, bass, out))
             cached = (out / "notes.chart").is_file()
             if not cached:
                 notes = [] if "bass" in empty else [FretNote(tick(t), (lane,)) for t, lane in bass_times()]
@@ -163,11 +176,14 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None):
 
         def sections(self, mix, stems, out, device, threads):
             self._bug("sections")
-            self.calls.append(("sections", sorted(stems), out, device, threads))
+            self.calls.append(("sections", dict(stems), out, device, threads))
             cached = (out / "segments.json").is_file()
             if not cached:
                 out.mkdir(parents=True)
                 (out / "segments.json").write_text(json.dumps({"segments": SEGMENTS}))
+            if allin1_device:
+                return Run(out / "segments.json", cached, {"backend": "allin1", "segments": len(SEGMENTS), "allin1": {
+                    "model": "harmonix-fold0", "device": allin1_device, "fallback": None, "peak_rss_mb": 512.0}})
             return Run(out / "segments.json", cached, {"backend": "librosa", "why": "no allin1 Python (stand-in)",
                                                        "segments": len(SEGMENTS)})
 
@@ -179,8 +195,9 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None):
                 path = out / f"seed_{seed}" / "notes.chart"
                 cached = path.is_file()
                 if not cached:  # each take after the first misses one note, in a section of its own
+                    miss = 0 if repeat and seed == 101 else k
                     notes = [FretNote(tick(t), (lane,)) for j, (t, lane) in enumerate(guitar_times())
-                             if not (k and j == 40 * k) and "guitar" not in empty]
+                             if not (miss and j == 40 * miss) and "guitar" not in empty]
                     _write(path, Track("Expert", "Single", notes))
                 runs.append(Run(path, cached, {"devices": {"transcriber": device}}))
             return runs
@@ -237,7 +254,8 @@ def test_the_work_folder_and_the_assemble_config(charted):
     assert result.work == work and result.config == work / "assemble.json"
     cfg = json.loads(result.config.read_text(encoding="utf-8"))
     assert cfg["audio"] == str(work / "decode.wav") and cfg["output"] == str(result.folder)
-    assert cfg["stems"] == {s: str(work / "stems" / "standin" / f"{s}.wav")
+    key = standin_key(A.decode(root / "song.flac"))
+    assert cfg["stems"] == {s: str(work / "stems" / key / f"{s}.wav")
                             for s in ("drums", "bass", "guitar", "other", "vocals")}
     assert cfg["sections"] == str(work / "sections" / "segments.json") and cfg["solos"] == "stems"
     assert [p["instrument"] for p in cfg["parts"]] == ["guitar", "bass", "drums"]
@@ -255,20 +273,31 @@ def test_the_work_folder_and_the_assemble_config(charted):
                                                       "assemble"]
     assert all(s["seconds"] >= 0 and not s["cached"] for s in report["stages"])
     assert report["assemble"]["ok"] and report["options"]["takes"] == 3 and "error" not in report
-    if sys.platform != "win32":
-        assert report["peak_rss_mb"]["self"] > 0
+    assert report["stages"][1]["key"] == key and report["stages"][1]["cuda_error"] is None
+    if sys.platform != "win32":  # this process's own peak only: RUSAGE_CHILDREN is at least its size, not a child's
+        assert report["peak_rss_mb"]["self"] > 0 and set(report["peak_rss_mb"]) == {"self"}
+        assert all(set(s["peak_rss_mb"]) == {"self"} for s in report["stages"])
+    sections = next(s for s in report["stages"] if s["stage"] == "sections")
+    assert sections["backend"] == "librosa" and sections["child_peak_rss_mb"] is None
 
 
 def test_the_engines_get_the_decode_its_stems_and_the_options(charted):
+    """Each engine gets the decode and exactly its own stem (a slip that hands the drums the bass stem, or the bass
+    the mix, would chart the wrong instrument through a gate that still passes)."""
     root, result, engines, lines = charted
     work = result.work
     calls = {c[0]: c[1:] for c in engines.calls}
     shape = (2, int(DURATION * SR))
+    mix, own = A.decode(root / "song.flac"), stems(shape[1])
     assert calls["threads"] == (2,)
     assert calls["separate"] == (shape, work / "stems", "cpu")
-    assert calls["drums"][0] == shape and calls["drums"][2:] == (work / "drums", "cpu") and calls["drums"][1] > 0.1
-    assert calls["bass"][0] == shape and calls["bass"][2] == work / "bass"
-    assert calls["sections"] == (["bass", "drums", "guitar", "other", "piano", "vocals"], work / "sections", "auto", 2)
+    assert np.array_equal(calls["drums"][0], mix) and np.array_equal(calls["drums"][1], own["drums"])
+    assert calls["drums"][2:] == (work / "drums", "cpu")
+    assert np.array_equal(calls["bass"][0], mix) and np.array_equal(calls["bass"][1], own["bass"])
+    assert calls["bass"][2] == work / "bass"
+    got, *rest = calls["sections"]
+    assert sorted(got) == sorted(own) and all(np.array_equal(got[s], own[s]) for s in own)
+    assert rest == [work / "sections", "auto", 2]
     assert calls["guitar"] == (work / "decode.wav", work / "guitar", (DEFAULT_SEED, 101, 202), "cpu", "Click Song",
                                "The Testers")
     assert lines[0] == "[1/7] decode: song.flac" and lines[-1].startswith("[7/7] assemble: gate OK")
@@ -307,6 +336,7 @@ def test_an_engine_without_notes_leaves_its_part_out(tmp_path, monkeypatch, caps
     assert not any(line.startswith("diff_bass") for line in ini)
     # no tags: the file's name, and placeholders scan-chart does not take for missing values
     assert {"name = song", "artist = Unknown", "album = A", "year = 2001", "genre = Unknown"} <= set(ini)
+    shutil.rmtree(tmp_path / "Song.work" / "stems")  # 135 MB of stand-in stems, not needed again
     # every engine empty: nothing to chart, before assemble
     monkeypatch.setattr(P, "Engines", standins(empty=("bass", "drums")))
     assert main(["chart", str(tmp_path / "song.flac"), "--out", str(tmp_path / "Other"), "--instruments",
@@ -330,8 +360,11 @@ def test_cli_exit_codes(charted, tmp_path, monkeypatch, capsys):
     assert "gate: FAILED" in printed and (tmp_path / "Gate.failed" / "notes.chart").is_file() and not out.exists()
     monkeypatch.setattr(assemble_module, "verify_folder", real)
 
-    (tmp_path / "Busy").mkdir()
-    (tmp_path / "Busy" / "keep.txt").write_text("mine")
+    engines = standins()
+    monkeypatch.setattr(P, "Engines", engines)
+    for busy in ("Busy", "Busy2.failed"):  # an output, or the .failed beside one, holding someone's file
+        (tmp_path / busy).mkdir()
+        (tmp_path / busy / "keep.txt").write_text("mine")
     (tmp_path / "not audio.mp3").write_text("hello")
     for args, message in (([str(tmp_path / "missing.mp3")], "does not exist"),
                           ([song, "--takes", "2"], "takes is 1, or 3 or more"),
@@ -340,13 +373,16 @@ def test_cli_exit_codes(charted, tmp_path, monkeypatch, capsys):
                           ([song, "--instruments", "bass", "--takes", "3"], "takes are guitar takes"),
                           ([song, "--threads", "0"], "threads must be"),
                           ([song, "--out", str(tmp_path / "Busy")], "holds what a build does not write"),
+                          ([song, "--out", str(tmp_path / "Busy2")], "Busy2.failed holds what a build does not write"),
                           ([song, "--work", str(tmp_path / "X" / "w")], "must be apart"),
                           ([str(tmp_path / "not audio.mp3")], "ffmpeg could not read")):
         argv = ["chart", *args] + ([] if "--out" in args else ["--out", str(tmp_path / "X")])
         assert main(argv) == 2, args
         assert message in capsys.readouterr().err, args
     assert (tmp_path / "Busy" / "keep.txt").read_text() == "mine" and not (tmp_path / "X").exists()
-    assert not (tmp_path / "Busy.work").exists()  # refused before any audio work, not by assemble at the end
+    assert (tmp_path / "Busy2.failed" / "keep.txt").read_text() == "mine"
+    # refused before any audio work, not by assemble at the end: no work folder, no engine run
+    assert not (tmp_path / "Busy.work").exists() and not (tmp_path / "Busy2.work").exists() and engines.calls == []
 
     class Missing(standins()):
         def missing(self, options):
@@ -364,6 +400,23 @@ def test_cli_exit_codes(charted, tmp_path, monkeypatch, capsys):
     report = json.loads((result.work / "pipeline.json").read_text(encoding="utf-8"))
     assert report["error"] == "KeyError: 'a bug in drums'" and [s["stage"] for s in report["stages"]] == [
         "decode", "separate"]
+    assert "Traceback" in report["traceback"] and "KeyError: 'a bug in drums'" in report["traceback"]
+    # numpy's and torch's own ValueError and RuntimeError are bugs too, not a bad input (exit 2)
+    for e in (ValueError("operands could not be broadcast together with shapes (52,) (172,) "),
+              RuntimeError("The size of tensor a (2049) must match the size of tensor b (2048)")):
+        monkeypatch.setattr(P, "Engines", standins(bug="drums", error=e))
+        assert main(["chart", song, "--out", str(tmp_path / "Z"), *work]) == 3, e
+        err = capsys.readouterr().err
+        assert "Traceback" in err and f"{type(e).__name__}: {e}" in err and "internal error" in err
+        report = json.loads((result.work / "pipeline.json").read_text(encoding="utf-8"))
+        assert report["error"] == f"{type(e).__name__}: {e}" and "in _bug" in report["traceback"]
+    # a component that fails is the user's to fix: one line, and the traceback kept in pipeline.json
+    monkeypatch.setattr(P, "Engines", standins(bug="guitar", error=ToolError("autochart seed 1 failed (exit 1)")))
+    assert main(["chart", song, "--out", str(tmp_path / "Z"), *work]) == 2
+    err = capsys.readouterr().err
+    assert "songcharter: error: autochart seed 1 failed (exit 1)" in err and "Traceback" not in err
+    report = json.loads((result.work / "pipeline.json").read_text(encoding="utf-8"))
+    assert report["error"] == "ToolError: autochart seed 1 failed (exit 1)" and "in _bug" in report["traceback"]
 
     def interrupted(*a, **k):
         raise KeyboardInterrupt
@@ -371,6 +424,71 @@ def test_cli_exit_codes(charted, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(P, "chart", interrupted)
     assert main(["chart", song, "--out", str(tmp_path / "Z")]) == 130
     assert "interrupted" in capsys.readouterr().err
+
+
+def test_the_cli_options_reach_the_engines(charted, tmp_path, monkeypatch, capsys):
+    """--device cuda reaches separation, the drums and the guitar, and the sections engine as "auto": allin1 runs in
+    a Python of its own, whose CUDA is not checked up front, so it takes CUDA when that Python has it and the CPU
+    when not, which is warned about. --threads reaches torch. With --takes 4, a take that repeats an earlier one's
+    notes is left out and the other three go to assemble."""
+    root, _, _, _ = charted
+    engines = standins(allin1_device="cpu", repeat=True)
+    monkeypatch.setattr(P, "Engines", engines)
+    work = tmp_path / "work"
+    code = main(["chart", str(root / "song.flac"), "--out", str(tmp_path / "Song"), "--work", str(work),
+                 "--device", "cuda", "--threads", "3", "--takes", "4"])
+    out, err = capsys.readouterr()
+    assert code == 0, err
+    calls = {c[0]: c[1:] for c in engines.calls}
+    assert calls["threads"] == (3,) and calls["separate"][2] == "cuda" and calls["drums"][3] == "cuda"
+    assert calls["guitar"][2:4] == ((DEFAULT_SEED, 101, 202, 303), "cuda") and calls["sections"][2:] == ("auto", 3)
+    assert "songcharter: warning: sections: allin1 ran on the CPU (its Python has no working CUDA)" in err
+    assert "songcharter: warning: guitar take seed_101 repeats an earlier take's notes: left out" in err
+    cfg = json.loads((work / "assemble.json").read_text(encoding="utf-8"))
+    guitar = next(p for p in cfg["parts"] if p["instrument"] == "guitar")
+    assert guitar["source"] == str(work / "guitar" / f"seed_{DEFAULT_SEED}" / "notes.chart")
+    assert guitar["takes"] == [str(work / "guitar" / f"seed_{s}" / "notes.chart") for s in (202, 303)]
+    report = json.loads((work / "pipeline.json").read_text(encoding="utf-8"))
+    sections = next(s for s in report["stages"] if s["stage"] == "sections")
+    assert sections["backend"] == "allin1" and sections["child_peak_rss_mb"] == 512.0
+
+
+def test_auto_runs_on_the_cpu_when_cuda_does_not_run(charted, tmp_path, monkeypatch, capsys):
+    """Device "auto" on CUDA that is there but does not run (a GPU the torch build has no kernels for): every
+    engine gets the CPU, and the run says why."""
+    root, result, _, _ = charted
+    why = "AcceleratorError: CUDA error: no kernel image is available for execution on the device"
+    engines = standins(cuda_error=why)
+    monkeypatch.setattr(P, "Engines", engines)
+    code = main(["chart", str(root / "song.flac"), "--out", str(tmp_path / "Song"), "--work", str(result.work),
+                 "--takes", "3", "--genre", "Test"])
+    out, err = capsys.readouterr()
+    assert code == 0, err
+    assert f"songcharter: warning: CUDA does not run here ({why}): the models run on the CPU" in err
+    calls = {c[0]: c[1:] for c in engines.calls}
+    assert calls["separate"][2] == calls["drums"][3] == calls["guitar"][3] == "cpu"
+    report = json.loads((result.work / "pipeline.json").read_text(encoding="utf-8"))
+    assert report["stages"][1]["cuda_error"] == why and why in report["warnings"][0]
+
+
+def test_a_second_song_in_the_same_folders_is_decoded_and_separated_anew(charted, tmp_path, monkeypatch, capsys):
+    """Another song charted into the same output, so into the same work folder: its decode is written over the
+    first song's (decode.wav is autochart's input and assemble's audio) and its stems are its own."""
+    root, _, _, _ = charted
+    write_song(tmp_path / "b.flac", gain=0.7)
+    monkeypatch.setattr(P, "Engines", standins())
+    args = ["--out", str(tmp_path / "Song"), "--instruments", "drums"]
+    assert main(["chart", str(root / "song.flac"), *args]) == 0
+    work = tmp_path / "Song.work"
+    first = json.loads((work / "pipeline.json").read_text(encoding="utf-8"))["stages"]
+    shutil.rmtree(work / "stems")  # disk: the stand-in keys its stems by the mix, so the next song misses anyway
+    code = main(["chart", str(tmp_path / "b.flac"), *args])
+    assert code == 0, capsys.readouterr().err
+    decode, separate = json.loads((work / "pipeline.json").read_text(encoding="utf-8"))["stages"][:2]
+    mix = A.decode(tmp_path / "b.flac")
+    assert not decode["cached"] and not separate["cached"]
+    assert separate["key"] == standin_key(mix) != first[1]["key"]
+    assert np.array_equal(A.read_wav(work / "decode.wav")[0], mix)
 
 
 # ------------------------------------------------------------------------------------------------ the parts
@@ -439,12 +557,53 @@ def test_a_missing_component_is_named_with_its_fix(monkeypatch):
     problems = Engines().missing(Options())
     text = "\n".join(problems)
     for needle in ("pip install songcharter[separate]", "pip install songcharter[bass]",
-                   "pip install songcharter[sections]", "SONGCHARTER_ALLIN1_PYTHON", "install Node.js",
-                   "SONGCHARTER_AUTOCHART", "--instruments bass,drums"):
+                   "pip install songcharter[sections]", "install Node.js", "SONGCHARTER_AUTOCHART",
+                   "--instruments bass,drums"):
         assert needle in text, needle
-    assert len(Engines().missing(Options(instruments=("drums",)))) == 2  # separation and sections only
+    drums = Engines().missing(Options(instruments=("drums",)))
+    assert len(drums) == 2 and "sections need librosa" in drums[1]  # separation and sections only
+    # allin1 does not serve sections alone: librosa is its fallback when it fails (a failed run, a moved Python)
     monkeypatch.setattr(SE, "allin1_python", lambda settings: "/opt/allin1/python")
-    assert Engines().missing(Options(instruments=("drums",))) == [problems[0]]  # allin1 alone serves sections
+    assert Engines().missing(Options(instruments=("drums",))) == drums
+
+
+def test_auto_means_cuda_only_when_a_cuda_kernel_runs(monkeypatch):
+    """torch.cuda.is_available() is also true on a GPU the torch build has no kernels for: "auto" takes CUDA only
+    when a kernel runs, and "cuda" asked for on such a GPU is named before any audio work."""
+    torch = pytest.importorskip("torch")
+    real = torch.ones
+
+    class Ran:
+        def add_(self, x):
+            return self
+
+        def item(self):
+            return 2.0
+
+    def ones(*a, device=None, **k):
+        if str(device).startswith("cuda"):
+            if works:
+                return Ran()
+            raise RuntimeError("CUDA error: no kernel image is available for execution on the device\nCUDA kernel "
+                               "errors might be asynchronously reported")
+        return real(*a, **k) if device is None else real(*a, device=device, **k)
+
+    monkeypatch.setattr(torch, "ones", ones)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    works = False
+    why = "RuntimeError: CUDA error: no kernel image is available for execution on the device"
+    assert Engines().device("auto") == ("cpu", why) and Engines().device("cpu") == ("cpu", None)
+    assert Engines().device("cuda") == ("cuda", None)  # asked for: missing() has named the problem already
+
+    def cuda_problems():
+        return [p for p in Engines().missing(Options(instruments=("drums",), device="cuda")) if "device cuda" in p]
+
+    assert cuda_problems() == [f"device cuda asked for, but torch {torch.__version__} here has no working CUDA "
+                               f"({why}): use --device auto or cpu"]
+    works = True
+    assert Engines().device("auto") == ("cuda", None) and cuda_problems() == []
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    assert Engines().device("auto") == ("cpu", None)
 
 
 def test_the_real_engines_are_called_with_the_pipelines_settings(tmp_path, monkeypatch):

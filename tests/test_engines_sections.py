@@ -21,6 +21,7 @@ from songcharter.engines import sections as S
 from songcharter.engines.sections import (ALLIN1_FOLDS, ALLIN1_MODELS, ALLIN1_REPO, ALLIN1_REVISION, Allin1Error,
                                           Settings, allin1_input, allin1_stem, checkpoint_paths, find_sections,
                                           name_segments)
+from songcharter.errors import ToolError
 from songcharter.sections import read_allin1
 
 SR = S.SAMPLE_RATE
@@ -67,7 +68,7 @@ class FakeAllin1:
         if self.fail == "cuda" and job["device"] == "cuda":
             return subprocess.CompletedProcess(cmd, 1, b"", NO_KERNEL)
         result = {"segments": SEGMENTS, "bpm": 120.0, "beats": [0.5, 1.0], "downbeats": [0.5], "device": job["device"],
-                  "fallback": None, "threads": job["threads"], "attention": "torch",
+                  "fallback": None, "threads": job["threads"], "attention": "torch", "peak_rss_mb": 640.5,
                   "seconds": {"spectrogram": 1.0, "load": 0.1, "inference": 2.0, "total": 3.1}}
         open(job["out"], "w", encoding="utf-8").write(json.dumps(result))
         return subprocess.CompletedProcess(cmd, 0, b"", b"")
@@ -116,6 +117,7 @@ def test_allin1_gets_our_stems_folded_to_its_four(tmp_path, weights):
     assert info["allin1"]["model"] == "harmonix-fold0" and info["allin1"]["package"] == "all-in-one-infer"
     assert info["allin1"]["revision"] == ALLIN1_REVISION and info["input"]["other"] == ["guitar", "other", "piano"]
     assert info["settings"]["python"] == "/envs/allin1/python" and info["seconds"]["inference"] == 2.0
+    assert info["allin1"]["peak_rss_mb"] == 640.5  # the runner's own peak, for the pipeline's report
 
 
 def test_the_ensemble_runs_on_cuda_and_fold_0_on_the_cpu(tmp_path, weights):
@@ -251,6 +253,19 @@ def test_auto_falls_back_to_librosa_and_says_why(tmp_path, weights, fallback, mo
     with pytest.raises(Allin1Error, match=reason):  # asked for allin1: no fallback
         find_sections(mix, stems, tmp_path / "out2", Settings(backend="allin1", python=python), run=run,
                       download=weights)
+
+
+def test_allin1_failing_without_librosa_names_both(tmp_path, weights, monkeypatch):
+    """allin1 set up but failing (here its probe), and librosa, the fallback, not installed: an error the user can
+    act on that keeps allin1's reason, not librosa's ImportError from inside the fallback (a "bug", exit 3)."""
+    mix, stems = song(2.0)
+    monkeypatch.setitem(sys.modules, "librosa", None)  # not installed: importing it raises ImportError
+    with pytest.raises(ToolError) as e:
+        find_sections(mix, stems, tmp_path / "out", Settings(python="py"), run=FakeAllin1(fail="probe"),
+                      download=weights)
+    assert re.match(r"(?s)allin1 failed \(allin1's Python py failed its probe \(exit 1\).*\) and the librosa "
+                    r"fallback is not installed: pip install songcharter\[sections\]$", str(e.value)), str(e.value)
+    assert isinstance(e.value.__cause__, Allin1Error) and not (tmp_path / "out").exists()
 
 
 def test_no_huggingface_hub_falls_back_too(tmp_path, fallback, monkeypatch):
@@ -420,12 +435,24 @@ def test_the_runner_on_a_fake_package(tmp_path, fake_package):
     assert allinone.loaded == [{"fold": 0}, {"fold": 1}]  # an ensemble of two
     assert res["segments"] == [[0.0, 0.02, "start"], [0.02, 0.1, "verse"]] and res["bpm"] == 120.0
     assert res["device"] == "cpu" and res["fallback"] is None and res["frames"] == 10
+    assert res["peak_rss_mb"] == R.peak_rss_mb() and (res["peak_rss_mb"] is None or res["peak_rss_mb"] > 0)
     with pytest.raises(ValueError, match="int16 samples on stdin"):
         R.run(tmp_path / "job.json", io.BytesIO(b"\0" * 10))
     (tmp_path / "job.json").write_text(json.dumps({**job, "stems": job["stems"][::-1]}), encoding="utf-8")
     with pytest.raises(ValueError, match="this runner reads"):  # a caller sending another order is refused
         R.run(tmp_path / "job.json", io.BytesIO(stems.astype("<i2").tobytes()))
     assert R.main(["bogus"]) == 2
+
+
+@pytest.mark.skipif(sys.platform not in ("linux", "win32"), reason="the runner reports its peak on Linux and Windows")
+def test_the_runner_reports_its_own_peak_not_its_parents():
+    """The runner's peak is its own (VmHWM, PeakWorkingSetSize), not ru_maxrss: in a spawned process that starts
+    from the parent's peak at the time of the spawn, so a small child of a large parent looked large."""
+    big = np.ones(300 * 2 ** 20 // 8)  # 300 MB in this process before the spawn
+    code = "import runpy, sys; print(runpy.run_path(sys.argv[1])['peak_rss_mb']())"
+    out = subprocess.run([sys.executable, "-c", code, str(S.RUNNER)], capture_output=True, text=True, check=True)
+    assert 1 < float(out.stdout) < 150, out.stdout  # a bare Python with json and the standard library
+    del big
 
 
 def test_the_runners_probe_runs_a_cuda_kernel(tmp_path, fake_package, monkeypatch):

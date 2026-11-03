@@ -21,11 +21,17 @@
   * **Before any audio work** the inputs are checked (the file exists, the output folder holds nothing a build does
     not write) and so is every component the instruments need: a missing one fails with what to install or set,
     never a traceback. Where DESIGN.md has a fallback the stage takes it and says so: sections fall back to
-    librosa when allin1 is absent or fails, separation and allin1 move to the CPU when CUDA fails.
+    librosa when allin1 is absent or fails; device "auto" takes CUDA only when a CUDA kernel runs here (else every
+    model runs on the CPU), separation moves to the CPU when CUDA runs out of memory, and allin1, which runs in a
+    Python of its own, uses CUDA when that Python has it and the CPU when not, even for device "cuda".
+  * **Errors.** What the user can act on (a bad input or option, a missing or failing component) raises an
+    errors.InputError or errors.ToolError, or an OSError; anything else is a bug. Either way pipeline.json keeps
+    the error and its traceback.
   * **Re-runs.** The decode is rewritten only when the samples change; separation and every engine reuse their
     caches, so a re-run with the same file and options costs the decode, the cache checks and the build.
   * **Report.** work/pipeline.json: the options, the metadata and where each value came from, every stage's wall
-    time, cache use, device and fallback, and the process's peak RSS after each stage (where the OS reports it).
+    time, cache use, device and fallback, the process's peak RSS after each stage (where the OS reports it) and,
+    for the sections, the peak allin1's runner reports for itself.
     Progress goes to `log` (stderr on the command line), a line when a stage starts and one when it ends.
 
 The heavy stages are the methods of `Engines`, so tests stand in for them; importing this module loads no model.
@@ -41,6 +47,7 @@ import re
 import subprocess
 import sys
 import time
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -50,6 +57,7 @@ import numpy as np
 from . import __version__
 from . import audio as A
 from .assemble import AssembleResult, assemble, check_output, failed_folder, load_config
+from .errors import InputError, ToolError
 from .importers import read_song
 from .timed import INSTRUMENTS
 
@@ -68,7 +76,7 @@ OVERRIDES = ("name", "artist", "album", "genre", "year")
 class Options:
     instruments: tuple[str, ...] = INSTRUMENTS   # which parts to chart: guitar, bass, drums
     takes: int = 1                               # guitar takes: 1, or 3 and more (a splice needs three runs)
-    device: str = "auto"                         # "auto" (CUDA when torch has it), "cpu" or "cuda"
+    device: str = "auto"                         # "auto" (CUDA when a CUDA kernel runs here), "cpu" or "cuda"
     threads: int | None = None                   # torch's threads here and in allin1 (None: their defaults)
     work: Path | None = None                     # the work folder (None: <output>.work beside the output)
     metadata: Mapping[str, str] = field(default_factory=dict)  # name, artist, album, genre, year: over the tags
@@ -76,25 +84,25 @@ class Options:
 
     def check(self) -> None:
         if not self.instruments:
-            raise ValueError("no instruments to chart")
+            raise InputError("no instruments to chart")
         unknown = [i for i in self.instruments if i not in INSTRUMENTS]
         if unknown or len(set(self.instruments)) != len(self.instruments):
-            raise ValueError(f"instruments are {', '.join(INSTRUMENTS)}, each once, not {', '.join(self.instruments)}")
+            raise InputError(f"instruments are {', '.join(INSTRUMENTS)}, each once, not {', '.join(self.instruments)}")
         if isinstance(self.takes, bool) or not isinstance(self.takes, int) or self.takes < 1 or self.takes == 2:
-            raise ValueError(f"takes is 1, or 3 or more (takes are spliced by agreement, and two cannot outvote "
+            raise InputError(f"takes is 1, or 3 or more (takes are spliced by agreement, and two cannot outvote "
                              f"each other), not {self.takes!r}")
         if self.takes > 1 and "guitar" not in self.instruments:
-            raise ValueError("takes are guitar takes: chart the guitar too, or leave takes at 1")
+            raise InputError("takes are guitar takes: chart the guitar too, or leave takes at 1")
         if self.device not in ("auto", "cpu", "cuda"):
-            raise ValueError(f"device is auto, cpu or cuda, not {self.device!r}")
+            raise InputError(f"device is auto, cpu or cuda, not {self.device!r}")
         if self.threads is not None and (isinstance(self.threads, bool) or not isinstance(self.threads, int)
                                          or self.threads < 1):
-            raise ValueError(f"threads must be a whole number of at least 1, not {self.threads!r}")
+            raise InputError(f"threads must be a whole number of at least 1, not {self.threads!r}")
         if self.solos not in ("stems", "off"):
-            raise ValueError(f"solos is 'stems' or 'off', not {self.solos!r}")
+            raise InputError(f"solos is 'stems' or 'off', not {self.solos!r}")
         unknown = sorted(set(self.metadata) - set(OVERRIDES))
         if unknown:
-            raise ValueError(f"unknown metadata key(s): {', '.join(unknown)} (known: {', '.join(OVERRIDES)})")
+            raise InputError(f"unknown metadata key(s): {', '.join(unknown)} (known: {', '.join(OVERRIDES)})")
 
 
 @dataclass(frozen=True)
@@ -248,11 +256,9 @@ class Engines:
             problems.append("stem separation needs torch and demucs: pip install songcharter[separate]")
         if "bass" in options.instruments and not _has("librosa"):
             problems.append("the bass engine needs librosa: pip install songcharter[bass]")
-        if not _has("librosa"):
-            from .engines.sections import Settings, allin1_python
-            if allin1_python(Settings()) is None:
-                problems.append("sections need allin1 or librosa: pip install songcharter[sections], or set "
-                                "SONGCHARTER_ALLIN1_PYTHON to a Python with all-in-one-infer")
+        if not _has("librosa"):  # even with allin1: its fallback, for when allin1 fails
+            problems.append("sections need librosa (the fallback when allin1 is absent or fails): pip install "
+                            "songcharter[sections]")
         if "guitar" in options.instruments:
             from .engines.autochart import find_install
             try:
@@ -263,17 +269,22 @@ class Engines:
                                 "install, or leave the guitar out with --instruments bass,drums")
         if options.device == "cuda" and _has("torch"):
             import torch
-            if not torch.cuda.is_available():
-                problems.append(f"device cuda asked for, but torch {torch.__version__} here has no CUDA: use "
-                                "--device auto or cpu")
+
+            from .separate import cuda_works
+            works, why = cuda_works()
+            if not works:
+                problems.append(f"device cuda asked for, but torch {torch.__version__} here has no "
+                                f"{'CUDA' if why is None else f'working CUDA ({why})'}: use --device auto or cpu")
         return problems
 
-    def device(self, asked: str) -> str:
-        """The torch device the options mean: CUDA for "auto" when torch has it."""
+    def device(self, asked: str) -> tuple[str, str | None]:
+        """The torch device the options mean, and why "auto" chose the CPU although torch here has CUDA (else None):
+        "auto" is CUDA only when a CUDA kernel runs (separate.cuda_works)."""
         if asked != "auto":
-            return asked
-        import torch
-        return "cuda" if torch.cuda.is_available() else "cpu"
+            return asked, None
+        from .separate import cuda_works
+        works, why = cuda_works()
+        return ("cuda" if works else "cpu"), why
 
     def threads(self, n: int | None) -> None:
         if n is not None:
@@ -314,15 +325,16 @@ class Engines:
 # ------------------------------------------------------------------------------------------------ the pipeline
 
 def _peak_rss_mb() -> dict[str, float] | None:
-    """Peak resident memory so far of this process and of its largest finished child (autochart, allin1), in MB;
-    None where the OS does not report it (Windows)."""
+    """Peak resident memory so far of this process, in MB; None where the OS does not report it (Windows). Not of
+    its children: a child's ru_maxrss starts from its parent's peak at the time it was spawned, so RUSAGE_CHILDREN
+    is never below this process's own size and cannot tell a small child from a large one. Children that report
+    their own peak (allin1's runner) are recorded with their stage."""
     try:
         import resource
     except ImportError:
         return None
     scale = 1 if sys.platform == "darwin" else 1024   # ru_maxrss: bytes on macOS, KB elsewhere
-    return {"self": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * scale / 2 ** 20, 1),
-            "children": round(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss * scale / 2 ** 20, 1)}
+    return {"self": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * scale / 2 ** 20, 1)}
 
 
 def _expert_onsets(path: Path, instrument: str) -> int:
@@ -375,8 +387,9 @@ def _distinct_takes(runs: list[Run], warn: Callable[[str], None]) -> list[Run]:
 def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, engines: Engines | None = None,
           log: Callable[[str], None] | None = None) -> ChartResult:
     """Chart the song file `audio` into the song folder `out` (the module docstring). Bad inputs and missing
-    components raise (ValueError, OSError, RuntimeError) before any audio work; a stage that fails raises the
-    same kinds; a build the gate fails does not raise: it is in <out>.failed and `ok` is False."""
+    components raise (errors.InputError, errors.ToolError, OSError) before any audio work; a stage that fails for
+    a reason the user can act on raises the same kinds, and any other exception is a bug; a build the gate fails
+    does not raise: it is in <out>.failed and `ok` is False."""
     engines = engines or Engines()
     log = log or (lambda line: print(line, file=sys.stderr, flush=True))
     options.check()
@@ -386,12 +399,12 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         raise FileNotFoundError(f"the song file {audio} does not exist" if not audio.exists()
                                 else f"{audio} is not a file")
     if work == out or out in work.parents or work in out.parents:
-        raise ValueError(f"the work folder {work} and the output {out} must be apart, neither inside the other")
+        raise InputError(f"the work folder {work} and the output {out} must be apart, neither inside the other")
     check_output(out)
     check_output(failed_folder(out))
     problems = engines.missing(options)
     if problems:
-        raise RuntimeError("cannot chart: " + "; ".join(problems))
+        raise ToolError("cannot chart: " + "; ".join(problems))
 
     instruments = [i for i in INSTRUMENTS if i in options.instruments]
     # the quick engines first, so a failure there comes before the guitar's minutes
@@ -430,7 +443,7 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         report["metadata"], report["metadata_from"], report["tags"] = meta, origin, tags
         parts, sections, stem_files = _engine_stages(audio, work, options, engines, meta, begin, end, warn)
         if not parts:
-            raise ValueError(f"no instrument has notes ({', '.join(instruments)} all came out empty): nothing to "
+            raise InputError(f"no instrument has notes ({', '.join(instruments)} all came out empty): nothing to "
                              "chart")
         cfg = {"_about": f"written by songcharter {__version__} chart for {audio.name}",
                "audio": str(work / "decode.wav"), "stems": stem_files, "beat_hints": None, "lead_in": 2.5,
@@ -448,6 +461,7 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         return ChartResult(result, stages, work, config, meta, warnings)
     except BaseException as e:
         report["error"] = f"{type(e).__name__}: {e}"
+        report["traceback"] = traceback.format_exc()
         raise
     finally:
         report["warnings"] = warnings
@@ -466,7 +480,9 @@ def _engine_stages(audio: Path, work: Path, options: Options, engines: Engines, 
     end("decode", t0, same, f"{mix.shape[1] / SAMPLE_RATE:.2f} s of audio in {wav.name}",
         {"samples": int(mix.shape[1])})
 
-    device = engines.device(options.device)
+    device, cuda_error = engines.device(options.device)
+    if cuda_error:
+        warn(f"CUDA does not run here ({cuda_error}): the models run on the CPU")
     engines.threads(options.threads)
     t0 = begin("separate", f"htdemucs_6s on {device}")
     stems, folder, info = engines.separate(mix, work / "stems", device)
@@ -474,7 +490,7 @@ def _engine_stages(audio: Path, work: Path, options: Options, engines: Engines, 
     if fallback:
         warn(f"separation: {fallback}")
     end("separate", t0, bool(info.get("cached")), f"{len(stems)} stems on {info.get('device', device)}",
-        {"device": info.get("device"), "fallback": fallback, "key": info.get("key")})
+        {"device": info.get("device"), "fallback": fallback, "cuda_error": cuda_error, "key": info.get("key")})
     stem_files = {s: str(folder / f"{s}.wav") for s in STEMS if s in stems}
 
     parts: list[dict] = []
@@ -499,18 +515,25 @@ def _engine_stages(audio: Path, work: Path, options: Options, engines: Engines, 
         end("bass", t0, run.cached, f"{n} Expert onsets", {"onsets": n})
 
     t0 = begin("sections", "allin1 when it is installed, else the librosa fallback")
-    run = engines.sections(mix, stems, work / "sections", options.device, options.threads)
+    # allin1 runs in a Python of its own, whose CUDA missing() did not check: for "cuda" it is asked for "auto"
+    # (CUDA when that Python has it, else the CPU), as the guitar stage leaves the CPU fallback to autochart
+    run = engines.sections(mix, stems, work / "sections", "auto" if options.device == "cuda" else options.device,
+                           options.threads)
     backend = run.info.get("backend", "?")
-    how = backend
+    how, child = backend, None
     if backend == "allin1":
         a = run.info.get("allin1") or {}
         how = f"allin1 {a.get('model', '')} on {a.get('device', '?')}".replace("  ", " ")
+        child = None if run.cached else a.get("peak_rss_mb")  # a hit ran only the probe
         if a.get("fallback"):
             warn(f"sections: {a['fallback']}")
+        elif options.device == "cuda" and a.get("device") != "cuda":
+            warn("sections: allin1 ran on the CPU (its Python has no working CUDA)")
     elif run.info.get("why"):
         warn(f"sections: the librosa fallback ({run.info['why']})")
     n_seg = run.info.get("segments")
-    end("sections", t0, run.cached, f"{how}, {n_seg} segments", {"backend": backend, "segments": n_seg})
+    end("sections", t0, run.cached, f"{how}, {n_seg} segments", {"backend": backend, "segments": n_seg,
+                                                                  "child_peak_rss_mb": child})
     sections = str(run.path)
 
     if "guitar" in options.instruments:
