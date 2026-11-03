@@ -316,6 +316,29 @@ def test_cancel_kills_the_tree_and_deletes_the_staging(tmp_path, standin):
     jobs2.shutdown()   # nothing running: nothing to do
 
 
+def test_a_log_that_cannot_be_written_still_ends_the_job(tmp_path, standin, monkeypatch):
+    """A full disk, say: the lines are read on (so the child never blocks on a full pipe) and the job still ends."""
+    jobs = J.Jobs(tmp_path, command=standin("ok"))
+    real = open
+
+    class Full:
+        def write(self, text):
+            raise OSError(28, "No space left on device")
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    def full_open(path, mode="r", *a, **k):
+        return Full() if str(path).endswith(".log") and mode == "a" else real(path, mode, *a, **k)
+
+    monkeypatch.setattr("builtins.open", full_open)
+    job = jobs.start(upload(tmp_path), {})
+    assert wait_state(job) == "done" and job.events[-1]["event"] == "result"
+
+
 def test_the_child_gets_the_environment_and_pythonutf8(tmp_path):
     script = tmp_path / "env.py"
     script.write_text("import json, os, sys\nsys.stderr.write('@@songcharter ' + json.dumps({'event': 'result', "

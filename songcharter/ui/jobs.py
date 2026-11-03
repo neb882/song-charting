@@ -290,19 +290,34 @@ class Jobs:
             return job
 
     def _read(self, job: Job) -> None:
+        """The child's lines into the log and the events, to its end; the end state always follows, even when the
+        log cannot be written (a full disk: the lines are read on, so the child never blocks on a full pipe)."""
         assert job.tree is not None and job.tree.stdout is not None
-        with open(job.log, "a", encoding="utf-8", errors="replace") as log:
+        try:
+            log = open(job.log, "a", encoding="utf-8", errors="replace")
+        except OSError:
+            log = None
+        try:
             for raw in job.tree.stdout:
                 line = raw.decode("utf-8", "replace").rstrip("\r\n")
-                log.write(line + "\n")
-                log.flush()
+                if log is not None:
+                    try:
+                        log.write(line + "\n")
+                        log.flush()
+                    except OSError:
+                        log = None
                 event = parse_line(line)
                 if event is not None:
                     job.add(event)
                 elif line.strip():
                     job.tail = (job.tail + [line])[-TAIL_LINES:]
-        code = job.tree.wait()
-        self._finish(job, code)
+        finally:
+            if log is not None:
+                try:
+                    log.close()
+                except OSError:
+                    pass
+            self._finish(job, job.tree.wait())
 
     def _finish(self, job: Job, code: int) -> None:
         """The end state from the exit code (a cancel's is set by cancel())."""
