@@ -411,6 +411,24 @@ def test_run_refuses_an_output_in_use_or_inside_the_work_folder(tmp_path, refs):
         G.reference_set(refs, ("nope",))
 
 
+def test_checkout_names_the_commit_and_the_changed_files(tmp_path):
+    import subprocess
+    repo = tmp_path / "repo"
+    (repo / ".claude").mkdir(parents=True)
+    for f in (".claude/a.md", "b.py"):
+        (repo / f).write_text("x\n")
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(git[:3] + ["init", "-q"], check=True)
+    subprocess.run(git + ["add", "."], check=True)
+    subprocess.run(git + ["commit", "-qm", "c"], check=True)
+    head = subprocess.run(git[:3] + ["rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    assert G.checkout(repo) == {"commit": head, "branch": G.checkout(repo)["branch"], "dirty": []}
+    (repo / ".claude" / "a.md").write_text("y\n")
+    (repo / "new.txt").write_text("untracked\n")
+    assert G.checkout(repo)["dirty"] == [".claude/a.md"]
+    assert G.checkout(tmp_path / "not-git") == {"commit": None, "branch": None, "dirty": []}
+
+
 def test_stems_are_hard_linked_from_a_separation_cache_when_the_key_fits(tmp_path):
     from songcharter import separate as SEP
     folder = tmp_path / "refs" / "s"
