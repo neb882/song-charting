@@ -163,3 +163,10 @@ M4-07, the full review workflow, and the owner's and the friend's time.
   starve; and its sessions set no intra-op thread limit. Measure the node process's own VmRSS and VmHWM every second
   from `/proc/<pid>/status`, with `NODE_OPTIONS=--trace-gc`, over at least 5 runs of one song, idle and under CPU
   load, on the cuda lane and, if time allows, forced to the CPU. A peak near the WSL memory cap blocks the release.
+- **The friend's GPU, from his `nvidia-smi` (2026-11-03):** RTX 4070 with 12,282 MiB, a driver new enough for the cu132 lane,
+  WDDM, driving the display. So he gets the cu132 lane and the guitar on CUDA. At idle 2.6 GB of VRAM is already in use
+  by desktop apps: about 9.5 GB is left. Record the per-stage VRAM peaks against
+  that, with those apps open and closed.
+- **Other software with kernel drivers:** anti-cheat drivers and other GPU vendors' utilities are common on gaming PCs.
+  If WSL2's virtualization does not install or start, record what `wsl` says; if the PC has a second graphics adapter,
+  check that doctor names the NVIDIA GPU and that CUDA uses it.
