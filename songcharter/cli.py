@@ -3,9 +3,10 @@
     songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums]
                       [--levels expert|all|expert,hard,...] [--solos labels|stems|off|"NAME,NAME"] [--takes N]
                       [--device auto|cpu|cuda] [--threads N] [--no-preview] [--title ...] [--artist ...]
-                      [--album ...] [--year ...] [--genre ...]
+                      [--album ...] [--year ...] [--genre ...] [--events]
     songcharter assemble <config.json> [--out DIR]
     songcharter doctor [--json PATH] [--quick]
+    songcharter ui [--port N] [--no-browser] [--from-shortcut]
 
 `chart` runs the whole pipeline on one song file (pipeline.py): decode, separation, the engines, then assemble's
 build and gate, then the preview of the built folder; progress goes to stderr, a line per stage with its time, and
@@ -13,7 +14,15 @@ the summary to stdout. `assemble`
 builds a song folder from a config that names existing charts. `doctor` (device.py) checks where a chart would run
 and what it needs: a line per item (WSL and Windows, the GPU, torch's device and the guitar's, memory, disk, the
 components), then the problems and notes, and `doctor: OK` or `doctor: N problems`; --json writes the report
-(doctor.json) too, and --quick skips the CUDA matmul, autochart's CUDA provider check and allin1's probe.
+(doctor.json) too, and --quick skips the CUDA matmul, autochart's CUDA provider check and allin1's probe. `ui`
+(ui/server.py) serves the local page on 127.0.0.1 and opens it in the browser.
+
+`chart --events` also writes the run's events (pipeline.py's module docstring) to stderr, each as one line
+`@@songcharter <json>` (ASCII), for the UI's job (ui/jobs.py); then, after the summary, `result` {"ok", "exit",
+"folder", "work", "preview" (the work folder's preview/, or null when no preview ran), "summary" (stdout's text)},
+or, before exit 2, 3 or 130, `error` {"kind", "message"}: kind "input" for an errors.InputError or an OSError,
+"tool" for an errors.ToolError (or another errors.SongcharterError), "bug" (exit 3), "interrupted" (130). Without
+--events nothing of this is written.
 
 --solos takes a mode (labels, the default: every section named Solo; pipeline.py says why) or the names of the
 sections to make solos, as one argument with the names separated by
@@ -47,10 +56,23 @@ import traceback
 from pathlib import Path
 
 from . import __version__
-from .errors import SongcharterError
+from .errors import InputError, SongcharterError
 from .timed import DIFFICULTIES
 
 LEVEL_ABBREVIATIONS = {"expert": "E", "hard": "H", "medium": "M", "easy": "Ez"}
+EVENT_PREFIX = "@@songcharter "   # chart --events: each event line on stderr starts with it (ui/jobs.py reads them)
+
+
+def _event(event: dict) -> None:
+    """chart --events: one event as one ASCII line on stderr."""
+    sys.stderr.write(EVENT_PREFIX + json.dumps(event, ensure_ascii=True, default=str) + "\n")
+    sys.stderr.flush()
+
+
+def _error_kind(e: BaseException) -> str:
+    """chart --events: an exit-2 error's kind, "input" (errors.InputError, OSError) or "tool" (errors.ToolError and
+    any other errors.SongcharterError)."""
+    return "input" if isinstance(e, (InputError, OSError)) else "tool"
 
 
 def _summary(result) -> str:
@@ -206,6 +228,8 @@ def main(argv: list[str] | None = None) -> int:
                       ("--genre", "genre")):
         c.add_argument(flag, dest=f"meta_{key}", metavar="TEXT",
                        help=f"song.ini's {key} (default: the file's tag, else a placeholder)")
+    c.add_argument("--events", action="store_true",
+                   help="also write the run's events to stderr, a line '@@songcharter <json>' each (for the UI)")
     p = sub.add_parser("assemble", help="build a song folder from a config (our grid, tool parts, our scaffolding)",
                        description="Build a Clone Hero song folder from a JSON config: our beat grid and tempo map, "
                                    "each part taken from an existing chart and re-timed onto it, our difficulties, "
@@ -222,12 +246,31 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--json", type=Path, metavar="PATH", help="also write the report there (doctor.json)")
     d.add_argument("--quick", action="store_true",
                    help="skip the CUDA matmul, autochart's CUDA provider check and allin1's probe")
+    u = sub.add_parser("ui", help="the local page: drop a song, choose the options, watch it chart",
+                       description="Serve songcharter's page on 127.0.0.1 (the first free port from 8765) and open it "
+                                   "in the browser (in WSL, the Windows browser). One chart runs at a time, as a "
+                                   "child process; the page shows its progress and can cancel it. Stops on Ctrl+C or "
+                                   "when its window closes. When it is running already, opens its page and exits.")
+    u.add_argument("--port", type=int, metavar="N", help="this port only (default: the first free from 8765 to 8784)")
+    u.add_argument("--no-browser", action="store_true", help="print the page's address, open no browser")
+    u.add_argument("--from-shortcut", action="store_true",
+                   help="started by the Start-menu shortcut (noted in the log)")
     args = parser.parse_args(argv)
     if args.command is None:
         parser.print_help()
         return 2
     if args.command == "doctor":
         return _doctor(args)
+    if args.command == "ui":
+        from .ui import server
+        return server.main(port=args.port, browser=not args.no_browser, from_shortcut=args.from_shortcut)
+    events = args.command == "chart" and args.events
+
+    def failed(code: int, kind: str, message: str) -> int:
+        if events:
+            _event({"event": "error", "kind": kind, "message": message})
+        return code
+
     try:
         if args.command == "chart":
             from . import pipeline  # numpy and the pipeline load only when needed
@@ -236,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
             options = pipeline.Options(instruments=instruments, takes=args.takes, device=args.device,
                                        threads=args.threads, work=args.work, metadata=meta, levels=args.levels,
                                        solos=args.solos, preview=not args.no_preview)
-            done = pipeline.chart(args.song, args.out, options)
+            done = pipeline.chart(args.song, args.out, options, events=_event if events else None)
             result, extra = done.assembled, pipeline.summary(done)
         else:
             from .assemble import assemble, load_config
@@ -244,18 +287,25 @@ def main(argv: list[str] | None = None) -> int:
             result, extra = assemble(cfg), None
     except (SongcharterError, OSError) as e:  # a bad input, a missing or failing tool, song.ogg out of sync
         print(f"songcharter: error: {e}", file=sys.stderr)
-        return 2
+        return failed(2, _error_kind(e), str(e))
     except KeyboardInterrupt:
         print("songcharter: interrupted", file=sys.stderr)
-        return 130
-    except Exception:  # noqa: BLE001  a bug: not to be mistaken for a bad input or a failed gate
+        return failed(130, "interrupted", "interrupted")
+    except Exception as e:  # noqa: BLE001  a bug: not to be mistaken for a bad input or a failed gate
         traceback.print_exc()
         print("songcharter: internal error (a bug, please report it with the traceback above)", file=sys.stderr)
-        return 3
-    print(_summary(result))
+        return failed(3, "bug", f"{type(e).__name__}: {e}")
+    text = _summary(result)
+    print(text)
     if extra:
         print(extra)
-    return 0 if result.ok else 1
+    code = 0 if result.ok else 1
+    if events:
+        sys.stdout.flush()   # the summary before the result in a stream that merges the two
+        _event({"event": "result", "ok": result.ok, "exit": code, "folder": str(result.folder), "work": str(done.work),
+                "preview": str(done.work / "preview") if done.preview else None,
+                "summary": text + (f"\n{extra}" if extra else "")})
+    return code
 
 
 if __name__ == "__main__":

@@ -110,6 +110,21 @@ def test_finished_takes_are_reused_and_a_changed_input_is_not(tmp_path):
     assert AC._done(tmp_path / "out" / "seed_2", AC.take_key(AC.sha256(audio), 2, AC.install_key(inst))) is None
 
 
+def test_on_take_hears_of_each_take_that_runs_before_it_runs(tmp_path):
+    """The UI's "take k of n": (index from 1 among the seeds, their count, the seed), before the driver runs, and
+    not for a take the cache answers."""
+    inst = find_install(install(tmp_path), node="node")
+    audio = tmp_path / "input.wav"
+    audio.write_bytes(b"one")
+    drv, heard = FakeDriver(), []
+    generate(inst, audio, tmp_path / "out", (7,), run=drv)
+    generate(inst, audio, tmp_path / "out", (5, 7, 9), run=drv,
+             on_take=lambda i, n, seed: heard.append((i, n, seed, len(drv.calls))))
+    assert heard == [(1, 3, 5, 1), (3, 3, 9, 2)]   # seed 7 was cached; each heard before its own run
+    assert [int(c[1]["AC_SEED"]) for c in drv.calls] == [7, 5, 9]
+    generate(inst, audio, tmp_path / "out", (5, 7, 9), run=drv, on_take=lambda *a: pytest.fail(f"cached: {a}"))
+
+
 def test_a_take_is_keyed_by_the_install_too(tmp_path):
     """A take made by another engine, model set or driver is not reused (a re-run after an update would otherwise
     build from the old engine's notes, or splice takes of two engines), and neither is one without take.json."""

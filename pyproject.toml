@@ -36,7 +36,10 @@ requires = ["setuptools>=77"]   # 77: the SPDX `license` string and `license-fil
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["songcharter", "songcharter.engines"]
+packages = ["songcharter", "songcharter.engines", "songcharter.ui"]
+
+[tool.setuptools.package-data]
+"songcharter.ui" = ["static/*.html", "static/*.js", "static/*.css"]   # the page (ui/server.py serves it)
 
 [tool.uv]
 required-version = "==0.13.5"   # the installer's uv (packaging/linux/install.sh)

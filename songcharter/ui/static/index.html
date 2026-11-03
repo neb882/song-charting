@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>songcharter</title>
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<header>
+  <h1>songcharter</h1>
+  <p id="machine">Checking this PC…</p>
+  <p id="guitar"></p>
+  <details id="details" hidden>
+    <summary>Details</summary>
+    <ul id="notes"></ul>
+  </details>
+</header>
+
+<main>
+  <section id="drop-screen">
+    <h2>1. Your song</h2>
+    <div id="drop" class="drop" tabindex="0">
+      <p>Drop a song file here</p>
+      <p class="small">MP3, WAV, FLAC, OGG, Opus, M4A, AAC, WMA or AIFF</p>
+      <label class="button">Choose a file<input id="file" type="file" accept=".mp3,.wav,.flac,.ogg,.opus,.m4a,.aac,.wma,.aiff,.aif" hidden></label>
+    </div>
+    <div id="upload" hidden>
+      <p id="upload-name"></p>
+      <progress id="upload-bar" max="1" value="0"></progress>
+    </div>
+    <p id="drop-error" class="error" hidden></p>
+  </section>
+
+  <section id="options-screen" hidden>
+    <h2>2. Options</h2>
+    <p id="song-name" class="small"></p>
+    <form id="options" novalidate>
+      <fieldset>
+        <legend>Song</legend>
+        <label>Title <input name="title" autocomplete="off"></label>
+        <label>Artist <input name="artist" autocomplete="off"></label>
+        <label>Album <input name="album" autocomplete="off"></label>
+        <label>Year <input name="year" autocomplete="off"></label>
+        <label>Genre <input name="genre" autocomplete="off"></label>
+      </fieldset>
+      <fieldset>
+        <legend>Instruments</legend>
+        <label class="check"><input type="checkbox" name="instruments" value="guitar" checked> Guitar</label>
+        <label class="check"><input type="checkbox" name="instruments" value="bass" checked> Bass</label>
+        <label class="check"><input type="checkbox" name="instruments" value="drums" checked> Drums</label>
+      </fieldset>
+      <fieldset>
+        <legend>Difficulties</legend>
+        <label class="check"><input type="checkbox" name="levels" value="expert" checked disabled> Expert</label>
+        <label class="check"><input type="checkbox" name="levels" value="hard"> Hard</label>
+        <label class="check"><input type="checkbox" name="levels" value="medium"> Medium</label>
+        <label class="check"><input type="checkbox" name="levels" value="easy"> Easy</label>
+        <p class="small">The others are made from Expert.</p>
+      </fieldset>
+      <fieldset>
+        <legend>Guitar</legend>
+        <label>Solos
+          <select name="solos">
+            <option value="labels" selected>On the sections named Solo (default)</option>
+            <option value="stems">Only where the vocals are quiet and the guitar loud</option>
+            <option value="off">No solos</option>
+            <option value="names">On these sections:</option>
+          </select>
+        </label>
+        <label id="solo-names-label" hidden>Section names, separated by commas <input name="solo_names" placeholder="Solo 1, Solo 2" autocomplete="off"></label>
+        <label>Guitar takes <input name="takes" type="number" min="1" step="1" placeholder="default: 4 on a GPU, 1 on the CPU"></label>
+      </fieldset>
+      <fieldset>
+        <legend>Run</legend>
+        <label>Device
+          <select name="device">
+            <option value="auto" selected>Auto: the GPU when it works (default)</option>
+            <option value="cpu">CPU</option>
+            <option value="cuda">GPU (CUDA)</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" name="preview" checked> Make a preview</label>
+      </fieldset>
+      <p id="options-error" class="error" hidden></p>
+      <p class="actions"><button type="submit" id="chart">Chart it</button> <button type="button" id="other-song" class="plain">Another song</button></p>
+    </form>
+  </section>
+
+  <section id="progress-screen" hidden>
+    <h2 id="progress-title">3. Charting</h2>
+    <p id="progress-song" class="small"></p>
+    <div id="fallbacks"></div>
+    <ol id="stages"></ol>
+    <ul id="warnings" class="warnings"></ul>
+    <p class="actions"><button type="button" id="cancel" class="danger">Cancel</button></p>
+  </section>
+
+  <section id="done-screen" hidden>
+    <h2 id="done-title"></h2>
+    <p id="done-text"></p>
+    <pre id="summary" hidden></pre>
+    <p class="actions"><button type="button" id="again">Chart another song</button></p>
+  </section>
+</main>
+</body>
+</html>
