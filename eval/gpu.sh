@@ -24,6 +24,11 @@ mem_mb() { awk -v k="$1:" '$1 == k {print int($2/1024)}' /proc/meminfo; }
 # from a pip wheel: autochart's own tools/autochart/cudnn_venv first (kept apart from the torch tools on purpose),
 # else a tool's or conda's nvidia-cudnn wheel. This prints the folders to prepend to LD_LIBRARY_PATH for autochart
 # only, and fails when no cuDNN 9 is found.
+# That CUDA 12 path predates a later finding: the provider of onnxruntime-node 1.27.0 (autochart's lock) needs CUDA 13
+# (libcublas.so.13, libcudart.so.13, libnvrtc.so.13, libcufft.so.12, libcurand.so.10) and cuDNN 9, so the runs made
+# with this path are no evidence for it (docs/work-orders/M4-00-plan.md, finding 4). M4-00b's spike
+# (packaging/spike/cuda13-provider.sh) checks the CUDA 13 path, the cu132 torch lane's wheels plus nvidia-curand;
+# songcharter itself gives autochart's node that path (engines/autochart.py, cuda_library_path).
 cuda_libs() {
   local dirs=() c d
   if ! ldconfig -p 2>/dev/null | grep -q 'libcudnn\.so\.9 '; then

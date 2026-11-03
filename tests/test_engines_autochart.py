@@ -1,8 +1,9 @@
 """The autochart engine wrapper (songcharter.engines.autochart) with a stand-in for the driver: the command and its
-environment, one shared work folder, the take cache and its key (the input, the seed and the install), failures and
-the install check. autochart itself never runs."""
+environment (the CUDA library path for "cuda"), one shared work folder, the take cache and its key (the input, the
+seed and the install), failures and the install check. autochart itself never runs."""
 import json
 import subprocess
+import sys
 
 import pytest
 
@@ -171,3 +172,54 @@ def test_the_install_check_names_what_is_missing(tmp_path, monkeypatch):
     monkeypatch.delenv("SONGCHARTER_NODE", raising=False)
     with pytest.raises(FileNotFoundError, match="node .install Node.js"):
         find_install()
+
+
+def fake_nvidia(tmp_path, monkeypatch, wsl: bool = True):
+    """A site-packages folder holding the nvidia namespace package's CUDA 13 and cuDNN folders (as the cu132 lane's
+    wheels lay them out) first on sys.path, and WSL's driver folder (or none)."""
+    site = tmp_path / "site-packages"
+    for sub in ("cu13/lib", "cudnn/lib", "cusparselt/lib"):
+        (site / "nvidia" / sub).mkdir(parents=True)
+    monkeypatch.syspath_prepend(str(site))
+    monkeypatch.delitem(sys.modules, "nvidia", raising=False)
+    (tmp_path / "wsl-lib").mkdir()
+    monkeypatch.setattr(AC, "WSL_LIB", tmp_path / ("wsl-lib" if wsl else "no-wsl-lib"))
+    return site / "nvidia"
+
+
+def test_the_cuda_library_path(tmp_path, monkeypatch):
+    """cu13/lib and cudnn/lib of every folder of the nvidia package (ours first, as it is first on sys.path), then
+    WSL's driver libraries when that folder exists; no other nvidia folder."""
+    nvidia = fake_nvidia(tmp_path, monkeypatch)
+    path = AC.cuda_library_path()
+    assert path[:2] == [str(nvidia / "cu13" / "lib"), str(nvidia / "cudnn" / "lib")]
+    assert path[-1] == str(tmp_path / "wsl-lib") and not any("cusparselt" in p for p in path)
+    monkeypatch.setattr(AC, "WSL_LIB", tmp_path / "nowhere")
+    assert str(tmp_path / "wsl-lib") not in AC.cuda_library_path()
+    monkeypatch.setattr(AC.importlib.util, "find_spec", lambda name: None)  # no nvidia package at all (the cpu lane)
+    assert AC.cuda_library_path() == []
+
+
+def test_the_cuda_take_gets_the_library_path_and_the_cpu_take_does_not(tmp_path, monkeypatch):
+    """For "cuda" the driver's LD_LIBRARY_PATH starts with the CUDA 13 folders and keeps what was set; for "cpu" it is
+    left as it was. This process's own LD_LIBRARY_PATH never changes, and neither does the take's key."""
+    nvidia = fake_nvidia(tmp_path, monkeypatch)
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/mine")
+    inst = find_install(install(tmp_path), node="node")
+    audio = tmp_path / "input.wav"
+    audio.write_bytes(b"x")
+    drv = FakeDriver()
+    generate(inst, audio, tmp_path / "gpu", (1,), device="cuda", run=drv)
+    generate(inst, audio, tmp_path / "cpu", (1,), device="cpu", run=drv)
+    cuda_env, cpu_env = drv.calls[0][1], drv.calls[1][1]
+    folders = AC.cuda_library_path()   # ours, then this Python's own nvidia folders when it has them, then WSL's
+    assert folders[:2] == [str(nvidia / "cu13" / "lib"), str(nvidia / "cudnn" / "lib")]
+    assert cuda_env["LD_LIBRARY_PATH"].split(":") == folders + ["/opt/mine"] and folders[-1] == str(tmp_path / "wsl-lib")
+    assert cpu_env["LD_LIBRARY_PATH"] == "/opt/mine" and AC.os.environ["LD_LIBRARY_PATH"] == "/opt/mine"
+    key = AC.take_key(AC.sha256(audio), 1, AC.install_key(inst))
+    assert json.loads((tmp_path / "gpu" / "seed_1" / AC.TAKE).read_text(encoding="utf-8")) == key
+    monkeypatch.delenv("LD_LIBRARY_PATH")
+    generate(inst, audio, tmp_path / "gpu2", (1,), device="cuda", run=drv)
+    assert drv.calls[2][1]["LD_LIBRARY_PATH"] == ":".join(folders)
+    generate(inst, audio, tmp_path / "cpu2", (1,), device="cpu", run=drv)
+    assert "LD_LIBRARY_PATH" not in drv.calls[3][1]
