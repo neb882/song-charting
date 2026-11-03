@@ -508,6 +508,35 @@ def test_a_second_song_in_the_same_folders_is_decoded_and_separated_anew(charted
     assert np.array_equal(A.read_wav(work / "decode.wav")[0], mix)
 
 
+def test_solos_on_named_sections(charted, monkeypatch, capsys):
+    """--solos with section names (one argument, names with spaces kept) reaches assemble as a list, which puts a
+    solo on the named section and warns about a name no section has; a mode word is the mode, in any case; a list
+    with no name is refused before any audio work."""
+    from songcharter.cli import _solos
+    assert _solos(" Solo 1, Solo  2 ,") == ("Solo 1", "Solo 2") and _solos(" LABELS ") == "labels"
+    assert _solos("Off") == "off" and _solos(",") == ()
+    root, result, _, _ = charted
+    names = [n for _, _, n in result.assembled.report["sections"]["list"]]
+    pick = names[2]  # a mid-song section full of guitar notes
+    monkeypatch.setattr(P, "Engines", standins())
+    args = ["chart", str(root / "song.flac"), "--work", str(result.work), "--takes", "3", "--genre", "Test"]
+    code = main([*args, "--out", str(root / "Solos"), "--solos", f"{pick}, Nowhere Land"])
+    out, err = capsys.readouterr()
+    assert code == 0, err
+    cfg = json.loads(result.config.read_text(encoding="utf-8"))
+    assert cfg["solos"] == [pick, "Nowhere Land"]
+    report = json.loads((root / "Solos" / "report.json").read_text(encoding="utf-8"))
+    (a, _, _), (b, _, _) = (report["sections"]["list"][i] for i in (2, 3))
+    solos = report["phrases"]["guitar"]["solos"]
+    assert len(solos) == 1 and a - 0.01 <= solos[0][0] and solos[0][1] <= b + 0.01, (solos, a, b)
+    assert "warning: solos: no section is named 'Nowhere Land'" in out
+    assert main([*args, "--out", str(root / "Solos"), "--solos", "labels"]) == 0
+    assert json.loads(result.config.read_text(encoding="utf-8"))["solos"] == "labels"
+    capsys.readouterr()
+    assert main([*args, "--out", str(root / "Solos"), "--solos", " , "]) == 2
+    assert "solos as section names needs one name or more" in capsys.readouterr().err
+
+
 # ------------------------------------------------------------------------------------------------ the parts
 
 def test_ffmetadata_is_parsed_with_its_escapes():
@@ -550,13 +579,17 @@ def test_metadata_rules():
 def test_options_and_seeds():
     Options().check()
     Options(instruments=("drums",), takes=1, device="cpu", threads=3, solos="off").check()
-    assert Options().levels == ("expert",)
+    assert Options().levels == ("expert",) and Options().solos == "stems"
+    for solos in ("stems", "labels", "off", ("Solo 1",), ["Solo 1", "Solo 2"]):
+        Options(solos=solos).check()
     Options(levels=("easy", "expert", "medium", "hard")).check()
     for bad, message in (({"instruments": ()}, "no instruments"),
                          ({"instruments": ("drums", "drums")}, "each once"),
                          ({"takes": 2}, "two cannot outvote"), ({"takes": 0}, "takes is 1"),
                          ({"takes": True}, "takes is 1"), ({"device": "tpu"}, "device is"),
-                         ({"threads": 1.5}, "threads must"), ({"solos": "labels"}, "solos is"),
+                         ({"threads": 1.5}, "threads must"), ({"solos": "Stems"}, "solos is"),
+                         ({"solos": 5}, "solos is"), ({"solos": ()}, "one name or more"),
+                         ({"solos": ("Solo 1", " ")}, "none of them blank"),
                          ({"levels": ("hard",)}, "expert among them"), ({"levels": "expert"}, "not 'expert'"),
                          ({"levels": ("expert", "insane")}, "levels are"), ({"levels": ()}, "not none"),
                          ({"metadata": {"title": "x"}}, "unknown metadata")):

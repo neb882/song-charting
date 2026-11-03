@@ -66,6 +66,7 @@ SAMPLE_RATE = A.SAMPLE_RATE
 STEMS = ("drums", "bass", "guitar", "other", "vocals")   # the stems assemble reads (piano only reaches allin1)
 EXTRA_SEED_STEP = 101    # takes after the first use seeds 101, 202, 303, ... (the v1 chart's seeds)
 WORK_SUFFIX = ".work"    # the default work folder: <output>.work beside the output
+SOLO_MODES = ("stems", "labels", "off")  # assemble's solos modes; a list of section names is the other kind
 DEFAULTS = {"artist": "Unknown", "album": "Unknown", "genre": "Unknown", "year": "Unknown", "charter": "songcharter"}
 # the tags each song.ini value is read from, first found wins (ffmpeg's names, lower-cased)
 TAGS = {"name": ("title",), "artist": ("artist", "album_artist", "albumartist"), "album": ("album",),
@@ -81,7 +82,8 @@ class Options:
     threads: int | None = None                   # torch's threads here and in allin1 (None: their defaults)
     work: Path | None = None                     # the work folder (None: <output>.work beside the output)
     metadata: Mapping[str, str] = field(default_factory=dict)  # name, artist, album, genre, year: over the tags
-    solos: str = "stems"                         # assemble's solos: "stems" (vocals quiet, guitar loud) or "off"
+    solos: str | tuple[str, ...] = "stems"       # assemble's solos: "stems" (vocals quiet, guitar loud), "labels"
+                                                 # (sections named Solo), "off", or the names of the solo sections
     levels: tuple[str, ...] = ("expert",)        # the difficulties written: Expert, and any of hard, medium, easy
 
     def check(self) -> None:
@@ -106,8 +108,11 @@ class Options:
             shown = ", ".join(map(str, levels)) if isinstance(levels, (tuple, list)) else repr(levels)
             raise InputError(f"levels are {', '.join(DIFFICULTIES)}, each once and expert among them (the others are "
                              f"reduced from it), not {shown or 'none'}")
-        if self.solos not in ("stems", "off"):
-            raise InputError(f"solos is 'stems' or 'off', not {self.solos!r}")
+        solos = self.solos
+        if isinstance(solos, str) and solos not in SOLO_MODES or not isinstance(solos, (str, tuple, list)):
+            raise InputError(f"solos is {', '.join(map(repr, SOLO_MODES))} or a list of section names, not {solos!r}")
+        if not isinstance(solos, str) and (not solos or any(not isinstance(n, str) or not n.strip() for n in solos)):
+            raise InputError(f"solos as section names needs one name or more, none of them blank, not {solos!r}")
         unknown = sorted(set(self.metadata) - set(OVERRIDES))
         if unknown:
             raise InputError(f"unknown metadata key(s): {', '.join(unknown)} (known: {', '.join(OVERRIDES)})")
@@ -456,7 +461,8 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         cfg = {"_about": f"written by songcharter {__version__} chart for {audio.name}",
                "audio": str(work / "decode.wav"), "stems": stem_files, "beat_hints": None, "lead_in": 2.5,
                "parts": parts, "sections": sections,
-               "solos": options.solos if any(p["instrument"] == "guitar" for p in parts) else "off",
+               "solos": (options.solos if isinstance(options.solos, str) else list(options.solos))
+               if any(p["instrument"] == "guitar" for p in parts) else "off",
                "levels": [d for d in DIFFICULTIES if d in options.levels],
                "metadata": meta, "output": str(out)}
         config = work / "assemble.json"

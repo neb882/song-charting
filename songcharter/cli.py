@@ -1,13 +1,20 @@
 """The command line:
 
     songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums]
-                      [--levels expert|all|expert,hard,...] [--takes N] [--device auto|cpu|cuda] [--threads N]
-                      [--title ...] [--artist ...] [--album ...] [--year ...] [--genre ...]
+                      [--levels expert|all|expert,hard,...] [--solos stems|labels|off|"NAME,NAME"] [--takes N]
+                      [--device auto|cpu|cuda] [--threads N] [--title ...] [--artist ...] [--album ...] [--year ...]
+                      [--genre ...]
     songcharter assemble <config.json> [--out DIR]
 
 `chart` runs the whole pipeline on one song file (pipeline.py): decode, separation, the engines, then assemble's
 build and gate; progress goes to stderr, a line per stage with its time, and the summary to stdout. `assemble`
 builds a song folder from a config that names existing charts.
+
+--solos takes a mode or the names of the sections to make solos, as one argument with the names separated by
+commas: a name with a space needs quotes around the whole list, in a POSIX shell, cmd.exe and PowerShell alike
+(--solos "Solo 1,Solo 2"; unquoted, the shell splits the list at its spaces). A name cannot hold a comma, and
+a name that is a mode word (stems, labels, off) is taken as the mode. The names are the build's own sections (the
+summary's warnings list them when a name matches none).
 
 Exit status (both commands):
   0  the song folder passed the gate and is in the output folder;
@@ -91,6 +98,15 @@ def _instruments(text: str) -> tuple[str, ...]:
     return tuple(x.strip().lower() for x in text.split(",") if x.strip())
 
 
+def _solos(text: str) -> str | tuple[str, ...]:
+    """--solos: a mode (stems, labels, off, any case), else section names separated by commas, each kept as written
+    but for runs of spaces (one argument: quote it when a name holds a space)."""
+    mode = text.strip().lower()
+    if mode in ("stems", "labels", "off"):
+        return mode
+    return tuple(" ".join(x.split()) for x in text.split(",") if x.strip())
+
+
 def _levels(text: str) -> tuple[str, ...]:
     """--levels: "all", or a comma-separated list of difficulties (checked by pipeline.Options)."""
     words = _instruments(text)
@@ -123,6 +139,11 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--levels", type=_levels, default=("expert",), metavar="LIST",
                    help="the difficulties to write: expert (default), all, or a comma-separated list that includes "
                         "expert, such as expert,hard (the others are reduced from Expert)")
+    c.add_argument("--solos", type=_solos, default="stems", metavar="MODE|NAMES",
+                   help="where the guitar solos go: stems (default: sections where the vocals stem is quiet and the "
+                        "guitar loud), labels (sections named Solo), off, or the solo sections' names, comma-"
+                        "separated and quoted as one argument when a name holds a space: --solos \"Solo 1,Solo 2\" "
+                        "(names as the build's sections are called; solos need the guitar charted)")
     c.add_argument("--takes", type=int, default=1, metavar="N",
                    help="guitar takes, spliced by agreement: 1 (default), or 3 or more (each about one more "
                         "autochart run)")
@@ -151,7 +172,8 @@ def main(argv: list[str] | None = None) -> int:
             meta = {k[5:]: v for k, v in vars(args).items() if k.startswith("meta_") and v is not None}
             instruments = pipeline.INSTRUMENTS if args.instruments is None else args.instruments
             options = pipeline.Options(instruments=instruments, takes=args.takes, device=args.device,
-                                       threads=args.threads, work=args.work, metadata=meta, levels=args.levels)
+                                       threads=args.threads, work=args.work, metadata=meta, levels=args.levels,
+                                       solos=args.solos)
             done = pipeline.chart(args.song, args.out, options)
             result, extra = done.assembled, pipeline.summary(done)
         else:
