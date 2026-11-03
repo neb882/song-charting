@@ -1106,6 +1106,11 @@ def test_notes_past_the_end_of_the_audio_are_clipped(built, monkeypatch):
     assert max(n.tick + n.length for n in lead.notes) == last_tick_by(result.chart.tempo, song_end - CLIP_MARGIN_S)
     if find_scan_chart()[0] is not None:
         assert result.report["gate"]["scan_chart"]["ran"]
+    # and the command line's summary says so, on the part's line
+    from songcharter.cli import _summary
+    line = next(x for x in _summary(result).splitlines() if x.startswith("part guitar: "))
+    assert line.endswith("; at the end of the audio 1 Expert onsets dropped, 1 sustains clipped, 0 removed"), line
+    assert not any("at the end of the audio" in x for x in _summary(result).splitlines() if x.startswith("part bass"))
     monkeypatch.setattr(assemble_module, "clip_to_audio", lambda tracks, tempo, end: (tracks, {}))
     unclipped = assemble(parse_config({**cfg, "output": "out/unclipped"}, root))
     assert not unclipped.ok

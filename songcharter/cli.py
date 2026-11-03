@@ -27,7 +27,9 @@ Exit status (both commands):
      or an OSError, printed as one line;
   3  an internal error, a bug: any other exception, numpy's and torch's included (the traceback is printed, and
      for `chart` also kept in the work folder's pipeline.json);
-  130  interrupted (Ctrl+C): the output folder keeps what it held.
+  130  interrupted (Ctrl+C) before the build was in place: the output folder keeps what it held. For `chart` a
+       Ctrl+C during the preview or the pruning after the build stops only that stage, which is warned about, and
+       the exit status is 0 or 1 as the gate says, with the summary.
 """
 from __future__ import annotations
 
@@ -140,8 +142,9 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--out", type=Path, required=True, help="the song folder to write")
     c.add_argument("--work", type=Path, help="the work folder for the decode, stems and engine outputs (default: "
                                              "one per song in the per-user cache, %%LOCALAPPDATA%%\\songcharter\\work "
-                                             "on Windows, ~/.cache/songcharter/work elsewhere, or $SONGCHARTER_CACHE/"
-                                             "work; the least recently used go past 5 GB, $SONGCHARTER_CACHE_GB)")
+                                             "on Windows, $XDG_CACHE_HOME/songcharter/work (else ~/.cache/"
+                                             "songcharter/work) elsewhere, or $SONGCHARTER_CACHE/work; the least "
+                                             "recently used go past 5 GB, $SONGCHARTER_CACHE_GB)")
     c.add_argument("--instruments", type=_instruments, default=None, metavar="LIST",
                    help="comma-separated parts to chart (default: guitar,bass,drums)")
     c.add_argument("--levels", type=_levels, default=("expert",), metavar="LIST",
@@ -151,7 +154,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="where the guitar solos go: labels (default: the sections named Solo), stems (only those "
                         "where the vocals stem is quiet and the guitar loud), off, or the solo sections' names, comma-"
                         "separated and quoted as one argument when a name holds a space: --solos \"Solo 1,Solo 2\" "
-                        "(names as the build's sections are called; solos need the guitar charted)")
+                        "(names as the build's sections are called; anything but labels and off needs the guitar "
+                        "charted)")
     c.add_argument("--takes", type=int, default=None, metavar="N",
                    help="guitar takes, spliced by agreement: 1, or 3 or more, each about one more autochart run "
                         "(default: 4 when the guitar runs on CUDA, 1 on the CPU)")

@@ -17,7 +17,7 @@ records, test coverage); the fixes are listed at the end of §11.*
 *Updated again on 2026-11-03 for the pipeline's defaults (branch `pipeline-defaults`): Expert only, solos on the
 sections named Solo (or by name), guitar takes by device, the preview, the work folder in the per-user cache (§9 Q30)
 and the clip at the end of the audio; with three research results: the takes experiment and the strumming detector
-(§2.7) and the solo evaluation (§2.10). Listed at the end of §11.*
+(§2.7) and the solo evaluation (§2.10). Listed at the end of §11, with the fixes after that branch's review.*
 
 **Evidence tags:**
 - **[here]**: measured by this project in the Linux dev container (4 CPUs, no GPU).
@@ -47,6 +47,7 @@ and the clip at the end of the audio; with three research results: the takes exp
 | takes experiment | four autochart Expert takes (seed 20260609 and 101, 202, 303, made on the 5070) of each of the six references, built through assemble one by one and spliced, scored with `score.py` against the human charts; a verifier re-checked it and corrected two points (§2.7) |
 | strumming research | a detector of under-charted strumming from the guitar stem's pick noise, scored on the six references with leave-one-song-out tuning; a verifier reproduced it and corrected it (§2.7) |
 | solo evaluation | every solo rule (off, labels, stems, the stem test on every section, their union and intersection) through `starpower.place_solos` on pipeline-shaped builds of the six references and the test song, on fold-0, ensemble and librosa sections, against the human solos and the two the friend confirmed (§2.10) |
+| defaults review | the review of branch `pipeline-defaults` (options, cache, tests, docs), each finding reproduced by a verifier: among them a real autochart take traced with strace, a prune that fails partway with NTFS's name order imitated, and two real runs racing a prune |
 | pipeline-defaults runs | `songcharter chart` with branch `pipeline-defaults`'s defaults in the dev container: Take Me Out and the test song on copies of their warm work folders, two 35-s cuts of Take Me Out (one with the work folder in the cache), and the clip's before-and-after on the excerpt that failed (§5, M3) |
 
 ---
@@ -154,16 +155,31 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
     characters or device names, at most 40 UTF-16 units), for a person to tell the folders apart. A renamed copy gets
     a folder of its own.
   - **autochart's scratch folder** (its engine cache and jobs) is `<cache>\ac\<first 8 hex of the key>`, apart:
-    its own layout reaches 188 characters below it on Windows, so inside the work folder its deepest path would be
-    319 characters with `C:\Users\<20 characters>\AppData\Local` and a 40-character name, past Windows' 259; here it
-    is 256, with 3 to spare, and the work folder's deepest (a take's report) 182 [code: `tests/test_cache.py`].
+    the files its own layout leaves reach 188 characters below it on Windows, so inside the work folder its deepest
+    file would be 319 characters with `C:\Users\<20 characters>\AppData\Local` and a 40-character name, past
+    Windows' 259; here it is 256, with 3 to spare, and the work folder's deepest (a take's report) 182 [code:
+    `tests/test_cache.py`]. autochart writes each of those files through a staging file beside it,
+    `.<name>.tmp-<pid>-<uuid>` (`fileSafety.cjs` `writeVerifiedAtomic`), 47 characters longer plus the pid's digits:
+    235 below the scratch folder in a real take (the mel tables', pid 6477) [here, defaults review: a traced take],
+    241 with a 10-digit pid, so 309 with that profile and 290 even with `C:\Users\X`, past 259 on every profile.
+    Only Node writes them, and Node's `fs` takes Windows paths in their `\\?\` form [doc; untested on Windows]; a
+    run killed while one is written leaves it behind, so pruning deletes with that form too (`cache.long_path`)
+    [untested on Windows].
   - **Pruning,** after each run that finishes: the least recently used work folders go, each with its scratch folder,
     until the rest total at most 5 GB (10⁹ bytes; `$SONGCHARTER_CACHE_GB`). Only folders with our marker
     (`songcharter-work.json`, written when a run starts) count; never the run's own, one used in the last 24 hours,
-    or one a `--work` run has used (then it is the person's, and stays so). A folder that cannot be deleted (a file
-    in use) stays with a warning, its marker last, and the next run tries again. Sizes: the test song (6:52) 1.19 GB,
-    Take Me Out (4:01) 696 MB, a 35-s excerpt 101 MB [here, pipeline-defaults runs], so 5 GB holds four to seven
-    songs [inference].
+    or one a `--work` run has used (then it is the person's, and stays so). A folder that goes is first moved whole
+    into `<cache>\trash` in one rename (its scratch folder before it) and only then deleted there, so no run meets a
+    folder half deleted: a run trusts the caches it finds, and a work folder deleted in name order up to a stem in
+    use left a stems `info.json` beside missing stems, which failed every later chart of that song as a bug [here,
+    defaults review]. Its marker is read again just before the move (a run may have started on that song since the
+    scan) and once more after it, and a run that marked it in between gets it back. A folder that cannot be moved
+    (on Windows a file in it in use, or a console in it [inference]) stays whole, with a warning, and the next run
+    tries again; what cannot be deleted in the trash stays there, with a warning, and the next prune deletes it
+    first. The trash is ours only with its `songcharter-trash.json` in it. Separation is safe on its own too: a
+    stems folder whose `info.json` lists a stem that is missing or does not read is separated again (§2.2). Sizes:
+    the test song (6:52) 1.19 GB, Take Me Out (4:01) 696 MB, a 35-s excerpt 101 MB [here, pipeline-defaults runs],
+    so 5 GB holds four to seven songs [inference].
   - `--work DIR` puts the work folder anywhere, with autochart's scratch inside it, as before.
 - **Determinism.** Seeds are fixed and nothing depends on the wall clock. Two CPU runs must give a byte-identical `notes.chart`.
   - Demucs's default `shifts=1` draws a random time shift from Python's global `random` (demucs 4.1.0: `apply.py` line 245, `api.py` line 59); the ADTOF test called `apply_model(..., shifts=1)` [here]. So two fresh separations differ unless `random` (and torch) is seeded right before each separation, or `shifts=0` is used. Record the choice in `doctor.json`. M1 is safe only because it reuses cached stems.
@@ -189,17 +205,17 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | `reduce.py` | Nested Hard/Medium/Easy for 5-fret and drums; minimum gaps from time floors (no Standard/Dense preset); a thinning ladder; a below-Expert HOPO rule; Easy sustain floor 1.25 beats (2 for bass); star-power and solo coverage; `check_reductions` (5-fret Hard ≥ 0.90 of Expert onsets is an error). |
 | `starpower.py` | Star power, drum activation lanes (at section changes, in star-power gaps, then every 4 measures) and solos (on the "Solo" sections, or those of them a caller's test confirms, e.g. `stem_confirm`, or exactly the sections a person names; none unless asked), placed on Expert and fitted to every level (`fit_chart`); `check_phrases` (scan-chart's phrase checks, our rules, a `fillNoCrash` warning) (§2.10). |
 | `sections.py` | allin1 segments, or an imported chart's sections, on measure starts: merged, split and named (§2.5). |
-| `separate.py` | `separate`: one Demucs pass on the decoded array (htdemucs_6s by default, htdemucs_ft for M2), weights at a pinned Hugging Face revision with every file's SHA-256 checked, `random` and torch seeded right before the call; device auto takes CUDA only when a CUDA kernel runs (`cuda_works`: `is_available()` is also true on a GPU the torch build has no kernels for), else the CPU (reported); CUDA out of memory retried on the CPU (reported); a float32 WAV stem cache keyed by the samples and settings (§2.2). Optional dependency `songcharter[separate]`. |
+| `separate.py` | `separate`: one Demucs pass on the decoded array (htdemucs_6s by default, htdemucs_ft for M2), weights at a pinned Hugging Face revision with every file's SHA-256 checked, `random` and torch seeded right before the call; device auto takes CUDA only when a CUDA kernel runs (`cuda_works`: `is_available()` is also true on a GPU the torch build has no kernels for), else the CPU (reported); CUDA out of memory retried on the CPU (reported); a float32 WAV stem cache keyed by the samples and settings, a hit only when every stem its `info.json` lists is there and reads (§2.2). Optional dependency `songcharter[separate]`. |
 | `engines/autochart.py` | Lead guitar by route B1 (§2.7, decided in §9 Q3): our job driver `eval/tools/autochart/ac_headless.cjs` runs autochart's engine once per seed, Expert only, behind a process boundary (no AGPL code is imported). `generate(install, audio, out, seeds)` writes one song folder per take (`seed_<seed>/`), reused when its `take.json`, written after the run, matches: the input's SHA-256, the seed, the sampling settings, the difficulty and the install (`engine/manifest.json`'s engineVersion and a SHA-256 over the engine's manifest and catalog, the models' manifest, onnxruntime-node's `package.json` and the driver), so an updated engine, model set or driver runs every take again; the takes share one engine work folder, so takes after the first pay only for the transcription. `find_install` names whatever is missing (node, the engine, the models, onnxruntime-node). |
 | `engines/adtof.py`, `engines/drumlanes.py` | The drums engine of §2.9 (Goal 2). `adtof.generate(mix, drums, out, settings)` runs ADTOF's Frame_RNN, our own PyTorch module and a separate component treated as BY-NC-SA, on the drum stem and on the mix. The weights come from xavriley/ADTOF-pytorch at commit 85c192e7, are checked against their SHA-256, are downloaded on first use to `models_dir()/adtof/` and are loaded with `weights_only=True`. drumlanes.py holds the fusion, the G3 hat gate, drummap2's lanes, the two-hands and shared-pad rules and the 2x kicks. The output is notes.chart (Expert only, 120 BPM at resolution 480), song.ini (pro_drums = True) and engine.json, cached by a key of the samples, the weights, the settings and the beat period used (beatgrid's tempo estimate of the mix unless `beat_s` is given, so a hit still estimates it: a few seconds). The activations are cached apart (`activations.npz`), so a change to the lane settings alone does not rerun the model. Optional dependency `songcharter[drums]`. |
 | `engines/bass.py` | The bass rule engine of §2.8: HFC onsets on the bass stem (delta 0.07), the leakage gate of §2.2 (stem within 30 dB of the mix from 50 ms before to 200 ms after the onset), `librosa.pyin` at 22.05 kHz (fmin 30, fmax 400, frame 2048, hop 220) in 30-s chunks, v1's `map_v2` lanes (identical to the prototype), sustains where the pitch track holds the note. `generate(mix, bass, out)` writes `notes.chart` (Expert bass on a constant 120 BPM map at resolution 480) and `engine.json`; the folder is reused when its key (samples, settings, rules and library versions) and chart match. Optional dependency `songcharter[bass]` (librosa). |
 | `engines/sections.py`, `engines/allin1_runner.py` | `find_sections(mix, stems, out, settings)`: `out/segments.json` (allin1 format: what `sections.read_allin1` and assemble's `"sections"` read) and `out/engine.json` (backend, why, versions, timings, key), cached by a key of the samples the backend read and every setting; a hit rewrites engine.json's why and settings for the call that hit. `backend="auto"`: allin1 when a Python with it is configured (`$SONGCHARTER_ALLIN1_PYTHON`, or this one) and its probe and run succeed, else the librosa fallback, with the reason recorded. allin1 runs as `allin1_runner.py` in that Python under its own import rules (user site and PYTHONPATH count), all-in-one-infer first, else allin1 1.x, fed our stems folded to its four, as int16 on stdin: no second separation, no stem files. Fold 0 on the CPU, the 8-fold ensemble on CUDA. The probe runs a CUDA kernel; with device auto, a failed CUDA run is redone with fold 0 on the CPU. Checkpoints from `taejunkim/allinone` @379e5fd0, SHA-256 checked. The fallback's `beats=` drops times outside the audio. allin1 failing with librosa absent is a `ToolError` that names both. The runner reports its own peak RSS (VmHWM on Linux, PeakWorkingSetSize on Windows), kept in engine.json. Optional dependency `songcharter[sections]` (librosa). |
-| `cache.py` | The per-user cache (§2, work folder; §9 Q30): `%LOCALAPPDATA%\songcharter` on Windows, `$XDG_CACHE_HOME/songcharter` or `~/.cache/songcharter` elsewhere (`user_cache`, shared with ADTOF's `models_dir()`, whose paths and `$SONGCHARTER_MODELS` are unchanged); `$SONGCHARTER_CACHE` moves the work folders only. A song's work folder is `<cache>/work/<name>-<key>`: the key is the first 16 hex characters of the song file's SHA-256, the name its stem made safe for Windows (ASCII-folded where it can be, no reserved characters or device names, no trailing dots or spaces, at most 40 UTF-16 units). autochart's scratch folder is `<cache>/ac/<8 hex>`: its own layout reaches 188 characters below it on Windows, so inside the work folder its deepest path would be 319 characters with `C:\Users\<20 characters>\AppData\Local` and a 40-character name, and here it is 256 (the work folder's deepest, a take's report, 182). After each run that finishes, the least recently used work folders (with our marker, `songcharter-work.json`, written when a run starts) go, with their scratch folders, until the rest fit 5 GB (`$SONGCHARTER_CACHE_GB`); never the run's own, one used in the last 24 hours or one a `--work` run used (pinned in its marker, which later default runs keep, with its scratch folder); a deletion that fails is a warning. |
-| `pipeline.py` | M3's pipeline (§1, `songcharter chart`): one decode, written as a float32 WAV into the work folder (the song's folder in the per-user cache, pruned after each run, §2; or `--work`) (autochart's input and assemble's audio, rewritten only when the samples change); one seeded separation cached there; the drums, bass, sections and guitar engines, each in a folder of the work folder that is its cache; then an assemble config (`work/assemble.json`) and assemble's build and gate, writing Expert only unless `levels` asks for more (the friend's v1 feedback: only Expert is needed unless he asks), with solos by assemble's rule (`solos`: "labels" by default, every section named Solo, chosen on the solo evaluation of §2.10; "stems", "off" or a list of section names; only when the guitar is charted). Guitar: autochart's default seed, and for `takes` N ≥ 3 seeds 101, 202, … spliced by takes.py (a take that repeats another's notes is left out); `takes` None (the default) is 4 when the guitar stage runs on CUDA and 1 otherwise (`guitar_takes`, §2.7), the first CUDA take run alone first so that a transcriber autochart moved off CUDA by itself leaves that take alone (warned); `pipeline.json`'s `takes` says how many, whether by default, and why. A part whose engine finds no note is left out (§2, absent parts). After assemble, the preview (`preview.py`) of the folder it wrote, the song folder or its `.failed`, goes into `work/preview/` (overview.png, page_NN.png), judged against the work folder's six stems, when matplotlib and librosa import; their absence or a preview that fails is one warning and never changes the exit code (`--no-preview` turns it off); `pipeline.json`'s `preview` holds its flags, and the CLI summary prints the overview's path. Metadata: the file's tags (ffmpeg's ffmetadata output, the container's, then the first audio stream's), the caller's values on top, and "Unknown" placeholders (scan-chart counts its own "Unknown Artist" defaults as missing). A missing component (ffmpeg, torch and demucs, librosa for bass, librosa for sections, allin1 or not, since it is allin1's fallback, autochart's install, CUDA asked for but absent or running no kernel in songcharter's torch) is named with its fix before any audio work, and so is an output folder (or its `.failed`) holding foreign files. Device auto is CUDA only when a CUDA kernel runs (`separate.cuda_works`), else the CPU for every model, with a warning. The sections engine is asked for auto when CUDA is asked for: allin1 runs in a Python of its own whose CUDA nothing checks up front, so it takes CUDA when that Python has it and the CPU (warned) when not. `work/pipeline.json` records each stage's wall time, cache use, device, fallback and the process's own peak RSS (not its children's: a child's `ru_maxrss` starts from its parent's peak when it was spawned), allin1's runner's own peak, and for a run that raised, the error and its traceback. The heavy stages are the methods of `Engines`, so tests stand in for them. |
+| `cache.py` | The per-user cache (§2, work folder; §9 Q30): `%LOCALAPPDATA%\songcharter` on Windows, `$XDG_CACHE_HOME/songcharter` or `~/.cache/songcharter` elsewhere (`user_cache`, shared with ADTOF's `models_dir()`, whose paths and `$SONGCHARTER_MODELS` are unchanged); `$SONGCHARTER_CACHE` moves the work folders only. A song's work folder is `<cache>/work/<name>-<key>`: the key is the first 16 hex characters of the song file's SHA-256, the name its stem made safe for Windows (ASCII-folded where it can be, no reserved characters or device names, no trailing dots or spaces, at most 40 UTF-16 units). autochart's scratch folder is `<cache>/ac/<8 hex>`: the files its own layout leaves reach 188 characters below it on Windows, so inside the work folder its deepest file would be 319 characters with `C:\Users\<20 characters>\AppData\Local` and a 40-character name, and here it is 256 (the work folder's deepest, a take's report, 182); autochart's staging files beside them go past 259 on every profile (`DEEPEST["staging"]`: 309 with that profile), which only Node writes, and pruning deletes in Windows' `\\?\` form (`long_path`). After each run that finishes, the least recently used work folders (with our marker, `songcharter-work.json`, written when a run starts) go, with their scratch folders, until the rest fit 5 GB (`$SONGCHARTER_CACHE_GB`); never the run's own, one used in the last 24 hours or one a `--work` run used (pinned in its marker, which later default runs keep, with its scratch folder). Each goes whole into `<cache>/trash` in one rename, scratch folder first, its marker read again before and after the move (a run that marked it in between gets it back), and is deleted there; a folder that cannot be moved stays whole, and what cannot be deleted in the trash waits for the next prune, each with a warning; a `trash` folder without our `songcharter-trash.json` is left alone. |
+| `pipeline.py` | M3's pipeline (§1, `songcharter chart`): one decode, written as a float32 WAV into the work folder (the song's folder in the per-user cache, pruned after each run, §2; or `--work`) (autochart's input and assemble's audio, rewritten only when the samples change); one seeded separation cached there; the drums, bass, sections and guitar engines, each in a folder of the work folder that is its cache; then an assemble config (`work/assemble.json`) and assemble's build and gate, writing Expert only unless `levels` asks for more (the friend's v1 feedback: only Expert is needed unless he asks), with solos by assemble's rule (`solos`: "labels" by default, every section named Solo, chosen on the solo evaluation of §2.10; "stems", "off" or a list of section names; only when the guitar is charted, and "stems" or names without the guitar are refused, as more than one take is). Guitar: autochart's default seed, and for `takes` N ≥ 3 seeds 101, 202, … spliced by takes.py (a take that repeats another's notes is left out); `takes` None (the default) is 4 when the guitar stage runs on CUDA and 1 otherwise (`guitar_takes`, §2.7), the first CUDA take run alone first so that a transcriber autochart moved off CUDA by itself leaves that take alone (warned); `pipeline.json`'s `takes` says how many, whether by default, and why. A part whose engine finds no note is left out (§2, absent parts). After assemble, the preview (`preview.py`) of the folder it wrote, the song folder or its `.failed`, goes into `work/preview/` (overview.png, page_NN.png), judged against the work folder's six stems, when matplotlib and librosa import; their absence or a preview that fails is one warning and never changes the exit code (`--no-preview` turns it off), and so is a Ctrl+C during the preview or the pruning after it (the build is in place by then); `pipeline.json`'s `preview` holds its flags, and the CLI summary prints the overview's path, the work folder's size and autochart's scratch folder when the run made one. Metadata: the file's tags (ffmpeg's ffmetadata output, the container's, then the first audio stream's), the caller's values on top, and "Unknown" placeholders (scan-chart counts its own "Unknown Artist" defaults as missing). A missing component (ffmpeg, torch and demucs, librosa for bass, librosa for sections, allin1 or not, since it is allin1's fallback, autochart's install, CUDA asked for but absent or running no kernel in songcharter's torch) is named with its fix before any audio work, and so is an output folder (or its `.failed`) holding foreign files. Device auto is CUDA only when a CUDA kernel runs (`separate.cuda_works`), else the CPU for every model, with a warning. The sections engine is asked for auto when CUDA is asked for: allin1 runs in a Python of its own whose CUDA nothing checks up front, so it takes CUDA when that Python has it and the CPU (warned) when not. `work/pipeline.json` records each stage's wall time, cache use, device, fallback and the process's own peak RSS (not its children's: a child's `ru_maxrss` starts from its parent's peak when it was spawned), allin1's runner's own peak, and for a run that raised, the error and its traceback. The heavy stages are the methods of `Engines`, so tests stand in for them. |
 | `takes.py` | `splice`: a part's Expert from several runs of its source, chosen per section by the takes' agreement (§2.7, Several takes); assemble's part key `takes`. |
 | `assemble.py` | One JSON config to a gated song folder: decode, stem-lag check, grid with a second stem (§2.3), parts imported, offset-corrected and quantized, edges trimmed (§2.8), every taken level clipped 1 ms inside song.ogg's end (`clip_to_audio`, §2.13), sections, phrases, reductions, ratings (§2.12), `build_song_folder` into a staging folder, then the gate with scan-chart 8.0.1 itself (§2.13) and `report.json`. A build the gate fails goes to `<output>.failed`. `check_output` (the output folder and its `.failed` hold only what a build writes) also runs in the pipeline before any audio work. |
-| `cli.py` | `songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums] [--levels expert\|all\|LIST] [--solos labels\|stems\|off\|"NAME,NAME"] [--takes N] [--device auto\|cpu\|cuda] [--threads N] [--no-preview] [--title\|--artist\|--album\|--year\|--genre TEXT]` (pipeline.py; the work folder defaults to the song's folder in the per-user cache, `cache.py`, and `--work DIR` puts it anywhere, with autochart's scratch inside it as before) and `songcharter assemble <config.json> [--out DIR]`. Both: exit 0: the gate passed; 1: it failed (the build is in `<output>.failed`); 2: a bad config, input, option or tool (a missing component named with its fix), a failing component, or song.ogg out of sync (nothing written): an `errors.SongcharterError` or an `OSError`, one line; 3: any other exception, a bug (traceback printed, and kept in `pipeline.json` for `chart`); 130: interrupted. `chart` prints a line on stderr when each stage starts and ends, with its wall time, and the build summary and stage times on stdout. |
-| tests | 472 tests on branch `pipeline-defaults` (469 pass and 3 skip in its worktree: the allin1 test without `$SONGCHARTER_ALLIN1_PYTHON`, and test_package's two scan-chart tests, which look for `tools/scan-chart/node_modules` in the checkout itself and pass with it [here]); `tests/conftest.py` points `$SONGCHARTER_CACHE` at a temporary folder for the whole session, so no test writes to the real per-user cache. Before this branch, 399 tests: tempo, chart, package, beatgrid, importers, quantize, reduce, starpower, sections, separate, takes, assemble and the CLI, the four engines (autochart 5, ADTOF 15, bass 14, sections 29) and the pipeline (17, with stand-ins for the heavy stages, which check the exact arrays they get, and the CLI end to end on a synthetic song). 398 pass and 1 skips without `$SONGCHARTER_ALLIN1_PYTHON` (it passes with it set); the scan-chart tests skip when `tools/scan-chart`'s node_modules are absent [here]. A passing test's temporary folders are deleted at once (`tmp_path_retention_policy = "failed"`): `tests/test_pipeline.py` peaks at about 320 MB of them and leaves none, where it used to leave about 470 MB per run, three runs kept [here]. |
+| `cli.py` | `songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums] [--levels expert\|all\|LIST] [--solos labels\|stems\|off\|"NAME,NAME"] [--takes N] [--device auto\|cpu\|cuda] [--threads N] [--no-preview] [--title\|--artist\|--album\|--year\|--genre TEXT]` (pipeline.py; the work folder defaults to the song's folder in the per-user cache, `cache.py`, and `--work DIR` puts it anywhere, with autochart's scratch inside it as before) and `songcharter assemble <config.json> [--out DIR]`. Both: exit 0: the gate passed; 1: it failed (the build is in `<output>.failed`); 2: a bad config, input, option or tool (a missing component named with its fix), a failing component, or song.ogg out of sync (nothing written): an `errors.SongcharterError` or an `OSError`, one line; 3: any other exception, a bug (traceback printed, and kept in `pipeline.json` for `chart`); 130: interrupted before the build was in place (for `chart`, a Ctrl+C during the preview or the pruning after the build stops only that stage, with a warning, and the exit status is the gate's). `chart` prints a line on stderr when each stage starts and ends, with its wall time, and the build summary and stage times on stdout. |
+| tests | 479 tests on branch `pipeline-defaults` (476 pass and 3 skip in its worktree: the allin1 test without `$SONGCHARTER_ALLIN1_PYTHON`, and test_package's two scan-chart tests, which look for `tools/scan-chart/node_modules` in the checkout itself and pass with it [here]); `tests/conftest.py` points `$SONGCHARTER_CACHE` at a temporary folder for the whole session, so no test writes to the real per-user cache. Before this branch (`main` at 7172d80), 428 tests: tempo 8, chart 5, package 6, beatgrid 26, importers 21, quantize 45, reduce 113, starpower 25, sections 16, separate 7, takes 11, assemble and the CLI 42, preview 22, the four engines (autochart 6, ADTOF 15, bass 14, sections 29) and the pipeline (17, with stand-ins for the heavy stages, which check the exact arrays they get, and the CLI end to end on a synthetic song); 427 pass and 1 skips without `$SONGCHARTER_ALLIN1_PYTHON` (it passes with it set). The branch adds 51: cache 38, pipeline 9, assemble 3, separate 1; the scan-chart tests skip when `tools/scan-chart`'s node_modules are absent [here]. A passing test's temporary folders are deleted at once (`tmp_path_retention_policy = "failed"`): `tests/test_pipeline.py` peaks at about 320 MB of them and leaves none, where it used to leave about 470 MB per run, three runs kept [here]. |
 
 **Design and code, decided once.** Each difference is decided here; code changes are §5.6 tasks.
 
@@ -231,7 +247,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | 5 | Sections (§2.5) | allin1's segments (v1's fold-0 result), merged and split per run: 26 sections | allin1 by default (fold 0 on the CPU, the ensemble on CUDA), librosa as the fallback [here, M2 row 7] | low / medium-low | section scores on more references; the owner's call on fold 0 for CUDA; the friend's feedback |
 | 6 | Quantizer (§2.6) | remove offsets, snap to 1/16 + 1/12 (a 1/32-grid source's odd 1/32s to the coarser slot), keep the HOPO states the source forced | same | medium | snapping moves > 2 % of onsets by > 25 ms; HOPO κ in M2 |
 | 7 | Lead guitar (§2.7) | four autochart Expert takes, imported and spliced per section by agreement between takes | autochart's engine as a separate program (B1, decided §9 Q3; built: `engines/autochart.py`); by default 4 takes spliced on CUDA, 1 on the CPU; `--takes N` (1, or N ≥ 3) on any device | medium / low | B1's seed spread over ≥ 3 seeds on the references; the friend's playtest |
-| 8 | Bass (§2.8) | STRUM onsets, offset removed by the quantizer, re-laned by pYIN | our rules (built: `engines/bass.py`), scored on 5 references; STRUM a benchmark only | low / medium-low | more references; whether the friend plays bass |
+| 8 | Bass (§2.8) | STRUM onsets, offset removed by the quantizer, re-laned by pYIN | our rules (built: `engines/bass.py`), scored on 5 references; STRUM a benchmark only | low / medium-low | more references; the friend asking for bass (§9 Q1 answered: he plays Guitar) |
 | 9 | Drums (§2.9) | STRUM lanes, re-timed; ADTOF kicks only after a de-duplicated fusion re-test | ADTOF onsets and kicks with drummap2's lanes (built: `engines/adtof.py`), a better lane mapper still to come (provisional [decision]); STRUM is the lane benchmark, never shipped | medium / medium-low | a mapper that misses the drum-lane rule of §3.2; the owner choosing a shipped-STRUM route (§9 Q14) |
 | 10 | Star power, solos, activation lanes (§2.10) | v1's rules with the critique's fixes; lanes first; v1.1: solos by name on the two sections the friend confirmed ("Solo 1", "Solo 2") | same; solos on every section allin1 labels Solo (the solo evaluation) | low-medium | M2 counts; the playtest; the owner's choice on fills; more human solos to score against |
 | 11 | Reductions (§2.11) | our nested reducer (`reduce.py`): time-floor gaps, a thinning ladder; v1.1: Expert only | same, when asked: Expert only by default | medium | ours losing to autochart's tiers beyond run-to-run spread |
@@ -267,7 +283,10 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 - **Built** (`songcharter/separate.py` [code]): the default above, with the pinned revision `3c5ee475` and both
   files' SHA-256 checked on every load. On the test song, on the dev container's CPU: 138.5 s; every stem's median lag
   against the mix within 0.1 sample (drums 0.001, bass −0.099, guitar 0.001, other 0.061, vocals −0.005; piano at
-  −31.9 dB not checked); two runs on a 30-s excerpt bit-identical [here, separation run].
+  −31.9 dB not checked); two runs on a 30-s excerpt bit-identical [here, separation run]. Its cache folder's
+  `info.json` is written last and is the hit, only when every stem it lists is there and reads: a folder half
+  deleted or half written is separated again, never an error (a run used to fail as a bug, exit 3, on a stem a
+  partial prune had deleted [here, defaults review]) [code; tested with the unit-test model].
 - **Goal 1:** no new separation. Reuse the `ft` stems (lag 0) and the ADTOF test's 6s drum stems (lag 0).
 - **Leakage gate** (kept from v1, untested): a note candidate from a stem needs the stem within 30 dB of the mix in that window. It is motivated by the 6s stems' −34 dB leakage in the test song's intro.
 - **BS-RoFormer SW is not in this version.** It has the best stems, but its weights have no licence, their origin is disputed, and it costs 8–14 min on a 6–8-core CPU [est.] (20–25 min in the dev container [here]). The owner may override (§9).
@@ -703,7 +722,8 @@ sections, scored with `score.py` against the six human charts [here, takes exper
   audio's end); assemble now clips it (§2.13).
 
 #### Under-charted strumming: a detector, no fill
-The friend found a sparse stretch in the test song around 2:28–2:35 of the original recording. The research tried
+The friend found a sparse stretch in the test song around 2:32–2:35 of the original song (his clarification; an
+earlier message gave 2:27–2:29 and was withdrawn). The research tried
 to detect, from the guitar's pick noise, where our chart is too sparse, and to fill it with 8th or 16th notes
 [here, strumming research].
 - **Detector:** the 6s guitar stem's 2–7 kHz band energy (a "dominance" control keeps only the cells where the
@@ -719,8 +739,10 @@ to detect, from the guitar's pick noise, where our chart is too sparse, and to f
   - **16th-note detection 0/22**; in flagged windows the human charts the detected rate in 1 of 27 held out;
   - our chart's own onsets per beat predict the human 8ths better (AUC 0.62–0.99) than the audio feature (0.69–0.81,
     0.40 on Kimochi Warui); only 6 of 269 windows on five songs are clearly under-charted.
-  - The friend's window, input 148.8–152.2 s (2:32.1–2:35.5 on the chart's clock, input + 3.342 s), has r2 17 and is
-    not flagged at T = 20; at T = 10 it is.
+  - The friend's times read on the chart's clock (input + 3.342 s) are input 148.8–152.2 s (2:32.1–2:35.5 there):
+    r2 17, not flagged at T = 20; at T = 10 it is. Read on the recording's own clock, input 152.2–155.5 s, the
+    window has r1 59, r2 1.7 and r4 2.0, below both T tried (10 and 20) [here, strumming research's stored
+    features]. Which clock he used is not known; the verdict below holds either way.
 - **No fill was built**, and nothing in songcharter changed: the research stopped, as planned, once the detector
   proved unable to drive a chart change.
 - **The verifier's corrections** (the numbers reproduce exactly on all seven songs; the verdict holds):
@@ -1020,7 +1042,7 @@ to detect, from the guitar's pick noise, where our chart is too sparse, and to f
 - **Evidence:** human charts have 89 activation lanes across 5 songs (3, 24, 23, 20, 19), mostly 4 beats long; 2 overlap a star-power phrase (1 lies fully inside) [here, comparison]. v1 cites a Harmonix median of 26 per song. STRUM's 8 lanes all sit inside its star power, which reflects how they were placed, not the music.
 
 **Solos** (guitar only; the friend asked for solo trackers, Clone Hero's hit percentage on a solo section):
-- **Candidates:** an allin1 "solo" section, or at least 8 bars where the vocal stem is below −30 dB (relative to its P95) while the guitar stem is at or above its P75 [untested thresholds]. Only the first is built. assemble's `solos: "stems"` tests the stems on the "Solo" sections alone (`solo_sections` skips every other section before the test runs), so it is the label and the stem test together; the 8-bar stem rule was never built [code; here, solo evaluation].
+- **Candidates:** an allin1 "solo" section, or at least 8 bars where the vocal stem is below −30 dB (relative to its P95) while the guitar stem is at or above its P75 [thresholds never tuned; here, solo evaluation]. Only the first is built. assemble's `solos: "stems"` tests the stems on the "Solo" sections alone (`solo_sections` skips every other section before the test runs), so it is the label and the stem test together; the 8-bar stem rule was never built [code; here, solo evaluation].
 - **Goal 1:** start from autochart's Expert solo spans (67.9 s for 8.2 s; 218.1 s for 40.6 s) [here, guitar audit]. They begin near where its half-tempo stretches begin (67.2–89.6 s and 218.5–230.3 s), so keep them only after a listening check.
   As built, assemble drops the tools' solos. "stems" placed none on the test song: the vocals stem is active in 56 %
   and 95 % of allin1's first two "solo" sections on v1's ft stems, and in two of the three parts of the third. v1.1
@@ -1065,10 +1087,14 @@ to detect, from the guitar's pick noise, where our chart is too sparse, and to f
     "intersection" equals "stems" on all seven songs and three sections sources.
 - **Decision** (`pipeline.Options.solos`, `--solos`) [decision, on this evidence]: **"labels" by default**: every
   section allin1 labels Solo, within the placement rules below. The friend asked for trackers, and a missed solo costs
-  him one where a false one is a tracker he can ignore: about one extra false tracker every three songs (2 against 1
-  in six, fold 0), for trackers on the one song he plays. A list of names (`--solos "Solo 1,Solo 2"`) overrides it;
-  "stems" and "off" remain. assemble's own default stays "off". No new mode was needed: the union would only add
-  false solos.
+  him one where a false one is a tracker he can ignore. The cost depends on the sections allin1 gives. On fold 0
+  (the CPU): 2 false solos against the stems' 1 in six songs, one extra false tracker every six songs, for trackers
+  on all of Solo 2 and half of Solo 1 on the one song he plays. On the ensemble, which his CUDA PC would run (allin1
+  on Windows is untested): 4 against 1, one extra about every two songs, and Solo 2 alone on the test song, Solo 1
+  missed (§9 Q29; the ensemble measured as allin1 1.1.0 on the CPU). Even so "labels" gives
+  that song a tracker where "stems" gives none. A list of names (`--solos "Solo 1,Solo 2"`) overrides it; "stems"
+  and "off" remain, and both "stems" and names need the guitar charted (refused without it, like `--takes`).
+  assemble's own default stays "off". No new mode was needed: the union would only add false solos.
 - **The evidence is weak:** 2 human solos in 6 songs; Lucretia is in allin1's Harmonix training data, so the label's
   one success on the references is in-sample, and out of sample no rule finds the remaining solo. The case for
   "labels" rests on one song whose two solos the friend confirmed but nobody charted, and Solo 1's 0.497 is
@@ -1465,13 +1491,15 @@ Whether the friend's tool is native Windows or WSL2 is the owner's call (§9). I
     - v1's pure-PyTorch shim replaces NATTEN, but it is an unreviewed local file.
   - The engines and the pipeline avoid fork-only multiprocessing, temporary stem files and shell commands [code].
 - **The cache and the install share a root** [code]. The per-user cache (§2, work folder) is
-  `%LOCALAPPDATA%\songcharter` with `work\`, `ac\` and `models\` in it, the root §4.4 installs to. So [decision] the
-  install keeps to folders of its own beside them, the uninstaller asks before deleting `work\` and `ac\` as it does
-  for the models, and the disk check counts the work folders' 5 GB budget (`$SONGCHARTER_CACHE_GB`) on top of the
-  lane and the weights. A profile folder name over 23 characters in `C:\Users\<name>\AppData\Local` (Windows can
-  add a suffix such as `.DESKTOP-ABC1234`, 16 characters, to a name), or a deeper `$SONGCHARTER_CACHE`, takes
-  autochart's deepest scratch path (256 characters with a 20-character name) past 259 [inference]; nothing checks
-  that yet [code].
+  `%LOCALAPPDATA%\songcharter` with `work\`, `ac\`, `trash\` and `models\` in it, the root §4.4 installs to. So
+  [decision] the install keeps to folders of its own beside them, the uninstaller asks before deleting `work\`,
+  `ac\` and `trash\` as it does for the models, and the disk check counts the work folders' 5 GB budget
+  (`$SONGCHARTER_CACHE_GB`) on top of the lane and the weights. A profile folder name over 23 characters in
+  `C:\Users\<name>\AppData\Local` (Windows can add a suffix such as `.DESKTOP-ABC1234`, 16 characters, to a name),
+  or a deeper `$SONGCHARTER_CACHE`, takes the deepest file autochart leaves in its scratch folder (256 characters
+  with a 20-character name) past 259 [inference]; nothing checks that yet [code]. autochart's staging files there
+  are past 259 on every profile (§2, work folder); only Node writes them, and pruning deletes in the `\\?\` form,
+  neither tried on Windows.
 - **Device check** (`device.py`):
   - CUDA arch check against `torch.cuda.get_arch_list()` and a matmul smoke test;
   - a CPU fallback that is always shown to the user with its reason;
@@ -1559,8 +1587,8 @@ Tolerances come from the measured spreads: autochart run to run up to 0.035 on E
   (§2.7), bass and drums from STRUM, all re-timed onto our grid. A second folder, the same but with ADTOF's drums,
   was built beside it.
 - It passes the gate, and scan-chart 8.0.1 finds it playable with 0 chart issues (§2.13).
-- Nobody has played it yet: the friend's playtest is the next gate. Q1 is still open and now decides which
-  instrument's rows below are judged first.
+- Nobody has played it yet: the friend's playtest is the next gate. Q1 is answered (Guitar, on Expert; §9 Q1), so
+  the guitar and "all" rows below are judged first.
 
 **Acceptance (test song).** "Source" means the autochart GPU take for guitar and STRUM's GPU output for drums and bass, measured with the audits' methods. Rows apply to the friend's instrument(s); "all" rows always apply.
 
@@ -1729,10 +1757,12 @@ ADTOF test]:
   - B1: autochart's Expert job 228.8 s, its own separation included [here, 5070], plus the rest; about 5–7 min;
   - Beat This on the 4070 and packaging are [untested];
 - peak RAM within the PC's RAM minus 4 GB [est. margin]; VRAM within the card's memory;
-- the work folders (§2, work folder) on the friend's profile: the deepest path under 260 characters (256 with a
-  20-character user name and a 40-character song name, 3 to spare [code]); a re-run of the same file reusing its
-  folder; pruning to 5 GB with a file in use giving one warning, not a failure (tested only with a stand-in that
-  raises `PermissionError` [code]); with the default 4 takes on CUDA, the time target above counts 1 take, so the
+- the work folders (§2, work folder) on the friend's profile: the deepest file a run leaves under 260 characters
+  (256 with a 20-character user name and a 40-character song name, 3 to spare [code]), and autochart's staging
+  files, which are longer on every profile (309 with that name), written by Node without an error; a re-run of the
+  same file reusing its folder; pruning to 5 GB with a file in use giving one warning, not a failure, and leaving
+  that folder whole (a folder with a file in use in it is expected not to move [inference]; tested only with
+  stand-ins that raise `PermissionError` [code]), and deleting a scratch folder that holds a staging file; with the default 4 takes on CUDA, the time target above counts 1 take, so the
   4-take run is timed too (+5.75 min a song on the 5070, §2.7);
 - any CPU fallback is shown to the user;
 - the test-song output passes M3's non-regression checks against the Linux build (not bytewise: GPU stems and flipped tokens differ);
@@ -2260,8 +2290,9 @@ decides), and the p95-drift click test (critique G4).
 - **Solos:** `--solos labels|stems|off` or section names, `--solos "Solo 1,Solo 2"`. The default is **"labels"**,
   every section allin1 labels Solo, from the solo evaluation: "stems" (the label and the stem test together) placed
   no solo on the test song, rejecting both solos the friend confirmed (vocals shares 0.561 and 0.863), where "labels"
-  covers Solo 2 and half of Solo 1; on the six references both find 1 of 2 human solos, "labels" with 2 false solos
-  to 1. No new mode: the union of the two only adds false solos (§2.10).
+  covers Solo 2 and half of Solo 1 with fold-0 sections (the CPU) and Solo 2 alone with the ensemble (CUDA); on the
+  six references both find 1 of 2 human solos, "labels" with 2 false solos to 1 on fold 0 and 4 to 1 on the
+  ensemble. No new mode: the union of the two only adds false solos (§2.10).
 - **Guitar takes:** 4 by default when the guitar stage runs on CUDA, 1 on the CPU; the first CUDA take alone first,
   that take alone when autochart moved its transcriber off CUDA; `--takes N` as asked on any device. The takes
   experiment behind it is in §2.7, with its verifier's two corrections (3 takes give +0.006 to +0.0105 over one, not
@@ -2271,7 +2302,8 @@ decides), and the p95-drift click test (critique G4).
 - **Preview:** written into `work/preview/` after every build, when matplotlib and librosa import; it never changes
   the exit code; `--no-preview` (§2.0).
 - **Work folder (§9 Q30, answered):** `<cache>/work/<name>-<key>` in the per-user cache, autochart's scratch in
-  `<cache>/ac/<8 hex>` to stay under Windows' 260 characters, the least recently used pruned to 5 GB; `--work` as before
+  `<cache>/ac/<8 hex>` to keep the files it leaves under Windows' 260 characters (not its staging files, which only
+  Node writes), the least recently used pruned to 5 GB; `--work` as before
   (`cache.py`; §2, work folder). A fix on review: a default run on a folder a `--work` run had pinned unpinned it,
   and the `--work` run dropped its scratch folder from the marker; both now keep what the marker held (tested).
 - **Summary:** the CLI's guitar line says where the solos went (`, 3 solos (167.3-180.7, ...) s` or `, no solo`).
@@ -2287,3 +2319,46 @@ decides), and the p95-drift click test (critique G4).
   none with "stems"), the summary's solo line, and a pinned folder staying pinned with its scratch folder; the CLI
   default back to "stems", the pin dropped and the scratch dropped each fail a test [here].
 
+
+**Fixes after the review of `pipeline-defaults`** [here, defaults review; each finding reproduced by a verifier]:
+- **Ctrl+C after the build:** a Ctrl+C during the preview or the pruning, after assemble had put the build in place,
+  exited 130 ("interrupted", the output "as it was"), lost the summary (and with it the `.failed` path) and skipped
+  the pruning. Now it stops only that stage, with a warning ("no preview: interrupted", "the cache ... was not
+  pruned (interrupted)"), and the run ends 0 or 1 as the gate says, with its summary; 130 now means interrupted
+  before the build was in place (§2.0, cli).
+- **Solos without the guitar:** `--solos stems` or section names with `--instruments drums,bass` were dropped
+  without a word; they are refused (exit 2) as `--takes 3` is. The default "labels" and "off" stay silent.
+- **The summary's scratch folder:** named only when the run made it (a run without the guitar makes none); the
+  marker and `pipeline.json` keep its path, so a later guitar run's folder is still found by the pruning.
+- **A prune that stops partway** (a file in use, a Ctrl+C) deleted a work folder file by file and could leave a
+  stems `info.json` beside missing stems, which every later chart of that song then failed as a bug (exit 3). Each
+  folder now goes whole into `<cache>/trash` in one rename before it is deleted, what is left there goes with the
+  next prune, and the separation cache counts a folder with a missing or unreadable stem as a miss (§2, work
+  folder; §2.2). Verified with the stand-in engines and the real separation cache code, NTFS's name order imitated
+  and the file in use emulated both ways (its unlink failing; its folder's rename failing, as on Windows): every
+  re-chart exits 0 [here]. The rmdir-only failure (the marker already gone, the folder never retried) is gone with
+  it: the empty folder waits in the trash.
+- **A run that starts while a prune deletes:** the marker is read again before each move and after it, so a run
+  that marked its folder after the scan keeps it; two real processes, B marking while A deletes an older folder
+  and just before A moves B's, both gave B exit 0 with its folder whole [here]. Left open: a run whose folder is
+  moved between its `mkdir` and its first marker write (microseconds) still fails, exit 2.
+- **Path lengths:** `cache.DEEPEST` and its test now include autochart's staging files, past 259 on every profile
+  (309 with a 20-character profile name), which only Node writes; pruning deletes in Windows' `\\?\` form
+  (`cache.long_path`). Neither is tried on Windows.
+- **The solos decision's cost** is given per sections source: one extra false tracker every six songs on fold 0,
+  about every two on the ensemble the friend's CUDA runs, which also misses Solo 1 (§2.10, §9 Q29); the pipeline's
+  docstring and the summary above say which sections they mean.
+- **Docs:** M1a's status and the stage overview's bass row no longer call Q1 open; the strumming section quotes the
+  friend's 2:32–2:35 and gives the window on both clocks; `stem_confirm`'s thresholds are "never tuned", not
+  "untested"; the `--work` help and the pipeline's docstring name `$XDG_CACHE_HOME`; the tests row counts main's
+  428 tests.
+- **Tests,** each failing without its fix (19 mutations, every one failing a test [here]): Ctrl+C in the preview
+  and in the pruning (exit 0 and 1); a prune that raises `PermissionError` (exit 0, one warning); solos without the
+  guitar refused; the summary without a scratch folder; the stand-in guitar keeping 3 MB in its scratch folder, so
+  the work folder's size must count it, and devices shaped like autochart's real summary (`demucs` and `timing`
+  None) with three probe cases (demucs on the CPU, no devices, empty devices: 4 takes each); a matplotlib that
+  raises a non-`ImportError` on import (one warning, exit 0); the clip clause of the summary's part line; refused
+  runs on a song new to the cache making no folder there (the `<out>.work` checks, which could not fail, removed);
+  the prune's move, re-reads, trash and sweep; a separation cache with a stem missing or cut short; the home
+  folder test setting `USERPROFILE`, which Windows' `Path.home()` reads instead of `HOME` (it failed under
+  Windows' lookup, emulated, and passes with it) [here].

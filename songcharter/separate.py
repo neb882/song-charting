@@ -16,6 +16,8 @@
     `info` says why the CPU was used (the UI tells the user).
   * **Cache.** Stems are cached as float32 WAV (the decoded mix peaks above 1.0, which an integer format would clip),
     keyed by the samples and every setting that changes the result. A cached run returns the same arrays.
+    info.json is written last and is the hit, but only when every stem it lists is there and reads: a folder half
+    deleted (or half written) is separated again, never an error.
 
 Needs torch and demucs >= 4.1 (`pip install songcharter[separate]`); importing this module does not.
 """
@@ -161,7 +163,7 @@ def separate(mix: np.ndarray, sample_rate: int = SAMPLE_RATE, *, model: Any = DE
 
     model:  a name in MODELS (loaded from its pinned files) or a Demucs model object (tests).
     device: "auto" (CUDA if a kernel runs: cuda_works), "cuda" or "cpu". CUDA out of memory retries on the CPU.
-    cache_dir: if given, stems are read from and written to cache_dir/<key>/ (float32 WAV and info.json).
+    cache_dir: if given, stems are read from and written to cache_dir/<key>/ (float32 WAV, then info.json).
     """
     if sample_rate != SAMPLE_RATE:
         raise ValueError(f"separate needs {SAMPLE_RATE} Hz audio, not {sample_rate} Hz")
@@ -174,9 +176,12 @@ def separate(mix: np.ndarray, sample_rate: int = SAMPLE_RATE, *, model: Any = DE
     key = cache_key(mix, name, revision, seed, shifts, overlap)
     folder = Path(cache_dir) / key if cache_dir is not None else None
     if folder is not None and (folder / "info.json").exists():
-        meta = json.loads((folder / "info.json").read_text(encoding="utf-8"))
-        stems = {s: A.read_wav(folder / f"{s}.wav")[0] for s in meta["stems"]}
-        if all(y.shape == mix.shape for y in stems.values()):
+        try:  # a hit only when every stem info.json lists is there and reads (a folder half deleted is a miss)
+            meta = json.loads((folder / "info.json").read_text(encoding="utf-8"))
+            stems = {s: A.read_wav(folder / f"{s}.wav")[0] for s in meta["stems"]}
+        except (OSError, RuntimeError, ValueError, KeyError, TypeError):  # soundfile's errors are RuntimeErrors
+            stems = None
+        if stems and all(y.shape == mix.shape for y in stems.values()):
             return stems, SeparationInfo(**{**meta["info"], "seconds": 0.0, "cached": True})
 
     import torch
@@ -204,6 +209,7 @@ def separate(mix: np.ndarray, sample_rate: int = SAMPLE_RATE, *, model: Any = DE
                           shifts, overlap)
     if folder is not None:
         folder.mkdir(parents=True, exist_ok=True)
+        (folder / "info.json").unlink(missing_ok=True)  # written last: a folder without it is never a hit
         for s, y in stems.items():
             A.write_wav(y, folder / f"{s}.wav")
         (folder / "info.json").write_text(json.dumps({"stems": list(stems), "info": asdict(info)}, indent=1),

@@ -19,7 +19,9 @@
      The result and its exit codes are `songcharter assemble`'s.
   5. **Preview** (preview.py) of the folder assemble wrote, the song folder or its .failed, into work/preview/
      (overview.png, page_NN.png), judged against the work folder's stems, when matplotlib and librosa import. It
-     only informs: absent libraries or a preview that fails give one warning, never another exit code.
+     only informs: absent libraries or a preview that fails give one warning, never another exit code, and so does
+     a Ctrl+C while it runs or while the cache is pruned after it (the build is in place by then: the run ends as
+     the gate says, with its summary).
 
   * **Metadata.** The file's tags as ffmpeg prints them (title, artist, album, genre, date, track), the caller's
     values on top, and defaults for what scan-chart requires: the file's name for the title, "Unknown" for the
@@ -35,19 +37,24 @@
     (`--solos "Solo 1,Solo 2"`) puts them exactly there instead. Not "stems", the label confirmed by the stems
     (vocals quiet, guitar loud), which the solo evaluation (DESIGN.md 2.10) found rejecting the very solos the
     friend confirmed on the test song (vocals active in 0.561 and 0.863 of their frames; the test allows 0.25), so
-    it placed none there, where "labels" covers all of Solo 2 and the first half of Solo 1 and adds one span nobody
-    has confirmed. On the six references both find 1 of the 2 human solos (Lucretia's; Kimochi Warui's is called a
-    chorus) and "labels" makes 2 false solos to the stems' 1 (fold-0 sections). The friend asked for solo
-    trackers, and a missed solo costs him one where a false one costs a tracker he can ignore.
+    it placed none there. With fold-0 sections (allin1 on the CPU) "labels" covers all of Solo 2 and the first half
+    of Solo 1 and adds one span nobody has confirmed; with the ensemble CUDA runs it covers Solo 2 only. On the six
+    references both find 1 of the 2 human solos (Lucretia's; Kimochi Warui's is called a chorus), and "labels"
+    makes 2 false solos to the stems' 1 with fold 0, 4 to 1 with the ensemble (one extra false tracker every six
+    songs, or about every two). The friend asked for solo trackers, and a missed solo costs him one where a false
+    one costs a tracker he can ignore. Solos are guitar solos: a mode other than "labels" or "off", or names,
+    without the guitar charted is refused, as more than one take is.
   * **Errors.** What the user can act on (a bad input or option, a missing or failing component) raises an
     errors.InputError or errors.ToolError, or an OSError; anything else is a bug. Either way pipeline.json keeps
     the error and its traceback.
   * **The work folder** is <cache>/work/<name>-<key> in the per-user cache (cache.py: %LOCALAPPDATA%\\songcharter
-    on Windows, ~/.cache/songcharter elsewhere, or $SONGCHARTER_CACHE), keyed by the song file's SHA-256, so the
-    same file reuses it whatever the output; autochart's own scratch folder sits apart in <cache>/ac/<key[:8]>,
-    which keeps its deep cache paths under Windows' 260 characters. `work` (--work) puts the work folder anywhere,
-    with the scratch folder inside it as before. After each run that finishes, the least recently used work folders
-    in the cache go until they fit in 5 GB (cache.prune); the summary gives the work folder and its size.
+    on Windows, $XDG_CACHE_HOME/songcharter (else ~/.cache/songcharter) elsewhere, or $SONGCHARTER_CACHE), keyed
+    by the song file's SHA-256, so the same file reuses it whatever the output; autochart's own scratch folder sits
+    apart in <cache>/ac/<key[:8]>, which keeps the files of its deep cache under Windows' 260 characters (not its
+    staging files: cache.py). `work` (--work) puts the work folder anywhere, with the scratch folder inside it as
+    before. After each run that finishes, the least recently used work folders in the cache go until they fit in
+    5 GB (cache.prune); the summary gives the work folder and its size, and autochart's scratch folder when the
+    run made one.
   * **Re-runs.** The decode is rewritten only when the samples change; separation and every engine reuse their
     caches, so a re-run with the same file and options costs the decode, the cache checks and the build.
   * **Report.** work/pipeline.json: the options, the metadata and where each value came from, every stage's wall
@@ -106,7 +113,8 @@ class Options:
     metadata: Mapping[str, str] = field(default_factory=dict)  # name, artist, album, genre, year: over the tags
     solos: str | tuple[str, ...] = "labels"      # assemble's solos: "labels" (sections named Solo: the module
                                                  # docstring), "stems" (those with vocals quiet, guitar loud), "off",
-                                                 # or the names of the solo sections
+                                                 # or the names of the solo sections; all but "labels" and "off" need
+                                                 # the guitar among the instruments
     levels: tuple[str, ...] = ("expert",)        # the difficulties written: Expert, and any of hard, medium, easy
     preview: bool = True                         # the preview of the built folder into work/preview/ (preview.py)
 
@@ -140,6 +148,8 @@ class Options:
             raise InputError(f"solos is {', '.join(map(repr, SOLO_MODES))} or a list of section names, not {solos!r}")
         if not isinstance(solos, str) and (not solos or any(not isinstance(n, str) or not n.strip() for n in solos)):
             raise InputError(f"solos as section names needs one name or more, none of them blank, not {solos!r}")
+        if solos not in ("labels", "off") and "guitar" not in self.instruments:  # the default stays silent
+            raise InputError("solos are guitar solos: chart the guitar too, or leave solos at labels")
         unknown = sorted(set(self.metadata) - set(OVERRIDES))
         if unknown:
             raise InputError(f"unknown metadata key(s): {', '.join(unknown)} (known: {', '.join(OVERRIDES)})")
@@ -575,6 +585,9 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
                 warn(f"no preview: it failed ({type(e).__name__}: {e})")
                 report["preview"] = {"ok": False, "error": f"{type(e).__name__}: {e}",
                                      "traceback": traceback.format_exc()}
+            except KeyboardInterrupt:  # Ctrl+C: the build is in place already, so only the preview stops
+                warn("no preview: interrupted")
+                report["preview"] = {"ok": False, "skipped": "interrupted"}
             else:
                 end("preview", t0, False, f"{preview['overview']} and {len(preview['pages'])} pages, "
                     f"{len(preview['flags'])} flags")
@@ -588,6 +601,8 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
             report["cache"] = cache.prune(root, budget, keep=[work], warn=warn)
         except OSError as e:  # the cache folder itself unreadable: the run is done all the same
             warn(f"the cache in {root} was not pruned ({type(e).__name__}: {e})")
+        except KeyboardInterrupt:  # Ctrl+C: the build is in place; what a deletion left in the trash goes next time
+            warn(f"the cache in {root} was not pruned (interrupted)")
         size = cache.tree_size(work) + (cache.tree_size(scratch) if scratch is not None else 0)
         report["work_bytes"] = size
         return ChartResult(result, stages, work, config, meta, warnings, preview, scratch, size)
@@ -715,13 +730,14 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
 
 def summary(result: ChartResult) -> str:
     """What the pipeline adds to assemble's summary: the preview's overview and its flags, the work folder and its
-    size, then the stage times."""
+    size (autochart's scratch folder's included, and named when it exists), then the stage times."""
     lines = []
     if result.preview:
         kinds = ", ".join(f"{k} {n}" for k, n in result.preview["flags_by_kind"].items())
         lines.append(f"preview: {result.preview['overview']} and {len(result.preview['pages'])} pages "
                      f"({f'flagged: {kinds}' if kinds else 'nothing flagged'})")
-    scratch = f"; autochart's scratch folder {result.scratch}" if result.scratch is not None else ""
+    made = result.scratch is not None and result.scratch.is_dir()  # not made by a run without the guitar
+    scratch = f"; autochart's scratch folder {result.scratch}" if made else ""
     lines.append(f"work folder: {result.work} ({cache.size_text(result.work_bytes)}{scratch})")
     total = sum(s.seconds for s in result.stages)
     lines.append("stages: " + ", ".join(f"{s.name} {s.seconds:.1f} s{' (cached)' if s.cached else ''}"

@@ -480,7 +480,8 @@ def stem_confirm(tempo: TempoMap, pad_seconds: float, frame_seconds: float, voca
                  lead_db: Sequence[float] | None = None, *, quiet_db: float = 30.0, max_vocal_share: float = 0.25,
                  lead_percentile: float = 75.0, min_lead_share: float = 0.5) -> Callable[[int, int], bool]:
     """A solo test from stem loudness, for place_solos (DESIGN.md 2.10: the vocals stem below its P95 - 30 dB while
-    the guitar stem is at or above its P75; the thresholds are untested beyond the test song).
+    the guitar stem is at or above its P75; the thresholds were never tuned, and the solo evaluation ran them on the
+    six references and the test song).
 
     vocals_db, lead_db: one level per frame of frame_seconds from the input audio's start (e.g. 100 ms RMS in dB).
     A section [start, end) passes when at most max_vocal_share of its frames have the vocals within quiet_db of
