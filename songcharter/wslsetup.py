@@ -72,9 +72,28 @@ def target_gb(ram_bytes: int) -> int:
     return round(ram_bytes / GIB) - WINDOWS_KEEPS_GB
 
 
+def memory_bytes(text: str | None) -> int | None:
+    """[wsl2]'s memory in a .wslconfig's text, in bytes, else None: from its lines, found as wsl.update_wslconfig
+    finds the line it rewrites (a section header, then `key=value` outside a comment, any case), the value read as
+    wsl.parse_wslconfig reads it, the last such line winning. Not configparser's reading alone: it rejects a whole
+    file over one bare key such as `nestedVirtualization` (WSL's git-config style parser takes it as true), and that
+    file's memory=16GB would read as none set, and be rewritten."""
+    section, found = None, None
+    for line in (text or "").splitlines():
+        s = line.lstrip("\ufeff").strip()
+        header = re.match(r"\[([^\]]*)\]", s)
+        if header:
+            section = header.group(1).strip().lower()
+        elif section == "wsl2" and "=" in s and s[0] not in "#;":
+            key, value = s.split("=", 1)
+            if key.strip().lower() == "memory":
+                found = value
+    return wsl.parse_size(wsl._value(found)) if found is not None else None
+
+
 def plan(text: str | None, ram_bytes: int | None) -> Plan:
     """The memory rule for a .wslconfig's text (None: no file) and Windows' RAM (None: unknown)."""
-    current = wsl.parse_wslconfig(text or "")["memory_bytes"]
+    current = memory_bytes(text)
     if current is not None and current >= ENOUGH_GB * GIB:
         return Plan("keep", current, ram_bytes, None)
     if ram_bytes is None:
@@ -182,7 +201,7 @@ def apply(home: Path, launcher: Path, yes: bool = False, ram: int | None = None,
         data = None
     text = wsl._decode(data) if data is not None else None
     if ram is None and path is not None:
-        ram = wsl.windows_ram_bytes({"path": shown, **wsl.parse_wslconfig(text or "")})
+        ram = wsl.windows_ram_bytes({"path": shown, "memory_bytes": memory_bytes(text)})
     p = plan(text, ram)
     if path is None:   # no interop, or no profile folder: nothing can be read or written
         p = Plan("unknown", None, None, None)

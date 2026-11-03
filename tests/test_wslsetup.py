@@ -276,3 +276,30 @@ def test_interop_off_and_plain_linux(windows, monkeypatch):
 
 def test_set_allin1_without_a_runtime_json(tmp_path):
     assert runtime.set_allin1(tmp_path, False) is False
+
+
+def test_a_wslconfig_configparser_cannot_read_keeps_its_memory_and_swap(windows):
+    """A bare key (nestedVirtualization, which WSL's git-config style parser takes as true) makes configparser refuse
+    the whole file. Its memory=16GB is still read from its lines, so it is kept, and swap=0 with it; a memory under 12
+    is raised with the bare key and swap=0 kept."""
+    w = windows
+    text = "[wsl2]\nmemory=16GB\nswap=0\nnestedVirtualization\n"
+    assert wsl.parse_wslconfig(text)["memory_bytes"] is None and wslsetup.memory_bytes(text) == 16 * GIB
+    w.config.write_text(text, encoding="utf-8")
+    out, said, asked = apply(w)
+    assert w.config.read_text(encoding="utf-8") == text and not out["changed"] and not asked and backups(w) == []
+    assert said[0] == ".wslconfig: memory=16GB kept (12 GB or more is enough)" and out["memory_bytes"] == 16 * GIB
+    w.config.write_text("[wsl2]\nmemory=8GB\nswap=0\nnestedVirtualization\n", encoding="utf-8")
+    out, said, asked = apply(w, answers=[True])
+    assert asked and out["changed"]
+    assert w.config.read_text(encoding="utf-8") == "[wsl2]\nmemory=12GB\nswap=0\nnestedVirtualization\n"
+
+
+def test_memory_bytes_reads_the_lines_as_wsl_does():
+    """Any case, quotes and an inline comment as wsl.py reads values; a commented line and other sections do not
+    count; the last memory line wins."""
+    read = wslsetup.memory_bytes
+    assert read('[WSL2]\n memory = "12GB" # mine\n') == 12 * GIB
+    assert read("[wsl2]\n# memory=4GB\nmemory=8GB\nMemory=10GB\n[other]\nmemory=1GB\n") == 10 * GIB
+    assert read("[other]\nmemory=4GB\n") is None and read("") is None and read(None) is None
+    assert read("﻿[wsl2]\r\nmemory=6144MB\r\n") == 6 * GIB
