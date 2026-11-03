@@ -166,6 +166,49 @@ def test_wslconfig(windows):
         12 * 2 ** 30, 8 * 2 ** 30, 512 * 2 ** 20, 2 ** 40, 4096, None, None]
 
 
+def test_wslconfig_values_with_inline_comments_and_quotes():
+    """git-config style values: a trailing # or ; comment outside quotes goes, and so do the quotes around a value;
+    CRLF, a BOM, any case and every unit still read."""
+    text = ("﻿[WSL2]\r\nMemory = 12GB # leave 4 for Windows\r\nswap=\"8GB\" ; plenty\r\n"
+            "localhostForwarding = 'false'\r\nnetworkingMode=\"mir#rored\"  # a # inside quotes stays\r\n")
+    assert wsl.parse_wslconfig(text) == {"memory_bytes": 12 * 2 ** 30, "swap_bytes": 8 * 2 ** 30,
+                                         "localhost_forwarding": False, "networking_mode": "mir#rored"}
+    assert wsl.parse_wslconfig("[wsl2]\nmemory=\"12288MB\"\n")["memory_bytes"] == 12 * 2 ** 30
+    assert wsl.parse_wslconfig("[wsl2]\nmemory=12GB;8GB\n")["memory_bytes"] == 12 * 2 ** 30
+    assert wsl.parse_wslconfig("[wsl2]\nmemory=# nothing\n")["memory_bytes"] is None
+    assert wsl.parse_wslconfig(wsl._decode(b"\xef\xbb\xbf[wsl2]\r\nmemory=12GB # x\r\n"))["memory_bytes"] == 12 * 2 ** 30
+
+
+def wsl2_lines(text: str, key: str) -> list[str]:
+    """The lines of [wsl2] (any case) that set `key` (any case)."""
+    out, inside = [], False
+    for line in text.splitlines():
+        s = line.strip().lstrip("﻿")
+        if s.startswith("["):
+            inside = s.split("]")[0][1:].strip().lower() == "wsl2"
+        elif inside and "=" in s and s[0] not in "#;" and s.split("=")[0].strip().lower() == key:
+            out.append(line)
+    return out
+
+
+def test_an_update_never_writes_a_second_memory_line():
+    """update_wslconfig sets each key in place (the first [wsl2] line that sets it, whatever its case, quotes or
+    comment; later ones go), adds the missing ones to [wsl2] (made when there is none), keeps every other line and
+    section and the file's line ends, and what it writes reads back."""
+    old = ("# mine\r\n[WSL2]\r\nMemory = \"10GB\" # old\r\nprocessors=4\r\nmemory=6GB\r\n# memory=99GB, a comment\r\n"
+           "\r\n[experimental]\r\nmemory=1GB\r\n")
+    new = wsl.update_wslconfig(old, {"memory": "12GB", "swap": "8GB"})
+    assert new == ("# mine\r\n[WSL2]\r\nmemory=12GB\r\nprocessors=4\r\n# memory=99GB, a comment\r\nswap=8GB\r\n"
+                   "\r\n[experimental]\r\nmemory=1GB\r\n")
+    assert wsl2_lines(new, "memory") == ["memory=12GB"] and wsl2_lines(new, "swap") == ["swap=8GB"]
+    assert wsl.parse_wslconfig(new)["memory_bytes"] == 12 * 2 ** 30
+    assert wsl.update_wslconfig(new, {"memory": "12GB", "swap": "8GB"}) == new   # again: nothing moves
+    assert wsl.update_wslconfig("", {"memory": "12GB", "swap": "8GB"}) == "[wsl2]\r\nmemory=12GB\r\nswap=8GB\r\n"
+    unix = wsl.update_wslconfig("[boot]\nsystemd=true", {"memory": "12GB"})
+    assert unix == "[boot]\nsystemd=true\n\n[wsl2]\nmemory=12GB\n"
+    assert wsl.parse_wslconfig(unix)["memory_bytes"] == 12 * 2 ** 30
+
+
 def test_windows_ram(windows):
     """PowerShell's TotalPhysicalMemory; without it, twice WSL's MemTotal when .wslconfig sets no memory (WSL's
     default is half), and None when it does."""

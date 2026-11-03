@@ -12,7 +12,8 @@
     raises.
   * **Encodings.** `cmd.exe /u` writes its own output (echo) as UTF-16LE, so a user name like Jörg survives; reg.exe
     writes in the console's OEM code page, which `cmd.exe /c chcp` names (cp437 when it cannot be read).
-  * **Read-only.** Nothing here changes Windows: queries only, and `open_url` (explorer.exe) to show the page.
+  * **Read-only.** Nothing here changes Windows: queries only, `update_wslconfig` (text in, text out: the install
+    writes the file) and `open_url` (explorer.exe) to show the page.
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Mapping
 
 MNT_C = Path("/mnt/c")                    # where WSL mounts C: (tests point it elsewhere)
 OSRELEASE = Path("/proc/sys/kernel/osrelease")
@@ -184,18 +186,87 @@ def _decode(data: bytes) -> str:
     return data.decode("utf-8-sig", "replace")
 
 
+def _value(raw: str | None) -> str | None:
+    """A .wslconfig value as git-config style parsing reads it: up to a # or ; outside quotes (a trailing comment),
+    stripped, and without the quotes around it ("12GB", '12GB')."""
+    if raw is None:
+        return None
+    out, quote = [], None
+    for ch in raw:
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "#;":
+            break
+        out.append(ch)
+    value = "".join(out).strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1].strip()
+    return value
+
+
 def parse_wslconfig(text: str) -> dict:
-    """The [wsl2] values of a .wslconfig's text (section and keys in any case); each missing or unreadable one
-    None."""
+    """The [wsl2] values of a .wslconfig's text (section and keys in any case, values as _value reads them, a BOM
+    left by a decoder ignored); each missing or unreadable one None."""
     cp = configparser.ConfigParser(interpolation=None, strict=False, comment_prefixes=("#", ";"))
     try:
-        cp.read_string(text)
+        cp.read_string(text.lstrip("\ufeff"))
     except configparser.Error:
         return {"memory_bytes": None, "swap_bytes": None, "localhost_forwarding": None, "networking_mode": None}
     section = next((cp[s] for s in cp.sections() if s.strip().lower() == "wsl2"), {})
-    mode = (section.get("networkingmode") or "").strip()
-    return {"memory_bytes": parse_size(section.get("memory")), "swap_bytes": parse_size(section.get("swap")),
-            "localhost_forwarding": _bool(section.get("localhostforwarding")), "networking_mode": mode or None}
+
+    def get(key: str) -> str | None:
+        return _value(section.get(key))
+
+    return {"memory_bytes": parse_size(get("memory")), "swap_bytes": parse_size(get("swap")),
+            "localhost_forwarding": _bool(get("localhostforwarding")), "networking_mode": get("networkingmode") or None}
+
+
+def update_wslconfig(text: str, values: Mapping[str, str]) -> str:
+    """`text` (a .wslconfig's) with each of `values` ({"memory": "12GB", ...}) set in [wsl2], for the install
+    (M4-03), which never writes a second line for a key: the first [wsl2] line that sets the key (any case, quoted or
+    commented) becomes `key=value` and later ones go; a key it lacks goes after [wsl2]'s last line, and a [wsl2]
+    section is added at the end when there is none. Every other line and section stays as it was, and so do the
+    line ends (CRLF for a new file, as Windows writes it). Writing the file is the caller's."""
+    nl = "\n" if "\n" in text and "\r\n" not in text else "\r\n"
+    want = {k.lower(): (k, v) for k, v in values.items()}
+    done: set[str] = set()
+    out: list[str] = []
+    section, first, end_of_first = None, False, None   # end_of_first: where a missing key goes in `out`
+    for line in text.splitlines(keepends=True):
+        body = line.rstrip("\r\n")
+        bom = "\ufeff" if body.startswith("\ufeff") else ""
+        s = body.lstrip("\ufeff").strip()
+        header = re.match(r"\[([^\]]*)\]", s)
+        if header:
+            section = header.group(1).strip().lower()
+            first = section == "wsl2" and end_of_first is None
+            out.append(line)
+            if first:
+                end_of_first = len(out)
+            continue
+        key = s.split("=", 1)[0].strip().lower() if "=" in s and s[0] not in "#;" else None
+        if section == "wsl2" and key in want:
+            if key in done:   # a second line for the key: dropped
+                continue
+            done.add(key)
+            line = f"{bom}{want[key][0]}={want[key][1]}{line[len(body):] or nl}"
+        out.append(line)
+        if first and s:
+            end_of_first = len(out)
+    missing = [f"{k}={v}{nl}" for key, (k, v) in want.items() if key not in done]
+    if missing and end_of_first is None:
+        if out and not out[-1].endswith(("\n", "\r")):
+            out[-1] += nl
+        if out and out[-1].strip():
+            out.append(nl)
+        out += [f"[wsl2]{nl}", *missing]
+    elif missing:
+        if not out[end_of_first - 1].endswith(("\n", "\r")):
+            out[end_of_first - 1] += nl
+        out[end_of_first:end_of_first] = missing
+    return "".join(out)
 
 
 def wslconfig() -> dict:
