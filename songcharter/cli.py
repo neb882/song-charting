@@ -1,7 +1,7 @@
 """The command line:
 
     songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums]
-                      [--levels expert|all|expert,hard,...] [--solos stems|labels|off|"NAME,NAME"] [--takes N]
+                      [--levels expert|all|expert,hard,...] [--solos labels|stems|off|"NAME,NAME"] [--takes N]
                       [--device auto|cpu|cuda] [--threads N] [--no-preview] [--title ...] [--artist ...]
                       [--album ...] [--year ...] [--genre ...]
     songcharter assemble <config.json> [--out DIR]
@@ -11,7 +11,8 @@ build and gate, then the preview of the built folder; progress goes to stderr, a
 the summary to stdout. `assemble`
 builds a song folder from a config that names existing charts.
 
---solos takes a mode or the names of the sections to make solos, as one argument with the names separated by
+--solos takes a mode (labels, the default: every section named Solo; pipeline.py says why) or the names of the
+sections to make solos, as one argument with the names separated by
 commas: a name with a space needs quotes around the whole list, in a POSIX shell, cmd.exe and PowerShell alike
 (--solos "Solo 1,Solo 2"; unquoted, the shell splits the list at its spaces). A name cannot hold a comma, and
 a name that is a mode word (stems, labels, off) is taken as the mode. The names are the build's own sections (the
@@ -142,9 +143,9 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--levels", type=_levels, default=("expert",), metavar="LIST",
                    help="the difficulties to write: expert (default), all, or a comma-separated list that includes "
                         "expert, such as expert,hard (the others are reduced from Expert)")
-    c.add_argument("--solos", type=_solos, default="stems", metavar="MODE|NAMES",
-                   help="where the guitar solos go: stems (default: sections where the vocals stem is quiet and the "
-                        "guitar loud), labels (sections named Solo), off, or the solo sections' names, comma-"
+    c.add_argument("--solos", type=_solos, default="labels", metavar="MODE|NAMES",
+                   help="where the guitar solos go: labels (default: the sections named Solo), stems (only those "
+                        "where the vocals stem is quiet and the guitar loud), off, or the solo sections' names, comma-"
                         "separated and quoted as one argument when a name holds a space: --solos \"Solo 1,Solo 2\" "
                         "(names as the build's sections are called; solos need the guitar charted)")
     c.add_argument("--takes", type=int, default=None, metavar="N",

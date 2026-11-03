@@ -118,13 +118,15 @@ def standin_key(mix: np.ndarray) -> str:
 
 def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: Exception | None = None,
              cuda_error: str | None = None, allin1_device: str | None = None, repeat: bool = False,
-             auto: str = "cpu", moved: str | None = None, no_preview: str | None = None):
+             auto: str = "cpu", moved: str | None = None, no_preview: str | None = None, segments=None):
     """Engines that write what the real ones write, and record each call (with the arrays it got) in `calls`.
     `empty`: engines that find no notes; `bug`: a stage that raises `error` (by default a KeyError: a bug);
     `cuda_error`: device "auto" finds CUDA that does not run; `allin1_device`: the sections come from allin1 on
     this device; `repeat`: the guitar take of seed 101 repeats the first take's notes; `auto`: the device "auto"
     resolves to; `moved`: the device autochart reports for every guitar take whatever it was asked for (its own
-    fallback); `no_preview`: why the preview cannot run (its libraries do not import)."""
+    fallback); `no_preview`: why the preview cannot run (its libraries do not import); `segments`: the sections
+    engine's segments instead of SEGMENTS (written over different ones already there)."""
+    segments = SEGMENTS if segments is None else segments
 
     class StandIns(Engines):
         calls: list[tuple] = []
@@ -180,15 +182,16 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: Excepti
         def sections(self, mix, stems, out, device, threads):
             self._bug("sections")
             self.calls.append(("sections", dict(stems), out, device, threads))
-            cached = (out / "segments.json").is_file()
+            path = out / "segments.json"
+            cached = path.is_file() and json.loads(path.read_text()) == {"segments": segments}
             if not cached:
-                out.mkdir(parents=True)
-                (out / "segments.json").write_text(json.dumps({"segments": SEGMENTS}))
+                out.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps({"segments": segments}))
             if allin1_device:
-                return Run(out / "segments.json", cached, {"backend": "allin1", "segments": len(SEGMENTS), "allin1": {
+                return Run(path, cached, {"backend": "allin1", "segments": len(segments), "allin1": {
                     "model": "harmonix-fold0", "device": allin1_device, "fallback": None, "peak_rss_mb": 512.0}})
-            return Run(out / "segments.json", cached, {"backend": "librosa", "why": "no allin1 Python (stand-in)",
-                                                       "segments": len(SEGMENTS)})
+            return Run(path, cached, {"backend": "librosa", "why": "no allin1 Python (stand-in)",
+                                      "segments": len(segments)})
 
         def preview_missing(self):
             return no_preview
@@ -299,7 +302,7 @@ def test_the_work_folder_and_the_assemble_config(charted):
     key = standin_key(A.decode(root / "song.flac"))
     assert cfg["stems"] == {s: str(work / "stems" / key / f"{s}.wav")
                             for s in ("drums", "bass", "guitar", "other", "vocals")}
-    assert cfg["sections"] == str(work / "sections" / "segments.json") and cfg["solos"] == "stems"
+    assert cfg["sections"] == str(work / "sections" / "segments.json") and cfg["solos"] == "labels"
     assert cfg["levels"] == ["expert"]
     assert [p["instrument"] for p in cfg["parts"]] == ["guitar", "bass", "drums"]
     guitar, bass, drums = cfg["parts"]
@@ -588,6 +591,26 @@ def test_solos_on_named_sections(charted, monkeypatch, capsys):
     assert "solos as section names needs one name or more" in capsys.readouterr().err
 
 
+def test_by_default_solos_go_on_the_sections_named_solo(charted, monkeypatch, capsys):
+    """By default ("labels") a section the sections engine labels "solo" gets a solo even where the vocals stem is
+    busy, as the stem test finds the test song's confirmed solos; "stems" places none there, and says nothing."""
+    root, result, _, _ = charted
+    sung = [[a, b, "solo" if a == 16.5 else label] for a, b, label in SEGMENTS]  # the vocals sing all through it
+    args = ["chart", str(root / "song.flac"), "--work", str(result.work), "--instruments", "guitar", "--genre", "Test"]
+    for extra, count in (([], 1), (["--solos", "stems"], 0)):
+        monkeypatch.setattr(P, "Engines", standins(segments=sung))
+        code = main([*args, "--out", str(root / "Sung"), *extra])
+        out, err = capsys.readouterr()
+        assert code == 0, err
+        report = json.loads((root / "Sung" / "report.json").read_text(encoding="utf-8"))
+        assert json.loads(result.config.read_text(encoding="utf-8"))["solos"] == (extra[1] if extra else "labels")
+        (a, _, name), (b, _, _) = (report["sections"]["list"][i] for i in (1, 2))
+        assert name.startswith("Solo") and abs(a - 16.5) < 0.6 and abs(b - 32.5) < 0.6, report["sections"]["list"]
+        solos = report["phrases"]["guitar"]["solos"]
+        assert len(solos) == count and all(a - 0.01 <= s and e <= b + 0.01 for s, e in solos), (solos, a, b)
+        assert "warning: solos" not in out + err
+
+
 def test_the_default_work_folder_is_the_songs_whatever_the_output(charted, tmp_path, own_cache, monkeypatch,
                                                                     capsys):
     """The same song charted into two outputs uses one work folder in the cache, whose caches answer the second
@@ -677,15 +700,20 @@ def test_each_run_prunes_the_cache(charted, tmp_path, own_cache, monkeypatch, ca
     assert report["cache"]["kept"] == {"current": 1, "recent": 1, "pinned": 0}
     assert f"work folder: {work} (" in out  # its size before pipeline.json, which holds it, is written last
     assert 0 <= P.cache.tree_size(work) - report["work_bytes"] < 100_000
-    # a --work run prunes too, and a cache folder it uses is the person's from then on
+    # a --work run prunes too, and a cache folder it uses is the person's from then on, its scratch folder still its
     monkeypatch.setattr(P.cache.shutil, "rmtree", real)
     assert main(["chart", str(song), "--out", str(tmp_path / "B"), "--instruments", "drums", "--work", str(work)]) == 0
-    assert P.cache.read_marker(work)["pinned"] and not old["older-2222222222222222"].exists()
+    marker = P.cache.read_marker(work)
+    assert marker["pinned"] and not old["older-2222222222222222"].exists()
+    assert marker["key"] == work.name[-16:] and marker["scratch"] == str(own_cache / "ac" / work.name[-16:-8])
     assert sorted(p.name for p in (own_cache / "work").iterdir()) == sorted([work.name, "recent-3333333333333333"])
-    # the run's own folder stays even when nothing counts as recent: it is kept by name, not only by its time
+    # the run's own folder stays even when nothing counts as recent: it is kept by name, not only by its time; and a
+    # default run on it later leaves it pinned
     monkeypatch.setattr(P.cache, "RECENT_S", 0)
     assert main(["chart", str(song), "--out", str(tmp_path / "C"), "--instruments", "drums"]) == 0
     assert [p.name for p in (own_cache / "work").iterdir()] == [work.name] and (work / "pipeline.json").is_file()
+    assert P.cache.read_marker(work)["pinned"]
+    assert json.loads((work / "pipeline.json").read_text(encoding="utf-8"))["cache"]["kept"]["current"] == 1
 
 
 def test_the_preview_never_fails_a_chart(charted, tmp_path, monkeypatch, capsys):
@@ -772,7 +800,8 @@ def test_takes_follow_the_guitar_stages_device(charted, monkeypatch, capsys):
     others = [str(result.work / "guitar" / f"seed_{s}" / "notes.chart") for s in (101, 202, 303)]
     takes, calls, devices, part, err = run("Cpu")
     assert takes == {"asked": None, "takes": 1, "auto": True, "seeds": [DEFAULT_SEED], "transcriber_moved_to": None,
-                     "why": "the default on the cpu: 1 take (each one more is about 3-7 min there)"}
+                     "why": "the default on the cpu: 1 take (each one more is another transcription there, about "
+                            "3.6 min for a 7-min song)"}
     assert calls == [(DEFAULT_SEED,)] and devices == {"cpu"} and part == []
     takes, calls, devices, part, err = run("Cuda", auto="cuda")
     assert takes["takes"] == 4 and takes["auto"] and takes["why"].startswith("the default on cuda: 4 takes")
@@ -836,7 +865,7 @@ def test_metadata_rules():
 def test_options_and_seeds():
     Options().check()
     Options(instruments=("drums",), takes=1, device="cpu", threads=3, solos="off").check()
-    assert Options().levels == ("expert",) and Options().solos == "stems"
+    assert Options().levels == ("expert",) and Options().solos == "labels"
     for solos in ("stems", "labels", "off", ("Solo 1",), ["Solo 1", "Solo 2"]):
         Options(solos=solos).check()
     Options(levels=("easy", "expert", "medium", "hard")).check()

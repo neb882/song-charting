@@ -15,7 +15,8 @@
   4. **Assemble** from a config written into the work folder (work/assemble.json): our beat grid and tempo map, the
      parts quantized onto it, star power, fills, solos and sections, then the gate (assemble.py). Only Expert is
      written by default (`levels`: the friend plays Expert, and asks for the others when he wants them); the lower
-     tiers are reduced from it when asked for. The result and its exit codes are `songcharter assemble`'s.
+     tiers are reduced from it when asked for. Solos go on every section named "Solo" (`solos` "labels", below).
+     The result and its exit codes are `songcharter assemble`'s.
   5. **Preview** (preview.py) of the folder assemble wrote, the song folder or its .failed, into work/preview/
      (overview.png, page_NN.png), judged against the work folder's stems, when matplotlib and librosa import. It
      only informs: absent libraries or a preview that fails give one warning, never another exit code.
@@ -29,6 +30,15 @@
     librosa when allin1 is absent or fails; device "auto" takes CUDA only when a CUDA kernel runs here (else every
     model runs on the CPU), separation moves to the CPU when CUDA runs out of memory, and allin1, which runs in a
     Python of its own, uses CUDA when that Python has it and the CPU when not, even for device "cuda".
+  * **Solos** ("labels" by default): every section the sections engine names "Solo" (allin1's solo label), within
+    starpower.place_solos's rules (16 Expert onsets, 4 measures, at most 3 a song); a list of section names
+    (`--solos "Solo 1,Solo 2"`) puts them exactly there instead. Not "stems", the label confirmed by the stems
+    (vocals quiet, guitar loud), which the solo evaluation (DESIGN.md 2.10) found rejecting the very solos the
+    friend confirmed on the test song (vocals active in 0.561 and 0.863 of their frames; the test allows 0.25), so
+    it placed none there, where "labels" covers all of Solo 2 and the first half of Solo 1 and adds one span nobody
+    has confirmed. On the six references both find 1 of the 2 human solos (Lucretia's; Kimochi Warui's is called a
+    chorus) and "labels" makes 2 false solos to the stems' 1 (fold-0 sections). The friend asked for solo
+    trackers, and a missed solo costs him one where a false one costs a tracker he can ignore.
   * **Errors.** What the user can act on (a bad input or option, a missing or failing component) raises an
     errors.InputError or errors.ToolError, or an OSError; anything else is a bug. Either way pipeline.json keeps
     the error and its traceback.
@@ -94,8 +104,9 @@ class Options:
     threads: int | None = None                   # torch's threads here and in allin1 (None: their defaults)
     work: Path | None = None                     # the work folder (None: one per song in the cache, cache.py)
     metadata: Mapping[str, str] = field(default_factory=dict)  # name, artist, album, genre, year: over the tags
-    solos: str | tuple[str, ...] = "stems"       # assemble's solos: "stems" (vocals quiet, guitar loud), "labels"
-                                                 # (sections named Solo), "off", or the names of the solo sections
+    solos: str | tuple[str, ...] = "labels"      # assemble's solos: "labels" (sections named Solo: the module
+                                                 # docstring), "stems" (those with vocals quiet, guitar loud), "off",
+                                                 # or the names of the solo sections
     levels: tuple[str, ...] = ("expert",)        # the difficulties written: Expert, and any of hard, medium, easy
     preview: bool = True                         # the preview of the built folder into work/preview/ (preview.py)
 
@@ -176,16 +187,18 @@ def guitar_takes(asked: int | None, device: str) -> tuple[int, str]:
     """How many guitar takes to run, and why: the number asked for, on any device; by default CUDA_TAKES (4) when
     the guitar stage runs on CUDA (`device`: "cuda" or "cpu", the device resolved for it) and 1 otherwise.
 
-    The evidence behind the default [takes experiment]: 4 takes spliced by agreement gave +0.013 Expert F1@50 over 1
-    take on 5 reference songs; on the owner's GPU 4 takes cost 3.41x the guitar stage (+5.75 min a song), worth it;
-    on a CPU one take takes about 3-7 min, so 3 more would add 9-21 min for that small gain. 2 or 3 takes are never
-    the default (2 cannot outvote each other; 3 scored below 1 on that set)."""
+    The evidence behind the default (the takes experiment, DESIGN.md 2.7): 4 takes spliced by agreement gave +0.013
+    Expert F1@50 over 1 take on 5 reference songs (Lucretia apart: our grid misses its beats), mostly precision, and
+    4 beat 3; on the owner's GPU 4 takes cost 3.41x the guitar stage (+5.75 min a song), worth it. On a CPU each take
+    after the first is one more transcription, 217 s for the 6:52 test song on the dev container (DESIGN.md 5, M3), so
+    3 more would add about 11 min for that small gain. 2 takes are never the default (two cannot outvote each other),
+    nor 3 (+0.006 to +0.0105 over 1, below 4)."""
     if asked is not None:
         return asked, f"{asked} asked for"
     if device == "cuda":
         return CUDA_TAKES, (f"the default on cuda: {CUDA_TAKES} takes spliced gave +0.013 Expert F1@50 over 1, for "
                             "3.41x the guitar stage's time")
-    return 1, "the default on the cpu: 1 take (each one more is about 3-7 min there)"
+    return 1, "the default on the cpu: 1 take (each one more is another transcription there, about 3.6 min for a 7-min song)"
 
 
 def take_seeds(takes: int) -> tuple[int, ...]:
@@ -523,10 +536,11 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         return s
 
     work.mkdir(parents=True, exist_ok=True)
-    if options.work is None:
-        cache.mark(work, audio, key, scratch)
-    elif cache.read_marker(work) is not None:  # a cache folder a --work run uses is the person's from now on
-        cache.mark(work, audio, key, scratch, pinned=True)
+    old = cache.read_marker(work)
+    if options.work is None:   # a folder a --work run has used stays pinned
+        cache.mark(work, audio, key, scratch, pinned=bool(old and old.get("pinned")))
+    elif old is not None:      # a cache folder a --work run uses is the person's from now on; its scratch stays its
+        cache.mark(work, audio, old.get("key"), Path(old["scratch"]) if old.get("scratch") else None, pinned=True)
     try:
         tags = read_tags(audio)
         meta, origin = song_metadata(audio, tags, options.metadata)

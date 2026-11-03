@@ -75,8 +75,9 @@ The config (JSON; relative paths are relative to the config file, keys starting 
                 "take_difficulties": "expert", "hopo": "forced", "trim_silence": true},
                {"instrument": "bass", "source": "run1/notes.chart", "takes": ["run2/notes.chart", "run3/notes.chart"]}],
      "sections": "allin1.json",                               (or "from:<part name>", or null)
-     "solos": "off",                                          ("stems": confirmed by the vocals stem, "labels",
-                                                               or a list of section names: ["Solo 1", "Solo 2"])
+     "solos": "off",                                          ("labels": every "Solo" section, the pipeline's
+                                                               default; "stems": those the vocals and guitar stems
+                                                               confirm; or a list of section names: ["Solo 1"])
      "levels": ["expert", "hard", "medium", "easy"],          (the difficulties written; Expert always)
      "metadata": {"name": "...", "artist": "...", "album": "...", "genre": "...", "year": "2014",
                   "album_track": 2, "charter": "songcharter"},  (album, genre and year required; charter defaults)
