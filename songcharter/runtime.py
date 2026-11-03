@@ -75,7 +75,7 @@ PROVIDER_OTHER = ("libonnxruntime_providers_tensorrt.so",)   # the installer's t
 STAMP = ".songcharter-npm"   # in a folder npm ci filled: its lock's SHA-256 and Node's version
 PROGRESS_BYTES = 50 * 10 ** 6   # fetch prints a line every 50 MB
 TIMEOUT_S = 60.0                # fetch's socket timeout
-ATTEMPTS = 3                    # fetch's tries, each resuming the last
+ATTEMPTS = 4                    # fetch's tries (3 retries), each resuming the last
 MB = 10 ** 6
 
 
@@ -142,9 +142,9 @@ def fetch(url: str, dest: Path | str, sha256: str | None, size: int | None = Non
           say: Callable[[str], None] = _say, attempts: int = ATTEMPTS, timeout: float = TIMEOUT_S,
           pause: Callable[[float], None] = time.sleep) -> Path:
     """`url` downloaded to `dest` through dest.part, resumed with a Range request where the .part holds a start (up
-    to `attempts` tries, each resuming the last; a `timeout`-s socket timeout), with a line every 50 MB, then checked
-    (its size and SHA-256, where given) and renamed into place. A `dest` already there and right is kept, with no
-    request. SONGCHARTER_OFFLINE=1 refuses the download. Raises StepFailed."""
+    to `attempts` tries, 3 retries by default, each resuming the last; a `timeout`-s socket timeout), with a line
+    every 50 MB, then checked (its size and SHA-256, where given) and renamed into place. A `dest` already there and
+    right is kept, with no request. SONGCHARTER_OFFLINE=1 refuses the download. Raises StepFailed."""
     dest = Path(dest)
     if file_ok(dest, sha256, size):
         return dest
@@ -474,6 +474,7 @@ def step_pipeline_models(s: Setup) -> None:
     os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
     local = not s.download or offline()
     from huggingface_hub import hf_hub_download
+    from huggingface_hub.errors import EntryNotFoundError
 
     from . import separate
     from .engines import adtof, sections
@@ -486,7 +487,7 @@ def step_pipeline_models(s: Setup) -> None:
         separate.model_paths("htdemucs_6s", get)
         sections.checkpoint_paths("harmonix-all", get)
         adtof.weights_path(download=no_download if local else None)
-    except (OSError, ValueError, RuntimeError) as e:   # the hub's errors are OSErrors and ValueErrors
+    except (OSError, ValueError, RuntimeError, EntryNotFoundError) as e:   # the hub's: mostly OSErrors
         raise StepFailed(f"{type(e).__name__}: {str(e).strip().splitlines()[0] if str(e).strip() else ''}") from e
 
 

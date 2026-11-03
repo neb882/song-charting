@@ -136,7 +136,7 @@ def test_fetch_refuses_a_wrong_sha256_and_a_404(server, tmp_path):
     with pytest.raises(R.StepFailed, match="HTTP 404"):
         fetch(server.url + "/missing", tmp_path / "m", None)
     assert len(server.requests) == 2   # a 404 is not asked again
-    with pytest.raises(R.StepFailed, match=r"could not download .* \(3 tries\)"):
+    with pytest.raises(R.StepFailed, match=r"could not download .* \(4 tries\)"):
         fetch("http://127.0.0.1:9/nothing-listens", tmp_path / "n", None)
 
 
