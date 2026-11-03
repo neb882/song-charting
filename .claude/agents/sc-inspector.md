@@ -18,7 +18,8 @@ You are given the brief and two commits: the new one and the one to compare agai
 3. **Golden charts**, when `eval/golden.py` exists in the new checkout. From `/dev/shm/inspect/new`, with the
    environment `eval/README.md` names (`EVAL_DATA`, `SONGCHARTER_GOLDEN`, and `SONGCHARTER_SCAN_CHART`,
    `SONGCHARTER_AUTOCHART` and `SONGCHARTER_ALLIN1_PYTHON`, since fresh checkouts hold no installs), run the old
-   commit's charts and then the new one's, one after the other (each is mostly assemble, about a minute a song):
+   commit's charts and then the new one's, one after the other (each is mostly assemble, about a minute a song;
+   `--rerun` adds 2–4 minutes a song for drums, bass and sections, 4–11 for the guitar):
    ```sh
    python -m eval.golden run --code /dev/shm/inspect/old --out /dev/shm/inspect/golden-old --threads 2
    python -m eval.golden run --out /dev/shm/inspect/golden-new --threads 2 --rerun <engines whose code the diff touches>

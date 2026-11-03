@@ -1465,6 +1465,9 @@ v1's absolute targets, kept as information only:
   - **Two checkouts at once:** `main` (built through `--code`) and the change (built by its own checkout's
     `golden.py`) ran at the same time, 399 s each, and each matched its own run made alone; the kept folders' 217
     files had the same size, time, inode, link count and SHA-256 before and after, and no run folder was left.
+  - **`--rerun` with the real engines:** drums, bass and sections run again on the seven songs reproduced the
+    baseline exactly (24 min for the set); so did the guitar on All the Small Things (its take 211 s, autochart's own
+    separation included). The kept folders were unchanged both times.
   - **Disk:** 0.71 GB in all, nearly all of it the kept decodes (59–139 MB a song); the stems are links to the
     separation cache.
 - **Limits:** Linux or WSL only (`fcntl` locks, hard links). One CPU take: the CUDA default of 4 spliced takes is not

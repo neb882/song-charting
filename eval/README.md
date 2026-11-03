@@ -69,10 +69,12 @@ checkout does not hold itself. `run` passes the same ones to both builds (autoch
   `engines/drumlanes.py`, and `beatgrid.py`'s tempo estimate, which the drums engine calls), `bass` (`engines/bass.py`),
   `sections` (`engines/sections.py`, `engines/allin1_runner.py`, `sections.py`'s allin1 reader), `guitar`
   (`engines/autochart.py`, autochart's install and driver). Everything else (the grid, quantizer, reductions, star
-  power, assemble) runs in every build anyway. The kept folders are left as they are. A guitar rerun is a whole
-  autochart run, its own separation included. A change to the decode or the separation shows as `decode` or
-  `separate` among the stages that ran, run again in that run's own folder; a change to the separation's code alone
-  does not show at all, because every run reads the kept stems.
+  power, assemble) runs in every build anyway. The kept folders are left as they are. In the dev container,
+  rerunning drums, bass and sections added 2–4 minutes a song (24 minutes for the set), and reproduced the baseline
+  exactly. A guitar rerun is a whole autochart run, its own separation included: 4–11 minutes a song. A change to
+  the decode or the separation's settings shows as `decode` or `separate` among the stages that ran, run again in
+  that run's own folder; a change to the separation's code alone does not show at all, because every run reads the
+  kept stems.
 - **`diff`** compares two summaries. `--expect` names the parts the change was meant to touch: `none`, or parts and
   `part:difficulty` pairs. A part and difficulty whose hash changed, appeared or vanished is "changed" when it is
   expected and UNEXPECTED when it is not. So is a song that is missing from either summary, whose build failed, or
