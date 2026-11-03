@@ -56,7 +56,9 @@ jobs:
             python-${{ runner.os }}-3.13-
 
       # Until uv.lock exists, pip, with torch from PyTorch's cpu index first, so pip never pulls the 3 GB CUDA build
-      # from PyPI. Once M4-01's uv.lock is there: the cpu lane from the lock, in .venv, on setup-python's 3.13.
+      # from PyPI. The runner has no ffmpeg: imageio-ffmpeg's wheel brings one (songcharter.audio.ffmpeg_exe), as
+      # M4-01's `ffmpeg` extra, part of `app`, does on the uv path. Once M4-01's uv.lock is there: the cpu lane from
+      # the lock, in .venv, on setup-python's 3.13.
       - name: Install songcharter
         run: |
           if [ -f uv.lock ]; then
@@ -65,7 +67,7 @@ jobs:
             CI_PY="$GITHUB_WORKSPACE/.venv/bin/python"
           else
             python -m pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
-            python -m pip install -e ".[dev,separate,drums,bass,sections,preview]"
+            python -m pip install -e ".[dev,separate,drums,bass,sections,preview]" "imageio-ffmpeg>=0.6"
             CI_PY="$(command -v python)"
           fi
           "$CI_PY" - <<'EOF'
