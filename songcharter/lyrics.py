@@ -9,7 +9,8 @@ The text is never written anywhere but the chart: every report holds counts and 
 **The text** (`parse`), as Clone Hero reads lyrics (the .chart lyrics documentation of the GuitarGame_ChartFormats
 project, "Lyrics Markup" and "Displaying as Plain Text"; scan-chart only checks that `"lyric ` events exist):
   * A line is a phrase. A blank line, or a line that is all one [bracketed] heading ("[Chorus]", not sung), is a
-    section gap: it ends the phrase too, and the aligner gets a wildcard there for the music between.
+    section gap: it ends the phrase too, and the aligner always gets a wildcard there for the music between
+    (Syllable.gap marks the first syllable after it).
   * Words are split at whitespace and at `_` (which the game shows as a space).
   * A hyphen inside a word splits it into syllables, each timed on its own and written with `=` (a literal hyphen
     that joins the next syllable), so the game shows the word as typed. A hyphen at either end of a word is left out:

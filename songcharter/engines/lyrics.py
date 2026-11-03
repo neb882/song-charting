@@ -89,7 +89,8 @@ DEFAULT_METHOD = "english"
 @dataclass(frozen=True)
 class Settings:
     method: str = DEFAULT_METHOD
-    stars: str = "line"          # the wildcard before every line ("line"), before every word ("word"), or none
+    stars: str = "line"          # the wildcard before every line ("line") or word ("word"); always at the text's
+                                 # start and end and at every section gap
     window_s: float = 30.0
     context_s: float = 2.0
     device: str = "cpu"          # "cpu" or "cuda" (forced_align itself always runs on the CPU)
@@ -197,23 +198,18 @@ def weights_path(method: Method, models: Path | str | None = None,
     return path
 
 
-_MODELS: dict[tuple[str, str], object] = {}
-
-
 def load_model(method: Method, device: str):
-    """The bundle's network with the pinned weights, on `device` (kept for the process)."""
-    key = (method.bundle, device)
-    if key not in _MODELS:
-        torch, torchaudio, _ = _torch()
-        path = weights_path(method)
-        bundle = getattr(torchaudio.pipelines, method.bundle, None)
-        if bundle is None:
-            raise Unavailable(f"torchaudio {torchaudio.__version__} has no {method.bundle} bundle")
-        kwargs = {"dl_kwargs": {"model_dir": str(path.parent), "file_name": path.name, "progress": False,
-                                "weights_only": True}}
-        model = bundle.get_model(with_star=False, **kwargs) if method.separator is None else bundle.get_model(**kwargs)
-        _MODELS[key] = (bundle, model.to(device).eval())
-    return _MODELS[key]
+    """The bundle and its network with the pinned weights, on `device`. Not kept: its memory (1.2 GB for the large
+    bundles) goes back once the alignment is done, before the guitar stage needs the GPU."""
+    torch, torchaudio, _ = _torch()
+    path = weights_path(method)
+    bundle = getattr(torchaudio.pipelines, method.bundle, None)
+    if bundle is None:
+        raise Unavailable(f"torchaudio {torchaudio.__version__} has no {method.bundle} bundle")
+    kwargs = {"dl_kwargs": {"model_dir": str(path.parent), "file_name": path.name, "progress": False,
+                            "weights_only": True}}
+    model = bundle.get_model(with_star=False, **kwargs) if method.separator is None else bundle.get_model(**kwargs)
+    return bundle, model.to(device).eval()
 
 
 # ------------------------------------------------------------------------------------------------ the alignment
@@ -252,14 +248,16 @@ def emissions(model, audio: np.ndarray, settings: Settings, torch) -> np.ndarray
 
 def targets(lyrics: Lyrics, labels: tuple[str, ...], method: Method, stars: str) -> tuple[list[int], list[int]]:
     """The label sequence of the whole text and, per label, the syllable it spells (-1 for a separator or a star).
-    The star is the class after the bundle's own labels."""
+    The star is the class after the bundle's own labels: before every line (`stars` "line") or word ("word"), and
+    whatever `stars` says at the text's start, at every section gap (a blank line or a heading: music the text does
+    not sing) and at its end."""
     index = {c: i for i, c in enumerate(labels)}
     star = len(labels)
     seq, owner = [], []
     prev_word, prev_line, separate = None, None, False
     for i, s in enumerate(lyrics.syllables):
         if s.word != prev_word:   # a new word: a star before a line (or every word), else the separator
-            if stars == "word" or (stars == "line" and s.line != prev_line):
+            if stars == "word" or (stars == "line" and s.line != prev_line) or s.gap:
                 if not seq or seq[-1] != star:
                     seq.append(star)
                     owner.append(-1)
@@ -274,7 +272,7 @@ def targets(lyrics: Lyrics, labels: tuple[str, ...], method: Method, stars: str)
             separate = False
         seq += chars
         owner += [i] * len(chars)
-    if stars != "none":
+    if seq[-1:] != [star]:
         seq.append(star)
         owner.append(-1)
     return seq, owner
@@ -364,6 +362,9 @@ class Torchaudio:
         audio = mono16k(vocals, torch, F)
         t1 = time.perf_counter()
         em = emissions(model, audio, settings, torch)
+        del model
+        if settings.device == "cuda":
+            torch.cuda.empty_cache()
         labels = tuple(bundle.get_labels(star=None) if method.separator is None else bundle.get_labels())
         if em.shape[1] != len(labels):
             raise RuntimeError(f"the network gives {em.shape[1]} classes for {len(labels)} labels")
@@ -404,7 +405,8 @@ def align(text: str, vocals: np.ndarray, out: Path | str, settings: Settings = S
             "method": {"name": settings.method, "bundle": method.bundle, "weights_sha256": method.sha256},
             "input": {"sample_rate": SAMPLE_RATE, "samples": int(vocals.shape[1]),
                       "seconds": round(vocals.shape[1] / SAMPLE_RATE, 3)},
-            "counts": {"syllables": n, "words": lyrics.words, "lines": lyrics.lines, "spelled_syllables": spelled,
+            "counts": {"syllables": n, "words": lyrics.words, "lines": lyrics.lines,
+                       "sections": sum(1 for x in lyrics.syllables if x.gap), "spelled_syllables": spelled,
                        "unspelled_words": _unspelled_words(lyrics), "markup_dropped": lyrics.dropped,
                        "frames": run.get("frames"), "labels": run.get("labels")},
             "confidence": confidence(lyrics, char_scores), "device": run.get("device", settings.device),

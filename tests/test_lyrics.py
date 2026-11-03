@@ -284,8 +284,10 @@ def test_targets_spell_the_words_with_stars_and_separators():
     spelled = "".join(english[t] if t not in (star, bar) else ("*" if t == star else "|") for t in seq)
     assert spelled == "*ZORP|BLEN*FIM*WOB'S*"     # the unspelled word gives nothing, and no doubled separator
     assert owner[:5] == [-1, 0, 0, 0, 0] and len(owner) == len(seq)
-    seq, _ = E.targets(x, english, m, "none")
-    assert "".join(english[t] for t in seq) == "ZORP|BLEN|FIM|WOB'S"
+    seq, _ = E.targets(x, english, m, "none")    # stars at the start and the end only
+    assert "".join(english[t] if t != star else "*" for t in seq) == "*ZORP|BLEN|FIM|WOB'S*"
+    seq, _ = E.targets(L.parse("zorp blen\n\n[Hed]\nfim\nwob"), english, m, "none")   # and at a section gap
+    assert "".join(english[t] if t != star else "*" for t in seq) == "*ZORP|BLEN*FIM|WOB*"
     lower = E.Method("X", "u", "0", "f", 0, False, None, "")
     seq, _ = E.targets(L.parse("zo blen"), tuple("-zoblen"), lower, "word")
     assert seq == [7, 1, 2, 7, 3, 4, 5, 6, 7]   # a star before every word and at the end

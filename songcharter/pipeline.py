@@ -775,6 +775,8 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
                                                                   "child_peak_rss_mb": child})
     sections = str(run.path)
     timed = _lyrics_stage(options, engines, stems, work, device, begin, end, warn, fallback, record)
+    if options.lyrics is not None:
+        engines.free_gpu(device)
 
     if "guitar" in options.instruments:
         gdev = "cuda" if device == "cuda" else "cpu"
