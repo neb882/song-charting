@@ -422,7 +422,9 @@ def test_checkout_names_the_commit_and_the_changed_files(tmp_path):
     subprocess.run(git + ["add", "."], check=True)
     subprocess.run(git + ["commit", "-qm", "c"], check=True)
     head = subprocess.run(git[:3] + ["rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    assert G.checkout(repo) == {"commit": head, "branch": G.checkout(repo)["branch"], "dirty": []}
+    assert G.checkout(repo)["commit"] == head and G.checkout(repo)["branch"] not in (None, "HEAD")
+    subprocess.run(git[:3] + ["checkout", "-q", "--detach"], check=True)
+    assert G.checkout(repo) == {"commit": head, "branch": None, "dirty": []}
     (repo / ".claude" / "a.md").write_text("y\n")
     (repo / "new.txt").write_text("untracked\n")
     assert G.checkout(repo)["dirty"] == [".claude/a.md"]

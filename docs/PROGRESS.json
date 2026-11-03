@@ -52,11 +52,15 @@
       "what": "quality iteration"
     }
   ],
-  "in_flight": [
-    "golden charts (eval/golden.py): reference songs rebuilt before and after a change, UNEXPECTED changes flagged, F1 against the human charts (brief written; being built)"
-  ],
+  "golden": {
+    "status": "done 2026-11-03 (branch golden)",
+    "what": "python -m eval.golden run builds the seven reference songs with songcharter chart (every level, 1 take, CPU) and records per part and difficulty the onsets, scan-chart's track hash and score.py's F1; diff OLD NEW --expect PARTS flags every other change UNEXPECTED (exit 1). DESIGN 3.6, eval/README.md; the commands are in CLAUDE.md's release gate and in sc-inspector.",
+    "baseline": "main at 11615e2: <scratchpad>/golden/base/summary.json, all 7 songs gate OK; the kept work folders in <scratchpad>/golden/work. Environment in the dev container: EVAL_DATA=<scratchpad>/eval SONGCHARTER_GOLDEN=<scratchpad>/golden, plus SONGCHARTER_SCAN_CHART, SONGCHARTER_AUTOCHART=<scratchpad>/eval/tools/autochart and SONGCHARTER_ALLIN1_PYTHON=<scratchpad>/research/timing/venv2/bin/python. <scratchpad> is /tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad.",
+    "cost": "cold (a kept folder made, stems hard-linked): 474-1081 s a song, 80 min for the set, the guitar take most of it; warm: 44-76 s a song, 6.5 min for the set (CPU, 2 threads)"
+  },
+  "in_flight": [],
   "next": [
-    "Golden charts (in flight), then use them for every change that can move a chart.",
+    "Use the golden charts for every change that can move a chart (the inspector runs them; the release gate needs them).",
     "A real GPU run of songcharter chart on the owner's 5070 (needs Demucs and allin1's own Python there).",
     "M4: a short Windows spike on the friend's PC first (paths, CUDA, SmartScreen), then the packaging, under work orders with acceptance checks.",
     "Before the next quality decision: grow the reference set to 20 or more human charts, with human-charted solos among them."
@@ -94,7 +98,8 @@
     "autochart's engine reports no memory peak of its own.",
     "Q26: the build's grid period does not reach the ADTOF engine as beat_s.",
     "Pruning: a run whose work folder is moved to the trash between its mkdir and its first marker write (a window of microseconds) fails with exit 2.",
-    "Not run on Windows: the \\\\?\\ deletion, a rename refused while a file is open (emulated), Node's long paths."
+    "Not run on Windows: the \\\\?\\ deletion, a rename refused while a file is open (emulated), Node's long paths.",
+    "Golden charts: a change to the separation's code does not show (every run reads the kept stems; delete the kept folders to make them again); sections, song.ini and the audio are not compared; one CPU take, so the CUDA default of 4 spliced takes is not covered."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
   "how_work_is_run": "CLAUDE.md, section 'How work is run'. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices"

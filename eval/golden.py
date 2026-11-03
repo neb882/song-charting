@@ -123,13 +123,15 @@ def reference_set(refs: Path, only: tuple[str, ...] = ()) -> list[Song]:
 
 
 def checkout(code: Path) -> dict:
-    """The checkout's commit, branch and the tracked files it has changed (git's view; None outside git)."""
+    """The checkout's commit, branch (None when detached) and the tracked files it has changed (git's view; None
+    outside git)."""
     def git(*args: str) -> str | None:
         p = subprocess.run(["git", "-C", str(code), *args], capture_output=True, text=True)
         return p.stdout if p.returncode == 0 else None
     status = git("status", "--porcelain", "--untracked-files=no") or ""  # "XY path": not stripped, X may be a space
+    branch = (git("rev-parse", "--abbrev-ref", "HEAD") or "").strip()
     return {"commit": (git("rev-parse", "HEAD") or "").strip() or None,
-            "branch": (git("rev-parse", "--abbrev-ref", "HEAD") or "").strip() or None,
+            "branch": None if branch in ("", "HEAD") else branch,
             "dirty": [line[3:] for line in status.splitlines() if line.strip()]}
 
 

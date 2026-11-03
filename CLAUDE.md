@@ -73,6 +73,15 @@ Before anything goes to the friend [the Overclock project's per-change checks mi
 whole-film check caught]:
 
 1. The full suite passes.
-2. The golden charts (`eval/golden.py`, once it exists) show no UNEXPECTED change on the whole reference set.
+2. The golden charts show no UNEXPECTED change on the whole reference set. Run from the release's checkout, with
+   the last release checked out at `/dev/shm/golden-old` (`git worktree add --detach`) and the environment that
+   `eval/README.md` names (`EVAL_DATA`, `SONGCHARTER_GOLDEN`):
+   ```sh
+   python -m eval.golden run --code /dev/shm/golden-old --out /dev/shm/golden/old --threads 2
+   python -m eval.golden run --out /dev/shm/golden/new --threads 2 --rerun <the engines whose code changed>
+   python -m eval.golden diff /dev/shm/golden/old /dev/shm/golden/new --expect <parts the release changes, or none>
+   ```
+   Leave `--rerun` out when no engine's code changed (`eval/README.md` lists each engine's files). The diff must
+   exit 0. Read its `report.md`: the pooled F1 per part, and the engines that ran.
 3. The test song runs end to end with the gate ok, and its preview has been looked at.
 4. The owner approves the release.
