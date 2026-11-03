@@ -55,7 +55,7 @@ Under `/mnt/c` only the Songs folder (M4-06), `.wslconfig` and the shortcut are 
 
 ### `install.sh`
 
-- **Usage:** `bash install.sh [--lane auto|cpu|cu126|cu132] [--yes] [--from DIR]`. `--from` takes the release
+- **Usage:** `bash install.sh [--lane auto|cpu|cu126|cu132] [--yes] [--from DIR] [--windows-ram-gb N]`. `--from` takes the release
   assets from a folder or a URL prefix, for CI. `$SONGCHARTER_RELEASE_URL`, when set, replaces the release URL
   prefix. M4-07's CI hook runs the guide's line unchanged against a local server this way.
 - **Shell rules:** `set -euo pipefail`. It needs `curl` or `wget`, `tar`, `xz` and `sha256sum`, which the Ubuntu
@@ -64,7 +64,9 @@ Under `/mnt/c` only the Songs folder (M4-06), `.wslconfig` and the shortcut are 
   - the version;
   - the app tarball's name and SHA-256;
   - the release URL prefix (`https://github.com/neb882/song-charting/releases/download/v<version>`);
-  - uv's wheel URL and SHA-256 (`uv-0.13.5-py3-none-manylinux*_x86_64.whl` from PyPI).
+  - uv's release tarball URL (`https://github.com/astral-sh/uv/releases/download/0.13.5/uv-x86_64-unknown-linux-gnu.tar.gz`)
+    and the SHA-256 published beside it in `.sha256` (`f68d291c75783122dad58ab77def0e13f3233f358731db5d6d7e8715603b928f`
+    for 0.13.5 [here]). Not the PyPI wheel: a wheel is a zip, and the Ubuntu image has no `unzip`.
 - **On a failure**, the last line is always: `songcharter: <step> failed: <one line>. Run the same command again to
   continue.` Then exit 2.
 
@@ -76,10 +78,15 @@ Steps, each printing a header:
    - Read `nvidia-smi` (PATH, else `/usr/lib/wsl/lib/nvidia-smi`): name, driver, compute capability.
    - **cu132:** driver 580 or newer, and capability 7.5 or more.
    - **cu126:** driver 528 or newer, with a warning: "the guitar runs on the CPU: update the NVIDIA driver to 580 or
-     newer for the GPU".
+     newer, then paste the install line again: it switches to the GPU build (about 3 GB)".
    - **cpu:** otherwise ("no NVIDIA GPU found", or "update the driver to 528 or newer").
    - Capability 12.0 or more with a driver under 580 gets cpu: the cu126 build has no kernels for it.
    - `--lane` overrides. The thresholds come from DESIGN 4.3's table [inference: not re-checked].
+   - **The lane is chosen at each run, not frozen.** A rerun picks the lane again from `nvidia-smi`. If it differs
+     from `runtime.json`'s:
+     - `uv sync` re-syncs both environments to the new lane: it swaps torch and the CUDA wheels, and keeps the rest;
+     - `runtime setup` adds or removes the CUDA provider;
+     - the summary says "lane changed: cu126 → cu132".
 3. **Disk.** Needed, by lane: cpu 6 GB, cu126 15 GB, cu132 15 GB (the downloads unpacked, plus the 5 GB of work
    folders) [decision; M4-05 measures the cpu lane on disk, M4-08 the cu132].
    - Check `df -B1 "$HOME"`, and on WSL `df -B1 /mnt/c`. WSL's disk reports up to 1 TB free while it really grows on
@@ -94,7 +101,8 @@ Steps, each printing a header:
    - The estimate is at 25 and at 100 Mbit/s.
    - Then "Continue? [Y/n]", unless `--yes`.
 6. **uv and Python:**
-   - download uv's wheel, check its SHA-256, and extract `uv` to `$SONGCHARTER_HOME/bin/uv`;
+   - download uv's release tarball, check it against the pinned SHA-256 (the published `.sha256`), and extract `uv`
+     from it with `tar` to `$SONGCHARTER_HOME/bin/uv`;
    - download the app tarball, check its SHA-256, and extract it to `app/<version>/`;
    - then `uv python install 3.13.17`.
    - Every uv call has `UV_HTTP_TIMEOUT=300` and `UV_HTTP_RETRIES=5`, and keeps uv's own progress output.
@@ -122,6 +130,10 @@ Steps, each printing a header:
 - **`memory` under 12 GB:** ask "WSL may use N GB; songcharter needs about 12. Raise it to <target> GB? [Y/n]", unless
   `--yes`.
 - **Windows' RAM unknown:** write nothing, and say how to set it by hand.
+- **Rounding:** Windows' RAM is rounded to the nearest whole GB before the 4 GB are taken off. A "16 GB" PC reports
+  about 15.9 GiB, which must give `memory=12GB`, not `11.9GB`.
+- **Test override:** `--windows-ram-gb N` (or `SONGCHARTER_WINDOWS_RAM_GB=N`) replaces the measured value. M4-08 part A
+  uses it to write the friend's 16 GB `.wslconfig` on a larger PC, and the tests use it.
 - **The resulting WSL memory under 11 GB** (a PC under 16 GB): `runtime.json`'s `allin1_python` is null, so the
   sections use the librosa fallback, which holds no 7.8 GB model run. The install says so. Under 8 GB it refuses:
   "songcharter needs a PC with at least 12 GB of RAM".
@@ -131,20 +143,24 @@ Steps, each printing a header:
 
 - **Where:** `<Programs>\songcharter.lnk`, with `Programs` from `wsl.shell_folder("Programs")` (the user's own
   Start-menu programs folder: no admin).
-- **Target and arguments:** `%windir%\System32\wsl.exe` with `-d <distro> --cd ~ -e /home/<user>/.local/bin/songcharter
-  ui --from-shortcut`. The working folder is `%USERPROFILE%`; the icon is `wsl.exe`'s; the description is
-  "songcharter".
+- **Target and arguments:** `%windir%\System32\cmd.exe` with `/c "wsl.exe -d <distro> --cd ~ -e
+  /home/<user>/.local/bin/songcharter ui --from-shortcut || pause"`.
+  - `cmd.exe` is signed and no script file is written.
+  - `|| pause` keeps the window open when `wsl.exe` itself fails early (a distro that will not start), before the
+    launcher's own pause can run.
+  - The working folder is `%USERPROFILE%`; the icon is `wsl.exe`'s; the description is "songcharter".
+  - **A reinstall overwrites** an existing `songcharter.lnk` in place.
 - **The writer** follows [MS-SHLLINK]:
   - a `ShellLinkHeader` with flags `HasArguments | HasWorkingDir | HasIconLocation | IsUnicode | HasExpString`;
   - no ID list and no LinkInfo;
   - `StringData` for the working folder, the arguments and the icon;
-  - an `EnvironmentVariableDataBlock` holding `%windir%\System32\wsl.exe` in ANSI and in Unicode;
+  - an `EnvironmentVariableDataBlock` holding `%windir%\System32\cmd.exe` in ANSI and in Unicode;
   - the terminal block.
 - **Why this way:**
   - it is no script file;
   - written from WSL, it has no Mark of the Web, so Smart App Control's list of risky file types, which applies only
     to files from an untrusted origin, does not touch it;
-  - `wsl.exe` is Microsoft-signed [doc: textslashplain.com; inference for this case].
+  - `cmd.exe` and `wsl.exe` are Microsoft-signed [doc: textslashplain.com; inference for this case].
 - **If writing fails**, or interop is off, the install prints the fallback: open Ubuntu from the Start menu and type
   `songcharter`.
 
@@ -239,7 +255,8 @@ Steps:
 
 - `git archive --format=tar.gz --prefix=songcharter-<v>/ HEAD` gives `songcharter-<v>.tar.gz`. `check_no_audio.py`
   runs on its listing.
-- Fill in `install.sh`'s placeholders (version, the tarball's SHA-256, uv's wheel and its SHA-256, the release URL).
+- Fill in `install.sh`'s placeholders: the version, the app tarball's SHA-256, uv's release tarball URL with the SHA-256
+  read from its published `.sha256`, and the release URL.
 - `SHA256SUMS` for both files.
 
 ## Done means
@@ -255,7 +272,9 @@ Steps:
    - **`wslsetup`,** against stand-in interop:
      - the four memory cases, with the backup written and the other sections kept;
      - CRLF;
-     - the under-11-GB rule.
+     - the under-11-GB rule;
+     - rounding (a measured 15.9 GiB writes `memory=12GB`);
+     - `--windows-ram-gb 16` on a 64 GB stand-in writes `memory=12GB`.
    - **`winshortcut`:** a written `.lnk` parsed by LnkParse3 (dev extra) gives the target, arguments, working folder
      and icon exactly.
    - **`launch --from-shortcut`** waits for Enter after a non-zero exit (stdin from a pipe).
@@ -278,11 +297,13 @@ Steps:
   - **uninstall:** with **No**, the reinstall downloads nothing (uv reports no download, the log has no `fetch`
     lines); with **Yes**, `~/.local/share/songcharter` and `~/.cache/songcharter` are gone.
 - **Hook `windows.d/30-shortcut.ps1`** (`windows-latest`):
-  - `python -c` writes a `.lnk` with `winshortcut` targeting `%windir%\System32\cmd.exe` with arguments
-    `/c echo ok> %TEMP%\lnk-ok.txt`;
-  - `(New-Object -ComObject WScript.Shell).CreateShortcut(<path>)` reads back the same `TargetPath`, `Arguments` and
-    `WorkingDirectory`;
-  - `Start-Process <path>` creates `lnk-ok.txt` within 10 s.
+  - `python -c` writes a `.lnk` with `winshortcut`, shaped like the real one: target `%windir%\System32\cmd.exe`,
+    arguments `/c "echo ok> %TEMP%\lnk-ok.txt || pause"`;
+  - **the pass condition:** `Start-Process <path>` creates `lnk-ok.txt` within 10 s. Windows itself resolved and
+    launched it;
+  - reading it back with `(New-Object -ComObject WScript.Shell).CreateShortcut(<path>)` (`TargetPath`, `Arguments`,
+    `WorkingDirectory`) is printed for diagnosis only, not as the pass;
+  - writing the `.lnk` a second time over the first works (the reinstall case).
 
 [Hardware] M4-08:
 - the install on a fresh Ubuntu-26.04 distro, timed, lane cu132;

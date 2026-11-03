@@ -72,7 +72,9 @@ Must not touch: `pipeline.py`, `engines/*`, `wsl.py`, `device.py`, `packaging/li
     40 characters at most.
   - **409** when it exists and `replace` is false, with `ours`: its `song.ini` says `charter = songcharter` and it
     holds `report.json`. A replace of a folder that is not ours is refused (409).
-  - **The copy** goes to `songs/.<name>.songcharter-<8 hex>.tmp` (`shutil.copytree`). Then:
+  - **The copy** goes to `songs/.<name>.songcharter-<8 hex>.tmp` with `shutil.copytree(src, tmp,
+    copy_function=shutil.copyfile)`: contents only, no `copystat`, whose timestamps and modes are what drvfs refuses
+    under `/mnt/c`. Then:
     - when replacing, the old folder moves to `$SONGCHARTER_HOME/replaced/<yyyyMMdd-HHmmss>/<name>` (`shutil.move`:
       it crosses from `/mnt/c` to ext4);
     - then the rename into place.
@@ -106,7 +108,9 @@ Must not touch: `pipeline.py`, `engines/*`, `wsl.py`, `device.py`, `packaging/li
   - `doctor.json`, `runtime/runtime.json` and `ui.json`;
   - the newest 10 logs;
   - a fresh `device.report(full=False)` as `doctor-now.json`;
-  - `clonehero.json`: `{folder, windows_path, source, under_onedrive}`;
+  - `clonehero.json`: `{folder, windows_path, source, under_onedrive}`, plus `doctor.json`'s `wsl.documents`
+    (the raw registry value, its expansion, and the Linux path). A localized folder name decoded with the wrong code
+    page then shows up as mojibake in the bundle (the advisor's finding 8);
   - for the newest 5 work folders: `pipeline.json` (with M4-02's samples and fallbacks), `assemble.json`,
     `songcharter-work.json`, the preview flags, and the built folder's `report.json`;
   - `MANIFEST.txt`.

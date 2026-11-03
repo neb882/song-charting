@@ -55,6 +55,9 @@ CI runs the install from scratch in an Ubuntu 26.04 container. Everything in M4-
      glibc 2.43 [doc: releases.ubuntu.com/26.04.1, `ubuntu-26.04.1-wsl-amd64.manifest`].
    - So the install needs no `apt`: uv brings Python 3.13, and the manylinux_2_28 wheels run on glibc 2.43.
    - CI uses Docker's `ubuntu:26.04` (it exists [doc: Docker Hub]).
+   - **Older WSL installs** read a legacy list in which "Ubuntu" is the 22.04 package [doc: the same file,
+     `Distributions`]. So the guide runs `wsl --update` before `wsl --install`, and CI also runs the install alone
+     in `ubuntu:24.04` and `ubuntu:22.04` (M4-05).
 2. **WSL's facts** [doc: MicrosoftDocs/WSL on GitHub, the source of learn.microsoft.com/windows/wsl, both
    reachable from here]:
    - **Install:** Windows 10 2004 (build 19041) or later, or Windows 11; `wsl --install` in an administrator
@@ -81,8 +84,14 @@ CI runs the install from scratch in an Ubuntu 26.04 container. Everything in M4-
    - The cu132 lane's wheels hold all of them in `site-packages/nvidia/cu13/lib` and `nvidia/cudnn/lib`, except
      curand. `nvidia-curand` 10.4.4.72 (62 MB) adds `nvidia/cu13/lib/libcurand.so.10` [here, the wheels' file
      lists].
-   - So the cu132 lane plus that wheel runs the guitar on CUDA, with the node child's `LD_LIBRARY_PATH` pointing
-     there. No separate cuDNN environment is needed.
+   - So the cu132 lane plus that wheel should run the guitar on CUDA, with the node child's `LD_LIBRARY_PATH`
+     pointing there, and no separate cuDNN environment.
+   - In this container, a real cu132 venv with that wheel put all seven libraries in those two folders. The provider
+     then loaded past all of them and stopped only at `libcuda.so.1`, the GPU driver's library [here, M4-00b's
+     script].
+   - **No GPU run backs it yet.** `eval/gpu.sh` (lines 22–44) assembled CUDA 12 libraries and a separate cuDNN for
+     the earlier 5070 runs, so those are no evidence for CUDA 13; its comment is fixed in M4-02.
+   - **M4-00b tests it on the 5070 before wave 1 ends.**
    - On cu126 (a driver under 580), the CUDA 13 provider cannot load: there the guitar runs on the CPU, and
      `doctor` says to update the driver.
 5. **Downloads, Linux** [here: the lock's wheel sizes, and HEAD on the PyTorch index]:
@@ -96,9 +105,10 @@ CI runs the install from scratch in an Ubuntu 26.04 container. Everything in M4-
      Microsoft-signed, so it should run [inference; tested in M4-08].
    - No script file is written on Windows. Interop calls only signed system tools (`cmd.exe`, `reg.exe`,
      `explorer.exe`, `curl.exe`), and PowerShell for one read-only query, with a fallback.
-   - Since KB5083769 (April 2026, Windows 11 25H2), SAC can be turned on and off in Windows Security without
-     reinstalling; a manual toggle never returns it to Evaluation [doc: admin365.blog, 2026-10-11]. So the owner can
-     mimic the friend's SAC for the test (question 1, section 8).
+   - One blog says that since KB5083769 (April 2026, Windows 11 25H2), SAC can be turned on and off in Windows
+     Security without reinstalling [doc: admin365.blog, 2026-10-11]. A December 2025 article only said "soon" [doc:
+     windowslatest.com]. **Treat this as unsettled:** the owner's SAC step in M4-08 is optional, and only if the
+     switch is not greyed out.
 7. **Memory.** On the CPU, the test song peaked at 10.1 GB for the process tree, 7.8 GB of it allin1's runner (DESIGN
    5, M3). With CUDA, allin1's ensemble runs on the GPU: the host peak is unmeasured.
    - With the default 50 %, a 16 GB PC gives WSL 8 GB: too little.
@@ -107,12 +117,13 @@ CI runs the install from scratch in an Ubuntu 26.04 container. Everything in M4-
 8. **The `.lnk` writer.** pylnk3 is LGPL; LnkParse3 (a parser) is MIT [doc: PyPI]. songcharter writes the small
    [MS-SHLLINK] structure itself and tests it with LnkParse3, and with Windows itself on `windows-latest`.
 9. **Pushes from sessions.** This session pushed a workflow file to a new branch, but could not delete the branch
-   (proxy refusal, then HTTP 403). The owner deletes `m4-workflow-push-probe`.
+   (proxy refusal, then HTTP 403). The owner has since deleted `m4-workflow-push-probe`.
 
 ## 4. The orders, in build order
 
 | order | name | one line | size |
 |---|---|---|---|
+| M4-00b | [cuda13-spike](M4-00b-cuda13-spike.md) | not a build: the owner runs `packaging/spike/cuda13-provider.sh` in their existing WSL on the 5070 (about 20 min). It checks that onnxruntime-node's CUDA provider runs on the cu132 lane's CUDA 13 libraries, and fails loudly on a CPU fallback | owner's time |
 | M4-01 | [lanes](M4-01-lanes.md) | Linux torch lanes cpu/cu126/cu132 as uv extras (cu132 with `nvidia-curand` for autochart's CUDA provider), one Linux lock, allin1's own locked project, a wheels-only check | half a day |
 | M4-02 | [device](M4-02-device.md) | `songcharter/wsl.py` (read-only interop) and `songcharter doctor`: WSL, Windows build, memory against `.wslconfig`, GPU, CUDA in torch and in onnxruntime-node, disk in WSL and on C:, localhost forwarding; the pipeline records fallbacks, frees GPU memory and samples RAM, swap and VRAM; autochart's node gets the CUDA 13 library path | 1 day |
 | M4-05a | [ci-skeleton](M4-05a-ci-skeleton.md) | the CI workflow from day one: the suite on `ubuntu-latest`, a `windows-latest` job for Windows-side files, hook folders that every later order fills | half a day |
@@ -128,12 +139,21 @@ CI runs the install from scratch in an Ubuntu 26.04 container. Everything in M4-
 
 | wave | orders | files |
 |---|---|---|
+| 0 | **M4-00b** (the owner, on the 5070) | none: the script is committed. **It must pass before wave 1 ends.** |
 | 1 | **M4-01** ∥ **M4-02** ∥ **M4-05a** | `pyproject.toml`, locks, `packaging/allin1/`, `packaging/check_wheels.py` ∥ `wsl.py`, `device.py`, `cli.py`, `pipeline.py`, `engines/autochart.py` ∥ `.github/workflows/ci.yml`, `packaging/ci/` |
 | 2 | **M4-03** ∥ **M4-04** | `packaging/linux/`, `packaging/release/`, `runtime.py`, `launch.py`, `wslsetup.py`, `winshortcut.py` ∥ `ui/`, `proc.py`, `cli.py`, `pipeline.py`, `engines/autochart.py` (the take callback), `pyproject.toml` (package data) |
 | 3 | **M4-05** ∥ **M4-06** | `packaging/ci/linux.d/50-*` and `ui_guards.py` ∥ `ui/`, `clonehero.py`, `diagnostics.py`, `cli.py` |
 | 4 | **M4-07** | `docs/guide/`, `packaging/NOTICE.txt`, `packaging/release/build.sh` (after M4-03), `packaging/ci/linux.d/70-release.sh` |
 | then | the full review workflow over the integrated v0.1, then **M4-08** | |
 
+- **If M4-00b fails:** wave 2 waits, and the director and the owner choose before it starts (details in M4-00b):
+  - a missing library is a one-line fix in M4-01 or M4-02, then the spike runs again;
+  - if CUDA 13 cannot run in WSL, either onnxruntime-node pinned to a release with a CUDA 12 provider plus a small
+    side environment of CUDA 12 wheels (if autochart's engine accepts that pin), or the guitar on the CPU in v0.1,
+    which probably misses the 8-minute target.
+- **The one coupling across wave 2:** M4-03's `launch.main` starts `songcharter ui` with no arguments, which exists
+  only once M4-04 merges. Until then it prints `doctor`'s summary. The director edits that one line at the wave-2
+  merge.
 - **Each order lands its own CI checks as hook files** in `packaging/ci/linux.d/` and `windows.d/`. Nobody but
   M4-05a edits `ci.yml`.
 - **M4-02 to M4-07 may push their branches to run CI.** Their briefs must say so (CLAUDE.md).
@@ -149,25 +169,26 @@ CI runs the install from scratch in an Ubuntu 26.04 container. Everything in M4-
 
 | # | risk | caught by | plan |
 |---|---|---|---|
-| 1 | Peak RAM with CUDA does not fit 12 GB of WSL memory on a 16 GB PC | M4-08 A (owner, with `memory=12GB`), sampled per stage | `swap=8GB` absorbs short peaks. If WSL gets under 11 GB (a PC under 16 GB), the install leaves allin1 out, so the sections use the librosa fallback (warned) [decision]. Under 8 GB, the install refuses (M4-03, the memory rule). |
-| 2 | The CUDA 13 provider does not load in WSL (driver, library path) | `doctor`'s provider check (M4-02); M4-08 | the engine falls back to the CPU by itself, and the first-take check keeps that to 1 take (warned) |
+| 1 | Peak RAM with CUDA does not fit 12 GB of WSL memory on a 16 GB PC | M4-08 A (owner, with `memory=12GB`), sampled per stage | `swap=8GB` absorbs short peaks. The guide says to chart first and play after, and not to run games while a song charts: Windows has about 4 GB during the peak minutes. Swap over 4 GB in a stage is M4-08's tripwire. If WSL gets under 11 GB (a PC under 16 GB), the install leaves allin1 out, so the sections use the librosa fallback (warned) [decision]. Under 8 GB, the install refuses (M4-03, the memory rule). |
+| 2 | The CUDA 13 provider does not load in WSL (driver, library path) | **M4-00b first** (the owner's 5070, before wave 1 ends); then `doctor`'s provider check (M4-02) and M4-08 | the engine falls back to the CPU by itself, and the first-take check keeps that to 1 take (warned); if the spike fails, the options in M4-00b |
 | 3 | Localhost forwarding is off, or port 8765 is taken on the Windows side | M4-04's self-check: `curl.exe` from Windows fetches `/api/hello` and compares an instance token | the next port up to 8784. If none works, the server also binds WSL's own address and opens that URL (M4-04, startup step 3). |
 | 4 | Interop is off (no `cmd.exe` in WSL) | `doctor` | the page asks for the Songs folder as a `/mnt/c/...` path; the Start-menu shortcut is skipped (the guide's fallback: open Ubuntu, type `songcharter`) |
-| 5 | Smart App Control blocks the shortcut or an interop tool | only hardware: M4-08 A with SAC on (if the owner agrees), then the friend | fallback: open Ubuntu from the Start menu and type `songcharter` |
+| 5 | Smart App Control blocks the shortcut or an interop tool | only hardware: M4-08 A with SAC on (if the owner agrees and the switch is not greyed out), then the friend | fallback: open Ubuntu from the Start menu and type `songcharter` |
 | 6 | A large download fails halfway (3+ GB on cu132) | uv's progress, `UV_HTTP_TIMEOUT=300`, `UV_HTTP_RETRIES=5`; `runtime.fetch` resumes; M4-05 kills a download and reruns | every step reruns safely; the script ends with "run the same line again to continue" |
 | 7 | The disk fills: the vhdx grows on C: while WSL reports 1 TB free | the install checks `df` of `$HOME` and of `/mnt/c` before downloading | it stops with the numbers |
 | 8 | OneDrive or security software locks the Songs folder during the rename | M4-06's retry (about 5 s) and its "blocked" message | the zip, and "open folder" |
-| 9 | Ubuntu 26.04 differs from what CI tests | CI runs in `ubuntu:26.04` as a plain user | M4-08 A on a fresh Ubuntu-26.04 distro |
+| 9 | Ubuntu 26.04 differs from what CI tests, or an older WSL installs 22.04 | CI runs in `ubuntu:26.04` as a plain user, and the install alone in 24.04 and 22.04 | M4-08 A on a fresh Ubuntu-26.04 distro, plus an install-only check on Ubuntu-22.04; the guide runs `wsl --update` first |
 | 10 | Antivirus slows the install or the runs on the Windows side (vhdx scanning) | only M4-08 (CI has no Defender) | recorded; no fix planned for v0.1 |
 | 11 | The friend's driver is under 580 | `doctor`, from `nvidia-smi` | cu126 lane (torch on the GPU, guitar on the CPU), with "update the NVIDIA driver to 580 or newer" shown |
 
 ## 7. What needs the owner, and when
 
-1. **Now:** delete the branch `m4-workflow-push-probe` on GitHub (a session cannot), and answer section 8.
+1. **Now, while wave 1 builds:** run M4-00b on the 5070 (about 20 minutes in your existing WSL; the steps are in
+   M4-00b), send `cuda13-result.json`, and answer section 8.
 2. **During the build:** allow the order branches to push for CI, and read the Actions tab when a session cannot.
-3. **After M4-07, on the 5070 PC (M4-08 part A, about two hours):**
-   - a fresh `Ubuntu-26.04` distro, with WSL's memory set to 12 GB like the friend's PC (and Smart App Control on,
-     if you agree);
+3. **After M4-07, on the 5070 PC (M4-08 part A, about three hours):**
+   - a fresh `Ubuntu-26.04` distro, with no `.wslconfig`, which the install writes for a 16 GB PC (12 GB); Smart App
+     Control on, if you agree and the switch is not greyed out;
    - the install, the test song with 1 and 4 takes, Take Me Out, cancel, Clone Hero, offline, the diagnostics zip,
      uninstall and reinstall.
 4. **Then the friend's PC (part B):** you send him the pre-release link and the guide, and he sends back the
@@ -177,10 +198,14 @@ CI runs the install from scratch in an Ubuntu 26.04 container. Everything in M4-
 ## 8. Questions only the owner can answer
 
 1. **For the test, will you turn Smart App Control on on your PC** (Windows Security > App & browser control > Smart
-   App Control), then off again after? It needs Windows 11 25H2 with the April 2026 update. It is the only way to try
-   the Start-menu shortcut under SAC before the friend does. While it is on, your own unsigned tools may be blocked.
-2. **Is the friend's Ubuntu only for songcharter?** If yes, the guide can offer `wsl --unregister Ubuntu` as the
-   complete uninstall. If he uses it for other things, only `songcharter uninstall` is offered.
+   App Control), then off again after?
+   - Only if the switch is not greyed out: that it can be toggled at all is reported for Windows 11 25H2 with the
+     April 2026 update, and is unsettled.
+   - It is the only way to try the Start-menu shortcut under SAC before the friend does.
+   - While it is on, your own unsigned tools may be blocked.
+
+Settled: the guide offers `wsl --unregister Ubuntu` as the complete uninstall, with a warning to use it only if that
+Ubuntu holds nothing else.
 
 ## 9. Done for v0.1
 

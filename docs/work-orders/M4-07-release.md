@@ -37,7 +37,9 @@ Plain words, numbered steps, no jargon without a gloss, under two pages. Its sec
    - virtualization on: Task Manager > Performance > CPU shows "Virtualization: Enabled". If it says Disabled, it is
      turned on in the PC's BIOS/UEFI settings (Intel VT-x or AMD SVM); the steps depend on the PC.
 2. **Set up WSL, once:**
-   - right-click Start > "Terminal (Admin)", type `wsl --install`, and restart the PC when it finishes;
+   - right-click Start > "Terminal (Admin)", type `wsl --update`, then `wsl --install`, and restart the PC when it
+     finishes. `wsl --update` first, because an older WSL installs Ubuntu 22.04 instead of the current 26.04 [doc:
+     Microsoft's DistributionInfo.json, the legacy list];
    - after the restart an Ubuntu window opens: choose a user name and a password.
    - Errors 0x80370102 or 0x80070003 mean virtualization is off [doc: Microsoft's WSL troubleshooting].
    - **Never install an NVIDIA driver inside Ubuntu:** the Windows driver already works there [doc: NVIDIA's WSL
@@ -49,21 +51,31 @@ Plain words, numbered steps, no jargon without a gloss, under two pages. Its sec
    - It shows how much it will download (about 4 GB with an NVIDIA GPU) and how long that takes, then asks to go
      on.
    - If it stops halfway, paste the same line again: it continues.
+   - If it says the guitar runs on the CPU because the driver is older than 580: update the driver, then paste the
+     line again. It switches to the GPU build (about 3 GB).
    - At the end, it sets WSL's memory and restarts WSL, and the window closes.
 4. **Start songcharter:**
    - Start menu > "songcharter". A window opens: keep it open while you use songcharter. Then your browser opens the
      page.
    - If the shortcut does not work: open "Ubuntu" from the Start menu and type `songcharter`.
 5. **Chart a song:**
+   - **chart first, play after.** While a song charts, songcharter uses most of the PC's memory: on a 16 GB PC
+     Windows has about 4 GB left for a few minutes. Don't run games then;
    - drop the file and press "Chart it";
    - when it is done, look at the preview, then "Install into Clone Hero";
    - in Clone Hero: Settings > General > Scan Songs.
-6. **If something goes wrong:** the "Diagnostics" link at the bottom of the page saves a zip to Downloads (logs and
-   settings, no audio). Send it. Or type `songcharter diagnostics` in Ubuntu.
+6. **If something goes wrong:**
+   - **turn off any VPN while installing:** it can block or slow the downloads;
+   - **if downloads keep failing with certificate errors**, typically after the PC slept and WSL's clock is wrong:
+     in Terminal, `wsl --shutdown`, then open Ubuntu and paste the install line again;
+   - the "Diagnostics" link at the bottom of the page saves a zip to Downloads (logs and settings, no audio). Send
+     it. Or type `songcharter diagnostics` in Ubuntu.
 7. **Remove it:**
    - in Ubuntu, `songcharter uninstall`. Answer No to keep the downloads for a later reinstall;
-   - if this Ubuntu is only for songcharter, Terminal (Admin) > `wsl --unregister Ubuntu` removes everything in it.
-     This depends on the owner's answer (M4-00, question 2).
+   - to remove everything: Terminal (Admin) > `wsl --unregister Ubuntu`.
+     - **Warning, shown in bold:** this deletes everything in that Ubuntu, not only songcharter. Use it only if you
+       keep nothing else there.
+     - The owner settled offering it.
 8. **Licences:** "songcharter is MIT. The models it downloads are non-commercial (see NOTICE.txt). Charts you make
    are yours; song.ogg is made from your recording, and sharing it is sharing the song."
 

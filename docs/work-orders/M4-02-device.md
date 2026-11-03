@@ -29,6 +29,9 @@ Creates:
 - `packaging/ci/linux.d/20-device.sh`.
 
 Changes:
+- `eval/gpu.sh`, its comment only (lines 22–26). It says onnxruntime-node's CUDA provider needs "the CUDA 12
+  libraries". The 1.27.0 provider needs CUDA 13 (M4-00, finding 4). Add that the CUDA 12 path it assembles predates
+  this, and point to M4-00b. The code stays as it is.
 - `songcharter/cli.py` (`doctor`);
 - `songcharter/pipeline.py`;
 - `songcharter/engines/autochart.py` (the library path);
@@ -100,15 +103,20 @@ timeout. A failure returns None; it never raises.
   - returns `(ok, detail)`; timeout 120 s.
 - `guitar_device(torch_device, autochart_ok) -> (device, reason)`:
   - `"cuda"` when both are true;
-  - else `"cpu"`, with "no GPU", "the cu126 lane: onnxruntime-node needs CUDA 13, so a 580 or newer driver", or "the
-    CUDA provider did not load: <detail>".
+  - else `"cpu"`, with one of:
+    - "no GPU";
+    - "the cu126 lane: onnxruntime-node needs CUDA 13, so a 580 or newer driver. Then paste the install line again:
+      it switches to the GPU build (about 3 GB)";
+    - "the CUDA provider did not load: <detail>".
 - `default_threads()`: `max(1, cpu_count − 1)`, for the UI. The CLI default does not change, so no chart moves.
 - `memory()`: `MemTotal`, `MemAvailable`, `SwapTotal` and `SwapFree` from `/proc/meminfo`, in MB.
 - `report(full=True)` gives `doctor.json`:
   ```
   {"songcharter", "written", "platform", "python",
    "wsl": null | {"distro", "windows_build", "interop", "windows_ram_mb", "wslconfig": wsl.wslconfig(),
-                  "memory_matches_config": bool | null},
+                  "memory_matches_config": bool | null,
+                  "documents": {"registry": the raw Personal value, "windows": expanded, "linux": the /mnt/c path or
+                                null}},
    "gpu", "gpu_error", "torch", "device": {"chosen", "reason"}, "guitar_device", "guitar_reason",
    "cpu": {"logical", "threads_default"}, "ram": memory(),
    "disk": {"home_free_mb", "windows_c_free_mb" (df of /mnt/c, WSL only)},
@@ -121,7 +129,8 @@ timeout. A failure returns None; it never raises.
     - free space under 6 GB in WSL or on C:;
     - WSL memory under 8 GB.
   - **`notes`** (shown, not failing):
-    - the CPU-mode reason, and the guitar's;
+    - the CPU-mode reason, and the guitar's. On the cu126 lane it ends: "then paste the install line again: it
+      switches to the GPU build (about 3 GB)" (M4-03: a lane change re-syncs);
     - allin1 absent, so the sections use the librosa fallback;
     - WSL memory under 11 GB ("allin1 is left out to save memory", M4-03);
     - `MemTotal` more than 10 % away from `.wslconfig`'s `memory` ("restart WSL: `wsl --shutdown`");

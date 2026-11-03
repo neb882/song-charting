@@ -23,57 +23,79 @@ CI proves the cpu lane on Ubuntu 26.04 in a container. Only the PCs can show:
 
 ## Part A: the owner's RTX 5070 PC, a fresh distro that mimics the friend's
 
-Run as written; note each answer (A1–A12).
+Run as written; note each answer (A1–A16). About three hours.
 
 **Prepare (Windows):**
 
 1. `nvidia-smi` in a Windows terminal shows driver 580 or newer.
-2. **Mimic the friend's memory.** Copy `%UserProfile%\.wslconfig` to `.wslconfig.owner` (if it exists), then set
-   `[wsl2]` to `memory=12GB` and `swap=8GB`. Then `wsl --shutdown`. Your other distros get 12 GB until step 15
-   restores the file.
-3. *(Only if you agreed, M4-00 question 1)* Windows Security > App & browser control > Smart App Control: **On**.
-4. Terminal (Admin): `wsl --install -d Ubuntu-26.04`. This is the same Ubuntu 26.04.1 image the friend's "Ubuntu"
-   gets, as a separately named distro [doc: Microsoft's DistributionInfo.json]. Make a user.
+2. **Start with no `.wslconfig`, as on the friend's PC.**
+   - Rename `%UserProfile%\.wslconfig` to `.wslconfig.owner` (if it exists), then `wsl --shutdown`.
+   - The install writes the friend's file in step 5. Your other distros run with that file, or WSL's defaults, until
+     step 18 restores yours.
+3. *(Optional, only if you agreed to M4-00 question 1, and only if the switch is not greyed out)* Windows Security >
+   App & browser control > Smart App Control: **On**. That it can be turned on after setup is reported for 25H2 with
+   the April 2026 update, and is unsettled. If it is greyed out, skip this step and note it.
+4. Terminal (Admin): `wsl --update`, then `wsl --install -d Ubuntu-26.04`. This is the same Ubuntu 26.04.1 image the
+   friend's "Ubuntu" gets, as a separately named distro [doc: Microsoft's DistributionInfo.json]. Make a user.
 
 **Install and use (follow the guide, M4-07, from its section 3):**
 
-5. Paste the guide's install line, or `bash install.sh --from <folder>` before the pre-release exists.
+5. Paste the guide's install line, with ` --windows-ram-gb 16` added after `bash install.sh`, so it writes the
+   `.wslconfig` of a 16 GB PC. Before the pre-release exists: `bash install.sh --from <folder> --windows-ram-gb 16`.
    - **A1:** total time, and the download size it announced.
    - **A2:** the lane and reason (expected `cu132`).
-   - Did it keep the 12 GB `.wslconfig`? It should keep any memory of 12 GB or more.
-   - At the end, the window closes (WSL restarts).
-6. Start menu > "songcharter".
-   - **A3:** does the page open in the browser? (With SAC on: does the shortcut run at all?)
-   - **A4:** the header: expected "GPU: NVIDIA GeForce RTX 5070 (12 GB)" and "guitar on the GPU".
-7. Chart the test song's MP3 (the friend's file) with **Guitar takes: 1**. **A5:** the total and the guitar stage's
+   - **A3:** did it say it wrote `.wslconfig` (`memory=12GB`, `swap=8GB`), and print the restart message before the
+     window closed?
+6. Start menu > "songcharter". In the window that opens, before using the page: `songcharter doctor` in another
+   Ubuntu-26.04 window.
+   - **A4:** `memory_matches_config` true, and `MemTotal` about 12 GB?
+   - **A5:** does the page open in the browser? (With SAC on: does the shortcut run at all?) The header should say
+     "GPU: NVIDIA GeForce RTX 5070 (12 GB)" and "guitar on the GPU".
+7. Chart the test song's MP3 (the friend's file) with **Guitar takes: 1**. **A6:** the total and the guitar stage's
    time.
-8. Chart it again with the defaults (4 takes on the GPU). **A6:** the guitar stage's time.
-9. Chart Take Me Out (`input.wav`) with the defaults. The director scores it on Linux with
-   `eval/scorer/score.py`.
-10. Start any song, and press Cancel once the guitar row shows "take 1".
-    - **A7:** cancelled within 30 s?
-    - Afterwards, in the distro, does `ps -eo args | grep -E 'node|songcharter.cli'` show anything?
-11. "Install into Clone Hero". **A8:** did it find the Songs folder by itself (is your Documents in OneDrive)?
-    - Then in Clone Hero: Scan Songs, and play the test song on Expert. **A9:** in sync? Anything odd?
-12. Turn Windows' network off, close the songcharter window, start it again from the Start menu, and chart a song
-    not charted before. **A10:** does it finish?
-13. Copy only the song-folder lines of `Documents\Clone Hero\settings.ini`, with their key names. **A11.**
-14. The page's "Diagnostics" link. Send the zip with A1–A12.
+8. Chart it again with the defaults (4 takes on the GPU). **A7:** the guitar stage's time.
+9. Chart Take Me Out (`input.wav`) with the defaults. The director scores it on Linux with `eval/scorer/score.py`.
+10. **Cancel:** start any song, and press Cancel once the guitar row shows "take 1".
+    - **A8:** cancelled within 30 s?
+    - Afterwards, does `ps -eo args | grep -E 'node|songcharter.cli'` in the distro show anything?
+11. **Closing the window mid-chart:** start a song, close the songcharter window during the guitar stage, then
+    reopen Ubuntu-26.04. **A9:** does the same `ps` show no `node` and no `songcharter.cli`? (SIGHUP must kill the
+    job.)
+12. **A non-ASCII name:** drag a song file named, for example, `Déjà Vü – Test.mp3` from Windows Explorer onto the
+    page, and chart it with 1 take. **A10:** uploaded, charted, and its folder name readable?
+13. **Clone Hero:** "Install into Clone Hero" for the test song.
+    - **A11:** did it find the Songs folder by itself (is your Documents in OneDrive)?
+    - Then install the same chart again: the page should offer "Replace the older chart?". Accept, and check that one
+      folder of that name is left.
+    - In Clone Hero: Scan Songs, and play the test song on Expert. **A12:** in sync? Anything odd?
+14. **Offline:** turn Windows' network off, close the songcharter window, start it again from the Start menu, and
+    chart a song not charted before. **A13:** does it finish?
+15. **The fallback address:**
+    - add `localhostForwarding=false` to `[wsl2]` in `.wslconfig`, `wsl --shutdown`, and start songcharter from the
+      Start menu;
+    - **A14:** does the page open on WSL's own address (`http://172.x.x.x:8765/`), and does an upload work there?
+    - Then remove that line and `wsl --shutdown`.
+16. Copy only the song-folder lines of `Documents\Clone Hero\settings.ini`, with their key names. **A15.**
+17. The page's "Diagnostics" link. Send the zip with the answers.
 
-**Uninstall and clean up:**
+**Uninstall, reinstall, the older distro, clean up:**
 
-15. In the distro: `songcharter uninstall`, answer **No**. Then paste the install line again.
-    - **A12:** time; did it download anything?
-    - Then:
-      - `wsl --unregister Ubuntu-26.04`;
-      - restore `.wslconfig.owner` to `.wslconfig`, and `wsl --shutdown`;
-      - turn Smart App Control back off if step 3 turned it on.
+18. **Uninstall and reinstall:**
+    - in the distro: `songcharter uninstall`, answer **No**, then paste the install line again;
+    - **A16:** time; did it download anything? Is there exactly one "songcharter" in the Start menu, the reinstall
+      having overwritten the shortcut, and does it start?
+    - Then `wsl --unregister Ubuntu-26.04`.
+19. **The older-distro variant, install only:** `wsl --install -d Ubuntu-22.04`, make a user, paste the install
+    line, and note whether it finishes and what `songcharter doctor` says. Then `wsl --unregister Ubuntu-22.04`. CI
+    covers the same in a container (M4-05); this is the real WSL image.
+20. Restore `.wslconfig.owner` to `.wslconfig`, `wsl --shutdown`, and turn Smart App Control back off if step 3
+    turned it on.
 
 **Pass** (DESIGN 5, M4, for what v0.1 covers):
 - the install finishes without help; lane `cu132`;
 - every take's transcriber ran on `cuda` (`pipeline.json`, in the zip);
 - `doctor`'s `autochart_cuda` is ok;
-- the test song with 1 take in **8 min or less**: the 4070's target, so the 5070 should beat it. A6 is recorded.
+- the test song with 1 take in **8 min or less**: the 4070's target, so the 5070 should beat it. A7 is recorded.
   - Rule [decision]: if 4 takes add more than 12 min to the guitar stage, the default on CUDA under WSL goes to 1
     take, a one-line change in `guitar_takes`.
 - **Memory:** inside 12 GB, no stage is killed (no "Killed", no OOM line in the logs), and the lowest available RAM
@@ -82,8 +104,14 @@ Run as written; note each answer (A1–A12).
 - VRAM per stage is recorded; no CUDA out-of-memory fallback.
 - **Take Me Out against the human chart:** guitar F1@50 ≥ 0.845 (0.880 − 0.035), drums ≥ 0.927 (0.947 − 0.02), bass
   reported (M3's rules).
-- Cancel leaves no process; the offline run finishes; the song plays in Clone Hero after a rescan; the reinstall
-  downloads nothing.
+- The install wrote `memory=12GB` and `swap=8GB`, and after the restart `memory_matches_config` is true.
+- Cancel and closing the window both leave no process.
+- The non-ASCII file charts.
+- 409 → replace leaves one folder.
+- The offline run finishes; the fallback address works.
+- The song plays in Clone Hero after a rescan.
+- The reinstall downloads nothing and leaves one shortcut.
+- The 22.04 result is recorded (a failure there is a guide note, since the guide runs `wsl --update` first).
 - Every guide step was clear, or the unclear ones are listed for M4-07.
 
 **Then** the owner (or a session, if allowed) creates the pre-release (M4-07).

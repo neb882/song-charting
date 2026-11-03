@@ -54,7 +54,7 @@ the golden charts.
 
 ## Deferred by the M4 plan
 
-- **Clone Hero's `settings.ini`:** read its song-folder keys once M4-08 has recorded them (A11). An hour.
+- **Clone Hero's `settings.ini`:** read its song-folder keys once M4-08 has recorded them (A15). An hour.
 - **Time estimates per stage** from the machine's earlier `pipeline.json` files: v0.1 shows elapsed times. Half a day.
 - **The tempo option and the chord-density slider** of DESIGN 4.5: the command line has neither yet (M5).
 - **A window-free start:**
