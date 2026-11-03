@@ -609,6 +609,8 @@ def test_by_default_solos_go_on_the_sections_named_solo(charted, monkeypatch, ca
         solos = report["phrases"]["guitar"]["solos"]
         assert len(solos) == count and all(a - 0.01 <= s and e <= b + 0.01 for s, e in solos), (solos, a, b)
         assert "warning: solos" not in out + err
+        line = next(x for x in out.splitlines() if x.startswith("guitar: onsets E "))  # where the trackers went
+        assert (f", 1 solo ({solos[0][0]:.1f}-{solos[0][1]:.1f} s), rating " if count else ", no solo, rating ") in line
 
 
 def test_the_default_work_folder_is_the_songs_whatever_the_output(charted, tmp_path, own_cache, monkeypatch,

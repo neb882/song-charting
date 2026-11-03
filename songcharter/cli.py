@@ -68,6 +68,10 @@ def _summary(result) -> str:
         counts = " / ".join(f"{levels[d]['onsets']}" for d in written)
         ex = levels.get("expert", {})
         extra = f", {ex.get('fills', 0)} fills" if inst == "drums" else ""
+        if inst == "guitar":  # the solo trackers, where they went (or that there are none)
+            solos = (r.get("phrases", {}).get(inst) or {}).get("solos") or []
+            extra = (f", {len(solos)} solo{'s' * (len(solos) > 1)} "
+                     f"({', '.join(f'{a:.1f}-{b:.1f}' for a, b in solos)} s)" if solos else ", no solo")
         lines.append(f"{inst}: onsets {'/'.join(LEVEL_ABBREVIATIONS[d] for d in written)} {counts}; "
                      f"{ex.get('star_power', 0)} star power{extra}, rating {r['ratings'].get(inst)}")
     lines.append(f"sections: {r['sections']['count']} ({r['sections']['source']})")
