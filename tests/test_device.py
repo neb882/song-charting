@@ -214,6 +214,48 @@ def test_the_sampler_keeps_each_stages_extremes():
     assert quiet.end("decode") == {"min_available_ram_mb": None, "max_swap_used_mb": None, "max_gpu_used_mb": None}
 
 
+def test_a_slow_sample_is_not_credited_to_the_next_stage():
+    """A GPU read that is still running when its stage ends (nvidia-smi can take up to a second in WSL) is dropped,
+    not credited to the stage that began meanwhile: separation's 9000 MB must not become the drums' peak, nor that of
+    a stage of the same name begun again."""
+
+    def run(first: str, then: str) -> tuple[dict, dict, list]:
+        vram = {"mb": 9000}
+        reading, go = threading.Event(), threading.Event()
+        reads = []
+
+        def read_gpu():
+            value = vram["mb"]   # taken now, returned late
+            reading.set()
+            go.wait(10)
+            reads.append(value)
+            return value
+
+        s = D.Sampler(every=0.01, gpu_every=0.01, read_memory=lambda: None, read_gpu=read_gpu)
+        s.begin(first)
+        s.start()
+        try:
+            assert reading.wait(10)   # the thread holds the first stage's 9000 MB, not yet recorded
+            vram["mb"] = 500
+            before = s.end(first)
+            s.begin(then)
+            go.set()
+            deadline = time.time() + 10
+            while len(reads) < 3 and time.time() < deadline:   # the late read, then two of the next stage's own
+                time.sleep(0.01)
+            after = s.end(then)
+        finally:
+            go.set()
+            s.stop()
+        return before, after, reads
+
+    for first, then in (("separate", "drums"), ("separate", "separate")):
+        before, after, reads = run(first, then)
+        assert reads[0] == 9000 and len(reads) >= 3, (first, then)
+        assert before["max_gpu_used_mb"] is None, (first, then)   # its only GPU read came back after it ended
+        assert after["max_gpu_used_mb"] == 500, (first, then)
+
+
 def base_report(**over):
     """A report as report() makes it, of a machine with nothing wrong (not in WSL)."""
     r = {"wsl": None, "device": {"chosen": "cuda", "reason": None}, "guitar_device": "cuda", "guitar_reason": None,

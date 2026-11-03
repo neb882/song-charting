@@ -308,7 +308,9 @@ class Sampler:
     """Samples the whole system's memory (children included) on a daemon thread: /proc/meminfo every `every` s and,
     when nvidia-smi exists, the GPU's memory in use every `gpu_every` s. Each stage (`begin`, then `end`, which
     returns its record) keeps min_available_ram_mb, max_swap_used_mb and max_gpu_used_mb (None for what was not
-    sampled). A sample is taken as each stage begins and ends, so even a short stage has one."""
+    sampled). A sample is taken as each stage begins and ends, so even a short stage has one. A sample counts for the
+    stage that was running when it started: one whose stage ended while it read (nvidia-smi can take a second in
+    WSL) is dropped, never credited to the next stage."""
 
     def __init__(self, every: float = 1.0, gpu_every: float = 2.0, read_memory: Callable[[], dict | None] = memory,
                  read_gpu: Callable[[], int | None] | None = None):
@@ -320,6 +322,7 @@ class Sampler:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._stage: str | None = None
+        self._generation = 0   # one more for each stage that begins or ends: a sample from an older one is dropped
         self._stats: dict[str, dict] = {}
 
     def start(self) -> None:
@@ -334,6 +337,7 @@ class Sampler:
     def begin(self, stage: str) -> None:
         with self._lock:
             self._stage = stage
+            self._generation += 1
             self._stats[stage] = {"min_available_ram_mb": None, "max_swap_used_mb": None, "max_gpu_used_mb": None}
         self._sample(gpu=False)
 
@@ -342,18 +346,23 @@ class Sampler:
         with self._lock:
             if self._stage == stage:
                 self._stage = None
+                self._generation += 1
             return dict(self._stats.get(stage) or {"min_available_ram_mb": None, "max_swap_used_mb": None,
                                                      "max_gpu_used_mb": None})
 
     def _sample(self, gpu: bool) -> None:
+        with self._lock:   # the stage this sample is for, noted before the (slow) reads
+            stage, generation = self._stage, self._generation
+        if stage is None:
+            return
         try:
             m = self.read_memory()
             g = self.read_gpu() if gpu and self.read_gpu is not None else None
         except Exception:  # noqa: BLE001  a sample that fails is skipped: it only informs
             return
         with self._lock:
-            s = self._stats.get(self._stage) if self._stage else None
-            if s is None:
+            s = self._stats.get(stage)
+            if s is None or self._generation != generation:   # its stage ended while it read: dropped
                 return
             if m and m.get("available_mb") is not None:
                 low = s["min_available_ram_mb"]
