@@ -64,7 +64,8 @@ Then run it the way Overclock renders, as a job of its own that no Claude sessio
 eval/gpu.sh check      # names the GPU, runs a CUDA op inside each tool, shows the memory WSL has; fails on a CPU fallback
 eval/gpu.sh start      # every tool on every song, detached; finished jobs are skipped, so it resumes after any stop
 eval/gpu.sh status     # the latest driver.log lines, GPU use, free memory
-eval/gpu.sh results    # eval/data/gpu_results.zip: scores, logs and the test-song charts, no audio
+eval/gpu.sh takes      # 4 autochart Expert takes of every song (seeds 20260609,101,202,303; SEEDS=, SONGS= to change)
+eval/gpu.sh results    # eval/data/gpu_results.zip: scores, logs, the test-song charts and the takes' charts, no audio
 ```
 
 `start` runs `drive.sh` in its own session (`setsid`), so closing the terminal or a crashed Claude session leaves

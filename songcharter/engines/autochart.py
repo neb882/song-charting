@@ -14,9 +14,13 @@ per take, behind a process boundary, so no AGPL code is imported.
     and the install (`install_key`: engine/manifest.json's engineVersion, and a SHA-256 over the engine's manifest
     and catalog, which pins every model file's SHA-256, the models' manifest, onnxruntime-node's package.json and
     the driver). So an updated engine, model set or driver runs every take again, and a take without take.json (an
-    older songcharter's) is run again too.
-  * **Devices.** "cpu", "cuda" or "webgpu" (the engine's own names). The engine falls back to the CPU by itself; the
-    devices it used are in each take's summary.
+    older songcharter's) is run again too. A take whose transcriber did not run on the requested device is not
+    reused either.
+  * **Devices.** "cpu", "cuda" or "webgpu" (the engine's own names). With "cuda" the engine itself would move the
+    transcriber to WebGPU whenever a WebGPU adapter answers its probe, even a software one that runs on the CPU (seen
+    in WSL: 1031 s for a take that took 319 s on CUDA), so the transcriber is pinned to the requested device with the
+    engine's AUTOCHART_ONNX_TRANSCRIBER_DEVICE (unless it is set already). The engine still falls back to the CPU by
+    itself when a provider fails to load; the devices it used are in each take's summary.
 """
 from __future__ import annotations
 
@@ -91,6 +95,14 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _on_device(summary: dict, device: str | None) -> bool:
+    """Whether every run's transcriber used `device` (summaries without devices count as yes)."""
+    if device is None:
+        return True
+    used = [(r.get("devices") or {}).get("transcriber") for r in summary.get("runs") or []]
+    return all(u in (None, device) for u in used)
+
+
 def install_key(install: Install) -> dict:
     """What a take depends on in the install: engine/manifest.json's engineVersion (a date-based name that may stay
     the same across commits) and a SHA-256 over the files that define the engine, the models and the job: the
@@ -135,13 +147,15 @@ def _summary(folder: Path, key: dict) -> dict | None:
     return s if ok else None
 
 
-def _done(folder: Path, key: dict) -> dict | None:
-    """The summary of a finished take in `folder` made with this key (its take.json), else None."""
+def _done(folder: Path, key: dict, device: str | None = None) -> dict | None:
+    """The summary of a finished take in `folder` made with this key (its take.json) and, if given, with its
+    transcriber on `device`, else None."""
     try:
         made = json.loads((folder / TAKE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return _summary(folder, key) if made == key else None
+    s = _summary(folder, key) if made == key else None
+    return s if s is not None and _on_device(s, device) else None
 
 
 def generate(install: Install, audio: Path | str, out: Path | str, seeds: Sequence[int] = (DEFAULT_SEED,), *,
@@ -164,7 +178,7 @@ def generate(install: Install, audio: Path | str, out: Path | str, seeds: Sequen
     takes = []
     for seed in seeds:
         folder, key = out / f"seed_{seed}", take_key(input_sha, seed, installed)
-        summary = _done(folder, key)
+        summary = _done(folder, key, device)
         if summary is not None:
             takes.append(Take(seed, folder / "notes.chart", summary, True, 0.0))
             continue
@@ -175,6 +189,8 @@ def generate(install: Install, audio: Path | str, out: Path | str, seeds: Sequen
                "AC_TEMPERATURE": str(TEMPERATURE), "AC_TOP_P": str(TOP_P), "AC_TIMEOUT_S": str(int(timeout_s)),
                "AC_APP_ROOT": str(install.app_root), "AC_MODELS": str(install.models),
                "AUTOCHART_FFMPEG_PATH": ffmpeg or A.ffmpeg_exe()}
+        if device in ("cpu", "cuda"):
+            env.setdefault("AUTOCHART_ONNX_TRANSCRIBER_DEVICE", device)
         if title:
             env["AC_TITLE"] = title
         if artist:
