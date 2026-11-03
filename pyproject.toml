@@ -19,14 +19,17 @@ bass = ["librosa>=0.10"]         # the bass rule engine (pYIN, peak picking); sc
 sections = ["librosa>=0.10"]    # the sections fallback (scipy comes with it); allin1 runs in a Python of its own
 preview = ["matplotlib>=3.8", "librosa>=0.10"]   # python -m songcharter.preview (preview.py)
 ffmpeg = ["imageio-ffmpeg>=0.6"]   # an ffmpeg binary, for a PC with none on PATH (audio.py)
-app = ["songcharter[separate,drums,bass,sections,preview,ffmpeg]"]   # the installed app, with one torch lane below
+# the lyrics aligner (engines/lyrics.py): torchaudio's CTC bundles and forced_align. 2.11.1 asks only for torch>=2.11;
+# each lane below carries it too, so its build follows the lane (the sources), as in packaging/allin1
+lyrics = ["torchaudio==2.11.1"]
+app = ["songcharter[separate,drums,bass,sections,preview,ffmpeg,lyrics]"]   # the installed app, with one torch lane below
 # The torch lanes: exactly one with `app` (uv sync --frozen --extra app --extra <lane>), each from its own index.
-cpu = ["torch==2.15.0"]    # no NVIDIA GPU
-cu126 = ["torch==2.14.1"]  # an NVIDIA driver under 580
+cpu = ["torch==2.15.0", "torchaudio==2.11.1"]    # no NVIDIA GPU
+cu126 = ["torch==2.14.1", "torchaudio==2.11.1"]  # an NVIDIA driver under 580
 # a driver of 580 or newer. curand: onnxruntime-node's CUDA provider (the guitar) needs libcurand.so.10, the one
 # CUDA 13 library the torch wheel does not bring (docs/work-orders/M4-00-plan.md, finding 4); with it, the provider
 # loaded and ran in WSL on the owner's RTX 5070, with no library missing [here, 5070 spike]
-cu132 = ["torch==2.15.0", "nvidia-curand==10.4.4.72; sys_platform == 'linux'"]
+cu132 = ["torch==2.15.0", "torchaudio==2.11.1", "nvidia-curand==10.4.4.72; sys_platform == 'linux'"]
 
 [project.scripts]
 songcharter = "songcharter.cli:main"
@@ -47,6 +50,14 @@ environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]   # 
 torch = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cu126", extra = "cu126" },
+    { index = "pytorch-cu132", extra = "cu132" },
+]
+# torchaudio by lane, as packaging/allin1/pyproject.toml has it: PyPI's 2.11.1 is a CUDA 13 build, so the cpu index's
+# build (libtorch and libc10 alone) serves cpu and cu126, whose own index has no 2.11.1; cu132 takes its own build.
+# The aligner runs forced_align on the CPU, which every build has. check_wheels.py's one cross-index exception.
+torchaudio = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cpu", extra = "cu126" },
     { index = "pytorch-cu132", extra = "cu132" },
 ]
 

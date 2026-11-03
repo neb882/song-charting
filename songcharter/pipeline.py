@@ -12,6 +12,10 @@
      engine's default seed and, for `takes` > 1, seeds 101, 202, ... for the others, which assemble splices
      section by section (takes.py). By default 4 takes when the guitar stage runs on CUDA and 1 on the CPU
      (`guitar_takes`). An engine that charts no note leaves its part out (DESIGN.md 2, absent parts).
+  3b. **Lyrics** (`lyrics`: the text a person gives, else none): aligned to the vocal stem (engines/lyrics.py,
+     DESIGN.md 2.15), its own folder work/lyrics/ the cache. Torch or torchaudio missing, the weights out of reach
+     or an alignment that fails leaves the lyrics out with a warning: lyrics never fail a chart. The text goes to
+     assemble in memory, never into a file: only the chart holds it, and pipeline.json counts it (`lyrics`).
   4. **Assemble** from a config written into the work folder (work/assemble.json): our beat grid and tempo map, the
      parts quantized onto it, star power, fills, solos and sections, then the gate (assemble.py). Only Expert is
      written by default (`levels`: the friend plays Expert, and asks for the others when he wants them); the lower
@@ -98,6 +102,7 @@ from . import device as D
 from .assemble import AssembleResult, assemble, check_output, failed_folder, load_config
 from .errors import InputError, ToolError
 from .importers import read_song
+from .lyrics import Timed, parse as parse_lyrics
 from .timed import DIFFICULTIES, INSTRUMENTS
 
 SAMPLE_RATE = A.SAMPLE_RATE
@@ -127,6 +132,8 @@ class Options:
                                                  # the guitar among the instruments
     levels: tuple[str, ...] = ("expert",)        # the difficulties written: Expert, and any of hard, medium, easy
     preview: bool = True                         # the preview of the built folder into work/preview/ (preview.py)
+    lyrics: str | None = None                    # the song's lyrics as text, a line per phrase, to time and write
+                                                 # into the chart (None: no lyrics); never into any report
 
     def check(self) -> None:
         if not self.instruments:
@@ -163,6 +170,11 @@ class Options:
         unknown = sorted(set(self.metadata) - set(OVERRIDES))
         if unknown:
             raise InputError(f"unknown metadata key(s): {', '.join(unknown)} (known: {', '.join(OVERRIDES)})")
+        if self.lyrics is not None:
+            if not isinstance(self.lyrics, str):
+                raise InputError(f"lyrics is a text or None, not a {type(self.lyrics).__name__}")
+            if not parse_lyrics(self.lyrics).syllables:
+                raise InputError("the lyrics hold no word to time")
 
 
 @dataclass(frozen=True)
@@ -194,6 +206,7 @@ class ChartResult:
     scratch: Path | None = None  # autochart's scratch folder when it is not inside the work folder (cache.py)
     work_bytes: int = 0          # the work folder's size after the run, its scratch folder's included
     fallbacks: list[dict] = field(default_factory=list)  # every move to the CPU: {"stage", "from", "to", "reason"}
+    lyrics: dict | None = None   # pipeline.json's `lyrics` (counts and confidence only); None when none were given
 
     @property
     def ok(self) -> bool:
@@ -412,6 +425,17 @@ class Engines:
         r = find_sections(mix, stems, out, Settings(device=device, threads=threads))
         return Run(r.path, r.cached, r.info)
 
+    def lyrics_missing(self) -> str | None:
+        """Why the lyrics aligner cannot run here (torch or torchaudio missing), else None."""
+        from .engines import lyrics as engine
+        return engine.missing()
+
+    def lyrics(self, vocals: np.ndarray, text: str, out: Path, device: str):
+        """The text aligned to the vocal stem (engines/lyrics.align's Result); engines.lyrics.Unavailable when the
+        aligner cannot run."""
+        from .engines import lyrics as engine
+        return engine.align(text, vocals, out, engine.Settings(device="cuda" if device == "cuda" else "cpu"))
+
     def preview_missing(self) -> str | None:
         """Why the preview cannot run here (matplotlib or librosa does not import), else None."""
         try:
@@ -543,6 +567,8 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
     instruments = [i for i in INSTRUMENTS if i in options.instruments]
     # the quick engines first, so a failure there comes before the guitar's minutes
     order = ["decode", "separate"] + [i for i in ("drums", "bass") if i in instruments] + ["sections"]
+    no_lyrics = engines.lyrics_missing() if options.lyrics is not None else None
+    order += ["lyrics"] * (options.lyrics is not None and no_lyrics is None)
     order += ["guitar"] * ("guitar" in instruments) + ["assemble"]
     no_preview = engines.preview_missing() if options.preview else None
     order += ["preview"] * (options.preview and no_preview is None)
@@ -551,8 +577,9 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
     fallbacks: list[dict] = []
     report: dict[str, Any] = {"songcharter": __version__, "input": str(audio), "output": str(out), "work": str(work),
                               "scratch": None if scratch is None else str(scratch), "cache_key": key,
-                              "options": {**{k: v for k, v in options.__dict__.items() if k != "work"},
-                                          "instruments": instruments, "metadata": dict(options.metadata)},
+                              "options": {**{k: v for k, v in options.__dict__.items() if k not in ("work", "lyrics")},
+                                          "instruments": instruments, "metadata": dict(options.metadata),
+                                          "lyrics": options.lyrics is not None},   # whether given; never the text
                               "versions": {"python": platform.python_version(), "numpy": np.__version__,
                                            "platform": platform.platform()},
                               "stages": [], "fallbacks": fallbacks}
@@ -604,8 +631,11 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         tags = read_tags(audio)
         meta, origin = song_metadata(audio, tags, options.metadata)
         report["metadata"], report["metadata_from"], report["tags"] = meta, origin, tags
-        parts, sections, stem_files, stem_folder = _engine_stages(audio, work, scratch, options, engines, meta, begin,
-                                                                  end, warn, fallback, report)
+        if options.lyrics is not None and no_lyrics is not None:
+            warn(f"lyrics: not added ({no_lyrics})")
+            report["lyrics"] = {"given": True, "added": False, "why": no_lyrics}
+        parts, sections, stem_files, stem_folder, timed = _engine_stages(audio, work, scratch, options, engines, meta,
+                                                                         begin, end, warn, fallback, report)
         if not parts:
             raise InputError(f"no instrument has notes ({', '.join(instruments)} all came out empty): nothing to "
                              "chart")
@@ -619,8 +649,10 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         config = work / "assemble.json"
         config.write_text(json.dumps(cfg, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
         t0 = begin("assemble", "grid, parts, tiers, phrases, sections, gate")
-        result = assemble(load_config(config, out))
+        result = assemble(load_config(config, out), lyrics=timed)
         g = result.report["gate"]
+        if timed is not None:
+            report["lyrics"]["chart"] = result.report.get("lyrics")
         end("assemble", t0, False, f"gate {'OK' if result.ok else 'FAILED'} ({g['errors']} errors, "
             f"{g['warnings']} warnings), {result.folder}", {"ok": result.ok, "folder": str(result.folder)})
         report["assemble"] = {"config": str(config), "ok": result.ok, "folder": str(result.folder)}
@@ -654,7 +686,8 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
             warn(f"the cache in {root} was not pruned (interrupted)")
         size = cache.tree_size(work) + (cache.tree_size(scratch) if scratch is not None else 0)
         report["work_bytes"] = size
-        return ChartResult(result, stages, work, config, meta, warnings, preview, scratch, size, fallbacks)
+        return ChartResult(result, stages, work, config, meta, warnings, preview, scratch, size, fallbacks,
+                           report.get("lyrics"))
     except BaseException as e:
         report["error"] = f"{type(e).__name__}: {e}"
         report["traceback"] = traceback.format_exc()
@@ -670,11 +703,12 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
 
 
 def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Options, engines: Engines, meta: dict,
-                   begin, end, warn, fallback, record: dict) -> tuple[list[dict], str | None, dict[str, str], Path]:
-    """Decode, separation and the engines: the assemble parts, the sections file, the stem files assemble reads
-    and the folder of every stem (the preview's); `record` (pipeline.json) gets the device and why, and the guitar
-    takes chosen and why; `fallback` records each move to the CPU. The audio arrays live only here, so they are
-    freed before assemble reads its own."""
+                   begin, end, warn, fallback, record: dict
+                   ) -> tuple[list[dict], str | None, dict[str, str], Path, Timed | None]:
+    """Decode, separation and the engines: the assemble parts, the sections file, the stem files assemble reads,
+    the folder of every stem (the preview's) and the timed lyrics (None without); `record` (pipeline.json) gets the
+    device and why, the guitar takes chosen and why, and the lyrics' counts; `fallback` records each move to the
+    CPU. The audio arrays live only here, so they are freed before assemble reads its own."""
     t0 = begin("decode", audio.name)
     mix, wav, same = _decode(audio, work)
     end("decode", t0, same, f"{mix.shape[1] / SAMPLE_RATE:.2f} s of audio in {wav.name}",
@@ -740,6 +774,7 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
     end("sections", t0, run.cached, f"{how}, {n_seg} segments", {"backend": backend, "segments": n_seg,
                                                                   "child_peak_rss_mb": child})
     sections = str(run.path)
+    timed = _lyrics_stage(options, engines, stems, work, device, begin, end, warn, fallback, record)
 
     if "guitar" in options.instruments:
         gdev = "cuda" if device == "cuda" else "cpu"
@@ -786,7 +821,54 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
             "in the first", {"seeds": list(seeds), "takes": [str(r.path) for r in runs], "onsets": n,
                              "chosen": record["takes"]})
     parts.sort(key=lambda p: INSTRUMENTS.index(p["instrument"]))
-    return parts, sections, stem_files, folder
+    return parts, sections, stem_files, folder, timed
+
+
+def _lyrics_stage(options: Options, engines: Engines, stems: Mapping[str, np.ndarray], work: Path, device: str,
+                  begin, end, warn, fallback, record: dict) -> Timed | None:
+    """The lyrics aligned to the vocal stem (the module docstring, 3b), or None: not given, the aligner missing (the
+    pipeline has warned), or the alignment unavailable or failing (warned here). record["lyrics"] gets the counts,
+    the confidence and the timings; no word. A failure records its type and where it happened, never its message,
+    which could quote the text."""
+    if options.lyrics is None or record.get("lyrics", {}).get("added") is False:
+        return None
+    from .engines.lyrics import Unavailable
+    words = parse_lyrics(options.lyrics).words
+    t0 = begin("lyrics", f"{words} words aligned to the vocal stem on {device}")
+    entry: dict[str, Any] = {"given": True, "added": False, "words": words}
+    record["lyrics"] = entry
+    if "vocals" not in stems:
+        entry["why"] = "no vocal stem"
+        warn("lyrics: not added (the separation gave no vocal stem)")
+        end("lyrics", t0, False, "not added: no vocal stem")
+        return None
+    try:
+        run = engines.lyrics(stems["vocals"], options.lyrics, work / "lyrics", device)
+    except Unavailable as e:
+        entry["why"] = str(e)
+        warn(f"lyrics: not added ({e})")
+        end("lyrics", t0, False, "not added: the aligner is unavailable")
+        return None
+    except Exception as e:  # noqa: BLE001  the lyrics never fail a chart; the message could quote the text
+        entry.update(why=f"the aligner failed: {type(e).__name__}", error=type(e).__name__,
+                     where=[f"{Path(f.filename).name}:{f.lineno} {f.name}" for f in traceback.extract_tb(e.__traceback__)])
+        warn(f"lyrics: not added ({entry['why']})")
+        end("lyrics", t0, False, f"not added: {type(e).__name__}")
+        return None
+    info = run.info
+    counts, conf = info.get("counts", {}), info.get("confidence", {})
+    used = info.get("device", device)
+    if used != device:
+        fallback("lyrics", device, used, f"the aligner ran on {used}")
+    entry.update(added=True, cached=run.cached, syllables=counts.get("syllables"), lines=counts.get("lines"),
+                 unspelled_words=counts.get("unspelled_words"), markup_dropped=counts.get("markup_dropped"),
+                 method=info.get("method", {}).get("name"), device=used, confidence=conf,
+                 timings_s=info.get("timings_s"))
+    if conf.get("low"):
+        warn(f"lyrics: the alignment is unsure (median word score {conf.get('median')}): check the lyrics' timing")
+    end("lyrics", t0, run.cached, f"{words} words, median word score {conf.get('median')}",
+        {"words": words, "confidence_median": conf.get("median")})
+    return Timed(run.lyrics, tuple(run.starts))
 
 
 def summary(result: ChartResult) -> str:
@@ -797,6 +879,14 @@ def summary(result: ChartResult) -> str:
         kinds = ", ".join(f"{k} {n}" for k, n in result.preview["flags_by_kind"].items())
         lines.append(f"preview: {result.preview['overview']} and {len(result.preview['pages'])} pages "
                      f"({f'flagged: {kinds}' if kinds else 'nothing flagged'})")
+    ly = result.lyrics
+    if ly is not None:
+        if ly.get("added"):
+            c = ly.get("chart") or {}
+            lines.append(f"lyrics: {ly.get('words')} words in {c.get('phrases')} phrases, median word score "
+                         f"{(ly.get('confidence') or {}).get('median')}")
+        else:
+            lines.append(f"lyrics: not added ({ly.get('why')})")
     made = result.scratch is not None and result.scratch.is_dir()  # not made by a run without the guitar
     scratch = f"; autochart's scratch folder {result.scratch}" if made else ""
     lines.append(f"work folder: {result.work} ({cache.size_text(result.work_bytes)}{scratch})")
