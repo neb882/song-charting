@@ -45,8 +45,12 @@ def _summary(result) -> str:
         trimmed = (f"; {len(removed)} Expert onsets trimmed where the {p['trimmed']['stem']} stem is silent "
                    f"({', '.join(f'{t:.2f}' for t in removed[:4])}{', ...' if len(removed) > 4 else ''} s)"
                    if removed else "")
+        cut = (p.get("clipped") or {}).get("levels", {}).get("expert", {})
+        clipped = (f"; at the end of the audio {cut['onsets_dropped']} Expert onsets dropped, "
+                   f"{cut['sustains_clipped']} sustains clipped, {cut['sustains_removed']} removed"
+                   if any(cut.values()) else "")
         lines.append(f"part {key}: offset {o['applied'] * 1000:+.1f} ms ({o['mode']}, measured "
-                     f"{o['measured'] * 1000:+.1f} ms, concentration {o['concentration']:.2f}){trimmed}")
+                     f"{o['measured'] * 1000:+.1f} ms, concentration {o['concentration']:.2f}){trimmed}{clipped}")
     for inst, levels in r["tracks"].items():
         counts = " / ".join(f"{levels[d]['onsets']}" for d in ("expert", "hard", "medium", "easy") if d in levels)
         ex = levels.get("expert", {})

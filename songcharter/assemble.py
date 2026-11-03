@@ -30,7 +30,11 @@ own difficulties, star power, fills and sections, and a Clone Hero folder that i
      rest follow the natural rule on our grid (`HOPO_RULES`). The tools' own star power, fills and solos are
      dropped: ours replace them. Onsets before the part's own stem first plays or after it last plays are removed
      from every taken level (`active_span`, DESIGN.md 2.8: no notes after the stem stops; a part's `trim_silence`
-     turns it off); an onset elsewhere where the stem is silent is only reported.
+     turns it off); an onset elsewhere where the stem is silent is only reported. Last, every taken level ends inside
+     the audio (`clip_to_audio`): a note starting in song.ogg's last CLIP_MARGIN_S or after its end is dropped, a
+     sustain running past that point is cut there, and one cut below its level's shortest sustain becomes a plain
+     note (counted in report.json's `clipped`). The lower levels are reduced from the clipped Expert, so no written
+     track has a note or a sustain end after the audio (the gate's noteAfterAudio).
   4. **Chart.** Star power, fills and (opt-in, or on the sections named in `solos`) solos on Expert
      (starpower.place_phrases); only the difficulties in `levels` are written. Then Hard, Medium and
      Easy, each reduced from the level above (reduce.py; with take_difficulties "all" the source's own levels, any
@@ -100,7 +104,8 @@ from .chart import DRUM_ACTIVATION, OPEN, STAR_POWER, Chart, DrumHit, FretNote, 
 from .errors import InputError, ToolError
 from .importers import read_chart, read_song
 from .package import PackageResult, build_song_folder
-from .quantize import (RULES, TRACK_DIFFICULTY, TRACK_INSTRUMENT, QuantizeReport, estimate_offset, quantize_part)
+from .quantize import (RULES, TRACK_DIFFICULTY, TRACK_INSTRUMENT, QuantizeReport, estimate_offset, quantize_part,
+                       sustain_kept)
 from .reduce import LEVELS, Issue, check_reductions, hopo_states, reduce_level
 from .sections import read_allin1, sections_from_chart, sections_from_segments
 from .starpower import check_phrases, fill_crash_share, fit_chart, place_phrases, stem_confirm
@@ -132,6 +137,12 @@ SCAN_BABY_SUSTAIN_MS = 100.0
 SCAN_SUSTAIN_GAP_MS = 40.0
 SCAN_BROKEN_NOTE_MS = 15.0
 SELF_CHECK_S = 0.001       # read-back times must match ours this closely
+# a note ends this long before song.ogg does (clip_to_audio). The gate's noteAfterAudio (scan_rules; our rule, as
+# scan-chart 8.0.1 never measures the audio) fails a track whose last onset or sustain end, read back from
+# notes.chart, lies after song.ogg's length in samples (the decode plus the lead-in pad) over 44.1 kHz. The read-back
+# times may differ from ours by up to SELF_CHECK_S before the self-check fails the build anyway, so a note that ends
+# SELF_CHECK_S before that length by our tempo map cannot trip the rule
+CLIP_MARGIN_S = SELF_CHECK_S
 # scan-chart 8.0.1 as DESIGN.md 2.13 runs it; $SONGCHARTER_SCAN_CHART names another scan.cjs
 SCAN_CHART = Path(__file__).resolve().parent.parent / "tools" / "scan-chart" / "scan.cjs"
 SCAN_CHART_TIMEOUT_S = 600.0
@@ -584,6 +595,42 @@ def trim_silent_edges(tracks: dict[str, Track], levels: np.ndarray, tempo: Tempo
     return out, removed
 
 
+def last_tick_by(tempo: TempoMap, limit: float) -> int:
+    """The last tick at or before `limit` seconds of the map."""
+    k = math.floor(tempo.sec_to_tick(limit))
+    while k > 0 and tempo.tick_to_sec(k) > limit:
+        k -= 1
+    while tempo.tick_to_sec(k + 1) <= limit:
+        k += 1
+    return k
+
+
+def clip_to_audio(tracks: dict[str, Track], tempo: TempoMap, audio_end: float, margin: float = CLIP_MARGIN_S
+                  ) -> tuple[dict[str, Track], dict[str, dict[str, int]]]:
+    """Every level of a part ending inside the audio: no onset and no sustain end after `audio_end` - `margin`
+    (seconds of the map: song.ogg's length). A note starting later is dropped; a sustain running later ends on the
+    last tick before that, unless that leaves it shorter than its level's shortest sustain (quantize.sustain_kept:
+    max(200 ms, 0.75 beat) on Expert and Hard, 1 and 2 beats on Medium and Easy), when the note keeps no sustain.
+    Returns the tracks and, per level, the onsets dropped and the sustains clipped and removed."""
+    last = last_tick_by(tempo, audio_end - margin)
+    out, counts = {}, {}
+    for d, tr in tracks.items():
+        dropped = {n.tick for n in tr.notes if n.tick > last}
+        notes, clipped, removed = [], 0, 0
+        for n in tr.notes:
+            if n.tick > last:
+                continue
+            if isinstance(n, FretNote) and n.length > 0 and n.tick + n.length > last:
+                if sustain_kept(tempo, n.tick, last, d):
+                    n, clipped = replace(n, length=last - n.tick), clipped + 1
+                else:
+                    n, removed = replace(n, length=0), removed + 1
+            notes.append(n)
+        out[d] = replace(tr, notes=notes) if dropped or clipped or removed else tr
+        counts[d] = {"onsets_dropped": len(dropped), "sustains_clipped": clipped, "sustains_removed": removed}
+    return out, counts
+
+
 # ------------------------------------------------------------------------------------------------ ratings
 
 def _window_nps(times: np.ndarray, w: float) -> float:
@@ -645,7 +692,9 @@ def scan_rules(song: TimedSong, pad_seconds: float = 0.0, audio_end: float | Non
     """scan-chart's chart issues (its findChartIssues), and Encore's stricter numbers, on a chart as read back.
 
     song: the read-back chart, times on the chart's (padded) timeline; issue times are given in input seconds
-    (minus pad_seconds). audio_end: song.ogg's length on that timeline; a note after it is an error. tempo: our map,
+    (minus pad_seconds). audio_end: song.ogg's length on that timeline; a track whose last onset or sustain end lies
+    after it is an error (noteAfterAudio: our own rule, as scan-chart 8.0.1 never measures the audio; assemble clips
+    every track to stay CLIP_MARGIN_S inside it, clip_to_audio). tempo: our map,
     for isDefaultBPM. Not covered: misalignedTimeSignature (TempoMap cannot write one), badEndEvent (we write no end
     event) and the 6-fret and flex-lane rules (we write neither).
     """
@@ -1215,6 +1264,7 @@ def assemble(config: AssembleConfig | dict | str | Path) -> AssembleResult:
     lead = plan_lead_in(grid.beats, grid.downbeats, sr, min_lead=cfg.lead_in, duration=duration)
     tm = TempoMap.from_beats(lead.beats, bars=lead.bars, tolerance=cfg.tempo_tolerance)
     pad = lead.pad_seconds
+    song_end = (mix.shape[1] + lead.pad_samples) / sr  # song.ogg's length on the map: the decode after the pad
     res = tm.resolution
     err = np.abs(tm.ticks_to_secs(np.arange(len(lead.beats)) * res) - np.asarray(lead.beats))
     share = grid.stats["evidence"]["confident_share"]
@@ -1293,6 +1343,9 @@ def assemble(config: AssembleConfig | dict | str | Path) -> AssembleResult:
             report["parts"][part.key]["trimmed"] = {
                 "stem": stem, "floor_db": TRIM_DB, "kept": None if span is None else [round(x, 3) for x in span],
                 "onsets": removed}
+        by_inst[part.instrument], clipped = clip_to_audio(by_inst[part.instrument], tm, song_end)
+        report["parts"][part.key]["clipped"] = {"audio_end": round(duration, 4), "margin_s": CLIP_MARGIN_S,
+                                                "levels": clipped}
 
     # 4. phrases, reductions (the sections are built before the parts, for the takes)
     confirm = None
@@ -1375,7 +1428,7 @@ def assemble(config: AssembleConfig | dict | str | Path) -> AssembleResult:
 
         # 6. the gate
         record: dict[str, Any] = {}
-        issues += verify_folder(staging, chart, pad, (mix.shape[1] + lead.pad_samples) / sr, record=record)
+        issues += verify_folder(staging, chart, pad, song_end, record=record)
         report["tracks"] = {}
         for t in chart.tracks:
             inst = PART_INSTRUMENT[t.instrument]
