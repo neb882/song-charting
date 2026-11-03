@@ -39,11 +39,13 @@
     },
     {
       "id": "M4",
-      "status": "not started",
+      "status": "planned; work orders in docs/work-orders/",
       "what": "a Windows release the friend can use: packaging, first-run model downloads, a simple way to run it, tested on his PC",
+      "plan": "docs/work-orders/M4-00-plan.md: v0.1 is the installer and portable zip, the first-launch bootstrap (uv lanes cu132/cu126/cpu, allin1's own Python, Node, autochart's engine and models, doctor.json), device checks with the CPU fallback shown, a local UI (drop, options, progress with cancel, the static preview, zip and install into Clone Hero), a diagnostics bundle and CI on Linux and windows-latest. The rest is M4-99.",
       "risks": [
-        "autochart's temporary files reach 290-309 characters of path on Windows, over the 260 limit: Node usually copes with long paths, the cache's deletion uses the \\\\?\\ form; check on the friend's PC, and fall back to a shorter cache root if it fails",
-        "the CUDA path (4 takes, onnxruntime's CUDA libraries, demucs on CUDA) has only run under stand-ins and on the owner's WSL GPU, never on native Windows"
+        "autochart's temporary files reach 290-309 characters of path on Windows, over the 260 limit: Node usually copes with long paths, the cache's deletion uses the \\\\?\\ form; the bootstrap checks it (M4-02, M4-03) and moves the cache root to %SystemDrive%\\songcharter-cache when the deep cache would not fit",
+        "the guitar has no CUDA on native Windows: onnxruntime-node 1.27.0's Windows build has only the CPU, DirectML and WebGPU providers (its README; the binding names no cuda), so the guitar runs on WebGPU there (M4-02); its speed on a 4070, and so the 4-take default there, is unmeasured (M4-08)",
+        "torch's CUDA lanes (cu132, cu126) and demucs on CUDA have run only on the owner's WSL GPU, never on native Windows; allin1's environment pairs torch 2.15 with torchaudio 2.11.1 (passed on Linux, untested on Windows)"
       ]
     },
     {
@@ -62,7 +64,8 @@
   "next": [
     "Use the golden charts for every change that can move a chart (the inspector runs them; the release gate needs them).",
     "A real GPU run of songcharter chart on the owner's 5070 (needs Demucs and allin1's own Python there).",
-    "M4: a short Windows spike on the friend's PC first (paths, CUDA, SmartScreen), then the packaging, under work orders with acceptance checks.",
+    "M4: build the work orders in docs/work-orders/ in waves (M4-01 and M4-02, then M4-03 and M4-04, then M4-05 and M4-06, then M4-07), the full review workflow over the integrated v0.1, then M4-08: the owner's native run on the 5070, then the friend's install, which is also M1a's Windows spike.",
+    "Owner: delete the GitHub branch m4-workflow-push-probe (a session pushed it to test workflow-file pushes and may not delete branches), and answer the M4 plan's two open questions (how the friend gets the installer; songcharter's licence).",
     "Before the next quality decision: grow the reference set to 20 or more human charts, with human-charted solos among them."
   ],
   "dead_ends": [
