@@ -69,6 +69,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
 FORMAT = 1                                  # summary.json's format: bump it when a field's meaning changes
+KEPT_FORMAT = 1                             # a kept folder's layout (its KEPT marker): bump it to make them again
 PARTS = ("guitar", "bass", "drums")
 LEVELS = ("expert", "hard", "medium", "easy")
 ENGINES = ("drums", "bass", "sections", "guitar")   # what --rerun may name
@@ -220,7 +221,7 @@ def seed_stems(song: Song, kept: Path, stems: Path) -> dict:
 def finished(kept: Path) -> dict | None:
     """The kept folder's KEPT marker when it is finished (the marker and the decode there), else None."""
     m = read_json(kept / KEPT)
-    return m if m is not None and m.get("golden") == FORMAT and (kept / "decode.wav").is_file() else None
+    return m if m is not None and m.get("golden") == KEPT_FORMAT and (kept / "decode.wav").is_file() else None
 
 
 def private_folder(kept: Path, folder: Path, rerun: tuple[str, ...]) -> None:
@@ -241,7 +242,8 @@ def private_folder(kept: Path, folder: Path, rerun: tuple[str, ...]) -> None:
                     else:
                         shutil.copy2(src, dst)
             else:
-                shutil.copytree(p, folder / p.name, ignore=lambda d, names: ["work"] if Path(d).name == "guitar" else [])
+                shutil.copytree(p, folder / p.name,
+                                ignore=lambda d, names: ["work"] if Path(d).name == "guitar" else [])
         elif p.name == "decode.wav":
             os.link(p, folder / p.name)
         else:
@@ -392,8 +394,9 @@ def prepare(song: Song, kept: Path, ctx: Context, log: Path) -> dict:
     scratch = kept / "guitar" / "work"
     if scratch.is_dir():
         shutil.rmtree(scratch)
-    marker = {"golden": FORMAT, "song": song.id, "code": checkout(ctx.code), "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-              "seconds": round(time.perf_counter() - t0, 1), "stems": seeded, "stages": stages}
+    marker = {"golden": KEPT_FORMAT, "song": song.id, "code": checkout(ctx.code),
+              "at": time.strftime("%Y-%m-%dT%H:%M:%S"), "seconds": round(time.perf_counter() - t0, 1),
+              "stems": seeded, "stages": stages}
     write_json(kept / KEPT, marker)
     return marker
 
@@ -481,6 +484,7 @@ def run(songs: list[Song], ctx: Context) -> tuple[dict, int]:
         ctx.runs.mkdir(parents=True)
         ctx.env["SONGCHARTER_CACHE"] = str(ctx.runs / "cache")  # an empty cache: the build prunes nothing
         started, t0 = time.strftime("%Y-%m-%dT%H:%M:%S"), time.perf_counter()
+        code, tool = checkout(ctx.code), checkout(ROOT)  # as the run starts
         results, timings, failures = {}, {}, 0
         try:
             for i, song in enumerate(songs, 1):
@@ -499,7 +503,6 @@ def run(songs: list[Song], ctx: Context) -> tuple[dict, int]:
                 ctx.say(f"  {song.id}: {_line(r, t)}")
         finally:
             shutil.rmtree(ctx.runs, ignore_errors=True)
-        code = checkout(ctx.code)
         summary = {
             "golden": FORMAT,
             "about": "python -m eval.golden run (eval/golden.py). Everything but `run` is the same for two runs of "
@@ -511,7 +514,7 @@ def run(songs: list[Song], ctx: Context) -> tuple[dict, int]:
                       "score_sha256": sha256(SCORE)},
             "songs": results,
             "run": {"code": {"path": str(ctx.code), "branch": code["branch"]}, "golden": {"path": str(ROOT),
-                    **checkout(ROOT)}, "out": str(ctx.out), "work": str(ctx.work), "refs": str(ctx.refs),
+                    **tool}, "out": str(ctx.out), "work": str(ctx.work), "refs": str(ctx.refs),
                     "stems": str(ctx.stems) if ctx.stems else None, "threads": ctx.threads,
                     "python": sys.executable, "started": started, "finished": time.strftime("%Y-%m-%dT%H:%M:%S"),
                     "seconds": round(time.perf_counter() - t0, 1), "songs": timings},
@@ -639,7 +642,7 @@ def compare(old: dict, new: dict, expect: frozenset[tuple[str, str | None]]) -> 
         o, n = old["songs"].get(sid), new["songs"].get(sid)
         song: dict = {"id": sid, "findings": [], "rows": [],
                       "gate": [None if o is None else o.get("gate_ok"), None if n is None else n.get("gate_ok")],
-                      "beat_f1": [((o or {}).get("beat_f1") or {}).get("f1"), ((n or {}).get("beat_f1") or {}).get("f1")]}
+                      "beat_f1": [((x or {}).get("beat_f1") or {}).get("f1") for x in (o, n)]}
         songs.append(song)
 
         def find(text: str, bad: bool = True) -> None:
@@ -806,8 +809,9 @@ def cmd_diff(a: argparse.Namespace) -> int:
     out.mkdir(parents=True, exist_ok=True)
     write_json(out / "report.json", report)
     (out / "report.md").write_text(render(report, old_file, new_file), encoding="utf-8")
-    verdict = (f"UNEXPECTED: {len(report['unexpected'])} ({'; '.join(report['unexpected'][:6])}"
-               f"{'; ...' if len(report['unexpected']) > 6 else ''})" if report["unexpected"] else "no UNEXPECTED change")
+    bad = report["unexpected"]
+    verdict = (f"UNEXPECTED: {len(bad)} ({'; '.join(bad[:6])}{'; ...' if len(bad) > 6 else ''})" if bad
+               else "no UNEXPECTED change")
     print(f"golden diff: {verdict}; report: {out / 'report.md'}")
     return report["exit"]
 

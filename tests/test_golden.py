@@ -322,7 +322,8 @@ def kept_state(work):
 
 def test_run_makes_each_kept_folder_once_and_never_writes_into_it(tmp_path, refs):
     songs = G.reference_set(refs)
-    assert [(s.id, s.has_ref, s.title) for s in songs] == [("song_a", True, "Song A"), (G.TEST_SONG, False, "test_song")]
+    assert [(s.id, s.has_ref, s.title) for s in songs] == [("song_a", True, "Song A"),
+                                                           (G.TEST_SONG, False, "test_song")]
     chart = FakeChart()
     first, code = G.run(songs, context(tmp_path, refs, chart=chart, env={"SONGCHARTER_CACHE": str(tmp_path / "mine")}))
     assert code == 0
