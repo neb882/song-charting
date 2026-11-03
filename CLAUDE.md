@@ -28,25 +28,51 @@ SONGCHARTER_SCAN_CHART=$PWD/tools/scan-chart/scan.cjs python -m pytest -q -p no:
 
 ## How work is run
 
-Adopted on 2026-11-03 from Anthropic's guidance on agentic work (sources in `docs/PROGRESS.json`).
+Adopted on 2026-11-03 from Anthropic's guidance on agentic work and from the Overclock project's pipeline (sources
+in `docs/PROGRESS.json`). Each rule's reason is in brackets, so a rule can be dropped once its reason no longer
+holds.
 
-- **Size the process to the risk.**
+- **Size the process to the risk.** [On 2026-11-03 a full workflow of about 28 agents found 20 issues, 1 of them
+  major.]
   - Do merges, doc edits and small fixes directly.
-  - An ordinary change gets one builder plus one fresh reviewer.
+  - An ordinary change gets `sc-builder`, then `sc-reviewer` and `sc-inspector`.
   - The full workflow (build, review lenses, verify, fix) is for big or risky work only: the Windows release, a new
     engine.
   - Before a big run, read the usage meter (`mcp__usage-meter__usage`, when that mod is loaded) and give the
     workflow a token budget.
+- **Agent types** in `.claude/agents/` pin each stage's effort, tools and turn cap. The harness enforces the limits:
+  the reviewer and the skeptic cannot edit files. [A reviewer that can edit can quietly fix what it is reviewing.]
+  - `sc-builder` builds (xhigh); `sc-reviewer` reviews a diff (high); `sc-skeptic` tries to refute a major finding
+    (xhigh); `sc-inspector` compares a commit against the one before it from fresh checkouts (medium);
+    `sc-measurer` runs measurements (medium).
+  - Choose the model when starting an agent: the largest for builders and skeptics, a smaller one for the inspector
+    and measurements. The definitions leave the model out, since model names stay out of the repository, and a
+    model named in the call takes precedence over the file.
+  - Never set `CLAUDE_CODE_EFFORT_LEVEL`. [It overrides every agent's own effort.]
 - **Every brief says what done means:** the check to pass, the evidence to return (commands and their output), and
-  what the agent may touch (its worktree or branch). Nobody pushes unless the brief says so.
-- **Reviewers report correctness only and skip style.**
-  - Major findings get an adversarial verifier.
+  what the agent may touch (its worktree or branch). Nobody pushes unless the brief says so. [A check that is not
+  written down is judged by "looks done".]
+- **Reviewers report correctness only and skip style.** [A reviewer asked to find problems always finds something.]
+  - Major findings go to `sc-skeptic` before anyone fixes them. [On 2026-11-03 a skeptic refuted a "major" Windows
+    crash that would have cost a pointless fix.]
   - The fixer reproduces each minor finding itself, fixes the cheap ones, and lists the rest under `deferred` in
     `docs/PROGRESS.json`.
-- **Effort per stage:** builders and verifiers at xhigh. Docs, measurements and lookups at medium, or on Sonnet.
 - **Short reports:** agents write the full detail to a file and return about 1–2k tokens, with the file's path.
+  [Reports of 5–10k tokens filled the orchestrating session's context and forced a compaction.]
 - **Long runs:**
   - Commit at milestones.
-  - Treat 20 minutes with no agent activity as a stall.
-  - Resume from the failure instead of starting over.
-- **The owner approves anything that goes to the friend** before it is sent.
+  - Treat 20 minutes with no agent activity as a stall. [A verifier hung for an hour on 2026-11-03.]
+  - Resume from the failure instead of starting over. [A message sent while a workflow ran stopped its agents.]
+  - Check in at least every 55 minutes. [The prompt cache lasts about an hour; a later check-in costs far more.]
+- **Parallel builds only for jobs whose files do not overlap,** each in its own worktree. [Jobs that share files
+  conflict when merged.]
+
+## Release gate
+
+Before anything goes to the friend [the Overclock project's per-change checks missed a flashing chorus that only a
+whole-film check caught]:
+
+1. The full suite passes.
+2. The golden charts (`eval/golden.py`, once it exists) show no UNEXPECTED change on the whole reference set.
+3. The test song runs end to end with the gate ok, and its preview has been looked at.
+4. The owner approves the release.
