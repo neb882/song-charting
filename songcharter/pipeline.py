@@ -32,6 +32,12 @@
   * **Errors.** What the user can act on (a bad input or option, a missing or failing component) raises an
     errors.InputError or errors.ToolError, or an OSError; anything else is a bug. Either way pipeline.json keeps
     the error and its traceback.
+  * **The work folder** is <cache>/work/<name>-<key> in the per-user cache (cache.py: %LOCALAPPDATA%\\songcharter
+    on Windows, ~/.cache/songcharter elsewhere, or $SONGCHARTER_CACHE), keyed by the song file's SHA-256, so the
+    same file reuses it whatever the output; autochart's own scratch folder sits apart in <cache>/ac/<key[:8]>,
+    which keeps its deep cache paths under Windows' 260 characters. `work` (--work) puts the work folder anywhere,
+    with the scratch folder inside it as before. After each run that finishes, the least recently used work folders
+    in the cache go until they fit in 5 GB (cache.prune); the summary gives the work folder and its size.
   * **Re-runs.** The decode is rewritten only when the samples change; separation and every engine reuse their
     caches, so a re-run with the same file and options costs the decode, the cache checks and the build.
   * **Report.** work/pipeline.json: the options, the metadata and where each value came from, every stage's wall
@@ -61,6 +67,7 @@ import numpy as np
 
 from . import __version__
 from . import audio as A
+from . import cache
 from .assemble import AssembleResult, assemble, check_output, failed_folder, load_config
 from .errors import InputError, ToolError
 from .importers import read_song
@@ -70,7 +77,6 @@ SAMPLE_RATE = A.SAMPLE_RATE
 STEMS = ("drums", "bass", "guitar", "other", "vocals")   # the stems assemble reads (piano only reaches allin1)
 EXTRA_SEED_STEP = 101    # takes after the first use seeds 101, 202, 303, ... (the v1 chart's seeds)
 CUDA_TAKES = 4           # guitar takes by default when the guitar stage runs on CUDA (guitar_takes); 1 on the CPU
-WORK_SUFFIX = ".work"    # the default work folder: <output>.work beside the output
 SOLO_MODES = ("stems", "labels", "off")  # assemble's solos modes; a list of section names is the other kind
 DEFAULTS = {"artist": "Unknown", "album": "Unknown", "genre": "Unknown", "year": "Unknown", "charter": "songcharter"}
 # the tags each song.ini value is read from, first found wins (ffmpeg's names, lower-cased)
@@ -86,7 +92,7 @@ class Options:
                                                  # 4 when the guitar stage runs on CUDA, else 1 (guitar_takes)
     device: str = "auto"                         # "auto" (CUDA when a CUDA kernel runs here), "cpu" or "cuda"
     threads: int | None = None                   # torch's threads here and in allin1 (None: their defaults)
-    work: Path | None = None                     # the work folder (None: <output>.work beside the output)
+    work: Path | None = None                     # the work folder (None: one per song in the cache, cache.py)
     metadata: Mapping[str, str] = field(default_factory=dict)  # name, artist, album, genre, year: over the tags
     solos: str | tuple[str, ...] = "stems"       # assemble's solos: "stems" (vocals quiet, guitar loud), "labels"
                                                  # (sections named Solo), "off", or the names of the solo sections
@@ -154,6 +160,8 @@ class ChartResult:
     metadata: dict
     warnings: list[str]
     preview: dict | None = None  # what the preview wrote and flagged (Engines.preview); None when it did not run
+    scratch: Path | None = None  # autochart's scratch folder when it is not inside the work folder (cache.py)
+    work_bytes: int = 0          # the work folder's size after the run, its scratch folder's included
 
     @property
     def ok(self) -> bool:
@@ -382,10 +390,13 @@ class Engines:
                 "stems": dict(pv.stems), "flags": [str(f) for f in found], "flags_by_kind": kinds,
                 "remarks": PV.remarks(pv)}
 
-    def guitar(self, audio: Path, out: Path, seeds: Sequence[int], device: str, title: str, artist: str) -> list[Run]:
+    def guitar(self, audio: Path, out: Path, seeds: Sequence[int], device: str, title: str, artist: str,
+               scratch: Path | None = None) -> list[Run]:
+        """The takes in out/seed_<seed>/; autochart's scratch folder (its engine cache and jobs) is `scratch`, else
+        out/work."""
         from .engines import autochart
         takes = autochart.generate(autochart.find_install(), audio, out, seeds, device=device, title=title,
-                                   artist=artist)
+                                   artist=artist, work=scratch)
         return [Run(t.chart, t.cached, {**t.summary, "seconds": t.seconds, "devices": t.devices}) for t in takes]
 
 
@@ -461,10 +472,15 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
     log = log or (lambda line: print(line, file=sys.stderr, flush=True))
     options.check()
     audio, out = Path(audio).expanduser().resolve(), Path(out).expanduser().resolve()
-    work = (Path(options.work).expanduser() if options.work else out.with_name(out.name + WORK_SUFFIX)).resolve()
     if not audio.is_file():
         raise FileNotFoundError(f"the song file {audio} does not exist" if not audio.exists()
                                 else f"{audio} is not a file")
+    root, budget = cache.cache_root().expanduser().resolve(), cache.budget_bytes()
+    if options.work:   # the person's folder: autochart's scratch inside it, as before, and never pruned
+        work, scratch, key = Path(options.work).expanduser().resolve(), None, None
+    else:
+        key = cache.file_key(audio)
+        work, scratch = cache.work_folder(root, audio.stem, key), cache.scratch_folder(root, key)
     if work == out or out in work.parents or work in out.parents:
         raise InputError(f"the work folder {work} and the output {out} must be apart, neither inside the other")
     check_output(out)
@@ -482,6 +498,7 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
     stages: list[Stage] = []
     warnings: list[str] = []
     report: dict[str, Any] = {"songcharter": __version__, "input": str(audio), "output": str(out), "work": str(work),
+                              "scratch": None if scratch is None else str(scratch), "cache_key": key,
                               "options": {**{k: v for k, v in options.__dict__.items() if k != "work"},
                                           "instruments": instruments, "metadata": dict(options.metadata)},
                               "versions": {"python": platform.python_version(), "numpy": np.__version__,
@@ -506,12 +523,16 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         return s
 
     work.mkdir(parents=True, exist_ok=True)
+    if options.work is None:
+        cache.mark(work, audio, key, scratch)
+    elif cache.read_marker(work) is not None:  # a cache folder a --work run uses is the person's from now on
+        cache.mark(work, audio, key, scratch, pinned=True)
     try:
         tags = read_tags(audio)
         meta, origin = song_metadata(audio, tags, options.metadata)
         report["metadata"], report["metadata_from"], report["tags"] = meta, origin, tags
-        parts, sections, stem_files, stem_folder = _engine_stages(audio, work, options, engines, meta, begin, end, warn,
-                                                                  report)
+        parts, sections, stem_files, stem_folder = _engine_stages(audio, work, scratch, options, engines, meta, begin,
+                                                                  end, warn, report)
         if not parts:
             raise InputError(f"no instrument has notes ({', '.join(instruments)} all came out empty): nothing to "
                              "chart")
@@ -549,7 +570,13 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
             report["preview"] = {"ok": False, "skipped": no_preview}
         else:
             report["preview"] = {"ok": False, "skipped": "turned off"}
-        return ChartResult(result, stages, work, config, meta, warnings, preview)
+        try:
+            report["cache"] = cache.prune(root, budget, keep=[work], warn=warn)
+        except OSError as e:  # the cache folder itself unreadable: the run is done all the same
+            warn(f"the cache in {root} was not pruned ({type(e).__name__}: {e})")
+        size = cache.tree_size(work) + (cache.tree_size(scratch) if scratch is not None else 0)
+        report["work_bytes"] = size
+        return ChartResult(result, stages, work, config, meta, warnings, preview, scratch, size)
     except BaseException as e:
         report["error"] = f"{type(e).__name__}: {e}"
         report["traceback"] = traceback.format_exc()
@@ -562,8 +589,8 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
                                             encoding="utf-8")
 
 
-def _engine_stages(audio: Path, work: Path, options: Options, engines: Engines, meta: dict, begin, end, warn,
-                   record: dict) -> tuple[list[dict], str | None, dict[str, str], Path]:
+def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Options, engines: Engines, meta: dict,
+                   begin, end, warn, record: dict) -> tuple[list[dict], str | None, dict[str, str], Path]:
     """Decode, separation and the engines: the assemble parts, the sections file, the stem files assemble reads
     and the folder of every stem (the preview's); `record`
     (pipeline.json) gets the guitar takes chosen and why. The audio arrays live only here, so they are freed before
@@ -639,7 +666,8 @@ def _engine_stages(audio: Path, work: Path, options: Options, engines: Engines, 
         t0 = begin("guitar", f"autochart, {len(seeds)} take{'s' * (len(seeds) > 1)} (seed{'s' * (len(seeds) > 1)} "
                              f"{', '.join(map(str, seeds))}) on {gdev}" + (", the first alone first" if probe else ""))
         del mix, stems   # autochart reads decode.wav; the arrays are not needed again
-        runs = engines.guitar(wav, work / "guitar", seeds[:1] if probe else seeds, gdev, meta["name"], meta["artist"])
+        runs = engines.guitar(wav, work / "guitar", seeds[:1] if probe else seeds, gdev, meta["name"], meta["artist"],
+                              scratch=scratch)
         moved = None
         if probe:
             used = (runs[0].info.get("devices") or {}).get("transcriber")  # not reported: taken as on CUDA
@@ -650,7 +678,8 @@ def _engine_stages(audio: Path, work: Path, options: Options, engines: Engines, 
                 n_takes, seeds = 1, seeds[:1]
                 why = f"{why}; but autochart's transcriber ran on {used} for the first take, so that take alone"
             else:
-                runs += engines.guitar(wav, work / "guitar", seeds[1:], gdev, meta["name"], meta["artist"])
+                runs += engines.guitar(wav, work / "guitar", seeds[1:], gdev, meta["name"], meta["artist"],
+                                       scratch=scratch)
         for r in runs[1 if moved else 0:]:
             used = (r.info.get("devices") or {})
             if gdev == "cuda" and used and any(v == "cpu" for v in used.values()):
@@ -671,12 +700,15 @@ def _engine_stages(audio: Path, work: Path, options: Options, engines: Engines, 
 
 
 def summary(result: ChartResult) -> str:
-    """What the pipeline adds to assemble's summary: the preview's overview and its flags, then the stage times."""
+    """What the pipeline adds to assemble's summary: the preview's overview and its flags, the work folder and its
+    size, then the stage times."""
     lines = []
     if result.preview:
         kinds = ", ".join(f"{k} {n}" for k, n in result.preview["flags_by_kind"].items())
         lines.append(f"preview: {result.preview['overview']} and {len(result.preview['pages'])} pages "
                      f"({f'flagged: {kinds}' if kinds else 'nothing flagged'})")
+    scratch = f"; autochart's scratch folder {result.scratch}" if result.scratch is not None else ""
+    lines.append(f"work folder: {result.work} ({cache.size_text(result.work_bytes)}{scratch})")
     total = sum(s.seconds for s in result.stages)
     lines.append("stages: " + ", ".join(f"{s.name} {s.seconds:.1f} s{' (cached)' if s.cached else ''}"
                                         for s in result.stages) + f"; total {total:.1f} s")

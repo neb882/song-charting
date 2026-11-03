@@ -133,8 +133,10 @@ def main(argv: list[str] | None = None) -> int:
                                    "folder (into <output>.failed when the gate fails).")
     c.add_argument("song", type=Path, help="the song file")
     c.add_argument("--out", type=Path, required=True, help="the song folder to write")
-    c.add_argument("--work", type=Path, help="the work folder for the decode, stems and engine outputs "
-                                             "(default: <out>.work beside the output)")
+    c.add_argument("--work", type=Path, help="the work folder for the decode, stems and engine outputs (default: "
+                                             "one per song in the per-user cache, %%LOCALAPPDATA%%\\songcharter\\work "
+                                             "on Windows, ~/.cache/songcharter/work elsewhere, or $SONGCHARTER_CACHE/"
+                                             "work; the least recently used go past 5 GB, $SONGCHARTER_CACHE_GB)")
     c.add_argument("--instruments", type=_instruments, default=None, metavar="LIST",
                    help="comma-separated parts to chart (default: guitar,bass,drums)")
     c.add_argument("--levels", type=_levels, default=("expert",), metavar="LIST",
