@@ -139,11 +139,13 @@ def entry(bass_hard=("h", 540), f1=(80, 100, 100), exit=0, delay=0, ref=True):
     return e
 
 
-def summary(songs, commit="a" * 40, rerun=(), ran=None):
+def summary(songs, commit="a" * 40, rerun=(), ran=None, stale=None, backend=None, kept="k" * 40):
     return {"golden": G.FORMAT, "code": {"commit": commit, "dirty": []}, "options": {"rerun": list(rerun)},
             "tools": {"scan_chart": "8.0.1"}, "songs": songs,
             "run": {"started": "2026-11-03T12:00:00", "seconds": 60.0, "code": {"branch": "main"},
-                    "songs": {s: {"ran": list(ran or []), "cold": None} for s in songs}}}
+                    "songs": {s: {"ran": list(ran or []), "cold": None, "kept_from": kept,
+                                  **({"stale": stale} if stale is not None else {}),
+                                  **({"sections_backend": backend} if backend else {})} for s in songs}}}
 
 
 def diff(tmp_path, old, new, expect, *extra):
@@ -170,7 +172,7 @@ def test_identical_summaries_exit_0_with_every_part_unchanged(tmp_path):
 
 
 def test_an_expected_change_exits_0_and_an_unexpected_one_exits_1(tmp_path):
-    old = summary({"a": entry()})
+    old = summary({"a": entry()}, rerun=("bass",), ran=["bass"])
     new = summary({"a": entry(bass_hard=("h2", 530))}, commit="b" * 40, rerun=("bass",), ran=["bass"])
     code, md, js = diff(tmp_path, old, new, "bass:hard")
     assert code == 0 and js["exit"] == 0 and js["unexpected"] == [] and not js["identical"]
@@ -180,8 +182,8 @@ def test_an_expected_change_exits_0_and_an_unexpected_one_exits_1(tmp_path):
     assert {k: r["status"] for k, r in rows.items() if k != ("bass", "hard")} == {
         ("guitar", "expert"): "unchanged", ("bass", "expert"): "unchanged"}
     assert "| bass | hard | changed | 540 → 530 | 0.727 → 0.727 |" in md
-    assert "| engines that ran | none (every engine's cache answered) | bass on 1 song |" in md
-    assert "| engines asked to rerun | none | bass |" in md
+    assert "| engines that ran | bass on 1 song | bass on 1 song |" in md
+    assert "| engines asked to rerun | bass | bass |" in md
 
     code, md, js = diff(tmp_path, old, new, "guitar")
     assert code == 1 and js["unexpected"] == ["a: bass hard"]
@@ -455,3 +457,170 @@ def test_stems_are_hard_linked_from_a_separation_cache_when_the_key_fits(tmp_pat
     short = G.seed_stems(song, tmp_path / "kept2", cache)
     assert short["linked"] == [] and "not as long" in short["why"]
     assert G.seed_stems(song, tmp_path / "kept3", tmp_path / "empty")["linked"] == []
+
+
+# ------------------------------------------------------------------------------------------------ the review's fixes
+
+def test_a_rerun_in_one_run_only_is_unexpected_and_named_above_the_verdict(tmp_path):
+    """G1: the old run's bass answered from the kept folders, the new one's from its own code: not comparable."""
+    same = summary({"a": entry()})
+    code, md, js = diff(tmp_path, same, summary({"a": entry()}, commit="b" * 40, rerun=("bass",), ran=["bass"]),
+                        "none")
+    text = ("bass was rerun in the new run only: the old run's bass came from the kept folders (made by kkkkkkkkkkkk), "
+            "not from its own code (aaaaaaaaaaaa); pass the same --rerun to both runs")
+    assert code == 1 and js["unexpected"] == [f"runs: {text}"] and js["identical"]
+    assert md.index(f"**UNEXPECTED: {text}.**") < md.index("**UNEXPECTED: 1**")
+    assert diff(tmp_path, summary({"a": entry()}, rerun=("bass",)), same, "bass")[0] == 1  # either way round
+
+
+def test_an_engine_whose_kept_output_is_another_codes_is_unexpected(tmp_path):
+    """G1 (3): the run found bass's files changed since the kept folders were made and bass was not rerun."""
+    ok = {"drums": "unchanged", "bass": "unchanged", "sections": "unchanged", "guitar": "unchanged"}
+    old = summary({"a": entry()}, stale=ok)
+    code, md, js = diff(tmp_path, old, summary({"a": entry()}, stale={**ok, "bass": "changed"}), "bass")
+    assert code == 1 and len(js["unexpected"]) == 1
+    assert ("the new run's bass answered from the kept folders (made by kkkkkkkkkkkk), but bass's files differ in its "
+            "code (aaaaaaaaaaaa)") in js["unexpected"][0] and "pass --rerun bass to both runs" in md
+    code, md, js = diff(tmp_path, old, summary({"a": entry()}, stale={**ok, "guitar": "unknown"}), "none")
+    assert code == 0 and "Warning: could not tell with git whether the new run's guitar still match" in md
+
+
+def test_sections_from_another_backend_between_the_runs_are_unexpected(tmp_path):
+    """G3: allin1 in one run, the librosa fallback in the other."""
+    code, md, js = diff(tmp_path, summary({"a": entry()}, backend="allin1"),
+                        summary({"a": entry()}, backend="librosa"), "guitar,bass,drums")
+    assert code == 1 and "the sections came from allin1 in the old run and from librosa in the new one" in md
+    assert diff(tmp_path, summary({"a": entry()}, backend="allin1"), summary({"a": entry()}), "none")[0] == 0
+
+
+def test_stale_engines_compares_each_engines_files_with_the_kept_commit(tmp_path):
+    import subprocess
+    repo = tmp_path / "code"
+    for f in ("songcharter/engines/bass.py", "songcharter/engines/adtof.py", "songcharter/reduce.py"):
+        (repo / f).parent.mkdir(parents=True, exist_ok=True)
+        (repo / f).write_text("x = 1\n")
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(git[:3] + ["init", "-q"], check=True)
+    subprocess.run(git + ["add", "."], check=True)
+    subprocess.run(git + ["commit", "-qm", "kept"], check=True)
+    kept = G.checkout(repo)["commit"]
+    assert set(G.stale_engines(repo, kept, ()).values()) == {"unchanged"}
+    (repo / "songcharter" / "reduce.py").write_text("x = 2\n")  # no engine's file: nothing is stale
+    assert set(G.stale_engines(repo, kept, ()).values()) == {"unchanged"}
+    (repo / "songcharter" / "engines" / "bass.py").write_text("x = 2\n")  # uncommitted counts too
+    assert G.stale_engines(repo, kept, ()) == {"drums": "unchanged", "bass": "changed", "sections": "unchanged",
+                                               "guitar": "unchanged"}
+    assert "bass" not in G.stale_engines(repo, kept, ("bass",))
+    assert set(G.stale_engines(repo, "f" * 40, ()).values()) == {"unknown"}
+    assert set(G.stale_engines(repo, None, ("drums",)).values()) == {"unknown"}
+
+
+class BackendChart(FakeChart):
+    """FakeChart whose sections stage reports its backend: allin1 when SONGCHARTER_ALLIN1_PYTHON is set, else
+    librosa; a kept sections file of the other backend is a miss (as the real engine's key holds the backend)."""
+
+    def __call__(self, args, env, log):
+        work = Path(args[args.index("--work") + 1])
+        backend = "allin1" if env.get("SONGCHARTER_ALLIN1_PYTHON") else "librosa"
+        f = work / "sections" / "segments.json"
+        if f.is_file() and not f.read_text().endswith(f" via {backend}\n"):
+            f.unlink()
+        hit = f.is_file()
+        if not hit:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(f"sections of {args[3]} via {backend}\n")
+        code = super().__call__(args, env, log)
+        p = json.loads((work / "pipeline.json").read_text())
+        for st in p["stages"]:
+            if st["stage"] == "sections":
+                st.update(backend=backend, cached=hit)
+        (work / "pipeline.json").write_text(json.dumps(p))
+        return code
+
+
+def test_a_librosa_fallback_stops_the_run_with_exit_2_and_names_the_variable(tmp_path, refs):
+    """G3: the kept folders' sections came from allin1; a run without SONGCHARTER_ALLIN1_PYTHON falls back to librosa,
+    which must not pass as a warm build."""
+    songs = G.reference_set(refs)
+    first, code = G.run(songs, context(tmp_path, refs, chart=BackendChart(),
+                                       env={"SONGCHARTER_ALLIN1_PYTHON": "/allin1/python"}))
+    assert code == 0 and {t["sections_backend"] for t in first["run"]["songs"].values()} == {"allin1"}
+    kept = kept_state(tmp_path / "work")
+    with pytest.raises(G.Refused) as e:
+        G.run(songs, context(tmp_path, refs, out="out2", chart=BackendChart()))
+    assert "sections ran without being asked" in str(e.value)
+    assert "the sections fell back to librosa (the kept folder's came from allin1)" in str(e.value)
+    assert "SONGCHARTER_ALLIN1_PYTHON is not set" in str(e.value)
+    assert not (tmp_path / "out2" / "summary.json").exists() and kept_state(tmp_path / "work") == kept
+    rerun, code = G.run(songs, context(tmp_path, refs, out="out3", chart=BackendChart(), rerun=("sections",)))
+    assert code == 0 and {t["sections_backend"] for t in rerun["run"]["songs"].values()} == {"librosa"}
+    assert kept_state(tmp_path / "work") == kept
+
+
+class MissChart(FakeChart):
+    """FakeChart whose bass misses its cache in every build of a run folder (a bass VERSION bump, say)."""
+
+    def __call__(self, args, env, log):
+        work = Path(args[args.index("--work") + 1])
+        if G.RUNS in work.parts:
+            (work / "bass" / "notes.chart").unlink(missing_ok=True)
+        return super().__call__(args, env, log)
+
+
+def test_an_engine_that_runs_unasked_stops_the_run(tmp_path, refs):
+    songs = G.reference_set(refs, ("song_a",))
+    G.run(songs, context(tmp_path, refs))
+    with pytest.raises(G.Refused, match="bass ran without being asked: the bass engine's kept output did not answer"):
+        G.run(songs, context(tmp_path, refs, out="out2", chart=MissChart()))
+    assert not (tmp_path / "out2" / "summary.json").exists()
+    summary, code = G.run(songs, context(tmp_path, refs, out="out3", chart=MissChart(), rerun=("bass",)))
+    assert code == 0 and summary["run"]["songs"]["song_a"]["ran"] == ["bass"]
+
+
+def test_a_refused_or_killed_run_leaves_no_summary_for_a_diff(tmp_path, refs, monkeypatch):
+    """G2: an earlier summary (and the diff's report beside it) must not survive a run that does not finish."""
+    songs = G.reference_set(refs)
+    out = tmp_path / "out"
+    G.run(songs, context(tmp_path, refs))
+    (out / "report.md").write_text("an earlier diff's report\n")
+    (out / "report.json").write_text(json.dumps({"golden": 1, "unexpected": []}))
+    assert (out / "summary.json").is_file() and (out / "song_a").is_dir() and (out / "scores").is_dir()
+    code = G.main(["run", "--out", str(out), "--refs", str(tmp_path / "no-refs")])  # refused: no reference set
+    assert code == 2
+    assert not any((out / f).exists() for f in ("summary.json", "report.md", "report.json", "song_a", "scores", "logs"))
+    assert G.main(["diff", str(out), str(out), "--expect", "none"]) == 2
+
+    class Killed(FakeChart):
+        def __call__(self, args, env, log):
+            if G.TEST_SONG in args[3]:
+                raise KeyboardInterrupt  # killed while building the second song
+            return super().__call__(args, env, log)
+
+    G.run(songs, context(tmp_path, refs))
+    with pytest.raises(KeyboardInterrupt):
+        G.run(songs, context(tmp_path, refs, chart=Killed()))
+    assert not (out / "summary.json").exists() and list((tmp_path / "work" / G.RUNS).iterdir()) == []
+
+
+def test_a_folder_of_the_persons_loses_nothing(tmp_path):
+    mine = tmp_path / "mine"
+    mine.mkdir()
+    for f in ("summary.json", "report.md"):
+        (mine / f).write_text("{}" if f.endswith("json") else "notes\n")
+    assert G.clear_out(mine) == [] and (mine / "summary.json").is_file() and (mine / "report.md").is_file()
+
+
+def test_bad_input_exits_2_and_a_bug_exits_3(tmp_path, monkeypatch, capsys):
+    """G4: neither may pass for a failed build (1) or an UNEXPECTED diff (1)."""
+    (tmp_path / "a-file").write_text("not a folder\n")
+    assert G.main(["run", "--out", str(tmp_path / "a-file")]) == 2
+    assert "golden: error:" in capsys.readouterr().err
+    assert G.main(["run", "--out", str(tmp_path / "o"), "--threads", "0"]) == 2
+    assert "--threads is 1 or more" in capsys.readouterr().err
+
+    def boom(a, out):
+        raise KeyError("a bug")
+
+    monkeypatch.setattr(G, "_cmd_run", boom)
+    assert G.main(["run", "--out", str(tmp_path / "o2")]) == 3
+    assert "internal error" in capsys.readouterr().err

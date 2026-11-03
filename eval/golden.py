@@ -33,15 +33,27 @@ Logs go to <out>/logs/, score.py's full output to <out>/scores/.
     deleted. The build's per-user cache is an empty folder of the run's, so its pruning touches nothing.
   * **--rerun** runs the named engines again for this run (their folders are left out of the run's folder), because
     the engines' caches are keyed by their inputs and settings, not by their code: a change to an engine's code shows
-    only with it. The kept folders stay as they are. An engine whose kept cache does not answer (this commit changed
-    its inputs or settings) also runs, in the run's folder, and `run` says so.
+    only with it, and only when both runs rerun it (otherwise one side's output is the kept folders' commit's, which
+    `diff` flags). The kept folders stay as they are. An engine whose kept cache does not answer (this commit changed
+    its inputs or settings) also runs, in the run's folder, and `run` says so. For every engine not rerun, `run`
+    checks with git whether its files (ENGINE_FILES) differ between the commit that made the kept folder and the
+    code it builds; when they do, its output is not this code's: `run` says so loudly and `diff` flags it.
+  * **The sections backend** of every build must be the kept folder's (allin1, or librosa when allin1's Python is
+    not found): a build whose sections came from another one stops the run (exit 2), because every star power phrase
+    and solo would move.
+  * **The output folder** is locked first and cleared of what an earlier run or diff left there (summary.json,
+    report.md, report.json, logs/, scores/, the song folders its summary names) before anything else is checked, so a
+    run that is refused, fails or is killed leaves no summary for a diff to read.
   * Exit status: 0 every song built (a failed gate is recorded, not an error); 1 a song's build failed or a kept
-    folder changed; 2 bad input or environment (a missing reference set, scan-chart or node, an output folder in use).
+    folder changed; 2 bad input or environment (a missing reference set, scan-chart or node, an output folder in use
+    or that is a file, another sections backend); 3 a bug (with its traceback); 130 interrupted.
 
 **diff** compares two summaries (files, or the folders holding them). `--expect` names the parts the change was
 meant to touch: `guitar`, `bass:hard`, ... (comma-separated), or `none`. A part and difficulty whose hash changed (or
 that appeared or vanished, or whose song's chart delay changed) is "changed" when expected, else UNEXPECTED; so is a
-song missing from either, or whose build's exit status or gate changed. Writes report.md and report.json (default:
+song missing from either, or whose build's exit status or gate changed. So are, for the runs as a whole, an engine
+rerun in one run and not the other, an engine that answered from a kept folder its code no longer matches, and a
+sections backend that differs between the runs (named above the verdict). Writes report.md and report.json (default:
 beside NEW's summary): a table per song (status, onsets old -> new, F1@50 old -> new) and the F1 pooled over the
 songs per part and difficulty (2 x matched onsets over reference plus candidate onsets). Exit 0, or 1 when anything
 is UNEXPECTED, 2 when the summaries cannot be compared.
@@ -58,6 +70,7 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -73,6 +86,15 @@ KEPT_FORMAT = 1                             # a kept folder's layout (its KEPT m
 PARTS = ("guitar", "bass", "drums")
 LEVELS = ("expert", "hard", "medium", "easy")
 ENGINES = ("drums", "bass", "sections", "guitar")   # what --rerun may name
+# the files each engine's output depends on, besides its inputs and settings (which its cache key holds): when they
+# differ between the commit that made a kept folder and the code a run builds, the kept output is not that code's
+ENGINE_FILES = {
+    "drums": ("songcharter/engines/adtof.py", "songcharter/engines/drumlanes.py", "songcharter/beatgrid.py",
+              "songcharter/chart.py", "songcharter/tempo.py", "songcharter/ini.py"),
+    "bass": ("songcharter/engines/bass.py", "songcharter/chart.py", "songcharter/tempo.py", "songcharter/timed.py"),
+    "sections": ("songcharter/engines/sections.py", "songcharter/engines/allin1_runner.py", "songcharter/sections.py"),
+    "guitar": ("songcharter/engines/autochart.py",),   # autochart's install and driver are in the take's own key
+}
 TEST_SONG = "test_song"                     # the reference set's song with no human chart
 KEPT = "golden.json"                        # in a kept work folder: it is finished, and who made it
 RUNS = ".runs"                              # <work>/.runs/<run>/: each run's own work folders
@@ -334,6 +356,7 @@ class Context:
     threads: int | None = None
     env: dict = field(default_factory=dict)
     runs: Path | None = None     # <work>/.runs/<this run>
+    checked: dict = field(default_factory=dict)  # kept commit -> stale_engines(), so each is checked once a run
     say: Callable[[str], None] = lambda line: print(line, file=sys.stderr, flush=True)
     chart: Callable[..., int] | None = None
     scan: Callable[..., dict] = scan
@@ -359,13 +382,52 @@ def chart_args(song: Song, out: Path, work: Path, every_level: bool, threads: in
 
 
 def _stages(pipeline: dict | None) -> list[dict]:
-    return [{"stage": s["stage"], "seconds": s["seconds"], "cached": s["cached"]}
-            for s in (pipeline or {}).get("stages") or []]
+    return [{"stage": s["stage"], "seconds": s["seconds"], "cached": s["cached"],
+             **({"backend": s["backend"]} if s.get("backend") else {})} for s in (pipeline or {}).get("stages") or []]
+
+
+def _backend(stages: list[dict]) -> str | None:
+    """The sections stage's backend (allin1 or librosa), if it ran."""
+    return next((s.get("backend") for s in stages if s["stage"] == "sections"), None)
+
+
+def stale_engines(code: Path, kept: str | None, rerun: tuple[str, ...]) -> dict[str, str]:
+    """For every engine not rerun: "changed" when its ENGINE_FILES differ between the commit `kept` (which made the
+    kept folder) and the checkout `code` as it is (uncommitted changes included), "unchanged", or "unknown" (no
+    commit, or git cannot tell)."""
+    out = {}
+    for engine, files in ENGINE_FILES.items():
+        if engine in rerun:
+            continue
+        if not kept:
+            out[engine] = "unknown"
+            continue
+        p = subprocess.run(["git", "-C", str(code), "diff", "--quiet", kept, "--", *files], capture_output=True)
+        out[engine] = {0: "unchanged", 1: "changed"}.get(p.returncode, "unknown")
+    return out
 
 
 def _ran(stages: list[dict]) -> list[str]:
     """The heavy stages that ran rather than answering from their cache."""
     return [s["stage"] for s in stages if s["stage"] in ("decode", "separate", *ENGINES) and not s["cached"]]
+
+
+def _why(engine: str, backend: str | None, kept_backend: str | None, env: dict) -> str:
+    """Why an engine's kept output did not answer, and what to do: for `run`'s refusal."""
+    if engine == "sections" and backend == "librosa" and kept_backend != "librosa":
+        where = env.get("SONGCHARTER_ALLIN1_PYTHON")
+        return (f"the sections fell back to librosa (the kept folder's came from {kept_backend or 'allin1'}): "
+                + (f"SONGCHARTER_ALLIN1_PYTHON={where} has no working allin1" if where
+                   else "SONGCHARTER_ALLIN1_PYTHON is not set") + "; set it as when the kept folders were made")
+    if engine == "guitar":
+        return (f"autochart's kept take did not answer (another install, driver or setting: SONGCHARTER_AUTOCHART="
+                f"{env.get('SONGCHARTER_AUTOCHART')}); point SONGCHARTER_AUTOCHART at the install that made the kept "
+                "takes, or pass --rerun guitar to both runs")
+    if engine in ("decode", "separate"):
+        return (f"the {engine} did not answer from the kept folder (the decode's samples or the separation's settings "
+                "differ): the kept stems do not fit this code; delete the kept folders to make them again")
+    return (f"the {engine} engine's kept output did not answer (its settings, version, weights or libraries differ "
+            f"from the kept folder's): pass --rerun {engine} to both runs if this code changed it on purpose")
 
 
 def _tail(log: Path, n: int = 6) -> str:
@@ -419,6 +481,16 @@ def build_song(song: Song, ctx: Context, logs: Path) -> tuple[dict, dict]:
         private = ctx.runs / song.id
         private_folder(kept, private, ctx.rerun)
         before = manifest(kept)
+        kept_backend = _backend(_stages(read_json(kept / "pipeline.json")))
+    kept_from = (marker.get("code") or {}).get("commit")
+    if kept_from not in ctx.checked:
+        ctx.checked[kept_from] = stale_engines(ctx.code, kept_from, ctx.rerun)
+        changed = [e for e, v in ctx.checked[kept_from].items() if v == "changed"]
+        if changed:
+            k = _short(kept_from)
+            ctx.say(f"  WARNING: {', '.join(changed)}: the code here differs from {k}'s, which made the kept folders, "
+                    f"and is not rerun: its output is {k}'s. Pass --rerun {','.join(changed)} to both runs (diff flags "
+                    "this)")
     out = ctx.out / song.id
     failed = out.with_name(out.name + ".failed")
     for f in (out, failed):
@@ -431,8 +503,19 @@ def build_song(song: Song, ctx: Context, logs: Path) -> tuple[dict, dict]:
         write_json(logs / f"{song.id}.pipeline.json", pipeline)
     stages = _stages(pipeline)
     ran = _ran(stages)
-    timing.update(stages=stages, ran=ran, unasked=[e for e in ran if e not in ctx.rerun],
-                  kept_from=(marker.get("code") or {}).get("commit"), kept_at=marker.get("at"))
+    backend = _backend(stages)
+    timing.update(stages=stages, ran=ran, unasked=[e for e in ran if e not in ctx.rerun], kept_from=kept_from,
+                  kept_at=marker.get("at"), stale=ctx.checked[kept_from], sections_backend=backend)
+    unasked = timing["unasked"]
+    if unasked:
+        raise Refused(f"{song.id}: {', '.join(unasked)} ran without being asked: "
+                      + "; ".join(_why(e, backend, kept_backend, ctx.env) for e in unasked)
+                      + ". Its output would not be the kept folder's, so the charts would differ for that reason "
+                      "alone; the run stops here, with no summary")
+    if backend and kept_backend and backend != kept_backend:  # sections rerun: asked for, but say so
+        ctx.say(f"  WARNING: {song.id}: the sections came from {backend}, the kept folder's from {kept_backend}")
+    elif backend == "librosa":
+        ctx.say(f"  WARNING: {song.id}: the sections came from the librosa fallback, not allin1")
     after = manifest(kept)
     if after != before:
         changed = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
@@ -472,57 +555,85 @@ def _apart(a: Path, b: Path) -> bool:
     return a != b and a not in b.parents and b not in a.parents
 
 
-def run(songs: list[Song], ctx: Context) -> tuple[dict, int]:
-    """Build, scan and score every song (the module docstring): the summary, and the exit status."""
+def clear_out(out: Path) -> list[str]:
+    """Delete what an earlier run or diff left in the output folder: summary.json, report.md and report.json, logs/,
+    scores/ and the song folders (and their .failed) the summary names; only when the folder is golden's (its lock
+    file, a golden summary or a golden report is there), so a folder of the person's loses nothing. What went."""
+    summary, report = read_json(out / "summary.json"), read_json(out / "report.json")
+    ours = (out / ".golden.lock").exists() or (isinstance(summary, dict) and "golden" in summary) or (
+        isinstance(report, dict) and "golden" in report and "unexpected" in report)
+    if not ours:
+        return []
+    songs = list((summary or {}).get("songs") or {}) if isinstance(summary, dict) else []
+    gone = []
+    for name in ["summary.json", "summary.json.part", "report.md", "report.json", "logs", "scores",
+                 *(f"{sid}{x}" for sid in songs for x in ("", ".failed"))]:
+        f = out / name
+        if f.is_dir() and not f.is_symlink():
+            shutil.rmtree(f)
+        elif f.exists() or f.is_symlink():
+            f.unlink()
+        else:
+            continue
+        gone.append(name)
+    return gone
+
+
+def run(songs: list[Song], ctx: Context, *, holding: bool = False) -> tuple[dict, int]:
+    """Build, scan and score every song (the module docstring): the summary, and the exit status. The output folder
+    is locked and cleared first (clear_out), unless the caller `holding` its lock has done both."""
+    if not holding:
+        ctx.out.mkdir(parents=True, exist_ok=True)
+        with locked(ctx.out / ".golden.lock", wait=False):
+            clear_out(ctx.out)
+            return run(songs, ctx, holding=True)
     for a, b, what in ((ctx.out, ctx.work, "--work"), (ctx.out, ctx.refs, "--refs"), (ctx.out, ctx.code, "--code")):
         if not _apart(a.resolve(), b.resolve()):
             raise Refused(f"--out {ctx.out} and {what} {b} must be apart, neither inside the other")
-    ctx.out.mkdir(parents=True, exist_ok=True)
     logs = ctx.out / "logs"
-    with locked(ctx.out / ".golden.lock", wait=False):
-        logs.mkdir(exist_ok=True)
-        ctx.work.mkdir(parents=True, exist_ok=True)
-        _clear_stale_runs(ctx.work / RUNS)
-        ctx.runs = ctx.work / RUNS / f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
-        ctx.runs.mkdir(parents=True)
-        ctx.env["SONGCHARTER_CACHE"] = str(ctx.runs / "cache")  # an empty cache: the build prunes nothing
-        started, t0 = time.strftime("%Y-%m-%dT%H:%M:%S"), time.perf_counter()
-        code, tool = checkout(ctx.code), checkout(ROOT)  # as the run starts
-        results, timings, failures = {}, {}, 0
-        try:
-            for i, song in enumerate(songs, 1):
-                ctx.say(f"[{i}/{len(songs)}] {song.id}")
-                try:
-                    results[song.id], timings[song.id] = build_song(song, ctx, logs)
-                except RuntimeError as e:
-                    failures += 1
-                    results[song.id] = {"has_ref": song.has_ref, "exit": None, "gate_ok": None, "folder": None,
-                                        "error": str(e)}
-                    timings[song.id] = {"error": str(e)}
-                    ctx.say(f"  {song.id}: FAILED: {e}")
-                    continue
-                r, t = results[song.id], timings[song.id]
-                failures += r["exit"] not in (0, 1)
-                ctx.say(f"  {song.id}: {_line(r, t)}")
-        finally:
-            shutil.rmtree(ctx.runs, ignore_errors=True)
-        summary = {
-            "golden": FORMAT,
-            "about": "python -m eval.golden run (eval/golden.py). Everything but `run` is the same for two runs of "
-                     "one commit.",
-            "code": {"commit": code["commit"], "dirty": code["dirty"]},
-            "options": {"levels": "all", "takes": 1, "device": "cpu", "preview": False, "rerun": list(ctx.rerun),
-                        "songs": [s.id for s in songs]},
-            "tools": {"scan_chart": _scan_chart_version(), "scan_notes_sha256": sha256(SCAN_NOTES),
-                      "score_sha256": sha256(SCORE)},
-            "songs": results,
-            "run": {"code": {"path": str(ctx.code), "branch": code["branch"]}, "golden": {"path": str(ROOT),
-                    **tool}, "out": str(ctx.out), "work": str(ctx.work), "refs": str(ctx.refs),
-                    "stems": str(ctx.stems) if ctx.stems else None, "threads": ctx.threads,
-                    "python": sys.executable, "started": started, "finished": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "seconds": round(time.perf_counter() - t0, 1), "songs": timings},
-        }
-        write_json(ctx.out / "summary.json", summary)
+    logs.mkdir(exist_ok=True)
+    ctx.work.mkdir(parents=True, exist_ok=True)
+    _clear_stale_runs(ctx.work / RUNS)
+    ctx.runs = ctx.work / RUNS / f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    ctx.runs.mkdir(parents=True)
+    ctx.env["SONGCHARTER_CACHE"] = str(ctx.runs / "cache")  # an empty cache: the build prunes nothing
+    started, t0 = time.strftime("%Y-%m-%dT%H:%M:%S"), time.perf_counter()
+    code, tool = checkout(ctx.code), checkout(ROOT)  # as the run starts
+    results, timings, failures = {}, {}, 0
+    try:
+        for i, song in enumerate(songs, 1):
+            ctx.say(f"[{i}/{len(songs)}] {song.id}")
+            try:
+                results[song.id], timings[song.id] = build_song(song, ctx, logs)
+            except RuntimeError as e:
+                failures += 1
+                results[song.id] = {"has_ref": song.has_ref, "exit": None, "gate_ok": None, "folder": None,
+                                    "error": str(e)}
+                timings[song.id] = {"error": str(e)}
+                ctx.say(f"  {song.id}: FAILED: {e}")
+                continue
+            r, t = results[song.id], timings[song.id]
+            failures += r["exit"] not in (0, 1)
+            ctx.say(f"  {song.id}: {_line(r, t)}")
+    finally:
+        shutil.rmtree(ctx.runs, ignore_errors=True)
+    summary = {
+        "golden": FORMAT,
+        "about": "python -m eval.golden run (eval/golden.py). Everything but `run` is the same for two runs of "
+                 "one commit.",
+        "code": {"commit": code["commit"], "dirty": code["dirty"]},
+        "options": {"levels": "all", "takes": 1, "device": "cpu", "preview": False, "rerun": list(ctx.rerun),
+                    "songs": [s.id for s in songs]},
+        "tools": {"scan_chart": _scan_chart_version(), "scan_notes_sha256": sha256(SCAN_NOTES),
+                  "score_sha256": sha256(SCORE)},
+        "songs": results,
+        "run": {"code": {"path": str(ctx.code), "branch": code["branch"]}, "golden": {"path": str(ROOT),
+                **tool}, "out": str(ctx.out), "work": str(ctx.work), "refs": str(ctx.refs),
+                "stems": str(ctx.stems) if ctx.stems else None, "threads": ctx.threads,
+                "python": sys.executable, "started": started, "finished": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "seconds": round(time.perf_counter() - t0, 1), "songs": timings},
+    }
+    write_json(ctx.out / "summary.json", summary)
     return summary, 1 if failures else 0
 
 
@@ -552,7 +663,22 @@ def _words(text: str) -> tuple[str, ...]:
 
 
 def cmd_run(a: argparse.Namespace) -> int:
+    """`run`: the output folder locked and cleared before anything can refuse (so no earlier summary survives a
+    refused, failed or killed run), then the checks, then the run."""
+    out = Path(a.out).resolve()
+    out.mkdir(parents=True, exist_ok=True)  # a file there: FileExistsError, exit 2
+    with locked(out / ".golden.lock", wait=False):
+        gone = clear_out(out)
+        if gone:
+            print(f"golden: cleared {out} of an earlier run's {', '.join(gone[:6])}{', ...' if len(gone) > 6 else ''}",
+                  file=sys.stderr)
+        return _cmd_run(a, out)
+
+
+def _cmd_run(a: argparse.Namespace, out: Path) -> int:
     from songcharter import cache
+    if a.threads is not None and a.threads < 1:
+        raise Refused(f"--threads is 1 or more, not {a.threads}")
     refs = Path(a.refs or Path(os.environ.get("EVAL_DATA") or HERE / "data") / "refs").resolve()
     rerun = _words(a.rerun or "")
     unknown = [e for e in rerun if e not in ENGINES]
@@ -578,12 +704,11 @@ def cmd_run(a: argparse.Namespace) -> int:
         raise Refused(f"the build would not import songcharter from {code} ({probe.stdout.strip() or probe.stderr})")
     golden = os.environ.get("SONGCHARTER_GOLDEN")
     work = Path(a.work or (Path(golden) if golden else cache.user_cache() / "golden") / "work").resolve()
-    ctx = Context(out=Path(a.out).resolve(), work=work, code=code, refs=refs, stems=stems, rerun=rerun,
-                  threads=a.threads, env=env)
+    ctx = Context(out=out, work=work, code=code, refs=refs, stems=stems, rerun=rerun, threads=a.threads, env=env)
     head = checkout(code)
     ctx.say(f"golden run: {len(songs)} songs from {code} ({(head['commit'] or '?')[:12]}"
             f"{', with changes' if head['dirty'] else ''}); rerun {', '.join(rerun) or 'none'}; kept folders in {work}")
-    summary, status = run(songs, ctx)
+    summary, status = run(songs, ctx, holding=True)
     ctx.say(f"summary: {ctx.out / 'summary.json'} ({summary['run']['seconds']:.0f} s)")
     return status
 
@@ -635,11 +760,62 @@ def results(summary: dict) -> str:
     return json.dumps({k: v for k, v in summary.items() if k != "run"}, sort_keys=True)
 
 
+def _short(commit: str | None) -> str:
+    return (commit or "?")[:12]
+
+
+def run_findings(old: dict, new: dict) -> list[dict]:
+    """What makes the two runs' outputs not each its own code's, for the runs as a whole: an engine rerun in one run
+    only (the other's came from the kept folders), an engine that answered from a kept folder its code no longer
+    matches (`run`'s stale check), sections from different backends. {"text", "unexpected"} each."""
+    out: list[dict] = []
+
+    def songs(s: dict) -> dict:
+        return (s.get("run") or {}).get("songs") or {}
+
+    def kept(s: dict) -> str:
+        return ", ".join(sorted({_short(t["kept_from"]) for t in songs(s).values() if t.get("kept_from")})) or "?"
+
+    def commit(s: dict) -> str:
+        return _short((s.get("code") or {}).get("commit"))
+
+    sides = {"old": old, "new": new}
+    rerun = {k: set((v.get("options") or {}).get("rerun") or []) for k, v in sides.items()}
+    for e in sorted(rerun["old"] ^ rerun["new"]):
+        side = "new" if e in rerun["new"] else "old"
+        other = "old" if side == "new" else "new"
+        out.append({"text": f"{e} was rerun in the {side} run only: the {other} run's {e} came from the kept folders "
+                            f"(made by {kept(sides[other])}), not from its own code ({commit(sides[other])}); pass "
+                            f"the same --rerun to both runs", "unexpected": True})
+    for name, s in sides.items():
+        status: dict[str, set] = {}
+        for t in songs(s).values():
+            for e, v in (t.get("stale") or {}).items():
+                status.setdefault(e, set()).add(v)
+        for e in ENGINES:
+            if "changed" in status.get(e, ()):
+                out.append({"text": f"the {name} run's {e} answered from the kept folders (made by {kept(s)}), but "
+                                    f"{e}'s files differ in its code ({commit(s)}): its {e} output is not its own; "
+                                    f"pass --rerun {e} to both runs", "unexpected": True})
+        unknown = [e for e in ENGINES if "unknown" in status.get(e, ()) and "changed" not in status[e]]
+        if unknown:
+            out.append({"text": f"could not tell with git whether the {name} run's {', '.join(unknown)} still match "
+                                f"the code that made the kept folders ({kept(s)})", "unexpected": False})
+    backends = {k: sorted({t["sections_backend"] for t in songs(v).values() if t.get("sections_backend")})
+                for k, v in sides.items()}
+    if backends["old"] and backends["new"] and backends["old"] != backends["new"]:
+        out.append({"text": f"the sections came from {', '.join(backends['old'])} in the old run and from "
+                            f"{', '.join(backends['new'])} in the new one (SONGCHARTER_ALLIN1_PYTHON): every star "
+                            "power phrase and solo can move for that reason alone", "unexpected": True})
+    return out
+
+
 def compare(old: dict, new: dict, expect: frozenset[tuple[str, str | None]]) -> dict:
     """The diff (the module docstring): per song its rows and song-level findings, the pooled F1, what is
     UNEXPECTED."""
     order = list(old["songs"]) + [s for s in new["songs"] if s not in old["songs"]]
-    songs, unexpected = [], []
+    findings = run_findings(old, new)
+    songs, unexpected = [], [f"runs: {f['text']}" for f in findings if f["unexpected"]]
     touched: set[tuple[str, str]] = set()
     for sid in order:
         o, n = old["songs"].get(sid), new["songs"].get(sid)
@@ -706,7 +882,7 @@ def compare(old: dict, new: dict, expect: frozenset[tuple[str, str | None]]) -> 
     return {"golden": FORMAT, "expect": sorted(f"{p}:{lv}" if lv else p for p, lv in expect) or ["none"],
             "unexpected": unexpected, "exit": 1 if unexpected else 0,
             "identical": json.dumps(old["songs"], sort_keys=True) == json.dumps(new["songs"], sort_keys=True),
-            "expected_but_unchanged": quiet, "pooled": pooled, "songs": songs,
+            "expected_but_unchanged": quiet, "pooled": pooled, "songs": songs, "run_findings": findings,
             "tools_differ": old.get("tools") != new.get("tools")}
 
 
@@ -767,6 +943,8 @@ def render(report: dict, old_file: Path, new_file: Path) -> str:
              f"| started, seconds | {o['started'] or '—'}, {_num(o['seconds'], 0)} | {n['started'] or '—'}, "
              f"{_num(n['seconds'], 0)} |",
              "", f"Expected to change: {', '.join(report['expect'])}.", ""]
+    for f in report.get("run_findings") or []:
+        lines.append(f"**UNEXPECTED: {f['text']}.**" if f["unexpected"] else f"Warning: {f['text']}.")
     if report["unexpected"]:
         lines.append(f"**UNEXPECTED: {len(report['unexpected'])}** ({'; '.join(report['unexpected'][:12])}"
                      f"{'; ...' if len(report['unexpected']) > 12 else ''}).")
@@ -845,9 +1023,16 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     try:
         return cmd_run(a) if a.command == "run" else cmd_diff(a)
-    except Refused as e:
+    except (Refused, OSError) as e:  # bad input or environment: a folder that is a file, a missing file, ...
         print(f"golden: error: {e}", file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        print("golden: interrupted", file=sys.stderr)
+        return 130
+    except Exception:  # noqa: BLE001  a bug: not to be mistaken for a failed build (1) or bad input (2)
+        traceback.print_exc()
+        print("golden: internal error (a bug: the traceback is above)", file=sys.stderr)
+        return 3
 
 
 if __name__ == "__main__":
