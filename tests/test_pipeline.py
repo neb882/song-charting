@@ -118,13 +118,13 @@ def standin_key(mix: np.ndarray) -> str:
 
 def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: Exception | None = None,
              cuda_error: str | None = None, allin1_device: str | None = None, repeat: bool = False,
-             auto: str = "cpu", moved: str | None = None):
+             auto: str = "cpu", moved: str | None = None, no_preview: str | None = None):
     """Engines that write what the real ones write, and record each call (with the arrays it got) in `calls`.
     `empty`: engines that find no notes; `bug`: a stage that raises `error` (by default a KeyError: a bug);
     `cuda_error`: device "auto" finds CUDA that does not run; `allin1_device`: the sections come from allin1 on
     this device; `repeat`: the guitar take of seed 101 repeats the first take's notes; `auto`: the device "auto"
     resolves to; `moved`: the device autochart reports for every guitar take whatever it was asked for (its own
-    fallback)."""
+    fallback); `no_preview`: why the preview cannot run (its libraries do not import)."""
 
     class StandIns(Engines):
         calls: list[tuple] = []
@@ -189,6 +189,18 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: Excepti
                     "model": "harmonix-fold0", "device": allin1_device, "fallback": None, "peak_rss_mb": 512.0}})
             return Run(out / "segments.json", cached, {"backend": "librosa", "why": "no allin1 Python (stand-in)",
                                                        "segments": len(SEGMENTS)})
+
+        def preview_missing(self):
+            return no_preview
+
+        def preview(self, folder, out, stems):
+            self._bug("preview")
+            self.calls.append(("preview", folder, out, dict(stems)))
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "overview.png").write_bytes(b"stand-in")
+            return {"folder": str(folder), "overview": str(out / "overview.png"), "pages": [str(out / "page_01.png")],
+                    "stems": {}, "flags": ["guitar: gap 0:10.0-0:12.0 (1 measures)"], "flags_by_kind": {"gap": 1},
+                    "remarks": []}
 
         def guitar(self, audio, out, seeds, device, title, artist):
             self._bug("guitar")
@@ -280,7 +292,7 @@ def test_the_work_folder_and_the_assemble_config(charted):
     assert np.array_equal(mix, A.decode(root / "song.flac"))
     report = json.loads((work / "pipeline.json").read_text(encoding="utf-8"))
     assert [s["stage"] for s in report["stages"]] == ["decode", "separate", "drums", "bass", "sections", "guitar",
-                                                      "assemble"]
+                                                      "assemble", "preview"]
     assert all(s["seconds"] >= 0 and not s["cached"] for s in report["stages"])
     assert report["assemble"]["ok"] and report["options"]["takes"] == 3 and "error" not in report
     assert report["options"]["levels"] == ["expert"]
@@ -311,8 +323,13 @@ def test_the_engines_get_the_decode_its_stems_and_the_options(charted):
     assert rest == [work / "sections", "auto", 2]
     assert calls["guitar"] == (work / "decode.wav", work / "guitar", (DEFAULT_SEED, 101, 202), "cpu", "Click Song",
                                "The Testers")
-    assert lines[0] == "[1/7] decode: song.flac" and lines[-1].startswith("[7/7] assemble: gate OK")
-    assert any(line.startswith("[6/7] guitar: autochart, 3 takes (seeds 20260609, 101, 202) on cpu") for line in lines)
+    assert lines[0] == "[1/8] decode: song.flac" and lines[-3].startswith("[7/8] assemble: gate OK")
+    assert lines[-1].startswith(f"[8/8] preview: {work / 'preview' / 'overview.png'} and 1 pages, 1 flags, ")
+    assert any(line.startswith("[6/8] guitar: autochart, 3 takes (seeds 20260609, 101, 202) on cpu") for line in lines)
+    # the preview: of the song folder, into the work folder, against every stem of the separation (piano too)
+    key = standin_key(mix)
+    assert calls["preview"] == (result.folder, work / "preview", {s: work / "stems" / key / f"{s}.wav" for s in own})
+    assert result.preview["overview"] == str(work / "preview" / "overview.png")
     assert any("sections: the librosa fallback (no allin1 Python (stand-in))" in line for line in lines)
 
 
@@ -329,6 +346,8 @@ def test_a_rerun_reuses_every_stage(charted, monkeypatch, capsys):
     for stage in ("decode", "separate", "drums", "bass", "sections", "guitar"):
         assert any(f"] {stage}: " in line and "(cached)" in line for line in err.splitlines()), stage
     assert "gate: OK" in out and out.splitlines()[-1].startswith("stages: decode ")
+    assert out.splitlines()[-2] == (f"preview: {result.work / 'preview' / 'overview.png'} and 1 pages (flagged: "
+                                    "gap 1)")
     assert any(line.startswith("guitar: onsets E ") for line in out.splitlines())  # Expert only, labelled so
     assert (wav.stat().st_mtime_ns, (result.folder / "notes.chart").read_bytes()) == before
 
@@ -340,7 +359,7 @@ def test_an_engine_without_notes_leaves_its_part_out(tmp_path, monkeypatch, caps
                  "drums,bass", "--album", "A", "--year", "2001", "--artist", "  "])
     out, err = capsys.readouterr()
     assert code == 0, err
-    assert "bass: the engine found no notes" in err and "[6/6] assemble" in err and "] guitar:" not in err
+    assert "bass: the engine found no notes" in err and "[6/7] assemble" in err and "] guitar:" not in err
     cfg = json.loads((tmp_path / "Song.work" / "assemble.json").read_text(encoding="utf-8"))
     assert [p["instrument"] for p in cfg["parts"]] == ["drums"] and cfg["solos"] == "off"
     ini = (tmp_path / "Song" / "song.ini").read_text(encoding="utf-8").splitlines()
@@ -539,6 +558,66 @@ def test_solos_on_named_sections(charted, monkeypatch, capsys):
     capsys.readouterr()
     assert main([*args, "--out", str(root / "Solos"), "--solos", " , "]) == 2
     assert "solos as section names needs one name or more" in capsys.readouterr().err
+
+
+def test_the_preview_never_fails_a_chart(charted, tmp_path, monkeypatch, capsys):
+    """Without matplotlib or librosa, or with a preview that raises, the run gives one warning and keeps its exit
+    code (0, or 1 for a failed gate, whose .failed folder is the one previewed); --no-preview runs none and says
+    nothing. pipeline.json records each case."""
+    root, result, _, _ = charted
+    args = ["chart", str(root / "song.flac"), "--work", str(result.work), "--takes", "3", "--genre", "Test"]
+
+    def run(name, *extra, code=0, **kw):
+        engines = standins(**kw)
+        monkeypatch.setattr(P, "Engines", engines)
+        assert main([*args, "--out", str(tmp_path / name), *extra]) == code
+        out, err = capsys.readouterr()
+        report = json.loads((result.work / "pipeline.json").read_text(encoding="utf-8"))
+        return [c for c in engines.calls if c[0] == "preview"], out, err, report
+
+    calls, out, err, report = run("Absent", no_preview="ModuleNotFoundError: No module named 'matplotlib'")
+    assert calls == [] and "] preview:" not in err and "preview:" not in out
+    assert [line for line in err.splitlines() if "warning: no preview" in line] == [
+        "songcharter: warning: no preview: it needs matplotlib and librosa (ModuleNotFoundError: No module named "
+        "'matplotlib'): pip install songcharter[preview]"]
+    assert report["preview"] == {"ok": False, "skipped": "ModuleNotFoundError: No module named 'matplotlib'"}
+    assert "error" not in report and report["assemble"]["ok"]
+    calls, out, err, report = run("Fails", bug="preview")
+    assert [line for line in err.splitlines() if "warning: no preview" in line] == [
+        "songcharter: warning: no preview: it failed (KeyError: 'a bug in preview')"]
+    assert "Traceback" not in err and "preview:" not in out and "error" not in report
+    assert not report["preview"]["ok"] and "in _bug" in report["preview"]["traceback"]
+    calls, out, err, report = run("Off", "--no-preview")
+    assert calls == [] and "no preview" not in err and "] preview:" not in err
+    assert report["preview"] == {"ok": False, "skipped": "turned off"}
+    real = assemble_module.verify_folder
+    monkeypatch.setattr(assemble_module, "verify_folder", lambda *a, **k: real(*a, **k) + [
+        assemble_module.GateIssue(None, None, "fake", "a gate error")])
+    calls, out, err, report = run("Gate", code=1, bug="preview")
+    assert "no preview: it failed (KeyError: 'a bug in preview')" in err and "gate: FAILED" in out
+    calls, out, err, report = run("Gate2", code=1)
+    assert calls[0][1:3] == (tmp_path / "Gate2.failed", result.work / "preview") and report["preview"]["ok"]
+
+
+def test_the_real_preview_of_an_expert_only_folder(charted, tmp_path):
+    """Engines.preview (preview.py itself) on the charted song folder, Expert only, with the work folder's six
+    stems: an overview and a page per minute, every instrument judged against its stem (guitar against guitar, other
+    and piano), an earlier run's pages removed first."""
+    pytest.importorskip("matplotlib")
+    pytest.importorskip("librosa")
+    _, result, _, _ = charted
+    assert Engines().preview_missing() is None
+    out = tmp_path / "preview"
+    out.mkdir()
+    (out / "page_09.png").write_bytes(b"an earlier run's")
+    folder = Path(result.config.read_text(encoding="utf-8") and json.loads(result.config.read_text())["stems"]["drums"]
+                  ).parent
+    info = Engines().preview(result.folder, out, {p.stem: p for p in folder.glob("*.wav")})
+    assert info["overview"] == str(out / "overview.png") and (out / "overview.png").stat().st_size > 10000
+    assert info["pages"] == [str(out / "page_01.png"), str(out / "page_02.png")] and not (out / "page_09.png").exists()
+    assert info["stems"] == {"guitar": "guitar+other+piano", "bass": "bass", "drums": "drums"}
+    assert info["remarks"] == [] and isinstance(info["flags"], list)
+    assert sum(info["flags_by_kind"].values()) == len(info["flags"])
 
 
 def test_takes_follow_the_guitar_stages_device(charted, monkeypatch, capsys):

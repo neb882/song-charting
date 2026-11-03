@@ -2,12 +2,13 @@
 
     songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums]
                       [--levels expert|all|expert,hard,...] [--solos stems|labels|off|"NAME,NAME"] [--takes N]
-                      [--device auto|cpu|cuda] [--threads N] [--title ...] [--artist ...] [--album ...] [--year ...]
-                      [--genre ...]
+                      [--device auto|cpu|cuda] [--threads N] [--no-preview] [--title ...] [--artist ...]
+                      [--album ...] [--year ...] [--genre ...]
     songcharter assemble <config.json> [--out DIR]
 
 `chart` runs the whole pipeline on one song file (pipeline.py): decode, separation, the engines, then assemble's
-build and gate; progress goes to stderr, a line per stage with its time, and the summary to stdout. `assemble`
+build and gate, then the preview of the built folder; progress goes to stderr, a line per stage with its time, and
+the summary to stdout. `assemble`
 builds a song folder from a config that names existing charts.
 
 --solos takes a mode or the names of the sections to make solos, as one argument with the names separated by
@@ -150,6 +151,9 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto",
                    help="where the models run (default: auto, CUDA when available)")
     c.add_argument("--threads", type=int, metavar="N", help="CPU threads for the models (default: theirs)")
+    c.add_argument("--no-preview", action="store_true",
+                   help="no preview (by default the overview and pages of the built folder go into the work "
+                        "folder's preview/ when matplotlib and librosa are installed)")
     for flag, key in (("--title", "name"), ("--artist", "artist"), ("--album", "album"), ("--year", "year"),
                       ("--genre", "genre")):
         c.add_argument(flag, dest=f"meta_{key}", metavar="TEXT",
@@ -173,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
             instruments = pipeline.INSTRUMENTS if args.instruments is None else args.instruments
             options = pipeline.Options(instruments=instruments, takes=args.takes, device=args.device,
                                        threads=args.threads, work=args.work, metadata=meta, levels=args.levels,
-                                       solos=args.solos)
+                                       solos=args.solos, preview=not args.no_preview)
             done = pipeline.chart(args.song, args.out, options)
             result, extra = done.assembled, pipeline.summary(done)
         else:

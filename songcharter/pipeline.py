@@ -16,6 +16,9 @@
      parts quantized onto it, star power, fills, solos and sections, then the gate (assemble.py). Only Expert is
      written by default (`levels`: the friend plays Expert, and asks for the others when he wants them); the lower
      tiers are reduced from it when asked for. The result and its exit codes are `songcharter assemble`'s.
+  5. **Preview** (preview.py) of the folder assemble wrote, the song folder or its .failed, into work/preview/
+     (overview.png, page_NN.png), judged against the work folder's stems, when matplotlib and librosa import. It
+     only informs: absent libraries or a preview that fails give one warning, never another exit code.
 
   * **Metadata.** The file's tags as ffmpeg prints them (title, artist, album, genre, date, track), the caller's
     values on top, and defaults for what scan-chart requires: the file's name for the title, "Unknown" for the
@@ -88,6 +91,7 @@ class Options:
     solos: str | tuple[str, ...] = "stems"       # assemble's solos: "stems" (vocals quiet, guitar loud), "labels"
                                                  # (sections named Solo), "off", or the names of the solo sections
     levels: tuple[str, ...] = ("expert",)        # the difficulties written: Expert, and any of hard, medium, easy
+    preview: bool = True                         # the preview of the built folder into work/preview/ (preview.py)
 
     def check(self) -> None:
         if not self.instruments:
@@ -103,6 +107,8 @@ class Options:
             raise InputError("takes are guitar takes: chart the guitar too, or leave takes at 1")
         if self.device not in ("auto", "cpu", "cuda"):
             raise InputError(f"device is auto, cpu or cuda, not {self.device!r}")
+        if not isinstance(self.preview, bool):
+            raise InputError(f"preview is true or false, not {self.preview!r}")
         if self.threads is not None and (isinstance(self.threads, bool) or not isinstance(self.threads, int)
                                          or self.threads < 1):
             raise InputError(f"threads must be a whole number of at least 1, not {self.threads!r}")
@@ -147,6 +153,7 @@ class ChartResult:
     config: Path                 # the assemble config written into the work folder
     metadata: dict
     warnings: list[str]
+    preview: dict | None = None  # what the preview wrote and flagged (Engines.preview); None when it did not run
 
     @property
     def ok(self) -> bool:
@@ -348,6 +355,33 @@ class Engines:
         r = find_sections(mix, stems, out, Settings(device=device, threads=threads))
         return Run(r.path, r.cached, r.info)
 
+    def preview_missing(self) -> str | None:
+        """Why the preview cannot run here (matplotlib or librosa does not import), else None."""
+        try:
+            import librosa  # noqa: F401
+            import matplotlib  # noqa: F401
+        except Exception as e:  # noqa: BLE001  absent, or broken on import: either way no preview
+            return f"{type(e).__name__}: {e}"
+        return None
+
+    def preview(self, folder: Path, out: Path, stems: Mapping[str, Path]) -> dict:
+        """preview.py's overview and pages of the song folder `folder` in `out` (an earlier run's PNGs there go
+        first), judged against `stems` (stem name -> WAV, input seconds; the lead-in pad from its report.json): what
+        it wrote, flagged and remarked."""
+        from . import preview as PV
+        pv = PV.load(folder, stems=dict(stems))
+        out.mkdir(parents=True, exist_ok=True)
+        for old in [out / "overview.png", *out.glob("page_*.png")]:
+            old.unlink(missing_ok=True)
+        found = PV.render_overview(pv, out / "overview.png")
+        pages = PV.render_pages(pv, out)
+        kinds: dict[str, int] = {}
+        for f in found:
+            kinds[f.kind] = kinds.get(f.kind, 0) + 1
+        return {"folder": str(folder), "overview": str(out / "overview.png"), "pages": [str(x) for x in pages],
+                "stems": dict(pv.stems), "flags": [str(f) for f in found], "flags_by_kind": kinds,
+                "remarks": PV.remarks(pv)}
+
     def guitar(self, audio: Path, out: Path, seeds: Sequence[int], device: str, title: str, artist: str) -> list[Run]:
         from .engines import autochart
         takes = autochart.generate(autochart.find_install(), audio, out, seeds, device=device, title=title,
@@ -443,6 +477,8 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
     # the quick engines first, so a failure there comes before the guitar's minutes
     order = ["decode", "separate"] + [i for i in ("drums", "bass") if i in instruments] + ["sections"]
     order += ["guitar"] * ("guitar" in instruments) + ["assemble"]
+    no_preview = engines.preview_missing() if options.preview else None
+    order += ["preview"] * (options.preview and no_preview is None)
     stages: list[Stage] = []
     warnings: list[str] = []
     report: dict[str, Any] = {"songcharter": __version__, "input": str(audio), "output": str(out), "work": str(work),
@@ -474,7 +510,8 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         tags = read_tags(audio)
         meta, origin = song_metadata(audio, tags, options.metadata)
         report["metadata"], report["metadata_from"], report["tags"] = meta, origin, tags
-        parts, sections, stem_files = _engine_stages(audio, work, options, engines, meta, begin, end, warn, report)
+        parts, sections, stem_files, stem_folder = _engine_stages(audio, work, options, engines, meta, begin, end, warn,
+                                                                  report)
         if not parts:
             raise InputError(f"no instrument has notes ({', '.join(instruments)} all came out empty): nothing to "
                              "chart")
@@ -493,7 +530,26 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         end("assemble", t0, False, f"gate {'OK' if result.ok else 'FAILED'} ({g['errors']} errors, "
             f"{g['warnings']} warnings), {result.folder}", {"ok": result.ok, "folder": str(result.folder)})
         report["assemble"] = {"config": str(config), "ok": result.ok, "folder": str(result.folder)}
-        return ChartResult(result, stages, work, config, meta, warnings)
+        preview = None
+        if "preview" in order:
+            t0 = begin("preview", f"overview and pages of {result.folder.name} in {work / 'preview'}")
+            try:
+                preview = engines.preview(result.folder, work / "preview",
+                                          {p.stem: p for p in sorted(stem_folder.glob("*.wav"))})
+            except Exception as e:  # noqa: BLE001  the preview only informs: it never fails a chart
+                warn(f"no preview: it failed ({type(e).__name__}: {e})")
+                report["preview"] = {"ok": False, "error": f"{type(e).__name__}: {e}",
+                                     "traceback": traceback.format_exc()}
+            else:
+                end("preview", t0, False, f"{preview['overview']} and {len(preview['pages'])} pages, "
+                    f"{len(preview['flags'])} flags")
+                report["preview"] = {"ok": True, **preview}
+        elif options.preview:
+            warn(f"no preview: it needs matplotlib and librosa ({no_preview}): pip install songcharter[preview]")
+            report["preview"] = {"ok": False, "skipped": no_preview}
+        else:
+            report["preview"] = {"ok": False, "skipped": "turned off"}
+        return ChartResult(result, stages, work, config, meta, warnings, preview)
     except BaseException as e:
         report["error"] = f"{type(e).__name__}: {e}"
         report["traceback"] = traceback.format_exc()
@@ -507,8 +563,9 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
 
 
 def _engine_stages(audio: Path, work: Path, options: Options, engines: Engines, meta: dict, begin, end, warn,
-                   record: dict) -> tuple[list[dict], str | None, dict[str, str]]:
-    """Decode, separation and the engines: the assemble parts, the sections file and the stem files; `record`
+                   record: dict) -> tuple[list[dict], str | None, dict[str, str], Path]:
+    """Decode, separation and the engines: the assemble parts, the sections file, the stem files assemble reads
+    and the folder of every stem (the preview's); `record`
     (pipeline.json) gets the guitar takes chosen and why. The audio arrays live only here, so they are freed before
     assemble reads its own."""
     t0 = begin("decode", audio.name)
@@ -610,11 +667,17 @@ def _engine_stages(audio: Path, work: Path, options: Options, engines: Engines, 
             "in the first", {"seeds": list(seeds), "takes": [str(r.path) for r in runs], "onsets": n,
                              "chosen": record["takes"]})
     parts.sort(key=lambda p: INSTRUMENTS.index(p["instrument"]))
-    return parts, sections, stem_files
+    return parts, sections, stem_files, folder
 
 
 def summary(result: ChartResult) -> str:
-    """The stage times, one line."""
+    """What the pipeline adds to assemble's summary: the preview's overview and its flags, then the stage times."""
+    lines = []
+    if result.preview:
+        kinds = ", ".join(f"{k} {n}" for k, n in result.preview["flags_by_kind"].items())
+        lines.append(f"preview: {result.preview['overview']} and {len(result.preview['pages'])} pages "
+                     f"({f'flagged: {kinds}' if kinds else 'nothing flagged'})")
     total = sum(s.seconds for s in result.stages)
-    return "stages: " + ", ".join(f"{s.name} {s.seconds:.1f} s{' (cached)' if s.cached else ''}"
-                                  for s in result.stages) + f"; total {total:.1f} s"
+    lines.append("stages: " + ", ".join(f"{s.name} {s.seconds:.1f} s{' (cached)' if s.cached else ''}"
+                                        for s in result.stages) + f"; total {total:.1f} s")
+    return "\n".join(lines)
