@@ -5,11 +5,15 @@
                       [--device auto|cpu|cuda] [--threads N] [--no-preview] [--title ...] [--artist ...]
                       [--album ...] [--year ...] [--genre ...]
     songcharter assemble <config.json> [--out DIR]
+    songcharter doctor [--json PATH] [--quick]
 
 `chart` runs the whole pipeline on one song file (pipeline.py): decode, separation, the engines, then assemble's
 build and gate, then the preview of the built folder; progress goes to stderr, a line per stage with its time, and
 the summary to stdout. `assemble`
-builds a song folder from a config that names existing charts.
+builds a song folder from a config that names existing charts. `doctor` (device.py) checks where a chart would run
+and what it needs: a line per item (WSL and Windows, the GPU, torch's device and the guitar's, memory, disk, the
+components), then the problems and notes, and `doctor: OK` or `doctor: N problems`; --json writes the report
+(doctor.json) too, and --quick skips the CUDA matmul, autochart's CUDA provider check and allin1's probe.
 
 --solos takes a mode (labels, the default: every section named Solo; pipeline.py says why) or the names of the
 sections to make solos, as one argument with the names separated by
@@ -18,7 +22,9 @@ commas: a name with a space needs quotes around the whole list, in a POSIX shell
 a name that is a mode word (stems, labels, off) is taken as the mode. The names are the build's own sections (the
 summary's warnings list them when a name matches none).
 
-Exit status (both commands):
+Exit status of `doctor`: 0 no problem, 1 problems (listed), 2 bad usage or the report could not be written, 3 a bug.
+
+Exit status (`chart` and `assemble`):
   0  the song folder passed the gate and is in the output folder;
   1  the build failed the gate: it is in <output>.failed for inspection (see its report.json), and the output folder
      keeps what it held;
@@ -34,6 +40,8 @@ Exit status (both commands):
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -121,6 +129,35 @@ def _levels(text: str) -> tuple[str, ...]:
     return DIFFICULTIES if words == ("all",) else words
 
 
+def _doctor(args) -> int:
+    """`songcharter doctor`: the report's lines and the verdict on stdout, the report into --json."""
+    from . import device
+    try:
+        report = device.report(full=not args.quick)
+    except KeyboardInterrupt:
+        print("songcharter: interrupted", file=sys.stderr)
+        return 130
+    except Exception:  # noqa: BLE001  a bug: the checks themselves never raise for a missing component
+        traceback.print_exc()
+        print("songcharter: internal error (a bug, please report it with the traceback above)", file=sys.stderr)
+        return 3
+    for line in device.summary(report):
+        print(line)
+    if args.json:
+        path = args.json.expanduser()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            part = path.with_name(path.name + ".part")
+            part.write_text(json.dumps(report, indent=1, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
+            os.replace(part, path)
+        except OSError as e:
+            print(f"songcharter: error: cannot write {path}: {e}", file=sys.stderr)
+            return 2
+    n = len(report["problems"])
+    print("doctor: OK" if report["ok"] else f"doctor: {n} problem{'s' * (n != 1)}")
+    return 0 if report["ok"] else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     # a song name or path the console's code page cannot show (cp1252 when Windows redirects stdout) must not turn
     # a finished build into a crash; stderr already escapes such characters
@@ -177,10 +214,20 @@ def main(argv: list[str] | None = None) -> int:
                                    "the gate fails).")
     p.add_argument("config", type=Path, help="the JSON config (relative paths in it are relative to the file)")
     p.add_argument("--out", type=Path, help="the song folder to write (overrides the config's 'output')")
+    d = sub.add_parser("doctor", help="check where a chart would run (GPU, CUDA, WSL, memory, disk) and what it needs",
+                       description="Check the machine for charting: WSL and the Windows side (in WSL), the GPU, "
+                                   "torch's device and the guitar's (autochart's CUDA provider), memory, free disk "
+                                   "and every component, with the reason for any CPU fallback. Exit 0 with no "
+                                   "problem, 1 with problems.")
+    d.add_argument("--json", type=Path, metavar="PATH", help="also write the report there (doctor.json)")
+    d.add_argument("--quick", action="store_true",
+                   help="skip the CUDA matmul, autochart's CUDA provider check and allin1's probe")
     args = parser.parse_args(argv)
     if args.command is None:
         parser.print_help()
         return 2
+    if args.command == "doctor":
+        return _doctor(args)
     try:
         if args.command == "chart":
             from . import pipeline  # numpy and the pipeline load only when needed
