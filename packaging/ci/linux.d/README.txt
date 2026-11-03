@@ -8,6 +8,9 @@ How they run
   order (bytewise), each as `bash -euo pipefail <hook>`, from the repository's root, with stdin from /dev/null.
 - Each hook gets a header and its time in the log. The first hook that exits non-zero fails the job, and the hooks
   after it do not run.
+- Only README.txt and *.sh files belong here: anything else (another extension such as .bash, no extension, a hidden
+  file, a folder), or no linux.d at all, stops the runner with exit 2 before any hook runs. With only README.txt, the
+  runner prints "no Linux hooks" and passes.
 - By hand, from the repository's root: `CI_PY=<a Python with songcharter> bash packaging/ci/run-hooks.sh linux`.
 
 Names: NN-name.sh, NN being the order that adds the hook
@@ -33,5 +36,9 @@ What a hook sees
 Helpers (packaging/ci/; check_gate.py and check_no_audio.py need only the standard library)
   make_clip.py OUT.wav [SECONDS]    the clip (default 30 s), deterministic
   check_gate.py SONG_FOLDER         a built song folder passed its gate: the four files, gate.ok, scan-chart ran and
-                                    found it playable with 0 chart issues, Expert onsets on guitar, bass and drums
-  check_no_audio.py FOLDER ...      no audio by extension or by its first bytes; exit 1 lists each file
+                                    found it playable with 0 chart issues, Expert onsets on guitar, bass and drums,
+                                    and no SONG_FOLDER.failed beside it (the latest build into it failed)
+  check_no_audio.py PATH ...        no audio in a folder or a file, by extension or by first bytes, also inside zip
+                                    and tar archives (gz, xz, bz2) at any depth up to 4; exit 1 lists each file
+  test_ci.py                        the tests of the runners and of these helpers (pytest; CI runs it in both jobs,
+                                    before the suite); not part of the suite in tests/

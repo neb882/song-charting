@@ -13,7 +13,16 @@ How they run
   around it and read $LASTEXITCODE.
 - A hook fails by stopping that way, by `exit N` with N not 0, or by ending with a non-zero $LASTEXITCODE. The first
   hook that fails fails the job, and the hooks after it do not run. Each hook gets a header and its time in the log.
-- With no hooks the runner prints "no Windows hooks" and passes.
+- Two failures do NOT stop a hook, so check them yourself, right away:
+  - `& other.ps1` that ends with `exit 1` only sets $LASTEXITCODE, and the next native command that succeeds resets
+    it, so the failure is lost. Follow it with `if ($LASTEXITCODE) { exit $LASTEXITCODE }`, or run it as a native
+    command, `pwsh -NoProfile -File other.ps1`, which does stop the hook when it exits non-zero.
+  - `Start-Process -Wait -PassThru` does not set $LASTEXITCODE at all: check the returned process's .ExitCode
+    (`$p = Start-Process ... -Wait -PassThru; if ($p.ExitCode) { exit $p.ExitCode }`).
+- Only README.txt and *.ps1 files belong here: anything else (another extension, no extension, a hidden file, a
+  folder), or no windows.d at all, stops the runner with exit 2 before any hook runs. With only README.txt, the runner
+  prints "no Windows hooks" and passes.
+- packaging/ci/test_ci.py tests the runner (in both jobs, before the hooks).
 
 Names: NN-name.ps1, the same numbers as the Linux hooks (../linux.d/README.txt): 30 is M4-03's shortcut.
 

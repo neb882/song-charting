@@ -8,11 +8,16 @@ It passes when:
 - report.json's gate.ok is true;
 - scan-chart ran on the folder (gate.scan_chart.ran), found it playable, and found 0 chart issues;
 - guitar, bass and drums each have Expert onsets (report.json's tracks.<part>.expert.onsets above 0). The planning run
-  of make_clip.py's 30-s clip had 23, 120 and 119.
+  of make_clip.py's 30-s clip had 23, 120 and 119;
+- there is no SONG_FOLDER.failed beside it.
 
-A build the gate fails is written to SONG_FOLDER.failed instead (songcharter.assemble.FAILED_SUFFIX); its report is
-then checked the same way, so the log says why. Exit 0: pass, with one summary line. Exit 1: each failure listed.
-Exit 2: bad usage. Standard library only, so any Python runs it.
+A build the gate fails is written to SONG_FOLDER.failed instead (songcharter.assemble.FAILED_SUFFIX), and SONG_FOLDER
+keeps what an earlier build left there, which may pass. A build that passes deletes the .failed folder
+(assemble.assemble), so a .failed beside the folder always means the latest build into it failed: that fails the
+check, with the .failed report's own failures listed, so the log says why. No report times are compared: none are
+needed, and the mtimes of folders that CI copies or restores would not be safe to compare.
+Exit 0: pass, with one summary line. Exit 1: each failure listed. Exit 2: bad usage. Standard library only, so any
+Python runs it.
 """
 from __future__ import annotations
 
@@ -69,14 +74,15 @@ def main(argv: list[str]) -> int:
         print("usage: check_gate.py SONG_FOLDER", file=sys.stderr)
         return 2
     folder = Path(argv[0])
-    if not folder.is_dir():
-        failed = folder.with_name(folder.name + FAILED_SUFFIX)
-        if not failed.is_dir():
-            print(f"check_gate: FAIL, no song folder at {folder} (nor {failed.name})")
-            return 1
+    failed = folder.with_name(folder.name + FAILED_SUFFIX)
+    if failed.exists():
         failures, _ = check(failed)
-        print(f"check_gate: FAIL, the build went to {failed}: the gate failed it", *(f"  {f}" for f in failures),
-              sep="\n")
+        old = " (the song folder beside it holds an earlier build)" if folder.is_dir() else ""
+        print(f"check_gate: FAIL, the latest build went to {failed}: the gate failed it{old}",
+              *(f"  {f}" for f in failures), sep="\n")
+        return 1
+    if not folder.is_dir():
+        print(f"check_gate: FAIL, no song folder at {folder} (nor {failed.name})")
         return 1
     failures, seen = check(folder)
     if failures:

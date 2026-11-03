@@ -1,5 +1,6 @@
-# CI: the suite on Linux, then each work order's hooks (packaging/ci/linux.d/, windows.d/; the contract is in their
-# README.txt). Only M4-05a edits this file: a later order adds hook files, never a step here.
+# CI: the CI tools' own tests (packaging/ci/test_ci.py), the suite on Linux, then each work order's hooks
+# (packaging/ci/linux.d/, windows.d/; the contract is in their README.txt). Only M4-05a edits this file: a later order
+# adds hook files, never a step here.
 name: ci
 
 on:
@@ -77,6 +78,10 @@ jobs:
           EOF
           echo "CI_PY=$CI_PY" >> "$GITHUB_ENV"
 
+      - name: Test the CI tools
+        run: |
+          "$CI_PY" -m pytest -q -p no:cacheprovider --basetemp="$RUNNER_TEMP/pt-ci" -rs packaging/ci/test_ci.py
+
       - name: Install scan-chart
         working-directory: tools/scan-chart
         run: npm ci
@@ -126,6 +131,9 @@ jobs:
           python -m pip install pytest LnkParse3
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           "CI_PY=$((Get-Command python -CommandType Application | Select-Object -First 1).Source)" >> $env:GITHUB_ENV
+
+      - name: Test the CI tools
+        run: python -m pytest -q -p no:cacheprovider --basetemp="$env:RUNNER_TEMP\pt-ci" -rs packaging/ci/test_ci.py
 
       - name: Hooks
         run: ./packaging/ci/run-hooks.ps1 windows

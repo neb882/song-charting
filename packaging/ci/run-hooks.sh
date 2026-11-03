@@ -5,7 +5,8 @@
 #
 # Runs every packaging/ci/linux.d/*.sh in name order (bytewise), each as `bash -euo pipefail <hook>` from the
 # repository's root with stdin from /dev/null, and prints a header per hook and its time. Stops at the first hook that
-# exits non-zero, and exits with its code. The hook contract (the numbering, the CI_* variables) is linux.d/README.txt.
+# exits non-zero, and exits with its code. Exits 2, running nothing, when linux.d is missing or holds anything but
+# README.txt and *.sh files. The hook contract (the numbering, the CI_* variables) is linux.d/README.txt.
 #
 # Before the first hook it sets what the caller did not (so it also runs by hand): CI_PY (python3 on PATH), CI_TMP and
 # CI_ART (under $RUNNER_TEMP, or /tmp), and CI_CLIP ($CI_TMP/clip.wav), all absolute. It makes the two folders, and
@@ -20,6 +21,30 @@ fi
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd "$here/../.." && pwd)
 dir="$here/$platform.d"
+
+# The hooks: the *.sh files directly in linux.d. Anything else there but README.txt (another extension, no extension,
+# a hidden file, a folder) is a hook in the wrong shape, which would otherwise be skipped without a word: exit 2.
+if [ ! -d "$dir" ]; then
+  echo "run-hooks: no hook folder $dir" >&2
+  exit 2
+fi
+hooks=()
+stray=()
+while IFS= read -r -d '' entry; do
+  name=${entry##*/}
+  if [ "$name" = README.txt ] && [ -f "$entry" ]; then
+    continue
+  elif [[ $name == [!.]*.sh ]] && [ -f "$entry" ]; then
+    hooks+=("$entry")
+  else
+    stray+=("$platform.d/$name")
+  fi
+done < <(find "$dir" -mindepth 1 -maxdepth 1 -print0 | LC_ALL=C sort -z)
+if [ ${#stray[@]} -ne 0 ]; then
+  printf 'run-hooks: not a hook: %s\n' "${stray[@]}" >&2
+  echo "run-hooks: a hook is a NN-name.sh file directly in $platform.d, and README.txt the only other entry" >&2
+  exit 2
+fi
 
 base=${RUNNER_TEMP:-/tmp}
 : "${CI_PY:=$(command -v python3 || true)}"
@@ -43,10 +68,6 @@ echo "CI_TMP=$CI_TMP"
 echo "CI_ART=$CI_ART"
 echo "CI_CLIP=$CI_CLIP"
 
-hooks=()
-while IFS= read -r -d '' hook; do
-  hooks+=("$hook")
-done < <(find "$dir" -mindepth 1 -maxdepth 1 -name '*.sh' \( -type f -o -type l \) -print0 | LC_ALL=C sort -z)
 if [ ${#hooks[@]} -eq 0 ]; then
   echo "no Linux hooks"
   exit 0
