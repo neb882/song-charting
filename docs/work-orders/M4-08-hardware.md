@@ -151,3 +151,9 @@ and WSL memory.
 ## Depends on
 
 M4-07, the full review workflow, and the owner's and the friend's time.
+
+## Added at M4-01's merge
+
+- **The cu126 allin1 pairing is untested on real hardware:** torch 2.14.1+cu126 with torchaudio 2.11.1+cpu. A cpu
+  stand-in passed. If either PC gets the cu126 lane (a driver under 580), run allin1's probe there once
+  (`songcharter doctor` reports it) and record the result. On the cu132 lane this does not apply.
