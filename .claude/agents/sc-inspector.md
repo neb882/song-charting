@@ -15,21 +15,25 @@ You are given the brief and two commits: the new one and the one to compare agai
 1. **Fresh checkouts** in `/dev/shm/inspect/`: `git -C <repo> worktree add /dev/shm/inspect/new <new>` and
    `git -C <repo> worktree add /dev/shm/inspect/old <old>`.
 2. **The full suite** in the new checkout, with the command in `CLAUDE.md`. Report its last line, and every failure.
-3. **Golden charts**, when `eval/golden.py` exists in the new checkout. From `/dev/shm/inspect/new`, with the
-   environment `eval/README.md` names (`EVAL_DATA`, `SONGCHARTER_GOLDEN`, and `SONGCHARTER_SCAN_CHART`,
-   `SONGCHARTER_AUTOCHART` and `SONGCHARTER_ALLIN1_PYTHON`, since fresh checkouts hold no installs), run the old
-   commit's charts and then the new one's, one after the other (each is mostly assemble, about a minute a song;
-   `--rerun` adds 2–4 minutes a song for drums, bass and sections, 4–11 for the guitar):
+3. **Golden charts**, when `eval/golden.py` exists in the new checkout. Set the environment `eval/README.md` names
+   (`EVAL_DATA`, `SONGCHARTER_GOLDEN`, `SONGCHARTER_AUTOCHART`, `SONGCHARTER_ALLIN1_PYTHON`, and
+   `SONGCHARTER_SCAN_CHART`, since fresh checkouts hold no installs), then run the old commit's charts and the new
+   one's, one after the other, and compare them:
    ```sh
-   python -m eval.golden run --code /dev/shm/inspect/old --out /dev/shm/inspect/golden-old --threads 2
-   python -m eval.golden run --out /dev/shm/inspect/golden-new --threads 2 --rerun <engines whose code the diff touches>
-   python -m eval.golden diff /dev/shm/inspect/golden-old /dev/shm/inspect/golden-new --expect <parts, or none>
+   RERUN=""      # the same for both runs: e.g. RERUN="--rerun bass" for every engine whose code the diff touches
+   EXPECT=none   # the parts the brief says will change, e.g. EXPECT=guitar,bass:hard
+   cd /dev/shm/inspect/new &&
+   rm -rf /dev/shm/inspect/golden-old /dev/shm/inspect/golden-new &&
+   python -m eval.golden run --code /dev/shm/inspect/old --out /dev/shm/inspect/golden-old --threads 2 $RERUN &&
+   python -m eval.golden run --out /dev/shm/inspect/golden-new --threads 2 $RERUN &&
+   python -m eval.golden diff /dev/shm/inspect/golden-old /dev/shm/inspect/golden-new --expect $EXPECT
    ```
-   `--rerun` takes `drums`, `bass`, `sections` and `guitar`: name every engine whose code the diff touches
-   (`eval/README.md` lists each engine's files), and leave it out when it touches none. `--expect` names the parts
-   the brief says will change (`guitar`, `bass:hard`, ...), or `none`. Report the diff's exit status and verdict
-   line, every UNEXPECTED row, the pooled F1 table, and the "engines that ran" row of
-   `/dev/shm/inspect/golden-new/report.md`. Then delete both golden folders.
+   `--rerun` takes `drums`, `bass`, `sections` and `guitar`: `eval/README.md` lists each engine's files. Each run
+   takes about 6.5 min; `--rerun` adds to each run, per song, about half a minute for drums or bass, 1.5–3 min for
+   sections, 3.5–11 min for the guitar. Each run must exit 0, and then the diff must exit 0: report the exit status
+   of each (the `&&` stops at the first that fails), the diff's verdict line, every UNEXPECTED line and row, the
+   pooled F1 table, and the "engines that ran" row of `/dev/shm/inspect/golden-new/report.md`. Then delete both
+   golden folders.
 4. **Mechanical checks:** check each one the brief lists (a file exists, a grep comes up empty, a number is within
    a bound), and record pass or fail with the evidence.
 5. Remove both worktrees (`git -C <repo> worktree remove --force <path>`).

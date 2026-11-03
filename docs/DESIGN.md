@@ -1446,8 +1446,17 @@ v1's absolute targets, kept as information only:
   orders the runs while a kept folder is made or read, and the build's per-user cache is an empty folder, so its
   pruning touches nothing.
 - **Not keyed by code.** The engines' caches are keyed by their inputs and settings, not their code, so an engine's
-  code change shows only with `--rerun` (drums, bass, sections, guitar), which runs it again in the build's own folder
-  and leaves the kept one. The separation is never run again: a change to its code does not show.
+  code change shows only with `--rerun` (drums, bass, sections, guitar) on both runs, which runs it again in each
+  build's own folder and leaves the kept one. Rerun in one run only, it compares the kept commit's output with that
+  run's own, and `diff` fails, naming the engine and the kept commit. For every engine not rerun, `run` asks git
+  whether its files (`ENGINE_FILES`) differ between the kept folders' commit and its code, warns, and `diff` fails. An
+  engine that runs without being asked (its kept output did not answer: new settings or version, another autochart
+  install, the librosa fallback when `SONGCHARTER_ALLIN1_PYTHON` is unset) stops the run with exit 2 and says which
+  variable or option. The separation is never run again: a change to its code does not show.
+- **No stale summary.** `run` locks its output folder and clears what an earlier run or diff left there before any
+  check, so a run that is refused, fails or is killed leaves no summary for a diff to pass on; the gate's commands are
+  chained with `&&` from a `rm -rf` of both output folders. Bad input exits 2, a bug 3 (never 1, which is a failed
+  build or an UNEXPECTED diff).
 - **Runs** [here, golden runs]:
   - **The baseline**, `main` at 11615e2 on the seven songs: every gate OK; Expert F1@50 pooled over the songs guitar
     0.853 (6 songs), bass 0.825 (5), drums 0.962 (5), beat F1 0.876 (6); Take Me Out's guitar 0.909, bass 0.912,
@@ -2440,3 +2449,17 @@ decides), and the p95-drift click test (critique G4).
   that track's hash only), `--expect`, the diff's statuses, tables and exit codes, and `run`'s kept and private
   folders with stand-ins for the build, scan and scorer (two runs at once, a build writing into a linked stem
   caught). 35 mutations of `golden.py` and one of `scan_notes.cjs` (a constant hash), each failing a test.
+
+**Fixes after the review of `golden`** (four findings; a skeptic reproduced both majors):
+- **G1:** the gate reran engines in the new run only, so the old side's came from the kept folders' commit while the
+  summary named the old commit: a reverted bass change passed as "identical". Now `--rerun` goes to both runs (the
+  gate, the inspector and eval/README say so, with the cost), `diff` fails when the two runs reran different engines
+  or when an engine not rerun no longer matches the kept folders' code (`run` checks it with git), and names the
+  engine and the kept commit above the verdict (§3.6).
+- **G2:** a refused, failed or killed run left the earlier `summary.json` in `--out`, which a diff could pass. `run`
+  now clears the folder first, and the gate's commands are chained with `&&` after a `rm -rf`.
+- **G3:** without `SONGCHARTER_ALLIN1_PYTHON` the sections fell back to librosa unasked and every part's hash moved
+  against the baseline. An engine that runs without being asked now stops the run (exit 2), naming the variable, and
+  `diff` fails on sections from different backends.
+- **G4:** bad input that is not one of golden's own refusals (an `--out` that is a file) exits 2, and a bug 3.
+- Tests: each fix has one that fails without it (16 mutations of the fixes, each failing a test) [here].

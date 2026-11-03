@@ -74,14 +74,22 @@ whole-film check caught]:
 
 1. The full suite passes.
 2. The golden charts show no UNEXPECTED change on the whole reference set. Run from the release's checkout, with
-   the last release checked out at `/dev/shm/golden-old` (`git worktree add --detach`) and the environment that
-   `eval/README.md` names (`EVAL_DATA`, `SONGCHARTER_GOLDEN`):
+   the last release checked out at `/dev/shm/golden-old` (`git worktree add --detach /dev/shm/golden-old <commit>`),
+   and these set as `eval/README.md` says: `EVAL_DATA`, `SONGCHARTER_GOLDEN`, `SONGCHARTER_AUTOCHART`,
+   `SONGCHARTER_ALLIN1_PYTHON` (without it the sections fall back to librosa, and `run` stops with exit 2), and
+   `SONGCHARTER_SCAN_CHART` where `tools/scan-chart` has no `node_modules`:
    ```sh
-   python -m eval.golden run --code /dev/shm/golden-old --out /dev/shm/golden/old --threads 2
-   python -m eval.golden run --out /dev/shm/golden/new --threads 2 --rerun <the engines whose code changed>
-   python -m eval.golden diff /dev/shm/golden/old /dev/shm/golden/new --expect <parts the release changes, or none>
+   RERUN=""      # the same for both runs, e.g. RERUN="--rerun bass": engines changed since the kept folders
+   EXPECT=none   # or the parts the release changes, e.g. EXPECT=guitar,bass:hard
+   rm -rf /dev/shm/golden/old /dev/shm/golden/new &&
+   python -m eval.golden run --code /dev/shm/golden-old --out /dev/shm/golden/old --threads 2 $RERUN &&
+   python -m eval.golden run --out /dev/shm/golden/new --threads 2 $RERUN &&
+   python -m eval.golden diff /dev/shm/golden/old /dev/shm/golden/new --expect $EXPECT
    ```
-   Leave `--rerun` out when no engine's code changed (`eval/README.md` lists each engine's files). The diff must
-   exit 0. Read its `report.md`: the pooled F1 per part, and the engines that ran.
+   Each run must exit 0, and then the diff must exit 0 (the `&&` stops at the first that does not). A run takes
+   about 6.5 min. `--rerun` adds to each of the two runs, per song, about half a minute for drums or bass, 1.5–3 min
+   for sections and 3.5–11 min for the guitar. A run warns, and the diff fails, when an engine's code changed since
+   the kept folders were made and that engine was not rerun in both. Read `report.md`: the pooled F1 per part, and the
+   engines that ran.
 3. The test song runs end to end with the gate ok, and its preview has been looked at.
 4. The owner approves the release.
