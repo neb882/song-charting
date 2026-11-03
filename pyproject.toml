@@ -3,6 +3,8 @@ name = "songcharter"
 version = "0.1.0"
 description = "Make Clone Hero charts from audio"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "numpy>=2.0",
@@ -21,7 +23,7 @@ preview = ["matplotlib>=3.8", "librosa>=0.10"]   # python -m songcharter.preview
 songcharter = "songcharter.cli:main"
 
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools>=77"]   # 77: the SPDX `license` string and `license-files` (PEP 639)
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
