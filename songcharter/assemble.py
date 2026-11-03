@@ -31,7 +31,8 @@ own difficulties, star power, fills and sections, and a Clone Hero folder that i
      dropped: ours replace them. Onsets before the part's own stem first plays or after it last plays are removed
      from every taken level (`active_span`, DESIGN.md 2.8: no notes after the stem stops; a part's `trim_silence`
      turns it off); an onset elsewhere where the stem is silent is only reported.
-  4. **Chart.** Star power, fills and (opt-in) solos on Expert (starpower.place_phrases), then Hard, Medium and
+  4. **Chart.** Star power, fills and (opt-in, or on the sections named in `solos`) solos on Expert
+     (starpower.place_phrases); only the difficulties in `levels` are written. Then Hard, Medium and
      Easy, each reduced from the level above (reduce.py; with take_difficulties "all" the source's own levels, any
      missing one reduced from the level above), then every level's phrases fitted to its own notes
      (starpower.fit_chart). Easy drums get the drum stem's loudness per section. reduce.check_reductions and
@@ -70,7 +71,9 @@ The config (JSON; relative paths are relative to the config file, keys starting 
                 "take_difficulties": "expert", "hopo": "forced", "trim_silence": true},
                {"instrument": "bass", "source": "run1/notes.chart", "takes": ["run2/notes.chart", "run3/notes.chart"]}],
      "sections": "allin1.json",                               (or "from:<part name>", or null)
-     "solos": "off",                                          ("stems": confirmed by the vocals stem, "labels")
+     "solos": "off",                                          ("stems": confirmed by the vocals stem, "labels",
+                                                               or a list of section names: ["Solo 1", "Solo 2"])
+     "levels": ["expert", "hard", "medium", "easy"],          (the difficulties written; Expert always)
      "metadata": {"name": "...", "artist": "...", "album": "...", "genre": "...", "year": "2014",
                   "album_track": 2, "charter": "songcharter"},  (album, genre and year required; charter defaults)
      "output": "out/song"}
@@ -195,13 +198,16 @@ class AssembleConfig:
     lead_in: float = 2.5                          # the first beat lands at least this late in song.ogg
     tempo_tolerance: float = TEMPO_TOLERANCE
     sections: str | None = None                    # an allin1 JSON, "from:<part name>", or None
-    solos: str = "off"                             # "off", "stems" (vocals quiet, lead loud) or "labels"
+    solos: str | tuple[str, ...] = "off"           # "off", "stems" (vocals quiet, lead loud), "labels", or the
+                                                   # names of the sections that are solos (a person's choice)
+    levels: tuple[str, ...] = DIFFICULTIES         # the difficulties written (Expert always; the rest reduced)
     album_art: Path | None = None
     quality: float = 7.0                           # song.ogg Vorbis quality
 
 
 _CONFIG_KEYS = {"audio", "output", "parts", "metadata", "stems", "beat_hints", "grid_mode", "grid_source",
-                "grid_secondary", "lead_in", "tempo_tolerance", "sections", "solos", "album_art", "quality"}
+                "grid_secondary", "lead_in", "tempo_tolerance", "sections", "solos", "levels", "album_art",
+                "quality"}
 _PART_KEYS = {f.name for f in fields(PartConfig)}
 _METADATA_KEYS = {"name", "artist", "album", "genre", "year", "charter", "album_track", "preview_start_ms",
                   "loading_phrase"}
@@ -241,6 +247,28 @@ def _string(v, what: str, optional: bool = False) -> str | None:
     if not isinstance(v, str) or not v.strip():
         raise InputError(f"{what} must be {'a string or null' if optional else 'a non-empty string'}, not {v!r}")
     return v
+
+
+def _solos(v) -> str | tuple[str, ...]:
+    """The solos setting: a mode name (lower case) or a non-empty list of section names (kept as written)."""
+    if isinstance(v, list):
+        if not v:
+            raise InputError("solos as a list needs at least one section name")
+        return tuple(_string(x, f"solos[{i}]") for i, x in enumerate(v))
+    return _string(v, "solos").lower()
+
+
+def _levels(v) -> tuple[str, ...]:
+    """The difficulties to write, in DIFFICULTIES order; Expert is required (the others are reduced from it)."""
+    if not isinstance(v, list) or not v:
+        raise InputError(f"levels must be a non-empty list of difficulties, not {v!r}")
+    names = [_string(x, f"levels[{i}]").lower() for i, x in enumerate(v)]
+    bad = sorted(set(names) - set(DIFFICULTIES))
+    if bad:
+        raise InputError(f"levels: unknown difficulty {', '.join(bad)} (difficulties are {', '.join(DIFFICULTIES)})")
+    if "expert" not in names:
+        raise InputError("levels must include expert (the other levels are reduced from it)")
+    return tuple(d for d in DIFFICULTIES if d in names)
 
 
 def parse_config(data: dict, base: Path | str = ".", output: Path | str | None = None) -> AssembleConfig:
@@ -350,7 +378,8 @@ def parse_config(data: dict, base: Path | str = ".", output: Path | str | None =
         grid_mode=d.get("grid_mode"), grid_source=_string(d.get("grid_source"), "grid_source", True),
         grid_secondary=secondary, lead_in=opt("lead_in", 2.5, low=LEAD_S),
         tempo_tolerance=opt("tempo_tolerance", TEMPO_TOLERANCE, above=0),
-        sections=_string(d.get("sections"), "sections", True), solos=_string(d.get("solos", "off"), "solos").lower(),
+        sections=_string(d.get("sections"), "sections", True), solos=_solos(d.get("solos", "off")),
+        levels=_levels(d.get("levels", list(DIFFICULTIES))),
         album_art=path(d.get("album_art"), "album_art", True), quality=opt("quality", 7.0, low=0, high=10))
     if cfg.album_art is not None and cfg.album_art.suffix.lower() not in (".png", ".jpg", ".jpeg"):
         raise InputError(f"album_art {cfg.album_art} is not a .png or .jpg")
@@ -360,8 +389,8 @@ def parse_config(data: dict, base: Path | str = ".", output: Path | str | None =
         raise InputError(f"grid_source {cfg.grid_source!r} is not 'mix' or one of the stems")
     if cfg.grid_secondary and cfg.grid_secondary != "mix" and cfg.grid_secondary not in cfg.stems:
         raise InputError(f"grid_secondary {cfg.grid_secondary!r} is not 'mix', 'none' or one of the stems")
-    if cfg.solos not in ("off", "stems", "labels"):
-        raise InputError("solos is 'off', 'stems' or 'labels'")
+    if isinstance(cfg.solos, str) and cfg.solos not in ("off", "stems", "labels"):
+        raise InputError("solos is 'off', 'stems', 'labels' or a list of section names")
     if cfg.sections is not None and str(cfg.sections).startswith("from:"):
         if cfg.sections[5:] not in {p.key for p in parts}:
             raise InputError(f"sections {cfg.sections!r}: no part is named {cfg.sections[5:]!r}")
@@ -1277,8 +1306,24 @@ def assemble(config: AssembleConfig | dict | str | Path) -> AssembleResult:
                     year=str(cfg.metadata.get("year", "")))
     experts = [by_inst[i]["expert"] for i in INSTRUMENTS if i in by_inst]
     chart = Chart(info, tm, sections, experts)
-    chart = place_phrases(chart, solos=cfg.solos != "off" and (cfg.solos == "labels" or confirm is not None),
-                          confirm_solo=confirm)
+    named = cfg.solos if isinstance(cfg.solos, tuple) else None
+    chart = place_phrases(chart, solos=named is not None or (cfg.solos != "off" and (cfg.solos == "labels"
+                                                                                       or confirm is not None)),
+                          confirm_solo=confirm, solo_names=named)
+    if named:
+        have = {n for _, n in sections}
+        lead_track = next((t for t in chart.tracks if t.instrument == "Single" and t.difficulty == "Expert"), None)
+        starts = sorted(sections)
+        for name in named:
+            if name not in have:
+                warnings.append(f"solos: no section is named {name!r} (sections: {', '.join(sorted(have))})")
+                continue
+            for i, (a, n) in enumerate(starts):
+                b = starts[i + 1][0] if i + 1 < len(starts) else None
+                if n == name and lead_track is not None and not any(a <= s < (b if b is not None else s + 1)
+                                                                    for s, _ in lead_track.solos):
+                    warnings.append(f"solos: section {name!r} got no solo (it needs 16 Expert guitar onsets and 4 "
+                                    "measures, and a song has at most 3 solos)")
     placed = {t.instrument: t for t in chart.tracks}
     loud = None
     if "drums" in levels_db and sections:
@@ -1288,7 +1333,7 @@ def assemble(config: AssembleConfig | dict | str | Path) -> AssembleResult:
     for part in sorted(cfg.parts, key=lambda p: INSTRUMENTS.index(p.instrument)):
         own = by_inst[part.instrument] if part.take_difficulties == "all" else {}
         tracks += _ladder(placed[CHART_INSTRUMENT[part.instrument]], own, tm, [t for t, _ in sections], loud)
-    chart = fit_chart(Chart(info, tm, sections, tracks))
+    chart = fit_chart(Chart(info, tm, sections, [t for t in tracks if LEVEL_KEY[t.difficulty] in cfg.levels]))
 
     # checks
     issues: list[GateIssue] = []
