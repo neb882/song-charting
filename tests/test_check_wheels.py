@@ -1,8 +1,11 @@
-"""packaging/check_wheels.py: which pins of a lock export it keeps, the compile it asks for, the comparison, and the
-whole check of one lane through the real uv on a local find-links folder (fake wheels, and fake sdists whose in-tree
-build backend needs nothing), offline: wheels and the allowed sdist pass; a second sdist-only package, the allowed
-sdist at another version, a pin the lock misses, an sdist off the lock's hash or not downloadable, and an sdist
-that builds a platform wheel each fail. The real locks are checked by the 10-lanes CI hook, which needs the network."""
+"""packaging/check_wheels.py: which pins of a lock export it keeps, the compile it asks for (and its input, with the
+cross-index exception), the comparison, and the whole check of one lane through the real uv, offline, on local
+folders: find-links for PyPI and the lane's index (fake wheels, and fake sdists whose in-tree build backend needs
+nothing) and a flat index for another lane's. Wheels, the allowed sdist and cu126's torchaudio from the other index
+pass; a second sdist-only package, the allowed sdist at another version, a pin the lock misses, any other package
+from the other index, the exception on another lane, an sdist off the lock's hash or not downloadable, and an sdist
+that builds a platform wheel each fail. The real locks are checked by the 10-lanes CI hook, which needs the
+network."""
 import hashlib
 import importlib.util
 import io
@@ -11,6 +14,7 @@ import shutil
 import sys
 import tarfile
 import textwrap
+import tomllib
 import zipfile
 from pathlib import Path
 
@@ -91,12 +95,27 @@ def test_only_the_three_lanes_can_be_asked_for(lanes, capsys):
     assert e.value.code == 2 and "choose from cpu,cu126,cu132" in capsys.readouterr().err
 
 
+def test_the_compile_input_gives_only_the_named_exception_another_index(tmp_path):
+    pinned = {"numpy": "2.5.4", "torch": "2.14.1+cu126", "torchaudio": "2.11.1+cpu"}
+    text = cw.compile_input(pinned, "cu126", tmp_path).read_text()
+    data = tomllib.loads(text)
+    assert data["project"]["dependencies"] == ["numpy==2.5.4", "torch==2.14.1+cu126", "torchaudio==2.11.1+cpu"]
+    assert data["tool"]["uv"]["sources"] == {"torchaudio": {"index": "cross-cpu"}}
+    assert data["tool"]["uv"]["index"] == [{"name": "cross-cpu", "url": "https://download.pytorch.org/whl/cpu",
+                                            "explicit": True}]
+    # no exception on the other lanes, nor on cu126 when its package is not pinned
+    for lane, pins in (("cpu", pinned), ("cu132", pinned), ("cu126", {"torch": "2.14.1+cu126"})):
+        assert "tool" not in tomllib.loads(cw.compile_input(pins, lane, tmp_path).read_text())
+
+
 def test_compare_takes_public_versions_but_torch_in_full():
     assert cw.compare({"numpy": "2.5.0", "torch": "2.15.0+cpu"}, {"numpy": "2.5", "torch": "2.15.0+cpu"}) == []
     assert cw.compare({"numpy": "2.5.4"}, {"numpy": "2.5.4+local"}) == []
     assert cw.compare({"torch": "2.15.0+cpu"}, {"torch": "2.15.0+cu132"}) == [
         "torch: 2.15.0+cpu in the lock, 2.15.0+cu132 in the compile"]
     assert cw.compare({"torch": "2.15.0+cpu"}, {"torch": "2.15.0"}) != []
+    assert cw.compare({"torchaudio": "2.11.1+cpu"}, {"torchaudio": "2.11.1+cu132"}) == [
+        "torchaudio: 2.11.1+cpu in the lock, 2.11.1+cu132 in the compile"]
     assert cw.compare({"numpy": "2.5.4", "a": "1"}, {"numpy": "2.5.3", "b": "1"}) == [
         "a 1: in the lock, not in the compile", "b 1: in the compile, not in the lock",
         "numpy: 2.5.4 in the lock, 2.5.3 in the compile"]
@@ -198,28 +217,36 @@ def uv(monkeypatch, tmp_path):
 
 
 @pytest.fixture
-def lane(tmp_path):
-    """A find-links folder (torch and a wheel-only package as wheels, the allowed antlr and a second package as sdists
-    only) and a project whose cpu lane pins torch, with antlr's sdist in its lock."""
-    links, project, work = tmp_path / "links", tmp_path / "project", tmp_path / "work"
-    for d in (links, project, work):
+def lane(tmp_path, monkeypatch):
+    """A find-links folder for PyPI and the lane's index (torch and a wheel-only package as wheels, the allowed antlr
+    and a second package as sdists only), a flat index standing for another lane's (torchaudio, and a package found
+    nowhere else), an empty default index, and a project whose lanes pin torch (and torchaudio on cu126), with
+    antlr's sdist in its lock."""
+    links, other, empty, project, work = (tmp_path / d for d in ("links", "other", "empty", "project", "work"))
+    for d in (links, other, empty, project, work):
         d.mkdir()
+    monkeypatch.setattr(cw, "pytorch_index", lambda lane: {"url": other.as_uri(), "format": "flat"})
+    write_wheel(other, "torchaudio", "2.11.1+cpu", requires=["torch>=2.11"])
+    write_wheel(other, "other-only", "1.0")
+    write_wheel(links, "torch", "2.14.1+cu126")
     write_wheel(links, "torch", "2.15.0+cpu")
     write_wheel(links, "wheel-only", "1.0")
     write_wheel(links, "needs-dep", "1.0", requires=["dep>=2"])
     write_wheel(links, "dep", "2.0")
     write_sdist(links, "sdist-only", "1.0")
     write_lock(project, write_sdist(links, ANTLR, "4.9.3"))
-    (project / "pyproject.toml").write_text('[project.optional-dependencies]\ncpu = ["torch==2.15.0"]\n')
-    return {"links": links, "project": project, "work": work}
+    (project / "pyproject.toml").write_text('[project.optional-dependencies]\ncpu = ["torch==2.15.0"]\n'
+                                           'cu126 = ["torch==2.14.1", "torchaudio==2.11.1"]\n')
+    return {"links": links, "empty": empty, "project": project, "work": work}
 
 
 GOOD = f"{ANTLR}==4.9.3 ; sys_platform == 'linux'\ntorch==2.15.0+cpu\nwheel-only==1.0\n"
 
 
-def run_check(uv, lane, export, **kw):
-    return cw.check(uv, lane["project"], "cpu", lane["work"], "fixture", export=export,
-                    index=["--no-index", "--find-links", str(lane["links"])], **kw)
+def run_check(uv, lane, export, lane_name="cpu", **kw):
+    # not --no-index, which would also turn off the exception's explicit index
+    return cw.check(uv, lane["project"], lane_name, lane["work"], "fixture", export=export,
+                    index=["--default-index", lane["empty"].as_uri(), "--find-links", str(lane["links"])], **kw)
 
 
 def test_a_lane_of_wheels_and_the_allowed_sdist_passes(uv, lane):
@@ -239,6 +266,24 @@ def test_the_allowed_sdist_at_another_version_fails(uv, lane):
     write_sdist(lane["links"], ANTLR, "4.9.2")
     with pytest.raises(cw.CheckError, match=rf"(?s)no wheels-only resolution.*{ANTLR}"):
         run_check(uv, lane, GOOD.replace("4.9.3", "4.9.2"))
+
+
+CU126 = "torch==2.14.1+cu126\ntorchaudio==2.11.1+cpu\nwheel-only==1.0\n"
+
+
+def test_cu126s_torchaudio_from_the_cpu_index_passes(uv, lane):
+    assert run_check(uv, lane, CU126, "cu126") == (
+        "ok fixture cu126: 3 packages, torch 2.14.1+cu126, torchaudio 2.11.1+cpu (from the cpu index)")
+
+
+def test_any_other_package_from_another_index_fails(uv, lane):
+    with pytest.raises(cw.CheckError, match=r"(?s)no wheels-only resolution.*other-only"):
+        run_check(uv, lane, CU126 + "other-only==1.0\n", "cu126")
+
+
+def test_the_exception_holds_only_on_its_lane(uv, lane):
+    with pytest.raises(cw.CheckError, match=r"(?s)no wheels-only resolution.*torchaudio"):
+        run_check(uv, lane, CU126.replace("2.14.1+cu126", "2.15.0+cpu"), "cpu")
 
 
 def test_a_dependency_the_lock_misses_fails(uv, lane):

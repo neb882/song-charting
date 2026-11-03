@@ -9,17 +9,20 @@ packaging/check_wheels.py`. For each project (default `.` and `packaging/allin1`
 2. the pins whose marker holds on CPython 3.13, Linux x86_64 are kept (`packaging.markers`);
 3. `uv pip compile` resolves them again for x86_64-manylinux_2_39 (glibc 2.39, CI's Ubuntu 24.04; the friend's
    Ubuntu 26.04 has 2.43, so what passes here installs there), from PyPI and the lane's PyTorch index, with
-   `--only-binary` for every package but the allowed pure-Python sdists (PURE_SDISTS).
+   `--only-binary` for every package but the allowed pure-Python sdists (PURE_SDISTS). The one exception to that
+   index rule is named in CROSS_INDEX: that package alone may come from another lane's PyTorch index.
 
-A pair passes when the compile gives the same names at the same public versions (torch in full: its local part,
-`+cu132`, is the lane), and every allowed sdist among its pins downloads from the lock's URL with the lock's hash and
-builds (`uv build --wheel`) to a py3-none-any wheel. Prints one `ok <project> <lane>: <n> packages, torch <v>` line
-per pair, with the lane's other pins and the sdists built; exit 0, or 1 with the failures.
+A pair passes when the compile gives the same names at the same public versions (torch and torchaudio in full: their
+local part, `+cu132`, names the build), and every allowed sdist among its pins downloads from the lock's URL with the
+lock's hash and builds (`uv build --wheel`) to a py3-none-any wheel. Prints one `ok <project> <lane>: <n> packages,
+torch <v>` line per pair, with the lane's other pins (and the index of a cross-index one) and the sdists built;
+exit 0, or 1 with the failures.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -43,6 +46,12 @@ BUILD_PYTHON = PYTHON   # the Python the allowed sdists are built with (uv finds
 # the sdists allowed in a lane, at these versions only: each must build to py3-none-any with no compiler.
 # antlr4-python3-runtime: hydra-core 1.3.8 (all-in-one-infer needs it) pins ==4.9.*, and 4.9.3 is an sdist only.
 PURE_SDISTS = {"antlr4-python3-runtime": "4.9.3"}
+# the one exception to the index rule (PyPI and the lane's own PyTorch index): lane -> {package: the lane whose index
+# it comes from}. allin1's torchaudio on cu126 comes from the cpu index, which also serves the cpu lane as its own:
+# PyPI's 2.11.1 is a CUDA 13 build and cu126's index has no 2.11.1 (packaging/allin1/pyproject.toml).
+CROSS_INDEX = {"cu126": {"torchaudio": "cpu"}}
+# the packages compared with their local part, which names the build (`+cpu`, `+cu132`)
+FULL_VERSION = ("torch", "torchaudio")
 # where the pins are evaluated: CPython 3.13 on Linux x86_64. python_full_version is 3.13.0, as for `uv pip compile
 # --python-version 3.13`, so the two steps agree.
 MARKER_ENV = {
@@ -107,6 +116,30 @@ def pins(export: str) -> dict[str, str]:
     return out
 
 
+def pytorch_index(lane: str) -> dict:
+    """The `[[tool.uv.index]]` fields of a lane's PyTorch index, for a cross-index exception's source."""
+    return {"url": PYTORCH.format(lane=lane)}
+
+
+def compile_input(pinned: dict[str, str], lane: str, folder: Path) -> Path:
+    """The compile's input, a pyproject.toml whose dependencies are the pins. Each of the lane's cross-index
+    exceptions among them (CROSS_INDEX) gets a source on that index, marked explicit, so no other package can come
+    from it."""
+    cross = {name: other for name, other in CROSS_INDEX.get(lane, {}).items() if name in pinned}
+    lines = ["[project]", 'name = "check-wheels-pins"', 'version = "0"', "dependencies = ["]
+    lines += [f"    {json.dumps(f'{name}=={version}')}," for name, version in sorted(pinned.items())]
+    lines.append("]")
+    if cross:
+        lines += ["", "[tool.uv.sources]"]
+        lines += [f'{name} = {{ index = "cross-{other}" }}' for name, other in sorted(cross.items())]
+        for other in sorted(set(cross.values())):
+            table = {"name": f"cross-{other}", **pytorch_index(other), "explicit": True}
+            lines += ["", "[[tool.uv.index]]", *(f"{k} = {json.dumps(v)}" for k, v in table.items())]
+    path = folder / "pyproject.toml"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
 def compile_command(uv: str, pinned: dict[str, str], requirements: Path, lane: str,
                     index: list[str] | None = None) -> list[str]:
     """`uv pip compile` of the pins for the friend's platform, wheels only but for the allowed sdists. index: where
@@ -119,7 +152,8 @@ def compile_command(uv: str, pinned: dict[str, str], requirements: Path, lane: s
 
 
 def compare(want: dict[str, str], got: dict[str, str]) -> list[str]:
-    """The differences between the lock's pins and the compile's: names, public versions, and torch in full."""
+    """The differences between the lock's pins and the compile's: names, public versions, and FULL_VERSION's
+    packages in full."""
     problems = []
     for name in sorted(set(want) | set(got)):
         if name not in got:
@@ -128,7 +162,7 @@ def compare(want: dict[str, str], got: dict[str, str]) -> list[str]:
             problems.append(f"{name} {got[name]}: in the compile, not in the lock")
         else:
             a, b = Version(want[name]), Version(got[name])
-            if (a != b) if name == "torch" else (Version(a.public) != Version(b.public)):
+            if (a != b) if name in FULL_VERSION else (Version(a.public) != Version(b.public)):
                 problems.append(f"{name}: {want[name]} in the lock, {got[name]} in the compile")
     return problems
 
@@ -186,9 +220,7 @@ def check(uv: str, project: Path, lane: str, work: Path, label: str, export: str
         export = proc.stdout
     want = pins(export)
     folder = Path(tempfile.mkdtemp(prefix=f"{lane}-", dir=work))
-    requirements = folder / "requirements.in"
-    requirements.write_text("".join(f"{name}=={v}\n" for name, v in sorted(want.items())), encoding="utf-8")
-    proc = run(compile_command(uv, want, requirements, lane, index), cwd=folder)
+    proc = run(compile_command(uv, want, compile_input(want, lane, folder), lane, index), cwd=folder)
     if proc.returncode != 0:
         raise CheckError(f"no wheels-only resolution (exit {proc.returncode})\n{tail(proc)}")
     got = pins(proc.stdout)
@@ -204,7 +236,9 @@ def check(uv: str, project: Path, lane: str, work: Path, label: str, export: str
         sdists.append(f"sdist {name} {want[name]} built ({built[key]})")
     lane_pins = [canonicalize_name(Requirement(r).name) for r in extras(project).get(lane, [])]
     shown = ["torch"] + [n for n in lane_pins if n != "torch" and n in got]
-    listed = ", ".join(f"{n} {got.get(n, 'none')}" for n in shown)
+    cross = CROSS_INDEX.get(lane, {})
+    listed = ", ".join(f"{n} {got.get(n, 'none')}" + (f" (from the {cross[n]} index)" if n in cross else "")
+                       for n in shown)
     return ", ".join([f"ok {label} {lane}: {len(got)} packages", listed, *sdists])
 
 
