@@ -11,8 +11,9 @@ import pytest
 
 import songcharter.assemble as assemble_module
 from songcharter import audio as A
-from songcharter.assemble import (HOPO_RULES, GateIssue, active_span, assemble, check_inputs, difficulty_rating,
-                                  failed_folder, find_scan_chart, load_config, parse_config, run_scan_chart,
+from songcharter.assemble import (CLIP_MARGIN_S, HOPO_RULES, GateIssue, active_span, assemble, check_inputs,
+                                  clip_to_audio, difficulty_rating, failed_folder, find_scan_chart, last_tick_by,
+                                  load_config, parse_config, run_scan_chart,
                                   scan_chart_issues, scan_chart_song, scan_rules, self_check, silent_onsets,
                                   stem_alignment, trim_silent_edges, verify_folder)
 from songcharter.chart import (DRUM_ACTIVATION, STAR_POWER, Chart, DrumHit, FretNote, Phrase, SongInfo, Track,
@@ -1028,3 +1029,90 @@ def test_expert_only_and_solos_on_named_sections(built):
     assert len(lead.solos) == 1 and a <= lead.solos[0][0] and lead.solos[0][1] < b
     assert any("no section is named 'Nowhere'" in w for w in result.report["warnings"])
     assert result.report["tracks"]["guitar"].keys() == {"expert"}
+
+
+# ------------------------------------------------------------------------------------------------ the end of the audio
+
+def test_last_tick_by_the_limit():
+    tm = TempoMap(192, [Tempo(0, 120000), Tempo(700, 97531), Tempo(1500, 181000)])
+    for limit in (0.0, 0.0004, 0.5, 1.82, 3.3333, 4.96, 7.0, 12.345):
+        k = last_tick_by(tm, limit)
+        assert tm.tick_to_sec(k) <= limit < tm.tick_to_sec(k + 1), limit
+
+
+def test_clip_to_audio_counts_what_it_cuts():
+    """Song.ogg ends at 10 s on a 120 BPM map at 192 (384 ticks a second): with the 1 ms margin the last tick kept
+    is 3839 (9.9974 s). A note on 3840 (inside the margin) or later goes; a sustain past 3839 ends there, or is
+    removed when that leaves it under its level's shortest sustain (a beat is 192 ticks: Expert 0.75 beat, Medium 1,
+    Easy 2)."""
+    tm = TempoMap(192, [Tempo(0, 120000)])
+    assert last_tick_by(tm, 10.0 - CLIP_MARGIN_S) == 3839
+    expert = Track("Expert", "Single", [FretNote(3072, (0,), 1536), FretNote(3700, (1, 2), 0),
+                                        FretNote(3800, (1,), 200), FretNote(3840, (2,)), FretNote(4000, (3,), 192)])
+    easy = Track("Easy", "Single", [FretNote(3456, (0,), 768)])
+    medium = Track("Medium", "Single", [FretNote(3456, (0,), 768)])
+    inside = Track("Hard", "Single", [FretNote(384, (0,), 3455)])  # ends on 3839 exactly
+    tracks = {"expert": expert, "hard": inside, "medium": medium, "easy": easy}
+    out, counts = clip_to_audio(tracks, tm, 10.0)
+    assert [(n.tick, n.length) for n in out["expert"].notes] == [(3072, 767), (3700, 0), (3800, 0)]
+    assert counts["expert"] == {"onsets_dropped": 2, "sustains_clipped": 1, "sustains_removed": 1}
+    assert out["hard"] is inside and counts["hard"] == {"onsets_dropped": 0, "sustains_clipped": 0,
+                                                         "sustains_removed": 0}
+    assert out["medium"].notes == [FretNote(3456, (0,), 383)]   # 383 ticks: just under 2 beats, over Medium's 1
+    assert out["easy"].notes == [FretNote(3456, (0,), 0)] and counts["easy"]["sustains_removed"] == 1  # under 2
+    drums = Track("Expert", "Drums", [DrumHit(3839, 0), DrumHit(3840, 1), DrumHit(3840, 2, cymbal=True)])
+    out, counts = clip_to_audio({"expert": drums}, tm, 10.0)
+    assert out["expert"].notes == [DrumHit(3839, 0)] and counts["expert"]["onsets_dropped"] == 1  # one onset
+
+
+def _clip_config(root):
+    """The guitar tool's chart with notes at and past the end of the 84-s audio: Expert sustains from 81.5 s to
+    89 s, and Expert and Hard play at 84.5 s; Hard also has a 83.75-s note sustained to 86 s, which ends 0.25 s
+    after it at the end of the audio, under Hard's shortest sustain (0.75 beat, 0.375 s)."""
+    tm = TempoMap(480, [Tempo(0, 60000)])
+    tick = lambda t: round(tm.sec_to_tick(t + LATE))  # noqa: E731
+    expert, hard = write_tool_chart(root / "tool" / "notes.chart")
+    a = FretNote(tick(81.5), (2,), tick(89.0) - tick(81.5))
+    expert += [a, FretNote(tick(84.5), (1,))]
+    hard += [a, FretNote(tick(83.75), (1,), tick(86.0) - tick(83.75)), FretNote(tick(84.5), (0,))]
+    chart = Chart(SongInfo("tool", "tool"), tm, [], [Track("Expert", "Single", expert), Track("Hard", "Single", hard)])
+    (root / "clip").mkdir(exist_ok=True)
+    (root / "clip" / "notes.chart").write_text(write_chart(chart), encoding="utf-8", newline="")
+    parts = [{**CONFIG["parts"][0], "source": "clip/notes.chart"}] + CONFIG["parts"][1:]
+    return {**CONFIG, "parts": parts, "output": "out/clip"}
+
+
+def test_notes_past_the_end_of_the_audio_are_clipped(built, monkeypatch):
+    """A source that runs past the audio (an excerpt cut mid-note): the build clips every taken level and passes
+    the gate, scan-chart's included, with every written track ending CLIP_MARGIN_S or more before song.ogg; the
+    counts are in report.json. Without the clip the gate fails it (noteAfterAudio, on every guitar level)."""
+    root, _, _ = built
+    cfg = _clip_config(root)
+    result = assemble(parse_config(cfg, root))
+    assert result.ok, [i for i in result.issues if i.error]
+    clipped = result.report["parts"]["guitar"]["clipped"]
+    assert clipped["audio_end"] == DURATION and clipped["margin_s"] == CLIP_MARGIN_S
+    assert clipped["levels"] == {"expert": {"onsets_dropped": 1, "sustains_clipped": 1, "sustains_removed": 0},
+                                 "hard": {"onsets_dropped": 1, "sustains_clipped": 0, "sustains_removed": 1}}
+    assert all(not any(c.values()) for k in ("bass", "drums") for c in result.report["parts"][k]["clipped"]["levels"]
+               .values())
+    song_end = DURATION + result.lead.pad_seconds
+    song = read_chart(result.folder / "notes.chart")
+    assert {d for i, d in song.parts if i == "guitar"} == {"expert", "hard", "medium", "easy"}
+    for key, part in song.parts.items():
+        last = max([n.time for n in part.notes] + [n.end for n in part.notes if getattr(n, "end", None)])
+        assert last <= song_end - CLIP_MARGIN_S + 1e-9, key
+    lead = next(t for t in result.chart.tracks if t.instrument == "Single" and t.difficulty == "Expert")
+    assert max(n.tick + n.length for n in lead.notes) == last_tick_by(result.chart.tempo, song_end - CLIP_MARGIN_S)
+    if find_scan_chart()[0] is not None:
+        assert result.report["gate"]["scan_chart"]["ran"]
+    # and the command line's summary says so, on the part's line
+    from songcharter.cli import _summary
+    line = next(x for x in _summary(result).splitlines() if x.startswith("part guitar: "))
+    assert line.endswith("; at the end of the audio 1 Expert onsets dropped, 1 sustains clipped, 0 removed"), line
+    assert not any("at the end of the audio" in x for x in _summary(result).splitlines() if x.startswith("part bass"))
+    monkeypatch.setattr(assemble_module, "clip_to_audio", lambda tracks, tempo, end: (tracks, {}))
+    unclipped = assemble(parse_config({**cfg, "output": "out/unclipped"}, root))
+    assert not unclipped.ok
+    assert {(i.difficulty, i.kind) for i in unclipped.issues if i.error and i.instrument == "guitar"} == {
+        (d, "noteAfterAudio") for d in ("expert", "hard", "medium", "easy")}

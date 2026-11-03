@@ -400,6 +400,13 @@ def limit_chord(frets, difficulty: str) -> tuple[int, ...]:
     return tuple(fr)
 
 
+def sustain_kept(tm: TempoMap, tick: int, end: int, difficulty: str) -> bool:
+    """Whether a sustain from `tick` to `end` is long enough to keep on the difficulty: SUSTAIN_MIN_BEATS beats and
+    SUSTAIN_MIN_S seconds (shorter ones become plain notes)."""
+    return (end - tick >= SUSTAIN_MIN_BEATS[difficulty] * tm.resolution
+            and tm.tick_to_sec(end) - tm.tick_to_sec(tick) >= SUSTAIN_MIN_S - 1e-9)
+
+
 def _natural(prev: tuple[int, ...] | None, gap: int, frets: tuple[int, ...], threshold: int) -> bool:
     """Clone Hero's natural HOPO in a .chart (scan-chart's resolveFretModifiers): a single note, at most `threshold`
     ticks after the previous note, which is not the same single note."""
@@ -584,8 +591,7 @@ def _frets(notes: list[TimedNote], groups: dict[int, list[int]], grid: SnapGrid,
                           math.ceil(nxt.tick - tm.sec_to_tick(tm.tick_to_sec(nxt.tick) - SUSTAIN_GAP_S) - 1e-9))
                 if end > nxt.tick - gap:
                     end, trimmed = int(nxt.tick - gap), True
-            if (end - n.tick >= SUSTAIN_MIN_BEATS[difficulty] * res
-                    and tm.tick_to_sec(end) - tm.tick_to_sec(n.tick) >= SUSTAIN_MIN_S - 1e-9):
+            if sustain_kept(tm, n.tick, end, difficulty):
                 length = end - n.tick
                 rep.sustains_trimmed += trimmed
             else:

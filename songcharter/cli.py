@@ -1,13 +1,22 @@
 """The command line:
 
-    songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums] [--takes N]
-                      [--device auto|cpu|cuda] [--threads N] [--title ...] [--artist ...] [--album ...] [--year ...]
-                      [--genre ...]
+    songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums]
+                      [--levels expert|all|expert,hard,...] [--solos labels|stems|off|"NAME,NAME"] [--takes N]
+                      [--device auto|cpu|cuda] [--threads N] [--no-preview] [--title ...] [--artist ...]
+                      [--album ...] [--year ...] [--genre ...]
     songcharter assemble <config.json> [--out DIR]
 
 `chart` runs the whole pipeline on one song file (pipeline.py): decode, separation, the engines, then assemble's
-build and gate; progress goes to stderr, a line per stage with its time, and the summary to stdout. `assemble`
+build and gate, then the preview of the built folder; progress goes to stderr, a line per stage with its time, and
+the summary to stdout. `assemble`
 builds a song folder from a config that names existing charts.
+
+--solos takes a mode (labels, the default: every section named Solo; pipeline.py says why) or the names of the
+sections to make solos, as one argument with the names separated by
+commas: a name with a space needs quotes around the whole list, in a POSIX shell, cmd.exe and PowerShell alike
+(--solos "Solo 1,Solo 2"; unquoted, the shell splits the list at its spaces). A name cannot hold a comma, and
+a name that is a mode word (stems, labels, off) is taken as the mode. The names are the build's own sections (the
+summary's warnings list them when a name matches none).
 
 Exit status (both commands):
   0  the song folder passed the gate and is in the output folder;
@@ -18,7 +27,9 @@ Exit status (both commands):
      or an OSError, printed as one line;
   3  an internal error, a bug: any other exception, numpy's and torch's included (the traceback is printed, and
      for `chart` also kept in the work folder's pipeline.json);
-  130  interrupted (Ctrl+C): the output folder keeps what it held.
+  130  interrupted (Ctrl+C) before the build was in place: the output folder keeps what it held. For `chart` a
+       Ctrl+C during the preview or the pruning after the build stops only that stage, which is warned about, and
+       the exit status is 0 or 1 as the gate says, with the summary.
 """
 from __future__ import annotations
 
@@ -29,6 +40,9 @@ from pathlib import Path
 
 from . import __version__
 from .errors import SongcharterError
+from .timed import DIFFICULTIES
+
+LEVEL_ABBREVIATIONS = {"expert": "E", "hard": "H", "medium": "M", "easy": "Ez"}
 
 
 def _summary(result) -> str:
@@ -45,14 +59,23 @@ def _summary(result) -> str:
         trimmed = (f"; {len(removed)} Expert onsets trimmed where the {p['trimmed']['stem']} stem is silent "
                    f"({', '.join(f'{t:.2f}' for t in removed[:4])}{', ...' if len(removed) > 4 else ''} s)"
                    if removed else "")
+        cut = (p.get("clipped") or {}).get("levels", {}).get("expert", {})
+        clipped = (f"; at the end of the audio {cut['onsets_dropped']} Expert onsets dropped, "
+                   f"{cut['sustains_clipped']} sustains clipped, {cut['sustains_removed']} removed"
+                   if any(cut.values()) else "")
         lines.append(f"part {key}: offset {o['applied'] * 1000:+.1f} ms ({o['mode']}, measured "
-                     f"{o['measured'] * 1000:+.1f} ms, concentration {o['concentration']:.2f}){trimmed}")
+                     f"{o['measured'] * 1000:+.1f} ms, concentration {o['concentration']:.2f}){trimmed}{clipped}")
     for inst, levels in r["tracks"].items():
-        counts = " / ".join(f"{levels[d]['onsets']}" for d in ("expert", "hard", "medium", "easy") if d in levels)
+        written = [d for d in DIFFICULTIES if d in levels]
+        counts = " / ".join(f"{levels[d]['onsets']}" for d in written)
         ex = levels.get("expert", {})
         extra = f", {ex.get('fills', 0)} fills" if inst == "drums" else ""
-        lines.append(f"{inst}: onsets E/H/M/Ez {counts}; {ex.get('star_power', 0)} star power{extra}, "
-                     f"rating {r['ratings'].get(inst)}")
+        if inst == "guitar":  # the solo trackers, where they went (or that there are none)
+            solos = (r.get("phrases", {}).get(inst) or {}).get("solos") or []
+            extra = (f", {len(solos)} solo{'s' * (len(solos) > 1)} "
+                     f"({', '.join(f'{a:.1f}-{b:.1f}' for a, b in solos)} s)" if solos else ", no solo")
+        lines.append(f"{inst}: onsets {'/'.join(LEVEL_ABBREVIATIONS[d] for d in written)} {counts}; "
+                     f"{ex.get('star_power', 0)} star power{extra}, rating {r['ratings'].get(inst)}")
     lines.append(f"sections: {r['sections']['count']} ({r['sections']['source']})")
     lines.append(r["sync"]["summary"])
     gate = r["gate"]
@@ -83,6 +106,21 @@ def _instruments(text: str) -> tuple[str, ...]:
     return tuple(x.strip().lower() for x in text.split(",") if x.strip())
 
 
+def _solos(text: str) -> str | tuple[str, ...]:
+    """--solos: a mode (stems, labels, off, any case), else section names separated by commas, each kept as written
+    but for runs of spaces (one argument: quote it when a name holds a space)."""
+    mode = text.strip().lower()
+    if mode in ("stems", "labels", "off"):
+        return mode
+    return tuple(" ".join(x.split()) for x in text.split(",") if x.strip())
+
+
+def _levels(text: str) -> tuple[str, ...]:
+    """--levels: "all", or a comma-separated list of difficulties (checked by pipeline.Options)."""
+    words = _instruments(text)
+    return DIFFICULTIES if words == ("all",) else words
+
+
 def main(argv: list[str] | None = None) -> int:
     # a song name or path the console's code page cannot show (cp1252 when Windows redirects stdout) must not turn
     # a finished build into a crash; stderr already escapes such characters
@@ -102,16 +140,31 @@ def main(argv: list[str] | None = None) -> int:
                                    "folder (into <output>.failed when the gate fails).")
     c.add_argument("song", type=Path, help="the song file")
     c.add_argument("--out", type=Path, required=True, help="the song folder to write")
-    c.add_argument("--work", type=Path, help="the work folder for the decode, stems and engine outputs "
-                                             "(default: <out>.work beside the output)")
+    c.add_argument("--work", type=Path, help="the work folder for the decode, stems and engine outputs (default: "
+                                             "one per song in the per-user cache, %%LOCALAPPDATA%%\\songcharter\\work "
+                                             "on Windows, $XDG_CACHE_HOME/songcharter/work (else ~/.cache/"
+                                             "songcharter/work) elsewhere, or $SONGCHARTER_CACHE/work; the least "
+                                             "recently used go past 5 GB, $SONGCHARTER_CACHE_GB)")
     c.add_argument("--instruments", type=_instruments, default=None, metavar="LIST",
                    help="comma-separated parts to chart (default: guitar,bass,drums)")
-    c.add_argument("--takes", type=int, default=1, metavar="N",
-                   help="guitar takes, spliced by agreement: 1 (default), or 3 or more (each about one more "
-                        "autochart run)")
+    c.add_argument("--levels", type=_levels, default=("expert",), metavar="LIST",
+                   help="the difficulties to write: expert (default), all, or a comma-separated list that includes "
+                        "expert, such as expert,hard (the others are reduced from Expert)")
+    c.add_argument("--solos", type=_solos, default="labels", metavar="MODE|NAMES",
+                   help="where the guitar solos go: labels (default: the sections named Solo), stems (only those "
+                        "where the vocals stem is quiet and the guitar loud), off, or the solo sections' names, comma-"
+                        "separated and quoted as one argument when a name holds a space: --solos \"Solo 1,Solo 2\" "
+                        "(names as the build's sections are called; anything but labels and off needs the guitar "
+                        "charted)")
+    c.add_argument("--takes", type=int, default=None, metavar="N",
+                   help="guitar takes, spliced by agreement: 1, or 3 or more, each about one more autochart run "
+                        "(default: 4 when the guitar runs on CUDA, 1 on the CPU)")
     c.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto",
                    help="where the models run (default: auto, CUDA when available)")
     c.add_argument("--threads", type=int, metavar="N", help="CPU threads for the models (default: theirs)")
+    c.add_argument("--no-preview", action="store_true",
+                   help="no preview (by default the overview and pages of the built folder go into the work "
+                        "folder's preview/ when matplotlib and librosa are installed)")
     for flag, key in (("--title", "name"), ("--artist", "artist"), ("--album", "album"), ("--year", "year"),
                       ("--genre", "genre")):
         c.add_argument(flag, dest=f"meta_{key}", metavar="TEXT",
@@ -134,7 +187,8 @@ def main(argv: list[str] | None = None) -> int:
             meta = {k[5:]: v for k, v in vars(args).items() if k.startswith("meta_") and v is not None}
             instruments = pipeline.INSTRUMENTS if args.instruments is None else args.instruments
             options = pipeline.Options(instruments=instruments, takes=args.takes, device=args.device,
-                                       threads=args.threads, work=args.work, metadata=meta)
+                                       threads=args.threads, work=args.work, metadata=meta, levels=args.levels,
+                                       solos=args.solos, preview=not args.no_preview)
             done = pipeline.chart(args.song, args.out, options)
             result, extra = done.assembled, pipeline.summary(done)
         else:

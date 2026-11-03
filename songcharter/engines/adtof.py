@@ -34,7 +34,6 @@ import hashlib
 import json
 import os
 import platform
-import sys
 import time
 import urllib.request
 from dataclasses import asdict, dataclass
@@ -44,6 +43,7 @@ from typing import Any, Callable
 import numpy as np
 
 from .. import audio as A
+from ..cache import user_cache
 from ..chart import Chart, SongInfo, Track, write_chart
 from ..errors import ToolError
 from ..ini import write_ini
@@ -95,13 +95,12 @@ def _sha256(path: Path) -> str:
 
 
 def models_dir() -> Path:
-    """Where downloaded weights live: $SONGCHARTER_MODELS, else %LOCALAPPDATA%\\songcharter\\models on Windows, else
-    $XDG_CACHE_HOME (or ~/.cache)/songcharter/models."""
+    """Where downloaded weights live: $SONGCHARTER_MODELS, else models/ in the per-user cache (cache.user_cache():
+    %LOCALAPPDATA%\\songcharter\\models on Windows, else $XDG_CACHE_HOME (or ~/.cache)/songcharter/models).
+    $SONGCHARTER_CACHE, which moves the work folders, does not move them."""
     if os.environ.get("SONGCHARTER_MODELS"):
         return Path(os.environ["SONGCHARTER_MODELS"])
-    if sys.platform == "win32" and os.environ.get("LOCALAPPDATA"):
-        return Path(os.environ["LOCALAPPDATA"]) / "songcharter" / "models"
-    return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "songcharter" / "models"
+    return user_cache() / "models"
 
 
 def _download(url: str, dest: Path, attempts: int = 3) -> None:

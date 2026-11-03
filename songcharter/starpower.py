@@ -58,10 +58,12 @@ Drum activation lanes (fills, `S 64`), `schedule_drums` and `place_fills`:
   * Every drum difficulty gets its own fills (the critique: scan-chart checks noDrumActivationLanes per track),
     each ending on a note that exists on that difficulty (`fit_phrases`).
 
-Solos (lead guitar), `place_solos`: only from a reliable signal, a section named "Solo" (allin1's solo label) that
-the caller confirms, e.g. with `stem_confirm` (vocals quiet, guitar loud: DESIGN 2.10). The label alone is not
-enough: on the test song the vocals stem is active in 56 % and 95 % of allin1's first two "solo" sections and in
-two of the three parts of the third. Without a signal there are none.
+Solos (lead guitar), `place_solos`: on the sections named "Solo" (allin1's solo label), those the caller confirms
+when it passes a test (e.g. `stem_confirm`: vocals quiet, guitar loud), or exactly the sections a person names.
+Neither signal is reliable (DESIGN 2.10, the solo evaluation): on six references the label and the stem test each
+find 1 of the 2 human solos and make 2 and 1 false ones, and the stem test rejects both solos the friend confirmed
+on the test song (the vocals stem is active in 0.561 and 0.863 of their frames), where the label covers all of the
+second and half of the first. So the pipeline places them by the label; `place_phrases` places none unless asked.
 Confirmed solo sections next to each other are one solo (no back-to-back solos). A solo needs 4 measures and 16
 Expert onsets; at most 3 a song (human median 1, p90 2-3), those with the most onsets. `E solo` sits on the first
 onset and `E soloend` on the last.
@@ -454,10 +456,11 @@ def place_solos(expert: Track, tempo: TempoMap, sections: Sequence[tuple[int, st
     """Solos (first onset, last onset; Track.solos ends are inclusive) from the sections named as solos.
 
     confirm: a test of each solo section [start, end) in ticks, e.g. `stem_confirm` (the vocals stem is quiet).
-             allin1's label alone is not reliable: on the test song most of its "solo" sections are sung.
+             It rejects real solos with singing or bleed in the vocals stem: the test song's two confirmed solos
+             and Kimochi Warui's (vocals active in 0.561, 0.863 and 0.905 of their frames).
     names:   the sections a person named as solos (exact section names), instead of the label and confirm. The
-             test song's player named "Solo 1" and "Solo 2", which the stem test rejects (the vocals stem is active in
-             56 % and 95 % of them). The 16-onset and 4-measure minimums and the 3-solo cap still apply.
+             test song's player named "Solo 1" and "Solo 2", which the stem test rejects. The 16-onset and 4-measure
+             minimums and the 3-solo cap still apply.
     """
     onsets = _onsets(expert)
     if not onsets:
@@ -477,7 +480,8 @@ def stem_confirm(tempo: TempoMap, pad_seconds: float, frame_seconds: float, voca
                  lead_db: Sequence[float] | None = None, *, quiet_db: float = 30.0, max_vocal_share: float = 0.25,
                  lead_percentile: float = 75.0, min_lead_share: float = 0.5) -> Callable[[int, int], bool]:
     """A solo test from stem loudness, for place_solos (DESIGN.md 2.10: the vocals stem below its P95 - 30 dB while
-    the guitar stem is at or above its P75; the thresholds are untested beyond the test song).
+    the guitar stem is at or above its P75; the thresholds were never tuned, and the solo evaluation ran them on the
+    six references and the test song).
 
     vocals_db, lead_db: one level per frame of frame_seconds from the input audio's start (e.g. 100 ms RMS in dB).
     A section [start, end) passes when at most max_vocal_share of its frames have the vocals within quiet_db of
@@ -551,7 +555,7 @@ def place_phrases(chart: Chart, *, solos: bool = False, confirm_solo: Callable[[
     lead guitar, replacing any the tracks had; lower tracks already there get them fitted.
 
     solos:        place solos on the sections named as solos that confirm_solo accepts (all of them without it).
-                  Off by default: a section label alone is not a reliable signal (see place_solos).
+                  Off by default: no signal for them is reliable (see place_solos); the pipeline asks for them.
     solo_names:   with solos, exactly the sections of these names (see place_solos).
     bonus:        per instrument ("Single", "DoubleBass", "Drums", ...), extra score for a phrase [start, end).
     Run it before reduce_chart, which copies Expert's phrases down and keeps a note in each, then `fit_chart`.

@@ -62,6 +62,23 @@ def test_the_cache_returns_the_same_stems_without_separating(tiny, tmp_path, mon
     assert not fresh.cached
 
 
+def test_a_cache_folder_missing_a_stem_is_separated_again(tiny, tmp_path):
+    """info.json beside stems that are gone or do not read (a folder deleted in name order up to a file in use, a
+    file cut short) is a miss, separated and written again, not an error."""
+    m = mix()
+    a, info = separate(m, model=tiny, device="cpu", cache_dir=tmp_path)
+    folder = tmp_path / info.key
+    for broken in ("missing", "cut short"):
+        stem = folder / f"{list(a)[0]}.wav"
+        if broken == "missing":
+            stem.unlink()
+        else:
+            stem.write_bytes(stem.read_bytes()[:30])
+        b, again = separate(m, model=tiny, device="cpu", cache_dir=tmp_path)
+        assert not again.cached and all(np.array_equal(a[s], b[s]) for s in a), broken
+        assert stem.is_file() and separate(m, model=tiny, device="cpu", cache_dir=tmp_path)[1].cached, broken
+
+
 def test_cuda_out_of_memory_falls_back_to_the_cpu(tiny, monkeypatch):
     real = S._run
     calls = []

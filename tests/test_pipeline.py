@@ -116,12 +116,24 @@ def standin_key(mix: np.ndarray) -> str:
     return "standin-" + hashlib.sha256(np.ascontiguousarray(mix, dtype="<f4").tobytes()).hexdigest()[:12]
 
 
-def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: Exception | None = None,
-             cuda_error: str | None = None, allin1_device: str | None = None, repeat: bool = False):
+SCRATCH_BYTES = 3_000_000   # what the stand-in guitar keeps in autochart's scratch folder (its engine cache)
+
+
+def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: BaseException | None = None,
+             cuda_error: str | None = None, allin1_device: str | None = None, repeat: bool = False,
+             auto: str = "cpu", moved: str | None = None, no_preview: str | None = None, segments=None,
+             devices="summary"):
     """Engines that write what the real ones write, and record each call (with the arrays it got) in `calls`.
     `empty`: engines that find no notes; `bug`: a stage that raises `error` (by default a KeyError: a bug);
     `cuda_error`: device "auto" finds CUDA that does not run; `allin1_device`: the sections come from allin1 on
-    this device; `repeat`: the guitar take of seed 101 repeats the first take's notes."""
+    this device; `repeat`: the guitar take of seed 101 repeats the first take's notes; `auto`: the device "auto"
+    resolves to; `moved`: the device autochart reports for every guitar take whatever it was asked for (its own
+    fallback); `devices`: the devices every guitar take reports, by default as autochart's summary has them
+    ({"demucs": None, "timing": None, "transcriber": the device}: None for a stage its cache answered);
+    `no_preview`: why the preview cannot run (its libraries do not import); `segments`: the sections engine's
+    segments instead of SEGMENTS (written over different ones already there). The guitar keeps SCRATCH_BYTES in
+    its scratch folder, as autochart keeps its engine cache there."""
+    segments = SEGMENTS if segments is None else segments
 
     class StandIns(Engines):
         calls: list[tuple] = []
@@ -130,7 +142,7 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: Excepti
             return []
 
         def device(self, asked):
-            return ("cpu", cuda_error) if asked == "auto" else (asked, None)
+            return (auto, cuda_error) if asked == "auto" else (asked, None)
 
         def threads(self, n):
             self.calls.append(("threads", n))
@@ -177,45 +189,78 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: Excepti
         def sections(self, mix, stems, out, device, threads):
             self._bug("sections")
             self.calls.append(("sections", dict(stems), out, device, threads))
-            cached = (out / "segments.json").is_file()
+            path = out / "segments.json"
+            cached = path.is_file() and json.loads(path.read_text()) == {"segments": segments}
             if not cached:
-                out.mkdir(parents=True)
-                (out / "segments.json").write_text(json.dumps({"segments": SEGMENTS}))
+                out.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps({"segments": segments}))
             if allin1_device:
-                return Run(out / "segments.json", cached, {"backend": "allin1", "segments": len(SEGMENTS), "allin1": {
+                return Run(path, cached, {"backend": "allin1", "segments": len(segments), "allin1": {
                     "model": "harmonix-fold0", "device": allin1_device, "fallback": None, "peak_rss_mb": 512.0}})
-            return Run(out / "segments.json", cached, {"backend": "librosa", "why": "no allin1 Python (stand-in)",
-                                                       "segments": len(SEGMENTS)})
+            return Run(path, cached, {"backend": "librosa", "why": "no allin1 Python (stand-in)",
+                                      "segments": len(segments)})
 
-        def guitar(self, audio, out, seeds, device, title, artist):
+        def preview_missing(self):
+            return no_preview
+
+        def preview(self, folder, out, stems):
+            self._bug("preview")
+            self.calls.append(("preview", folder, out, dict(stems)))
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "overview.png").write_bytes(b"stand-in")
+            return {"folder": str(folder), "overview": str(out / "overview.png"), "pages": [str(out / "page_01.png")],
+                    "stems": {}, "flags": ["guitar: gap 0:10.0-0:12.0 (1 measures)"], "flags_by_kind": {"gap": 1},
+                    "remarks": []}
+
+        def guitar(self, audio, out, seeds, device, title, artist, scratch=None):
             self._bug("guitar")
-            self.calls.append(("guitar", audio, out, tuple(seeds), device, title, artist))
+            self.calls.append(("guitar", audio, out, tuple(seeds), device, title, artist, scratch))
+            if scratch is not None and not (scratch / "engine-cache.bin").is_file():
+                scratch.mkdir(parents=True, exist_ok=True)
+                (scratch / "engine-cache.bin").write_bytes(b"\0" * SCRATCH_BYTES)
             runs = []
-            for k, seed in enumerate(seeds):
+            for seed in seeds:
                 path = out / f"seed_{seed}" / "notes.chart"
                 cached = path.is_file()
                 if not cached:  # each take after the first misses one note, in a section of its own
-                    miss = 0 if repeat and seed == 101 else k
+                    miss = 0 if seed == DEFAULT_SEED or repeat and seed == 101 else seed // 101
                     notes = [FretNote(tick(t), (lane,)) for j, (t, lane) in enumerate(guitar_times())
                              if not (miss and j == 40 * miss) and "guitar" not in empty]
                     _write(path, Track("Expert", "Single", notes))
-                runs.append(Run(path, cached, {"devices": {"transcriber": device}}))
+                shown = ({"demucs": None, "timing": None, "transcriber": moved or device} if devices == "summary"
+                         else devices)
+                runs.append(Run(path, cached, {"devices": shown}))
             return runs
 
     StandIns.calls = []
     return StandIns
 
 
+def default_work(cache_dir: Path, song: Path) -> Path:
+    """The default work folder of a song file: <cache>/work/<stem>-<16 hex of its SHA-256> (a plain stem)."""
+    return cache_dir / "work" / f"{song.stem}-{hashlib.sha256(song.read_bytes()).hexdigest()[:16]}"
+
+
+@pytest.fixture
+def own_cache(tmp_path, monkeypatch) -> Path:
+    """A cache of the test's own, deleted with its other temporary folders when it passes."""
+    monkeypatch.setenv("SONGCHARTER_CACHE", str(tmp_path / "cache"))
+    return tmp_path / "cache"
+
+
 @pytest.fixture(scope="module")
 def charted(tmp_path_factory):
+    """The song charted with the default work folder, in a cache of this module's (root/cache)."""
     root = tmp_path_factory.mktemp("pipeline")
     write_song(root / "song.flac")
     engines = standins()()
     lines = []
-    result = chart(root / "song.flac", root / "out" / "Click Song", Options(takes=3, threads=2,
-                                                                          metadata={"genre": "Test"}),
-                   engines=engines, log=lines.append)
-    return root, result, engines, lines
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("SONGCHARTER_CACHE", str(root / "cache"))
+        result = chart(root / "song.flac", root / "out" / "Click Song", Options(takes=3, threads=2,
+                                                                              metadata={"genre": "Test"}),
+                       engines=engines, log=lines.append)
+        yield root, result, engines, lines
 
 
 # ------------------------------------------------------------------------------------------------ end to end
@@ -225,7 +270,7 @@ def test_the_song_folder_passes_the_gate(charted):
     assert result.ok, [i for i in result.assembled.issues if i.error]
     assert result.folder == root / "out" / "Click Song"
     assert sorted(p.name for p in result.folder.iterdir()) == ["notes.chart", "report.json", "song.ini", "song.ogg"]
-    assert sorted(p.name for p in (root / "out").iterdir()) == ["Click Song", "Click Song.work"]
+    assert sorted(p.name for p in (root / "out").iterdir()) == ["Click Song"]  # the work folder is in the cache
     report = result.assembled.report
     assert report["gate"]["ok"] and report["sync"]["ok"] and abs(report["grid"]["bpm_median"] - 120) < 0.05
     if find_scan_chart()[0] is not None:
@@ -234,6 +279,11 @@ def test_the_song_folder_passes_the_gate(charted):
     song = read_song(result.folder)
     assert {i for i, _ in song.parts} == {"guitar", "bass", "drums"}
     assert report["sections"]["count"] >= 4 and report["parts"]["guitar"]["takes"]
+    # Expert only by default, with a rating for every instrument in song.ini
+    assert {d for _, d in song.parts} == {"expert"} and all(t.keys() == {"expert"} for t in report["tracks"].values())
+    ini = (result.folder / "song.ini").read_text(encoding="utf-8").splitlines()
+    for key in ("diff_guitar", "diff_bass", "diff_drums", "diff_drums_real"):
+        assert any(line.startswith(f"{key} = ") and line.split(" = ")[1].isdigit() for line in ini), key
 
 
 def test_metadata_comes_from_the_tags_and_the_caller(charted):
@@ -250,14 +300,21 @@ def test_metadata_comes_from_the_tags_and_the_caller(charted):
 
 def test_the_work_folder_and_the_assemble_config(charted):
     root, result, _, _ = charted
-    work = root / "out" / "Click Song.work"
-    assert result.work == work and result.config == work / "assemble.json"
+    key = hashlib.sha256((root / "song.flac").read_bytes()).hexdigest()
+    work, scratch = root / "cache" / "work" / f"song-{key[:16]}", root / "cache" / "ac" / key[:8]
+    assert result.work == work and result.config == work / "assemble.json" and result.scratch == scratch
+    marker = json.loads((work / "songcharter-work.json").read_text(encoding="utf-8"))
+    assert marker["key"] == key[:16] and marker["scratch"] == str(scratch) and marker["input"] == str(root / "song.flac")
+    assert not marker["pinned"] and marker["used"] > 0
+    # no path a run makes here is deeper than cache.DEEPEST says (the Windows length budget rests on it)
+    assert max(len(str(f.relative_to(work))) for f in work.rglob("*")) <= len(P.cache.DEEPEST["work"])
     cfg = json.loads(result.config.read_text(encoding="utf-8"))
     assert cfg["audio"] == str(work / "decode.wav") and cfg["output"] == str(result.folder)
     key = standin_key(A.decode(root / "song.flac"))
     assert cfg["stems"] == {s: str(work / "stems" / key / f"{s}.wav")
                             for s in ("drums", "bass", "guitar", "other", "vocals")}
-    assert cfg["sections"] == str(work / "sections" / "segments.json") and cfg["solos"] == "stems"
+    assert cfg["sections"] == str(work / "sections" / "segments.json") and cfg["solos"] == "labels"
+    assert cfg["levels"] == ["expert"]
     assert [p["instrument"] for p in cfg["parts"]] == ["guitar", "bass", "drums"]
     guitar, bass, drums = cfg["parts"]
     assert guitar["source"] == str(work / "guitar" / f"seed_{DEFAULT_SEED}" / "notes.chart")
@@ -270,9 +327,10 @@ def test_the_work_folder_and_the_assemble_config(charted):
     assert np.array_equal(mix, A.decode(root / "song.flac"))
     report = json.loads((work / "pipeline.json").read_text(encoding="utf-8"))
     assert [s["stage"] for s in report["stages"]] == ["decode", "separate", "drums", "bass", "sections", "guitar",
-                                                      "assemble"]
+                                                      "assemble", "preview"]
     assert all(s["seconds"] >= 0 and not s["cached"] for s in report["stages"])
     assert report["assemble"]["ok"] and report["options"]["takes"] == 3 and "error" not in report
+    assert report["options"]["levels"] == ["expert"]
     assert report["stages"][1]["key"] == key and report["stages"][1]["cuda_error"] is None
     if sys.platform != "win32":  # this process's own peak only: RUSAGE_CHILDREN is at least its size, not a child's
         assert report["peak_rss_mb"]["self"] > 0 and set(report["peak_rss_mb"]) == {"self"}
@@ -299,9 +357,14 @@ def test_the_engines_get_the_decode_its_stems_and_the_options(charted):
     assert sorted(got) == sorted(own) and all(np.array_equal(got[s], own[s]) for s in own)
     assert rest == [work / "sections", "auto", 2]
     assert calls["guitar"] == (work / "decode.wav", work / "guitar", (DEFAULT_SEED, 101, 202), "cpu", "Click Song",
-                               "The Testers")
-    assert lines[0] == "[1/7] decode: song.flac" and lines[-1].startswith("[7/7] assemble: gate OK")
-    assert any(line.startswith("[6/7] guitar: autochart, 3 takes (seeds 20260609, 101, 202) on cpu") for line in lines)
+                               "The Testers", result.scratch)  # autochart's scratch folder, short, in the cache
+    assert lines[0] == "[1/8] decode: song.flac" and lines[-3].startswith("[7/8] assemble: gate OK")
+    assert lines[-1].startswith(f"[8/8] preview: {work / 'preview' / 'overview.png'} and 1 pages, 1 flags, ")
+    assert any(line.startswith("[6/8] guitar: autochart, 3 takes (seeds 20260609, 101, 202) on cpu") for line in lines)
+    # the preview: of the song folder, into the work folder, against every stem of the separation (piano too)
+    key = standin_key(mix)
+    assert calls["preview"] == (result.folder, work / "preview", {s: work / "stems" / key / f"{s}.wav" for s in own})
+    assert result.preview["overview"] == str(work / "preview" / "overview.png")
     assert any("sections: the librosa fallback (no allin1 Python (stand-in))" in line for line in lines)
 
 
@@ -318,29 +381,47 @@ def test_a_rerun_reuses_every_stage(charted, monkeypatch, capsys):
     for stage in ("decode", "separate", "drums", "bass", "sections", "guitar"):
         assert any(f"] {stage}: " in line and "(cached)" in line for line in err.splitlines()), stage
     assert "gate: OK" in out and out.splitlines()[-1].startswith("stages: decode ")
+    assert out.splitlines()[-3] == (f"preview: {result.work / 'preview' / 'overview.png'} and 1 pages (flagged: "
+                                    "gap 1)")
+    # the work folder's size counts autochart's scratch folder, which holds its engine cache
+    assert P.cache.tree_size(result.scratch) == SCRATCH_BYTES
+    size = P.cache.tree_size(result.work) + SCRATCH_BYTES
+    assert out.splitlines()[-2] == (f"work folder: {result.work} ({P.cache.size_text(size)}; autochart's scratch "
+                                    f"folder {result.scratch})")
+    report = json.loads((result.work / "pipeline.json").read_text(encoding="utf-8"))
+    assert abs(size - report["work_bytes"]) < 100_000  # but for pipeline.json, which holds it and is written last
+    assert any(line.startswith("guitar: onsets E ") for line in out.splitlines())  # Expert only, labelled so
     assert (wav.stat().st_mtime_ns, (result.folder / "notes.chart").read_bytes()) == before
 
 
-def test_an_engine_without_notes_leaves_its_part_out(tmp_path, monkeypatch, capsys):
+def test_an_engine_without_notes_leaves_its_part_out(tmp_path, own_cache, monkeypatch, capsys):
     write_song(tmp_path / "song.flac", tags={})
     monkeypatch.setattr(P, "Engines", standins(empty=("bass",)))
     code = main(["chart", str(tmp_path / "song.flac"), "--out", str(tmp_path / "Song"), "--instruments",
                  "drums,bass", "--album", "A", "--year", "2001", "--artist", "  "])
     out, err = capsys.readouterr()
     assert code == 0, err
-    assert "bass: the engine found no notes" in err and "[6/6] assemble" in err and "] guitar:" not in err
-    cfg = json.loads((tmp_path / "Song.work" / "assemble.json").read_text(encoding="utf-8"))
+    assert "bass: the engine found no notes" in err and "[6/7] assemble" in err and "] guitar:" not in err
+    work = default_work(own_cache, tmp_path / "song.flac")
+    cfg = json.loads((work / "assemble.json").read_text(encoding="utf-8"))
     assert [p["instrument"] for p in cfg["parts"]] == ["drums"] and cfg["solos"] == "off"
+    # no guitar, so no autochart scratch folder: the summary names none (pipeline.json and the marker keep its path,
+    # for a later run with the guitar)
+    scratch = own_cache / "ac" / work.name[-16:-8]
+    line = next(x for x in out.splitlines() if x.startswith("work folder: "))
+    assert line.startswith(f"work folder: {work} (") and "scratch" not in line and not scratch.exists()
+    assert P.cache.read_marker(work)["scratch"] == str(scratch)
     ini = (tmp_path / "Song" / "song.ini").read_text(encoding="utf-8").splitlines()
     assert any(line.startswith("diff_drums = ") for line in ini)
     assert not any(line.startswith("diff_bass") for line in ini)
     # no tags: the file's name, and placeholders scan-chart does not take for missing values
     assert {"name = song", "artist = Unknown", "album = A", "year = 2001", "genre = Unknown"} <= set(ini)
-    shutil.rmtree(tmp_path / "Song.work" / "stems")  # 135 MB of stand-in stems, not needed again
-    # every engine empty: nothing to chart, before assemble
+    shutil.rmtree(default_work(own_cache, tmp_path / "song.flac") / "stems")  # 135 MB of stand-in stems
+    # every engine empty: nothing to chart, before assemble (a work folder of its own: the song's in the cache
+    # holds the first run's drums)
     monkeypatch.setattr(P, "Engines", standins(empty=("bass", "drums")))
     assert main(["chart", str(tmp_path / "song.flac"), "--out", str(tmp_path / "Other"), "--instruments",
-                 "drums,bass"]) == 2
+                 "drums,bass", "--work", str(tmp_path / "w")]) == 2
     assert "nothing to chart" in capsys.readouterr().err and not (tmp_path / "Other").exists()
 
 
@@ -366,14 +447,27 @@ def test_cli_exit_codes(charted, tmp_path, monkeypatch, capsys):
         (tmp_path / busy).mkdir()
         (tmp_path / busy / "keep.txt").write_text("mine")
     (tmp_path / "not audio.mp3").write_text("hello")
+    used = P.cache.read_marker(result.work)["used"]
+    new = tmp_path / "new.flac"  # a song the cache has not seen: a run refused on it makes it no folder
+    write_song(new, gain=0.5)
+    folders = sorted(p.name for p in result.work.parent.iterdir())
     for args, message in (([str(tmp_path / "missing.mp3")], "does not exist"),
                           ([song, "--takes", "2"], "takes is 1, or 3 or more"),
                           ([song, "--instruments", "guitar,piano"], "instruments are guitar, bass, drums"),
                           ([song, "--instruments", ""], "no instruments"),
                           ([song, "--instruments", "bass", "--takes", "3"], "takes are guitar takes"),
+                          ([song, "--instruments", "drums,bass", "--solos", "Solo 1,Solo 2"], "solos are guitar solos"),
+                          ([song, "--instruments", "drums", "--solos", "stems"], "solos are guitar solos"),
                           ([song, "--threads", "0"], "threads must be"),
+                          ([song, "--levels", "hard"], "expert among them"),
+                          ([song, "--levels", "expert,extreme"], "levels are expert, hard, medium, easy"),
+                          ([song, "--levels", "expert,Expert"], "each once"),
+                          ([song, "--levels", ","], "not none"),
                           ([song, "--out", str(tmp_path / "Busy")], "holds what a build does not write"),
                           ([song, "--out", str(tmp_path / "Busy2")], "Busy2.failed holds what a build does not write"),
+                          ([str(new), "--out", str(tmp_path / "Busy")], "holds what a build does not write"),
+                          ([str(new), "--out", str(tmp_path / "Busy2")],
+                           "Busy2.failed holds what a build does not write"),
                           ([song, "--work", str(tmp_path / "X" / "w")], "must be apart"),
                           ([str(tmp_path / "not audio.mp3")], "ffmpeg could not read")):
         argv = ["chart", *args] + ([] if "--out" in args else ["--out", str(tmp_path / "X")])
@@ -381,17 +475,25 @@ def test_cli_exit_codes(charted, tmp_path, monkeypatch, capsys):
         assert message in capsys.readouterr().err, args
     assert (tmp_path / "Busy" / "keep.txt").read_text() == "mine" and not (tmp_path / "X").exists()
     assert (tmp_path / "Busy2.failed" / "keep.txt").read_text() == "mine"
-    # refused before any audio work, not by assemble at the end: no work folder, no engine run
-    assert not (tmp_path / "Busy.work").exists() and not (tmp_path / "Busy2.work").exists() and engines.calls == []
+    # refused before any audio work, not by assemble at the end: no engine run, no work folder made in the cache
+    # (the new song's would stay there for good: prune counts only marked folders), and the charted song's folder
+    # not even marked as used; only the file ffmpeg cannot read, found by the decode, has a folder (marked)
+    unread = default_work(result.work.parent.parent, tmp_path / "not audio.mp3")
+    assert sorted(p.name for p in result.work.parent.iterdir()) == sorted(folders + [unread.name])
+    assert P.cache.read_marker(unread) is not None and engines.calls == []
+    assert not default_work(result.work.parent.parent, new).exists()
+    assert P.cache.read_marker(result.work)["used"] == used
 
     class Missing(standins()):
         def missing(self, options):
             return ["the guitar needs autochart (set SONGCHARTER_AUTOCHART)"]
 
     monkeypatch.setattr(P, "Engines", Missing)
-    assert main(["chart", song, "--out", str(tmp_path / "Y")]) == 2
-    assert "cannot chart: the guitar needs autochart (set SONGCHARTER_AUTOCHART)" in capsys.readouterr().err
-    assert not (tmp_path / "Y.work").exists()
+    for audio in (song, str(new)):
+        assert main(["chart", audio, "--out", str(tmp_path / "Y")]) == 2
+        assert "cannot chart: the guitar needs autochart (set SONGCHARTER_AUTOCHART)" in capsys.readouterr().err
+    assert sorted(p.name for p in result.work.parent.iterdir()) == sorted(folders + [unread.name])
+    assert P.cache.read_marker(result.work)["used"] == used
 
     monkeypatch.setattr(P, "Engines", standins(bug="drums"))
     assert main(["chart", song, "--out", str(tmp_path / "Z"), *work]) == 3
@@ -436,7 +538,7 @@ def test_the_cli_options_reach_the_engines(charted, tmp_path, monkeypatch, capsy
     monkeypatch.setattr(P, "Engines", engines)
     work = tmp_path / "work"
     code = main(["chart", str(root / "song.flac"), "--out", str(tmp_path / "Song"), "--work", str(work),
-                 "--device", "cuda", "--threads", "3", "--takes", "4"])
+                 "--device", "cuda", "--threads", "3", "--takes", "4", "--levels", "hard,expert"])
     out, err = capsys.readouterr()
     assert code == 0, err
     calls = {c[0]: c[1:] for c in engines.calls}
@@ -451,6 +553,9 @@ def test_the_cli_options_reach_the_engines(charted, tmp_path, monkeypatch, capsy
     report = json.loads((work / "pipeline.json").read_text(encoding="utf-8"))
     sections = next(s for s in report["stages"] if s["stage"] == "sections")
     assert sections["backend"] == "allin1" and sections["child_peak_rss_mb"] == 512.0
+    assert cfg["levels"] == ["expert", "hard"] and report["options"]["levels"] == ["hard", "expert"]
+    assert {d for _, d in read_song(tmp_path / "Song").parts} == {"expert", "hard"}
+    assert any(line.startswith("drums: onsets E/H ") for line in out.splitlines())
 
 
 def test_auto_runs_on_the_cpu_when_cuda_does_not_run(charted, tmp_path, monkeypatch, capsys):
@@ -461,10 +566,12 @@ def test_auto_runs_on_the_cpu_when_cuda_does_not_run(charted, tmp_path, monkeypa
     engines = standins(cuda_error=why)
     monkeypatch.setattr(P, "Engines", engines)
     code = main(["chart", str(root / "song.flac"), "--out", str(tmp_path / "Song"), "--work", str(result.work),
-                 "--takes", "3", "--genre", "Test"])
+                 "--takes", "3", "--genre", "Test", "--levels", "all"])
     out, err = capsys.readouterr()
     assert code == 0, err
     assert f"songcharter: warning: CUDA does not run here ({why}): the models run on the CPU" in err
+    assert {d for _, d in read_song(tmp_path / "Song").parts} == {"expert", "hard", "medium", "easy"}
+    assert any(line.startswith("guitar: onsets E/H/M/Ez ") for line in out.splitlines())
     calls = {c[0]: c[1:] for c in engines.calls}
     assert calls["separate"][2] == calls["drums"][3] == calls["guitar"][3] == "cpu"
     report = json.loads((result.work / "pipeline.json").read_text(encoding="utf-8"))
@@ -472,14 +579,14 @@ def test_auto_runs_on_the_cpu_when_cuda_does_not_run(charted, tmp_path, monkeypa
 
 
 def test_a_second_song_in_the_same_folders_is_decoded_and_separated_anew(charted, tmp_path, monkeypatch, capsys):
-    """Another song charted into the same output, so into the same work folder: its decode is written over the
+    """Another song charted into the same output and the same --work folder: its decode is written over the
     first song's (decode.wav is autochart's input and assemble's audio) and its stems are its own."""
     root, _, _, _ = charted
     write_song(tmp_path / "b.flac", gain=0.7)
     monkeypatch.setattr(P, "Engines", standins())
-    args = ["--out", str(tmp_path / "Song"), "--instruments", "drums"]
-    assert main(["chart", str(root / "song.flac"), *args]) == 0
     work = tmp_path / "Song.work"
+    args = ["--out", str(tmp_path / "Song"), "--work", str(work), "--instruments", "drums"]
+    assert main(["chart", str(root / "song.flac"), *args]) == 0
     first = json.loads((work / "pipeline.json").read_text(encoding="utf-8"))["stages"]
     shutil.rmtree(work / "stems")  # disk: the stand-in keys its stems by the mix, so the next song misses anyway
     code = main(["chart", str(tmp_path / "b.flac"), *args])
@@ -489,6 +596,346 @@ def test_a_second_song_in_the_same_folders_is_decoded_and_separated_anew(charted
     assert not decode["cached"] and not separate["cached"]
     assert separate["key"] == standin_key(mix) != first[1]["key"]
     assert np.array_equal(A.read_wav(work / "decode.wav")[0], mix)
+
+
+def test_solos_on_named_sections(charted, monkeypatch, capsys):
+    """--solos with section names (one argument, names with spaces kept) reaches assemble as a list, which puts a
+    solo on the named section and warns about a name no section has; a mode word is the mode, in any case; a list
+    with no name is refused before any audio work."""
+    from songcharter.cli import _solos
+    assert _solos(" Solo 1, Solo  2 ,") == ("Solo 1", "Solo 2") and _solos(" LABELS ") == "labels"
+    assert _solos("Off") == "off" and _solos(",") == ()
+    root, result, _, _ = charted
+    names = [n for _, _, n in result.assembled.report["sections"]["list"]]
+    pick = names[2]  # a mid-song section full of guitar notes
+    monkeypatch.setattr(P, "Engines", standins())
+    args = ["chart", str(root / "song.flac"), "--work", str(result.work), "--takes", "3", "--genre", "Test"]
+    code = main([*args, "--out", str(root / "Solos"), "--solos", f"{pick}, Nowhere Land"])
+    out, err = capsys.readouterr()
+    assert code == 0, err
+    cfg = json.loads(result.config.read_text(encoding="utf-8"))
+    assert cfg["solos"] == [pick, "Nowhere Land"]
+    report = json.loads((root / "Solos" / "report.json").read_text(encoding="utf-8"))
+    (a, _, _), (b, _, _) = (report["sections"]["list"][i] for i in (2, 3))
+    solos = report["phrases"]["guitar"]["solos"]
+    assert len(solos) == 1 and a - 0.01 <= solos[0][0] and solos[0][1] <= b + 0.01, (solos, a, b)
+    assert "warning: solos: no section is named 'Nowhere Land'" in out
+    assert main([*args, "--out", str(root / "Solos"), "--solos", "labels"]) == 0
+    assert json.loads(result.config.read_text(encoding="utf-8"))["solos"] == "labels"
+    capsys.readouterr()
+    assert main([*args, "--out", str(root / "Solos"), "--solos", " , "]) == 2
+    assert "solos as section names needs one name or more" in capsys.readouterr().err
+
+
+def test_by_default_solos_go_on_the_sections_named_solo(charted, monkeypatch, capsys):
+    """By default ("labels") a section the sections engine labels "solo" gets a solo even where the vocals stem is
+    busy, as the stem test finds the test song's confirmed solos; "stems" places none there, and says nothing."""
+    root, result, _, _ = charted
+    sung = [[a, b, "solo" if a == 16.5 else label] for a, b, label in SEGMENTS]  # the vocals sing all through it
+    args = ["chart", str(root / "song.flac"), "--work", str(result.work), "--instruments", "guitar", "--genre", "Test"]
+    for extra, count in (([], 1), (["--solos", "stems"], 0)):
+        monkeypatch.setattr(P, "Engines", standins(segments=sung))
+        code = main([*args, "--out", str(root / "Sung"), *extra])
+        out, err = capsys.readouterr()
+        assert code == 0, err
+        report = json.loads((root / "Sung" / "report.json").read_text(encoding="utf-8"))
+        assert json.loads(result.config.read_text(encoding="utf-8"))["solos"] == (extra[1] if extra else "labels")
+        (a, _, name), (b, _, _) = (report["sections"]["list"][i] for i in (1, 2))
+        assert name.startswith("Solo") and abs(a - 16.5) < 0.6 and abs(b - 32.5) < 0.6, report["sections"]["list"]
+        solos = report["phrases"]["guitar"]["solos"]
+        assert len(solos) == count and all(a - 0.01 <= s and e <= b + 0.01 for s, e in solos), (solos, a, b)
+        assert "warning: solos" not in out + err
+        line = next(x for x in out.splitlines() if x.startswith("guitar: onsets E "))  # where the trackers went
+        assert (f", 1 solo ({solos[0][0]:.1f}-{solos[0][1]:.1f} s), rating " if count else ", no solo, rating ") in line
+
+
+def test_the_default_work_folder_is_the_songs_whatever_the_output(charted, tmp_path, own_cache, monkeypatch,
+                                                                    capsys):
+    """The same song charted into two outputs uses one work folder in the cache, whose caches answer the second
+    run; another song gets a folder of its own; the outputs stay free of work folders; --work is used as given,
+    with autochart's scratch folder inside it, no marker written and nothing in the cache."""
+    root, _, _, _ = charted
+    song = tmp_path / "Songs Folder" / "My Song.flac"
+    song.parent.mkdir()
+    shutil.copy(root / "song.flac", song)
+    work = default_work(own_cache, song)
+    args = ["--instruments", "drums,guitar", "--genre", "Test"]
+    for out in ("A", "B"):
+        engines = standins()
+        monkeypatch.setattr(P, "Engines", engines)
+        assert main(["chart", str(song), "--out", str(tmp_path / "Songs Folder" / out), *args]) == 0
+        report = json.loads((work / "pipeline.json").read_text(encoding="utf-8"))
+        assert report["output"] == str(tmp_path / "Songs Folder" / out) and report["work"] == str(work)
+    err = capsys.readouterr().err
+    assert all(s["cached"] for s in report["stages"] if s["stage"] not in ("assemble", "preview")), report["stages"]
+    assert sorted(p.name for p in (tmp_path / "Songs Folder").iterdir()) == ["A", "B", "My Song.flac"]
+    assert [p.name for p in (own_cache / "work").iterdir()] == [work.name] and "warning: the old" not in err
+    guitar = next(c for c in engines.calls if c[0] == "guitar")
+    assert guitar[2] == work / "guitar" and guitar[-1] == own_cache / "ac" / work.name[-16:-8]
+    shutil.rmtree(work / "stems")  # disk
+    write_song(tmp_path / "other.flac", gain=0.5)
+    assert main(["chart", str(tmp_path / "other.flac"), "--out", str(tmp_path / "C"), "--instruments", "drums"]) == 0
+    assert sorted(p.name for p in (own_cache / "work").iterdir()) == sorted([work.name,
+                                                                              default_work(own_cache, tmp_path / "other.flac").name])
+    shutil.rmtree(default_work(own_cache, tmp_path / "other.flac") / "stems")
+    # --work: today's behaviour
+    engines = standins()
+    monkeypatch.setattr(P, "Engines", engines)
+    mine = tmp_path / "my work"
+    assert main(["chart", str(song), "--out", str(tmp_path / "D"), "--work", str(mine), *args]) == 0
+    guitar = next(c for c in engines.calls if c[0] == "guitar")
+    assert guitar[2] == mine / "guitar" and guitar[-1] is None  # autochart's scratch: mine/guitar/work, as before
+    assert not (mine / "songcharter-work.json").exists() and (mine / "pipeline.json").is_file()
+    report = json.loads((mine / "pipeline.json").read_text(encoding="utf-8"))
+    assert report["work"] == str(mine) and report["scratch"] is None and report["cache_key"] is None
+    assert len(list((own_cache / "work").iterdir())) == 2
+
+
+def test_each_run_prunes_the_cache(charted, tmp_path, own_cache, monkeypatch, capsys):
+    """After a run, the least recently used work folders in the cache go until the rest fit
+    $SONGCHARTER_CACHE_GB: not the run's own, not one used in the last 24 hours, not a --work run's. A folder that
+    cannot be deleted gives one warning and the exit code stays 0. A budget that is not a number is refused before
+    any work."""
+    import time
+    root, _, _, _ = charted
+    song = tmp_path / "song.flac"
+    shutil.copy(root / "song.flac", song)
+    now = time.time()
+    old = {}
+    for name, age in (("old-1111111111111111", 3), ("older-2222222222222222", 5), ("recent-3333333333333333", 0.5)):
+        f = own_cache / "work" / name
+        f.mkdir(parents=True)
+        (f / "decode.wav").write_bytes(b"\0" * 200_000)
+        scratch = own_cache / "ac" / name[-16:-8]
+        scratch.mkdir(parents=True)
+        (scratch / "x.bin").write_bytes(b"\0" * 1000)
+        P.cache.mark(f, Path(f"{name}.flac"), name[-16:], scratch, now=now - age * 24 * 3600)
+        old[name] = f
+    monkeypatch.setattr(P, "Engines", standins())
+    monkeypatch.setenv("SONGCHARTER_CACHE_GB", "nope")
+    assert main(["chart", str(song), "--out", str(tmp_path / "A"), "--instruments", "drums"]) == 2
+    assert "SONGCHARTER_CACHE_GB is the work folders' budget" in capsys.readouterr().err
+    assert not default_work(own_cache, song).exists()
+    monkeypatch.setenv("SONGCHARTER_CACHE_GB", "0.0001")  # 100 kB: every folder that may go goes
+    real = P.cache.os.rename
+
+    def rename(src, dst, *a, **k):  # a file in the oldest folder's autochart scratch is in use: as on Windows, the
+        if Path(src) == own_cache / "ac" / "22222222":  # folder holding it cannot be moved (nor the file deleted)
+            raise PermissionError(13, "in use", str(src))
+        return real(src, dst, *a, **k)
+
+    monkeypatch.setattr(P.cache.os, "rename", rename)
+    code = main(["chart", str(song), "--out", str(tmp_path / "A"), "--instruments", "drums"])
+    out, err = capsys.readouterr()
+    assert code == 0, err
+    work = default_work(own_cache, song)
+    report = json.loads((work / "pipeline.json").read_text(encoding="utf-8"))
+    assert [Path(d["folder"]).name for d in report["cache"]["deleted"]] == ["old-1111111111111111"]
+    assert not old["old-1111111111111111"].exists() and not (own_cache / "ac" / "11111111").exists()
+    assert old["recent-3333333333333333"].exists() and (own_cache / "ac" / "33333333").exists() and work.exists()
+    assert [f["folder"] for f in report["cache"]["failed"]] == [str(old["older-2222222222222222"])]
+    assert err.count("could not be deleted") == 1 and "the next run tries again" in err
+    # it stays whole, scratch folder and marker and all, and nothing went to the trash but what was deleted
+    assert (old["older-2222222222222222"] / "decode.wav").is_file()
+    assert (own_cache / "ac" / "22222222" / "x.bin").is_file()
+    assert P.cache.read_marker(old["older-2222222222222222"]) is not None
+    assert [p.name for p in (own_cache / "trash").iterdir()] == [P.cache.TRASH_MARKER]
+    assert report["cache"]["kept"] == {"current": 1, "recent": 1, "pinned": 0}
+    assert f"work folder: {work} (" in out  # its size before pipeline.json, which holds it, is written last
+    assert 0 <= P.cache.tree_size(work) - report["work_bytes"] < 100_000
+    # a --work run prunes too, and a cache folder it uses is the person's from then on, its scratch folder still its
+    monkeypatch.setattr(P.cache.os, "rename", real)
+    assert main(["chart", str(song), "--out", str(tmp_path / "B"), "--instruments", "drums", "--work", str(work)]) == 0
+    marker = P.cache.read_marker(work)
+    assert marker["pinned"] and not old["older-2222222222222222"].exists()
+    assert marker["key"] == work.name[-16:] and marker["scratch"] == str(own_cache / "ac" / work.name[-16:-8])
+    assert sorted(p.name for p in (own_cache / "work").iterdir()) == sorted([work.name, "recent-3333333333333333"])
+    # the run's own folder stays even when nothing counts as recent: it is kept by name, not only by its time; and a
+    # default run on it later leaves it pinned
+    monkeypatch.setattr(P.cache, "RECENT_S", 0)
+    assert main(["chart", str(song), "--out", str(tmp_path / "C"), "--instruments", "drums"]) == 0
+    assert [p.name for p in (own_cache / "work").iterdir()] == [work.name] and (work / "pipeline.json").is_file()
+    assert P.cache.read_marker(work)["pinned"]
+    assert json.loads((work / "pipeline.json").read_text(encoding="utf-8"))["cache"]["kept"]["current"] == 1
+
+
+def test_the_preview_never_fails_a_chart(charted, tmp_path, monkeypatch, capsys):
+    """Without matplotlib or librosa, or with a preview that raises or is cut short by Ctrl+C, the run gives one
+    warning and keeps its exit code (0, or 1 for a failed gate, whose .failed folder is the one previewed), with its
+    summary and the cache pruned; --no-preview runs none and says nothing. pipeline.json records each case."""
+    root, result, _, _ = charted
+    args = ["chart", str(root / "song.flac"), "--work", str(result.work), "--takes", "3", "--genre", "Test"]
+
+    def run(name, *extra, code=0, **kw):
+        engines = standins(**kw)
+        monkeypatch.setattr(P, "Engines", engines)
+        assert main([*args, "--out", str(tmp_path / name), *extra]) == code
+        out, err = capsys.readouterr()
+        report = json.loads((result.work / "pipeline.json").read_text(encoding="utf-8"))
+        return [c for c in engines.calls if c[0] == "preview"], out, err, report
+
+    calls, out, err, report = run("Absent", no_preview="ModuleNotFoundError: No module named 'matplotlib'")
+    assert calls == [] and "] preview:" not in err and "preview:" not in out
+    assert [line for line in err.splitlines() if "warning: no preview" in line] == [
+        "songcharter: warning: no preview: it needs matplotlib and librosa (ModuleNotFoundError: No module named "
+        "'matplotlib'): pip install songcharter[preview]"]
+    assert report["preview"] == {"ok": False, "skipped": "ModuleNotFoundError: No module named 'matplotlib'"}
+    assert "error" not in report and report["assemble"]["ok"]
+    calls, out, err, report = run("Fails", bug="preview")
+    assert [line for line in err.splitlines() if "warning: no preview" in line] == [
+        "songcharter: warning: no preview: it failed (KeyError: 'a bug in preview')"]
+    assert "Traceback" not in err and "preview:" not in out and "error" not in report
+    assert not report["preview"]["ok"] and "in _bug" in report["preview"]["traceback"]
+    calls, out, err, report = run("Off", "--no-preview")
+    assert calls == [] and "no preview" not in err and "] preview:" not in err
+    assert report["preview"] == {"ok": False, "skipped": "turned off"}
+    # Ctrl+C while the preview runs: the song folder is in place, so the preview alone stops (not exit 130)
+    calls, out, err, report = run("Stopped", bug="preview", error=KeyboardInterrupt())
+    assert [line for line in err.splitlines() if "warning: no preview" in line] == [
+        "songcharter: warning: no preview: interrupted"]
+    assert "interrupted" not in err.replace("warning: no preview: interrupted", "") and "gate: OK" in out
+    assert report["preview"] == {"ok": False, "skipped": "interrupted"} and "error" not in report
+    assert "cache" in report and out.splitlines()[-1].startswith("stages: ")
+    assert (tmp_path / "Stopped" / "notes.chart").is_file()
+    real = assemble_module.verify_folder
+    monkeypatch.setattr(assemble_module, "verify_folder", lambda *a, **k: real(*a, **k) + [
+        assemble_module.GateIssue(None, None, "fake", "a gate error")])
+    calls, out, err, report = run("Gate", code=1, bug="preview")
+    assert "no preview: it failed (KeyError: 'a bug in preview')" in err and "gate: FAILED" in out
+    calls, out, err, report = run("Gate2", code=1)
+    assert calls[0][1:3] == (tmp_path / "Gate2.failed", result.work / "preview") and report["preview"]["ok"]
+    calls, out, err, report = run("Gate3", code=1, bug="preview", error=KeyboardInterrupt())
+    assert "no preview: interrupted" in err and "gate: FAILED" in out
+    assert f"the build is in {tmp_path / 'Gate3.failed'} for inspection" in out
+    assert "cache" in report and "error" not in report
+
+
+def test_a_prune_that_fails_or_is_interrupted_never_fails_a_chart(charted, tmp_path, own_cache, monkeypatch, capsys):
+    """Pruning comes after the build is in place: a cache that cannot be listed, or a Ctrl+C while it prunes, gives
+    one warning, and the run ends as the gate says, with its summary and without an error in pipeline.json."""
+    root, result, _, _ = charted
+    args = ["chart", str(root / "song.flac"), "--work", str(result.work), "--instruments", "drums", "--no-preview"]
+    monkeypatch.setattr(P, "Engines", standins())
+    for name, error, why in (("Unlisted", PermissionError(13, "Access is denied", str(own_cache / "work")),
+                              f"PermissionError: [Errno 13] Access is denied: '{own_cache / 'work'}'"),
+                             ("Stopped", KeyboardInterrupt(), "interrupted")):
+        def prune(*a, **k):
+            raise error
+
+        monkeypatch.setattr(P.cache, "prune", prune)
+        assert main([*args, "--out", str(tmp_path / name)]) == 0, name
+        out, err = capsys.readouterr()
+        assert [line for line in err.splitlines() if "was not pruned" in line] == [
+            f"songcharter: warning: the cache in {own_cache} was not pruned ({why})"], err
+        report = json.loads((result.work / "pipeline.json").read_text(encoding="utf-8"))
+        assert "error" not in report and "cache" not in report and report["assemble"]["ok"]
+        assert (tmp_path / name / "notes.chart").is_file() and "gate: OK" in out and "work folder: " in out
+
+
+def test_the_real_preview_of_an_expert_only_folder(charted, tmp_path):
+    """Engines.preview (preview.py itself) on the charted song folder, Expert only, with the work folder's six
+    stems: an overview and a page per minute, every instrument judged against its stem (guitar against guitar, other
+    and piano), an earlier run's pages removed first."""
+    pytest.importorskip("matplotlib")
+    pytest.importorskip("librosa")
+    _, result, _, _ = charted
+    assert Engines().preview_missing() is None
+    out = tmp_path / "preview"
+    out.mkdir()
+    (out / "page_09.png").write_bytes(b"an earlier run's")
+    folder = Path(result.config.read_text(encoding="utf-8") and json.loads(result.config.read_text())["stems"]["drums"]
+                  ).parent
+    info = Engines().preview(result.folder, out, {p.stem: p for p in folder.glob("*.wav")})
+    assert info["overview"] == str(out / "overview.png") and (out / "overview.png").stat().st_size > 10000
+    assert info["pages"] == [str(out / "page_01.png"), str(out / "page_02.png")] and not (out / "page_09.png").exists()
+    assert info["stems"] == {"guitar": "guitar+other+piano", "bass": "bass", "drums": "drums"}
+    assert info["remarks"] == [] and isinstance(info["flags"], list)
+    assert sum(info["flags_by_kind"].values()) == len(info["flags"])
+
+
+def test_a_matplotlib_that_fails_on_import_is_one_warning(charted, tmp_path, monkeypatch, capsys):
+    """The real Engines.preview_missing on a matplotlib that is installed but raises on import, and not an
+    ImportError (as matplotlib raises a ValueError for a $MPLBACKEND it does not know): no preview, one warning
+    before any stage, and the exit code kept; it is not taken for a bug (exit 3) before any work."""
+    pytest.importorskip("librosa")  # imported now, before matplotlib is replaced
+    fake = tmp_path / "site"
+    (fake / "matplotlib").mkdir(parents=True)
+    (fake / "matplotlib" / "__init__.py").write_text("raise RuntimeError('Could not find a writable config dir')\n")
+    for name in [m for m in sys.modules if m == "matplotlib" or m.startswith("matplotlib.")]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.syspath_prepend(str(fake))
+    assert Engines().preview_missing() == "RuntimeError: Could not find a writable config dir"
+    root, result, _, _ = charted
+
+    class Real(standins()):
+        preview_missing = Engines.preview_missing
+
+    monkeypatch.setattr(P, "Engines", Real)
+    code = main(["chart", str(root / "song.flac"), "--out", str(tmp_path / "Song"), "--work", str(result.work),
+                 "--instruments", "drums"])
+    out, err = capsys.readouterr()
+    assert code == 0, err
+    assert [line for line in err.splitlines() if "warning: no preview" in line] == [
+        "songcharter: warning: no preview: it needs matplotlib and librosa (RuntimeError: Could not find a writable "
+        "config dir): pip install songcharter[preview]"]
+    assert "] preview:" not in err and [c[0] for c in Real.calls if c[0] != "threads"] == ["separate", "drums",
+                                                                                         "sections"]
+
+
+def test_takes_follow_the_guitar_stages_device(charted, monkeypatch, capsys):
+    """By default 4 takes when the guitar stage runs on CUDA, the first alone first, and 1 on the CPU; when
+    autochart moved its transcriber off CUDA by itself for that first take, the take alone, with one warning (the
+    transcriber's device decides, not the other stages', and a take that reports none counts as on CUDA). A number
+    asked for runs as asked on either device, all at once. pipeline.json says how many, whether by default, and
+    why."""
+    root, result, _, _ = charted
+    args = ["chart", str(root / "song.flac"), "--work", str(result.work), "--instruments", "guitar", "--genre", "Test"]
+
+    def run(name, *extra, **kw):
+        engines = standins(**kw)
+        monkeypatch.setattr(P, "Engines", engines)
+        code = main([*args, "--out", str(root / name), *extra])
+        out, err = capsys.readouterr()
+        assert code == 0, err
+        report = json.loads((result.work / "pipeline.json").read_text(encoding="utf-8"))
+        part = json.loads(result.config.read_text(encoding="utf-8"))["parts"][0]
+        calls = [c for c in engines.calls if c[0] == "guitar"]
+        guitar = next(s for s in report["stages"] if s["stage"] == "guitar")
+        assert guitar["chosen"] == report["takes"]
+        return report["takes"], [c[3] for c in calls], {c[4] for c in calls}, part.get("takes", []), err
+
+    others = [str(result.work / "guitar" / f"seed_{s}" / "notes.chart") for s in (101, 202, 303)]
+    takes, calls, devices, part, err = run("Cpu")
+    assert takes == {"asked": None, "takes": 1, "auto": True, "seeds": [DEFAULT_SEED], "transcriber_moved_to": None,
+                     "why": "the default on the cpu: 1 take (each one more is another transcription there, about "
+                            "3.6 min for a 7-min song)"}
+    assert calls == [(DEFAULT_SEED,)] and devices == {"cpu"} and part == []
+    takes, calls, devices, part, err = run("Cuda", auto="cuda")
+    assert takes["takes"] == 4 and takes["auto"] and takes["why"].startswith("the default on cuda: 4 takes")
+    assert calls == [(DEFAULT_SEED,), (101, 202, 303)] and devices == {"cuda"} and part == others
+    assert "on cuda, the first alone first" in err and "warning: guitar" not in err
+    takes, calls, devices, part, err = run("Moved", auto="cuda", moved="cpu")
+    assert takes["takes"] == 1 and takes["auto"] and takes["transcriber_moved_to"] == "cpu"
+    assert "but autochart's transcriber ran on cpu for the first take, so that take alone" in takes["why"]
+    assert calls == [(DEFAULT_SEED,)] and part == [] and err.count("warning: guitar") == 1
+    assert "warning: guitar: autochart's transcriber ran on cpu, not cuda, for the first take" in err
+    # the transcriber's device alone decides, as a real summary reports it (the demucs and timing stages None when
+    # their cache answered): demucs on the CPU still makes 4 takes, and so does a take that reports no devices
+    for name, shown in (("Demucs", {"demucs": "cpu", "timing": "cuda", "transcriber": "cuda"}), ("None", None),
+                        ("Empty", {})):
+        takes, calls, devices, part, err = run(name, auto="cuda", devices=shown)
+        assert takes["takes"] == 4 and takes["transcriber_moved_to"] is None, name
+        assert calls == [(DEFAULT_SEED,), (101, 202, 303)] and part == others, name
+        assert "warning: guitar: autochart's transcriber" not in err, name
+    takes, calls, devices, part, err = run("Asked", "--takes", "3", auto="cuda")
+    assert takes == {"asked": 3, "takes": 3, "auto": False, "why": "3 asked for", "seeds": [DEFAULT_SEED, 101, 202],
+                     "transcriber_moved_to": None}
+    assert calls == [(DEFAULT_SEED, 101, 202)] and devices == {"cuda"} and part == others[:2]
+    takes, calls, devices, part, err = run("One", "--takes", "1", auto="cuda", moved="cpu")
+    assert (takes["takes"], takes["auto"], calls) == (1, False, [(DEFAULT_SEED,)])
+    assert "autochart ran on the CPU" in err  # the take's own report of the fallback, as before
+    takes, calls, devices, part, err = run("Cpu4", "--takes", "4")
+    assert calls == [(DEFAULT_SEED, 101, 202, 303)] and devices == {"cpu"} and part == others and not takes["auto"]
 
 
 # ------------------------------------------------------------------------------------------------ the parts
@@ -533,15 +980,32 @@ def test_metadata_rules():
 def test_options_and_seeds():
     Options().check()
     Options(instruments=("drums",), takes=1, device="cpu", threads=3, solos="off").check()
+    assert Options().levels == ("expert",) and Options().solos == "labels"
+    for solos in ("stems", "labels", "off", ("Solo 1",), ["Solo 1", "Solo 2"]):
+        Options(solos=solos).check()
+    Options(levels=("easy", "expert", "medium", "hard")).check()
     for bad, message in (({"instruments": ()}, "no instruments"),
                          ({"instruments": ("drums", "drums")}, "each once"),
                          ({"takes": 2}, "two cannot outvote"), ({"takes": 0}, "takes is 1"),
-                         ({"takes": True}, "takes is 1"), ({"device": "tpu"}, "device is"),
-                         ({"threads": 1.5}, "threads must"), ({"solos": "labels"}, "solos is"),
+                         ({"takes": True}, "takes is 1"), ({"takes": 3.0}, "takes is 1"),
+                         ({"instruments": ("bass",), "takes": 4}, "takes are guitar takes"),
+                         ({"device": "tpu"}, "device is"),
+                         ({"threads": 1.5}, "threads must"), ({"solos": "Stems"}, "solos is"),
+                         ({"solos": 5}, "solos is"), ({"solos": ()}, "one name or more"),
+                         ({"solos": ("Solo 1", " ")}, "none of them blank"),
+                         ({"instruments": ("drums", "bass"), "solos": "stems"}, "solos are guitar solos"),
+                         ({"instruments": ("bass",), "solos": ("Solo 1",)}, "solos are guitar solos"),
+                         ({"levels": ("hard",)}, "expert among them"), ({"levels": "expert"}, "not 'expert'"),
+                         ({"levels": ("expert", "insane")}, "levels are"), ({"levels": ()}, "not none"),
                          ({"metadata": {"title": "x"}}, "unknown metadata")):
         with pytest.raises(ValueError, match=message):
             Options(**bad).check()
     assert P.take_seeds(1) == (DEFAULT_SEED,) and P.take_seeds(4) == (DEFAULT_SEED, 101, 202, 303)
+    assert Options().takes is None
+    Options(instruments=("bass",)).check()  # the defaults need no guitar: takes, and solos by the label
+    Options(instruments=("bass",), solos="labels").check()
+    assert [P.guitar_takes(None, d)[0] for d in ("cuda", "cpu")] == [4, 1]
+    assert [P.guitar_takes(n, d)[0] for n in (1, 3, 5) for d in ("cuda", "cpu")] == [1, 1, 3, 3, 5, 5]
 
 
 def test_a_missing_component_is_named_with_its_fix(monkeypatch):
@@ -642,6 +1106,9 @@ def test_the_real_engines_are_called_with_the_pipelines_settings(tmp_path, monke
         "guitar", (inst, audio, out, tuple(seeds), k)) and [take])
     runs = Engines().guitar(tmp_path / "decode.wav", tmp_path / "g", (DEFAULT_SEED, 101), "cpu", "T", "A")
     assert seen["guitar"] == ("the install", tmp_path / "decode.wav", tmp_path / "g", (DEFAULT_SEED, 101),
-                              {"device": "cpu", "title": "T", "artist": "A"})
+                              {"device": "cpu", "title": "T", "artist": "A", "work": None})  # --work: out/work
+    seen.pop("guitar")
+    Engines().guitar(tmp_path / "decode.wav", tmp_path / "g", (DEFAULT_SEED,), "cuda", "T", "A", scratch=tmp_path / "s")
+    assert seen["guitar"][4] == {"device": "cuda", "title": "T", "artist": "A", "work": tmp_path / "s"}
     assert runs == [Run(take.chart, False, {"runs": [{"devices": {"x": "cpu"}}], "seconds": 9.5,
                                             "devices": {"x": "cpu"}})]
