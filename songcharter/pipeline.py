@@ -12,8 +12,9 @@
      engine's default seed and, for `takes` > 1, seeds 101, 202, ... for the others, which assemble splices
      section by section (takes.py). An engine that charts no note leaves its part out (DESIGN.md 2, absent parts).
   4. **Assemble** from a config written into the work folder (work/assemble.json): our beat grid and tempo map, the
-     parts quantized onto it, the lower tiers, star power, fills, solos and sections, then the gate (assemble.py).
-     The result and its exit codes are `songcharter assemble`'s.
+     parts quantized onto it, star power, fills, solos and sections, then the gate (assemble.py). Only Expert is
+     written by default (`levels`: the friend plays Expert, and asks for the others when he wants them); the lower
+     tiers are reduced from it when asked for. The result and its exit codes are `songcharter assemble`'s.
 
   * **Metadata.** The file's tags as ffmpeg prints them (title, artist, album, genre, date, track), the caller's
     values on top, and defaults for what scan-chart requires: the file's name for the title, "Unknown" for the
@@ -59,7 +60,7 @@ from . import audio as A
 from .assemble import AssembleResult, assemble, check_output, failed_folder, load_config
 from .errors import InputError, ToolError
 from .importers import read_song
-from .timed import INSTRUMENTS
+from .timed import DIFFICULTIES, INSTRUMENTS
 
 SAMPLE_RATE = A.SAMPLE_RATE
 STEMS = ("drums", "bass", "guitar", "other", "vocals")   # the stems assemble reads (piano only reaches allin1)
@@ -81,6 +82,7 @@ class Options:
     work: Path | None = None                     # the work folder (None: <output>.work beside the output)
     metadata: Mapping[str, str] = field(default_factory=dict)  # name, artist, album, genre, year: over the tags
     solos: str = "stems"                         # assemble's solos: "stems" (vocals quiet, guitar loud) or "off"
+    levels: tuple[str, ...] = ("expert",)        # the difficulties written: Expert, and any of hard, medium, easy
 
     def check(self) -> None:
         if not self.instruments:
@@ -98,6 +100,12 @@ class Options:
         if self.threads is not None and (isinstance(self.threads, bool) or not isinstance(self.threads, int)
                                          or self.threads < 1):
             raise InputError(f"threads must be a whole number of at least 1, not {self.threads!r}")
+        levels = self.levels
+        if (isinstance(levels, str) or not isinstance(levels, (tuple, list)) or "expert" not in levels
+                or any(d not in DIFFICULTIES for d in levels) or len(set(levels)) != len(levels)):
+            shown = ", ".join(map(str, levels)) if isinstance(levels, (tuple, list)) else repr(levels)
+            raise InputError(f"levels are {', '.join(DIFFICULTIES)}, each once and expert among them (the others are "
+                             f"reduced from it), not {shown or 'none'}")
         if self.solos not in ("stems", "off"):
             raise InputError(f"solos is 'stems' or 'off', not {self.solos!r}")
         unknown = sorted(set(self.metadata) - set(OVERRIDES))
@@ -449,6 +457,7 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
                "audio": str(work / "decode.wav"), "stems": stem_files, "beat_hints": None, "lead_in": 2.5,
                "parts": parts, "sections": sections,
                "solos": options.solos if any(p["instrument"] == "guitar" for p in parts) else "off",
+               "levels": [d for d in DIFFICULTIES if d in options.levels],
                "metadata": meta, "output": str(out)}
         config = work / "assemble.json"
         config.write_text(json.dumps(cfg, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")

@@ -234,6 +234,11 @@ def test_the_song_folder_passes_the_gate(charted):
     song = read_song(result.folder)
     assert {i for i, _ in song.parts} == {"guitar", "bass", "drums"}
     assert report["sections"]["count"] >= 4 and report["parts"]["guitar"]["takes"]
+    # Expert only by default, with a rating for every instrument in song.ini
+    assert {d for _, d in song.parts} == {"expert"} and all(t.keys() == {"expert"} for t in report["tracks"].values())
+    ini = (result.folder / "song.ini").read_text(encoding="utf-8").splitlines()
+    for key in ("diff_guitar", "diff_bass", "diff_drums", "diff_drums_real"):
+        assert any(line.startswith(f"{key} = ") and line.split(" = ")[1].isdigit() for line in ini), key
 
 
 def test_metadata_comes_from_the_tags_and_the_caller(charted):
@@ -258,6 +263,7 @@ def test_the_work_folder_and_the_assemble_config(charted):
     assert cfg["stems"] == {s: str(work / "stems" / key / f"{s}.wav")
                             for s in ("drums", "bass", "guitar", "other", "vocals")}
     assert cfg["sections"] == str(work / "sections" / "segments.json") and cfg["solos"] == "stems"
+    assert cfg["levels"] == ["expert"]
     assert [p["instrument"] for p in cfg["parts"]] == ["guitar", "bass", "drums"]
     guitar, bass, drums = cfg["parts"]
     assert guitar["source"] == str(work / "guitar" / f"seed_{DEFAULT_SEED}" / "notes.chart")
@@ -273,6 +279,7 @@ def test_the_work_folder_and_the_assemble_config(charted):
                                                       "assemble"]
     assert all(s["seconds"] >= 0 and not s["cached"] for s in report["stages"])
     assert report["assemble"]["ok"] and report["options"]["takes"] == 3 and "error" not in report
+    assert report["options"]["levels"] == ["expert"]
     assert report["stages"][1]["key"] == key and report["stages"][1]["cuda_error"] is None
     if sys.platform != "win32":  # this process's own peak only: RUSAGE_CHILDREN is at least its size, not a child's
         assert report["peak_rss_mb"]["self"] > 0 and set(report["peak_rss_mb"]) == {"self"}
@@ -318,6 +325,7 @@ def test_a_rerun_reuses_every_stage(charted, monkeypatch, capsys):
     for stage in ("decode", "separate", "drums", "bass", "sections", "guitar"):
         assert any(f"] {stage}: " in line and "(cached)" in line for line in err.splitlines()), stage
     assert "gate: OK" in out and out.splitlines()[-1].startswith("stages: decode ")
+    assert any(line.startswith("guitar: onsets E ") for line in out.splitlines())  # Expert only, labelled so
     assert (wav.stat().st_mtime_ns, (result.folder / "notes.chart").read_bytes()) == before
 
 
@@ -372,6 +380,10 @@ def test_cli_exit_codes(charted, tmp_path, monkeypatch, capsys):
                           ([song, "--instruments", ""], "no instruments"),
                           ([song, "--instruments", "bass", "--takes", "3"], "takes are guitar takes"),
                           ([song, "--threads", "0"], "threads must be"),
+                          ([song, "--levels", "hard"], "expert among them"),
+                          ([song, "--levels", "expert,extreme"], "levels are expert, hard, medium, easy"),
+                          ([song, "--levels", "expert,Expert"], "each once"),
+                          ([song, "--levels", ","], "not none"),
                           ([song, "--out", str(tmp_path / "Busy")], "holds what a build does not write"),
                           ([song, "--out", str(tmp_path / "Busy2")], "Busy2.failed holds what a build does not write"),
                           ([song, "--work", str(tmp_path / "X" / "w")], "must be apart"),
@@ -436,7 +448,7 @@ def test_the_cli_options_reach_the_engines(charted, tmp_path, monkeypatch, capsy
     monkeypatch.setattr(P, "Engines", engines)
     work = tmp_path / "work"
     code = main(["chart", str(root / "song.flac"), "--out", str(tmp_path / "Song"), "--work", str(work),
-                 "--device", "cuda", "--threads", "3", "--takes", "4"])
+                 "--device", "cuda", "--threads", "3", "--takes", "4", "--levels", "hard,expert"])
     out, err = capsys.readouterr()
     assert code == 0, err
     calls = {c[0]: c[1:] for c in engines.calls}
@@ -451,6 +463,9 @@ def test_the_cli_options_reach_the_engines(charted, tmp_path, monkeypatch, capsy
     report = json.loads((work / "pipeline.json").read_text(encoding="utf-8"))
     sections = next(s for s in report["stages"] if s["stage"] == "sections")
     assert sections["backend"] == "allin1" and sections["child_peak_rss_mb"] == 512.0
+    assert cfg["levels"] == ["expert", "hard"] and report["options"]["levels"] == ["hard", "expert"]
+    assert {d for _, d in read_song(tmp_path / "Song").parts} == {"expert", "hard"}
+    assert any(line.startswith("drums: onsets E/H ") for line in out.splitlines())
 
 
 def test_auto_runs_on_the_cpu_when_cuda_does_not_run(charted, tmp_path, monkeypatch, capsys):
@@ -461,10 +476,12 @@ def test_auto_runs_on_the_cpu_when_cuda_does_not_run(charted, tmp_path, monkeypa
     engines = standins(cuda_error=why)
     monkeypatch.setattr(P, "Engines", engines)
     code = main(["chart", str(root / "song.flac"), "--out", str(tmp_path / "Song"), "--work", str(result.work),
-                 "--takes", "3", "--genre", "Test"])
+                 "--takes", "3", "--genre", "Test", "--levels", "all"])
     out, err = capsys.readouterr()
     assert code == 0, err
     assert f"songcharter: warning: CUDA does not run here ({why}): the models run on the CPU" in err
+    assert {d for _, d in read_song(tmp_path / "Song").parts} == {"expert", "hard", "medium", "easy"}
+    assert any(line.startswith("guitar: onsets E/H/M/Ez ") for line in out.splitlines())
     calls = {c[0]: c[1:] for c in engines.calls}
     assert calls["separate"][2] == calls["drums"][3] == calls["guitar"][3] == "cpu"
     report = json.loads((result.work / "pipeline.json").read_text(encoding="utf-8"))
@@ -533,11 +550,15 @@ def test_metadata_rules():
 def test_options_and_seeds():
     Options().check()
     Options(instruments=("drums",), takes=1, device="cpu", threads=3, solos="off").check()
+    assert Options().levels == ("expert",)
+    Options(levels=("easy", "expert", "medium", "hard")).check()
     for bad, message in (({"instruments": ()}, "no instruments"),
                          ({"instruments": ("drums", "drums")}, "each once"),
                          ({"takes": 2}, "two cannot outvote"), ({"takes": 0}, "takes is 1"),
                          ({"takes": True}, "takes is 1"), ({"device": "tpu"}, "device is"),
                          ({"threads": 1.5}, "threads must"), ({"solos": "labels"}, "solos is"),
+                         ({"levels": ("hard",)}, "expert among them"), ({"levels": "expert"}, "not 'expert'"),
+                         ({"levels": ("expert", "insane")}, "levels are"), ({"levels": ()}, "not none"),
                          ({"metadata": {"title": "x"}}, "unknown metadata")):
         with pytest.raises(ValueError, match=message):
             Options(**bad).check()

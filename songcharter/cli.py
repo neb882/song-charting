@@ -1,8 +1,8 @@
 """The command line:
 
-    songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums] [--takes N]
-                      [--device auto|cpu|cuda] [--threads N] [--title ...] [--artist ...] [--album ...] [--year ...]
-                      [--genre ...]
+    songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums]
+                      [--levels expert|all|expert,hard,...] [--takes N] [--device auto|cpu|cuda] [--threads N]
+                      [--title ...] [--artist ...] [--album ...] [--year ...] [--genre ...]
     songcharter assemble <config.json> [--out DIR]
 
 `chart` runs the whole pipeline on one song file (pipeline.py): decode, separation, the engines, then assemble's
@@ -29,6 +29,9 @@ from pathlib import Path
 
 from . import __version__
 from .errors import SongcharterError
+from .timed import DIFFICULTIES
+
+LEVEL_ABBREVIATIONS = {"expert": "E", "hard": "H", "medium": "M", "easy": "Ez"}
 
 
 def _summary(result) -> str:
@@ -52,11 +55,12 @@ def _summary(result) -> str:
         lines.append(f"part {key}: offset {o['applied'] * 1000:+.1f} ms ({o['mode']}, measured "
                      f"{o['measured'] * 1000:+.1f} ms, concentration {o['concentration']:.2f}){trimmed}{clipped}")
     for inst, levels in r["tracks"].items():
-        counts = " / ".join(f"{levels[d]['onsets']}" for d in ("expert", "hard", "medium", "easy") if d in levels)
+        written = [d for d in DIFFICULTIES if d in levels]
+        counts = " / ".join(f"{levels[d]['onsets']}" for d in written)
         ex = levels.get("expert", {})
         extra = f", {ex.get('fills', 0)} fills" if inst == "drums" else ""
-        lines.append(f"{inst}: onsets E/H/M/Ez {counts}; {ex.get('star_power', 0)} star power{extra}, "
-                     f"rating {r['ratings'].get(inst)}")
+        lines.append(f"{inst}: onsets {'/'.join(LEVEL_ABBREVIATIONS[d] for d in written)} {counts}; "
+                     f"{ex.get('star_power', 0)} star power{extra}, rating {r['ratings'].get(inst)}")
     lines.append(f"sections: {r['sections']['count']} ({r['sections']['source']})")
     lines.append(r["sync"]["summary"])
     gate = r["gate"]
@@ -87,6 +91,12 @@ def _instruments(text: str) -> tuple[str, ...]:
     return tuple(x.strip().lower() for x in text.split(",") if x.strip())
 
 
+def _levels(text: str) -> tuple[str, ...]:
+    """--levels: "all", or a comma-separated list of difficulties (checked by pipeline.Options)."""
+    words = _instruments(text)
+    return DIFFICULTIES if words == ("all",) else words
+
+
 def main(argv: list[str] | None = None) -> int:
     # a song name or path the console's code page cannot show (cp1252 when Windows redirects stdout) must not turn
     # a finished build into a crash; stderr already escapes such characters
@@ -110,6 +120,9 @@ def main(argv: list[str] | None = None) -> int:
                                              "(default: <out>.work beside the output)")
     c.add_argument("--instruments", type=_instruments, default=None, metavar="LIST",
                    help="comma-separated parts to chart (default: guitar,bass,drums)")
+    c.add_argument("--levels", type=_levels, default=("expert",), metavar="LIST",
+                   help="the difficulties to write: expert (default), all, or a comma-separated list that includes "
+                        "expert, such as expert,hard (the others are reduced from Expert)")
     c.add_argument("--takes", type=int, default=1, metavar="N",
                    help="guitar takes, spliced by agreement: 1 (default), or 3 or more (each about one more "
                         "autochart run)")
@@ -138,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
             meta = {k[5:]: v for k, v in vars(args).items() if k.startswith("meta_") and v is not None}
             instruments = pipeline.INSTRUMENTS if args.instruments is None else args.instruments
             options = pipeline.Options(instruments=instruments, takes=args.takes, device=args.device,
-                                       threads=args.threads, work=args.work, metadata=meta)
+                                       threads=args.threads, work=args.work, metadata=meta, levels=args.levels)
             done = pipeline.chart(args.song, args.out, options)
             result, extra = done.assembled, pipeline.summary(done)
         else:
