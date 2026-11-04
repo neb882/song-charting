@@ -223,3 +223,18 @@ Each was tested with stand-ins only; only the real install shows them.
   reports (doctor's "Windows RAM") and the `memory=` the install wrote (12GB for a 16 GB PC, whatever it reports).
 - **A GPU out of reach** (nvidia-smi failing, as after some Windows updates) cannot be arranged at will: if it happens
   on a first install, the warning at its end, and `songcharter doctor`'s note once the GPU answers.
+
+## Added at the release gate
+
+The GPU smoke test (2026-11-04, the owner's 5070, through the real installer in an isolated HOME with the Windows side
+off; WSL had 22 GB, not 12) measured the cold chart of the test song with the friend's defaults. Recheck these with
+`memory=12GB`, as A's distro has it:
+- **VRAM:** the peak was 8,987 MiB of 12,227 (GPU 99%), during the guitar's takes. The friend's 4070 also has 12 GB,
+  but Windows' desktop holds some of it (about 9.5 GB was free when it was last read): record the free VRAM before
+  the chart and the peak during it, and whether any take fell back to the CPU.
+- **RAM:** the chart's process tree peaked at 11.09 GiB RSS, during the sections (allin1), with no swap used. Under
+  `memory=12GB` that is close to the limit: record the peak, and the swap used, from the job's memory samples.
+- **Time:** cold 959 s for the 412 s song (the guitar 854 s: 4 takes of about 177-217 s each, 3.9 times one take);
+  warm 37 s. Record A's times beside these.
+- **The solos:** the CPU chart (1 take) of the test song leaves guitar gaps in solos 3C-3D (about 5:45-6:15) where the
+  stem plays. Look at the same span in the 4-take chart's preview, and say whether the gaps are there too.

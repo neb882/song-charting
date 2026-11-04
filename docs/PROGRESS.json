@@ -33,18 +33,17 @@
       "done": "songcharter chart runs end to end in the dev container on the test song and Take Me Out; Take Me Out Expert F1@50 guitar 0.909, bass 0.912, drums 0.944. Defaults since 2026-11-03: Expert only, 4 guitar takes on CUDA and 1 on the CPU, solos on allin1's solo sections, a preview after each build, sustains clipped inside the end of the audio, the work folder in the per-user cache pruned to 5 GB.",
       "open": [
         "beat F1 0.962 on Take Me Out, 0.008 short of the rule (autochart 0.990 minus 0.02)",
-        "drum lanes: exact-lane agreement 0.285 against STRUM's 0.667",
-        "no run on a GPU yet"
+        "drum lanes: exact-lane agreement 0.285 against STRUM's 0.667"
       ]
     },
     {
       "id": "M4",
-      "status": "built: every order merged (M4-01 to M4-07, M4-05a, M4-10; each reviewed, CI green end to end in Ubuntu 26.04, the release's own check included); M4-00b's CUDA 13 spike passed on the 5070; next the release gate (the full review, the golden charts, the test song end to end, the advisor), then M4-08 on the owner's 5070, then the pre-release",
+      "status": "built: every order merged (M4-01 to M4-07, M4-05a, M4-10; each reviewed, CI green end to end in Ubuntu 26.04, the release's own check included); M4-00b's CUDA 13 spike passed on the 5070, and so did the GPU smoke test (the first chart on a GPU, through the real installer); the release gate (docs/reports/release-gate.md): the full review, its fixes merged and reviewed again, the golden charts identical, the test song end to end with its preview looked at; next the advisor on the release candidate, then M4-08 on the owner's 5070, then the pre-release",
       "what": "a release the friend can use on his Windows PC, running in WSL2: a guided WSL setup, a one-line install, a Start-menu shortcut, a local UI, tested on his PC",
       "plan": "docs/work-orders/M4-00-plan.md: v0.1 is a guide to set up WSL, install.sh fetched from the pre-release and checked by hash (uv lanes cu132/cu126/cpu, allin1's own Python, Node, autochart with its models and its CUDA 13 provider, doctor.json, a .wslconfig with Windows' RAM minus 4 GB, a Start-menu shortcut), device checks with the CPU fallback shown, the local UI in WSL opened in the Windows browser (drop, options, progress with cancel, the static preview, zip and install into the Windows Songs folder), diagnostics, and CI end to end in ubuntu:26.04. Native Windows and the rest are M4-99; the native plan is commit f9f9377 and M4-00's appendix.",
       "risks": [
-        "peak RAM with CUDA inside 12 GB of WSL memory (a 16 GB PC) is unmeasured: on the CPU the tree peaked at 10.1 GB, allin1's runner 7.8 GB; M4-08 measures it with memory=12GB, swap 8 GB absorbs short peaks, and under 11 GB of WSL memory allin1 is left out (librosa sections)",
-        "autochart's CUDA provider in WSL needs CUDA 13 libraries (cublas 13, cudart 13, nvrtc 13, cufft 12, curand 10, cuDNN 9): the cu132 lane's wheels plus nvidia-curand hold them, and in the dev container the provider loaded past all of them (only the driver's libcuda.so.1 was missing); never run on a GPU (eval/gpu.sh's earlier runs used CUDA 12 libraries), so M4-00b (packaging/spike/cuda13-provider.sh, the owner's 5070, about 20 min) must pass before wave 1 ends; a driver under 580 leaves the guitar on the CPU",
+        "peak RAM with CUDA inside 12 GB of WSL memory (a 16 GB PC): on the 5070 with 22 GB of WSL memory the tree peaked at 11.09 GiB RSS (during the sections), on the CPU at 10.1 GB, allin1's runner 7.8 GB; M4-08 measures it with memory=12GB, swap 8 GB absorbs short peaks, and under 11 GB of WSL memory allin1 is left out (librosa sections)",
+        "autochart's CUDA provider in WSL needs CUDA 13 libraries (the cu132 lane's wheels plus nvidia-curand): it loaded and ran the guitar on the 5070 in M4-00b's spike and in the GPU smoke test; a driver under 580 leaves the guitar on the CPU. VRAM: 8,987 MiB at the peak of 12 GB, and the friend's 4070 has 12 GB with Windows' desktop holding some (M4-08 records the free VRAM)",
         "the Start-menu shortcut under Smart App Control: a .lnk written from WSL has no Mark of the Web and targets the signed wsl.exe, so it should run; untested until M4-08 (fallback: open Ubuntu, type songcharter)",
         "the Windows browser reaches the server through WSL's localhost forwarding (default on); the server checks it from Windows with curl.exe and falls back to WSL's own address"
       ],
@@ -54,8 +53,10 @@
         "licence: MIT for songcharter's own code, LICENSE on main (the owner); NOTICE lists the third parties",
         "uninstall: the guide offers wsl --unregister Ubuntu as the complete uninstall, with a warning to use it only if that Ubuntu holds nothing else (the owner, 2026-11-03)",
         "lyrics (M4-10, DESIGN 2.15): `--lyrics FILE` / Options.lyrics; the friend pastes the text, songcharter never looks lyrics up or transcribes; the aligner is torchaudio's English 960 h large CTC bundle with a star before every line, chosen by measurement on the six references' 1,277 human-timed words (0.915 within 250 ms on the stems; the multilingual bundle 0.854, ctc-forced-aligner 0.812); the text goes into notes.chart only, every report counts it",
-        "memory rule: Windows' RAM rounded up to a whole GB, then less 4 (the owner, 2026-11-04, at the release gate: reported RAM is always a little under what is installed, so a PC sold as 16 GB that reports 15.4 GiB gets memory=12GB, not 11); allin1 is left out at 14 GiB or less, 11 GiB or less is refused"
-      ]
+        "memory rule: Windows' RAM rounded up to a whole GB, then less 4 (the owner, 2026-11-04, at the release gate: reported RAM is always a little under what is installed, so a PC sold as 16 GB that reports 15.4 GiB gets memory=12GB, not 11); allin1 is left out at 14 GiB or less, 11 GiB or less is refused",
+        "takes: 4 guitar takes stay the CUDA default after the GPU smoke test (4 takes cost 3.9 times one, not the 3.41 assumed: 854 s of a 959 s cold chart of a 412 s song), decided at the release gate with the owner's go-ahead, 2026-11-04"
+      ],
+      "gpu_smoke": "2026-11-04 on the owner's 5070, main at c0753d6, the real install.sh in an isolated HOME with the Windows side off (WSL had 22 GB): install exit 0 in 112 s, lane cu132, 7.4 GB installed; doctor OK, the guitar on CUDA (autochart's CUDA provider: 15 nodes on CUDA, 2 on the CPU). The test song (412 s) cold with the friend's defaults: exit 0, gate OK, playable with 0 chart issues, 959 s (the guitar 854 s for 4 takes, separation 10 s, sections 42 s); warm rerun 37 s. Peaks: VRAM 8,987 MiB of 12,227; the process tree 11.09 GiB RSS (during the sections); no swap. M4-08 rechecks them under memory=12GB (its 'Added at the release gate')."
     },
     {
       "id": "M5",
@@ -71,13 +72,13 @@
   },
   "in_flight": [
     {
-      "order": "the release gate",
-      "stage": "running on main at ceaf1dc: the full review (workflow run wf_be907e55-8b2, base 8a00e3f); the golden charts (656991d against ceaf1dc, --rerun drums,bass,guitar) and the test song end to end, in <scratchpad>/gate (run.sh, status)",
-      "then": "fix confirmed findings; look at the test song's preview; the advisor on the release candidate; then M4-08"
+      "order": "the release gate: the advisor on the release candidate",
+      "stage": "starting on main after the gate's fixes merged (a5ea646)",
+      "then": "fix what it finds that a skeptic confirms; then M4-08 on the owner's 5070 (the owner's turn), then the pre-release"
     }
   ],
   "next": [
-    "M4: the release gate on main: the full review over v0.1 (.claude/workflows/full-review.js), the golden charts on the whole set against the baseline, the test song end to end with its preview looked at, the advisor on the release candidate; then M4-08 on the owner's 5070 in a fresh Ubuntu-26.04 distro (the guide followed as written), then the pre-release (the owner approves), then the friend's PC.",
+    "M4: the release gate's last check on main, the advisor on the release candidate (the full review, the golden charts and the test song passed: docs/reports/release-gate.md); then M4-08 on the owner's 5070 in a fresh Ubuntu-26.04 distro (the guide followed as written), then the pre-release (the owner approves), then the friend's PC.",
     "From M5: the plan by the most capable model, as a fresh agent that reads only the repository, reviewed by a different model (docs/PIPELINE.md, Gates).",
     "Owner: delete the merged remote branches ci-test-gaps, m4-01-lanes, m4-02-device, m4-03-install and m4-05a-ci-skeleton (a session can't).",
     "Before the next quality decision: grow the reference set to 20 or more human charts, with human-charted solos among them."
@@ -143,7 +144,10 @@
     "M4-07: NOTICE.txt is hand-written from the locks of 2026-11-04; a lock or pin change can make it stale. A CI check that every locked package with a non-permissive licence is named in it would catch that.",
     "Release gate: the lyrics aligner's first-use download (1.26 GB) shows no progress on the page (only the lyrics stage running); its lines every 50 MB go to the job's log. Since the review of the gate fixes it goes through runtime.download_part, so it is retried, and a cut one is resumed by the next song with lyrics.",
     "Release gate: an install made before songcharter's own uv cache (runtime/uv-cache) keeps its ~/.cache/uv, which songcharter no longer counts or deletes. Its next run downloads nothing into the new cache while its environments are complete: checked with uv 0.13.5 (the pinned tarball) on a setuptools project installed --no-editable, whose re-sync with an empty cache, offline too, only 'Checked 2 packages'. A new release (the app at a new path) rebuilds songcharter's wheel, which needs setuptools: one small download (4.4 MB of cache with the index pages), plus what the new lock changes; offline that rebuild fails. v0.1 is not released, so only dev and CI installs have an old cache.",
-    "Release gate: the install's closing summary prints doctor.json as step 8 wrote it, before WSL restarts with the memory step 9 set (on a 16 GB PC with no .wslconfig, 'WSL has 7.8 GB ... allin1 is left out'). The page's header and diagnostics' doctor-now.json measure it again; the GPU is not measured again in the header."
+    "Release gate: the install's closing summary prints doctor.json as step 8 wrote it, before WSL restarts with the memory step 9 set (on a 16 GB PC with no .wslconfig, 'WSL has 7.8 GB ... allin1 is left out'). The page's header and diagnostics' doctor-now.json measure it again; the GPU is not measured again in the header.",
+    "GPU smoke test: song.ogg differs between two charts of the same song only in each Ogg page's serial number and checksum (notes.chart and song.ini identical), against the rule that the same input gives byte-identical output. The Ogg muxer picks a random stream serial; a fixed one (ffmpeg's bitexact flags, to check) would make the folder byte-identical.",
+    "GPU smoke test: each guitar take's expert_job.json records executionProvider \"cpu\" while the take ran on CUDA (its results say cuda; the GPU was at 99%): the job file's field misleads anyone reading it.",
+    "Release gate: the test song's CPU chart (1 take) leaves guitar gaps in solos 3C-3D (about 5:45-6:15) where the stem plays; M4-08 compares the 4-take chart's preview (its 'Added at the release gate')."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
   "how_work_is_run": "docs/PIPELINE.md. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices, /prompt-caching, /sub-agents, /settings",
