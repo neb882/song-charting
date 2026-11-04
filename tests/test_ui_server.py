@@ -409,7 +409,8 @@ def test_the_page_shows_the_problems_the_full_disk_and_the_errors_lines(tmp_path
 def test_an_upload_that_fills_the_disk_answers_507(served, monkeypatch):
     """The skeptic's probe of finding 6: an upload that meets a full disk (ENOSPC) answers 507 with what to do, not a
     500 logged as a bug; the rest of the body is read, so the browser gets the answer and not a reset; nothing is left
-    behind, and the next upload works. So does one whose record (upload.json) meets it."""
+    behind, and the next upload works. So does one whose record (upload.json) meets it, and its song file goes. Any
+    other OSError, on the file or on its record, is still a 500 logged as a bug."""
     import builtins
     import errno
     real = builtins.open
@@ -454,6 +455,26 @@ def test_an_upload_that_fills_the_disk_answers_507(served, monkeypatch):
     status, body = upload(served, data, "big.wav")
     assert status == 507 and body == {"error": S.DISK_FULL}
     assert not list(uploads.glob("*/upload.json*")) and not any("internal error" in line for line in served.lines)
+    assert not list(uploads.glob("*/*.wav"))   # the review's F6: the song with no record goes too
+    monkeypatch.setattr(Path, "write_text", write_text)
+    # any other OSError (here EACCES, as a read-only or unwritable folder gives) is still a bug: 500, logged (F4); a
+    # small song, which the server has read whole before it answers
+    small = song(served.home / "small.wav", seconds=0.05)
+    for where in ("file", "record"):
+        def denied(*a, **k):
+            raise PermissionError(errno.EACCES, "Permission denied")
+
+        if where == "file":
+            monkeypatch.setattr(S, "open", lambda path, mode="r", *a, **k: denied() if str(path).endswith(".part")
+                                else real(path, mode, *a, **k), raising=False)
+        else:
+            monkeypatch.setattr(Path, "write_text", lambda self, *a, **k: denied() if self.name == "upload.json.part"
+                                else write_text(self, *a, **k))
+        served.lines.clear()
+        status, body = upload(served, small, "small.wav")
+        assert status == 500 and body["error"].startswith("internal error: PermissionError"), (where, body)
+        assert any("internal error" in line for line in served.lines), where
+        monkeypatch.undo()
 
 
 def test_uploads(served, monkeypatch):

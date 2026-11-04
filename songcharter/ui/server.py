@@ -704,7 +704,7 @@ class Handler(BaseHTTPRequestHandler):
         meta, origin = pipeline.song_metadata(Path(name), tags, {})   # the name as dropped, not its safe form
         record = {"id": target.name, "name": name, "file": dest.name, "bytes": n, "sha256": key, "metadata": meta,
                   "origin": origin, "uploaded": time.time()}
-        tmp = target / "upload.json.part"
+        tmp, had = target / "upload.json.part", (target / "upload.json").is_file()
         try:
             tmp.write_text(json.dumps(record, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
             os.replace(tmp, target / "upload.json")
@@ -712,6 +712,8 @@ class Handler(BaseHTTPRequestHandler):
             tmp.unlink(missing_ok=True)
             if e.errno != errno.ENOSPC:
                 raise
+            if not had:   # a song with no record is of no use, and holds the space until the 7-day prune
+                dest.unlink(missing_ok=True)
             raise Refused(507, DISK_FULL) from None
         os.utime(target)
         self.app.log(f"upload {target.name}: {name} ({n} bytes)")
