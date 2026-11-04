@@ -52,7 +52,8 @@
         "route: WSL2, not native Windows (the owner, 2026-11-03): the friend's PC has Smart App Control on, which blocks unsigned DLLs and Python modules with no per-app exception; Linux programs in WSL2 are outside it, and onnxruntime-node's Linux build gives the guitar CUDA again",
         "delivery: a GitHub pre-release on neb882/song-charting (the owner)",
         "licence: MIT for songcharter's own code, LICENSE on main (the owner); NOTICE lists the third parties",
-        "uninstall: the guide offers wsl --unregister Ubuntu as the complete uninstall, with a warning to use it only if that Ubuntu holds nothing else (the owner, 2026-11-03)"
+        "uninstall: the guide offers wsl --unregister Ubuntu as the complete uninstall, with a warning to use it only if that Ubuntu holds nothing else (the owner, 2026-11-03)",
+        "lyrics (M4-10, DESIGN 2.15): `--lyrics FILE` / Options.lyrics; the friend pastes the text, songcharter never looks lyrics up or transcribes; the aligner is torchaudio's English 960 h large CTC bundle with a star before every line, chosen by measurement on the six references' 1,277 human-timed words (0.915 within 250 ms on the stems; the multilingual bundle 0.854, ctc-forced-aligner 0.812); the text goes into notes.chart only, every report counts it"
       ]
     },
     {
@@ -67,7 +68,9 @@
     "baseline": "main at 11615e2: <scratchpad>/golden/base/summary.json, all 7 songs gate OK; the kept work folders in <scratchpad>/golden/work. Environment in the dev container: EVAL_DATA=<scratchpad>/eval SONGCHARTER_GOLDEN=<scratchpad>/golden, plus SONGCHARTER_SCAN_CHART, SONGCHARTER_AUTOCHART=<scratchpad>/eval/tools/autochart and SONGCHARTER_ALLIN1_PYTHON=<scratchpad>/research/timing/venv2/bin/python. <scratchpad> is /tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad.",
     "cost": "cold (a kept folder made, stems hard-linked): 474-1081 s a song, 80 min for the set, the guitar take most of it; warm: 44-76 s a song, 6.5 min for the set (CPU, 2 threads)"
   },
-  "in_flight": [],
+  "in_flight": [
+    "M4-10 (lyrics): built on branch m4-10-lyrics, awaiting sc-reviewer and sc-inspector, then the merge (its uv.lock change: torchaudio 2.11.1 by lane, nothing else; see the builder's report)"
+  ],
   "next": [
     "M4 wave 2: M4-03 (install) and M4-04 (ui-server) in parallel; then M4-05 and M4-06; M4-07; the full review; M4-08 on the owner's 5070 in a fresh Ubuntu-26.04 distro, then the friend's PC.",
     "M4: the owner runs M4-00b (packaging/spike/cuda13-provider.sh in the existing WSL on the 5070, about 20 min) while wave 1 builds (M4-01, M4-02, M4-05a); it must pass before wave 1 ends. Then M4-03 and M4-04; M4-05 and M4-06; M4-07; the full review workflow; M4-08: the owner's 5070 in a fresh Ubuntu-26.04 distro with the friend's 16 GB .wslconfig written by the install, then the friend's PC (also M1a's Windows spike).",
@@ -113,7 +116,10 @@
     "M4-01 review F2: `uv sync` with no lane extra installs PyPI's CUDA torch (and allin1 then lacks torchaudio). The installer always passes a lane; M4-03 should refuse or warn when none is given, or the docs say so.",
     "DESIGN.md has not yet absorbed wave 1 (the lanes, doctor and the device rows of §2.0, §4, the VRAM note): the builders' reports list the edits (scratchpad briefs m4-01/m4-02/m4-05a.report.md); fold them in with the release's doc pass (M4-07) at the latest.",
     "M4-02: doctor does not count a missing torch or demucs as a problem, and the guitar's reason is 'no GPU' on the cpu lane even when a GPU is present (both per the spec's wording).",
-    "Pin the build backend in both locks (process-quality review, supply-1): add `build-constraint-dependencies = [\"setuptools==<the version in use>\"]` under [tool.uv] in pyproject.toml and packaging/allin1/pyproject.toml, then `uv lock` both, so a frozen sync no longer builds songcharter and the antlr4 sdist with whatever setuptools PyPI has that day. Do it after wave 2 merges (M4-03 may relock)."
+    "Pin the build backend in both locks (process-quality review, supply-1): add `build-constraint-dependencies = [\"setuptools==<the version in use>\"]` under [tool.uv] in pyproject.toml and packaging/allin1/pyproject.toml, then `uv lock` both, so a frozen sync no longer builds songcharter and the antlr4 sdist with whatever setuptools PyPI has that day. Do it after wave 2 merges (M4-03 may relock).",
+    "M4-10: the install (runtime.step_pipeline_models) does not fetch the lyrics weights (1.26 GB): the first --lyrics run downloads them. Fetching them at install is the director's call (install size and time).",
+    "M4-10: lyrics in a script other than Latin get no romanization: such words are spread between their neighbours. The English bundle collapses on a vocal stem as poor as a full mix (warned: median word score under 0.25). Not run on CUDA, nor checked in Clone Hero itself (M4-08 should look at the lyrics display).",
+    "M4-10: doctor (device.py) does not list torchaudio among the components, and NOTICE (M4-07) needs torchaudio (BSD-2-Clause) and the wav2vec 2.0 weights (MIT)."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
   "how_work_is_run": "CLAUDE.md, section 'How work is run'. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices",
