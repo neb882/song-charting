@@ -239,7 +239,7 @@ def test_uploads(served, monkeypatch):
         status, body = upload(ctx, b"hello", name)
         assert status == 415 and "not a song file" in body["error"], name
     data = song(ctx.home / "tmp.wav")
-    status, body = upload(ctx, data, "C:\\Users\\Jörg\\Music\\Jörg's Söng: 1/2.WAV")
+    status, body = upload(ctx, data, "C:\\Music\\Jörg's Söng: 1/2.WAV")
     key = hashlib.sha256(data).hexdigest()
     assert status == 200, body
     assert set(body) == {"id", "name", "bytes", "tags", "origin"} and body["id"] == key[:16]

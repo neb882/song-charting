@@ -61,7 +61,7 @@ time.sleep(60)
 '''
 
 UPLOAD = {"id": "0123456789abcdef", "name": "Jörg's Song.flac",
-          "metadata": {"name": "Ünïcode: Title?", "artist": "AC/DC"}}
+          "metadata": {"name": "Ünïcode: Title?", "artist": "Ann/Bo"}}
 
 
 @pytest.fixture
@@ -126,7 +126,7 @@ def test_the_options_become_the_command_line(tmp_path, monkeypatch):
     assert opts.metadata == {"title": "-Title with spaces", "year": "1999", "genre": "Rock"}
     assert opts.instruments == ("guitar", "drums") and opts.levels == ("hard", "expert")
     assert opts.solos == ("Solo 1", "Solo 2") and opts.takes == 3 and not opts.preview
-    out = tmp_path / "library" / "x" / "AC_DC - T"
+    out = tmp_path / "library" / "x" / "Ann_Bo - T"
     cmd = J.chart_command(Path("/s/song.flac"), out, opts, 7)
     assert cmd[:5] == [sys.executable, "-m", "songcharter.cli", "chart", "/s/song.flac"]
     # every value as --flag=VALUE: a title that starts with "-" stays a title
@@ -192,9 +192,9 @@ def test_threads_default_on_the_cpu_only():
 def test_the_output_folder_is_safe_for_windows(tmp_path):
     up = {**UPLOAD, "path": "/u/x.flac"}
     assert J.output_folder(tmp_path, up, J.parse_options({})) == (
-        tmp_path / "library" / UPLOAD["id"] / "AC_DC - Unicode_ Title_")
-    given = J.parse_options({"artist": "Mötley Crüe", "title": "Kickstart"})
-    assert J.output_folder(tmp_path, up, given).name == "Motley Crue - Kickstart"
+        tmp_path / "library" / UPLOAD["id"] / "Ann_Bo - Unicode_ Title_")
+    given = J.parse_options({"artist": "Ånn Øx", "title": "Xylö"})
+    assert J.output_folder(tmp_path, up, given).name == "Ann Ox - Xylo"
     bare = {"id": UPLOAD["id"], "path": "/u/CON.flac", "metadata": {}}
     assert J.output_folder(tmp_path, bare, J.parse_options({})).name == "Unknown - CON"
 
@@ -208,7 +208,7 @@ def test_a_chart_whose_gate_fails_is_done_with_ok_false(tmp_path, standin):
     kinds = [e["event"] for e in job.events]
     assert kinds == ["plan", "stage_start", "stage_end", "result"] and job.events[-1]["ok"] is False
     assert all(isinstance(e["at"], float) for e in job.events)
-    assert job.out == tmp_path / "library" / UPLOAD["id"] / "AC_DC - Unicode_ Title_"
+    assert job.out == tmp_path / "library" / UPLOAD["id"] / "Ann_Bo - Unicode_ Title_"
     # every line of the child, stdout's included, in the job's log; the events too; bad UTF-8 replaced
     assert job.log.parent == tmp_path / "logs" and job.log.name == f"job-{job.id}.log"
     log = job.log.read_text(encoding="utf-8")
