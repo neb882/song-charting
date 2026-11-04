@@ -28,6 +28,7 @@ APP_SHA256="@APP_SHA256@"
 RELEASE_URL="${SONGCHARTER_RELEASE_URL:-@RELEASE_URL@}"
 UV_URL="@UV_URL@"
 UV_SHA256="@UV_SHA256@"
+NOTICE_URL="@NOTICE_URL@"   # the release's NOTICE.txt, which the licence prompt names until the app is here
 UV_VERSION=0.13.5
 PYTHON_VERSION=3.13.17
 WSL_NVIDIA_SMI=/usr/lib/wsl/lib/nvidia-smi   # WSL's, from the Windows driver [doc: NVIDIA's WSL guide]
@@ -291,8 +292,10 @@ main() {
   echo "about $total_gb GB: the Python packages for lane $lane ($(packages_gb "$lane") GB), then Node, autochart and its models$([ "$lane" = cpu ] || echo ", the CUDA provider") and the pipeline's models (about $REST_GB GB)"
   awk -v g="$total_gb" 'BEGIN { printf "time: about %d min at 25 Mbit/s, %d min at 100 Mbit/s (less when an earlier run got part of it)\n", g * 8000 / 25 / 60 + 0.5, g * 8000 / 100 / 60 + 0.5 }'
   if [ $yes -ne 1 ]; then
-    local answer=""
-    printf 'Licences: %s/NOTICE.txt (some of the models are for non-commercial use only)\nContinue? [Y/n] ' "$app"
+    local answer="" notice=$NOTICE_URL
+    # the app's own copy once a run has unpacked it (step 6); before that, on a first install, the release's
+    if [ -f "$app/NOTICE.txt" ]; then notice=$app/NOTICE.txt; fi
+    printf 'Licences: %s (some of the models are for non-commercial use only)\nContinue? [Y/n] ' "$notice"
     read -r answer || answer=""
     case $answer in [nN]*) echo "songcharter: stopped; nothing was downloaded."; exit 1 ;; esac
   fi

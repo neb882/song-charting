@@ -193,6 +193,9 @@ def test_build_writes_the_three_assets(tmp_path):
             'v0.1.0-test}"') in script
     assert ('UV_URL="https://github.com/astral-sh/uv/releases/download/0.13.5/uv-x86_64-unknown-linux-gnu.tar.gz"'
             in script and f'UV_SHA256="{UV_SHA256}"' in script and "@VERSION@" not in script)
+    notice = "https://github.com/neb882/song-charting/blob/v0.1.0-test/packaging/NOTICE.txt"   # the guide's link
+    guide_md = (ROOT / "docs" / "guide" / "windows-wsl.md").read_text(encoding="utf-8")
+    assert f'NOTICE_URL="{notice}"' in script and notice.replace("0.1.0-test", "{{VERSION}}") in guide_md
     # the launcher and every call of the install's Python keep a songcharter/ folder in the current one out (-P)
     assert """exec "%s" -P -m songcharter.launch""" in script and '"$py" -m' not in script
     sums = (out / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
@@ -244,6 +247,7 @@ def test_build_ships_install_sh_and_the_guide_as_head_has_them(tmp_path):
 
 VERSION = "0.0.0-test"
 UV_URL = "https://uv.invalid/0.13.5/uv-x86_64-unknown-linux-gnu.tar.gz"
+NOTICE_URL = "https://rel.invalid/blob/v0.0.0-test/packaging/NOTICE.txt"
 PYTHON = r'''#!/bin/bash
 # the environments' stand-in python: what each helper does is in mode-<module> (ok by default)
 fake=@FAKE@
@@ -323,12 +327,13 @@ class Install:
                 (self.fake / "bin" / name).write_text(body.replace("@FAKE@", str(self.fake)), encoding="utf-8")
                 (self.fake / "bin" / name).chmod(0o755)
         self.uv = tar_gz({"uv-x86_64-unknown-linux-gnu/uv": (UV.replace("@FAKE@", str(self.fake)).encode(), 0o755)})
-        self.app = tar_gz({f"songcharter-{VERSION}/pyproject.toml": (b"[project]\n", 0o644)})
+        self.app = tar_gz({f"songcharter-{VERSION}/pyproject.toml": (b"[project]\n", 0o644),
+                           f"songcharter-{VERSION}/NOTICE.txt": (b"the licences\n", 0o644)})
         self.serve("uv-x86_64-unknown-linux-gnu.tar.gz", self.uv)
         (self.dist / f"songcharter-{VERSION}.tar.gz").write_bytes(self.app)
         script = INSTALL.read_text(encoding="utf-8")
         for key, value in (("VERSION", VERSION), ("APP_SHA256", sha(self.app)), ("RELEASE_URL", "https://rel.invalid"),
-                           ("UV_URL", UV_URL), ("UV_SHA256", sha(self.uv))):
+                           ("NOTICE_URL", NOTICE_URL), ("UV_URL", UV_URL), ("UV_SHA256", sha(self.uv))):
             script = script.replace(f"@{key}@", value)
         (self.dist / "install.sh").write_text(script, encoding="utf-8")
         self.env = {"PATH": f"{self.fake / 'bin'}:/usr/bin:/bin", "HOME": str(self.home), "LC_ALL": "C.UTF-8",
@@ -387,22 +392,29 @@ def test_a_release_installs_with_stand_ins(tmp_path):
 
 
 def test_the_prompt_names_the_licences_and_enter_goes_on(tmp_path):
-    """Without --yes, step 5 names the licences (NOTICE.txt, at the root of the app the tarball unpacks to) before
-    "Continue? [Y/n]". No stops the install, exit 1, before any download; Enter, as the guide says, goes on."""
+    """Without --yes, step 5 names the licences before "Continue? [Y/n]": on a first install the release's
+    NOTICE.txt (its URL: the app that holds a copy is downloaded only after the answer, the release gate's finding),
+    once the app is here its own copy. No stops the install, exit 1, before any download; Enter, as the guide says,
+    goes on."""
     i = Install(tmp_path)
 
     def answer(text: str) -> subprocess.CompletedProcess:
         return subprocess.run(["bash", str(i.dist / "install.sh"), "--lane", "cpu", "--from", str(i.dist)],
                               input=text, capture_output=True, text=True, env=i.env, timeout=120)
 
-    prompt = (f"Licences: {i.share}/app/{VERSION}/NOTICE.txt (some of the models are for non-commercial use only)\n"
-              "Continue? [Y/n] ")
+    def prompt(notice: str) -> str:
+        return f"Licences: {notice} (some of the models are for non-commercial use only)\nContinue? [Y/n] "
+
     p = answer("n\n")
-    assert p.returncode == 1 and p.stdout.endswith(prompt + "songcharter: stopped; nothing was downloaded.\n"), p.stdout
+    assert p.returncode == 1 and p.stdout.endswith(prompt(NOTICE_URL) + "songcharter: stopped; nothing was "
+                                                   "downloaded.\n"), p.stdout
     assert i.log("curl.log") == [] and list((i.share / "app").iterdir()) == [] and not i.launcher.exists()
     p = answer("\n")
-    assert p.returncode == 0 and prompt in p.stdout, p.stdout + p.stderr
+    assert p.returncode == 0 and prompt(NOTICE_URL) in p.stdout, p.stdout + p.stderr
     assert i.launcher.is_file() and (i.share / "app" / VERSION / "pyproject.toml").is_file()
+    here = i.share / "app" / VERSION / "NOTICE.txt"
+    p = answer("n\n")   # a rerun: the app is here, with its copy
+    assert p.returncode == 1 and prompt(str(here)) in p.stdout and here.read_text() == "the licences\n", p.stdout
 
 
 @pytest.mark.parametrize("served", ["wrong", "truncated"])
