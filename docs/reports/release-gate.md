@@ -30,8 +30,8 @@ The first end-to-end chart on a GPU, through the real installer, on main at c075
 owner's WSL2 (a copy of install.sh with the Windows side off: no .wslconfig, shortcut or WSL restart; WSL had 22 GB).
 Run by a session on the owner's PC.
 
-- **Install:** exit 0 first try, 112 s (a fast connection). Lane cu132 ("RTX 5070, driver 599.10, compute capability
-  12.0"). Disk: `.local/share/songcharter` 7.4 GB, uv's cache 6.0 GB measured alone (mostly the same files), the
+- **Install:** exit 0 first try, 112 s (a fast connection). Lane cu132 ("RTX 5070, driver <version>, compute
+  capability 12.0"). Disk: `.local/share/songcharter` 7.4 GB, uv's cache 6.0 GB measured alone (mostly the same files), the
   whole isolated HOME 8.9 GB after two charts. doctor: OK.
 - **doctor:** torch 2.15.0+cu132, CUDA 13.2, matmul ok; device cuda; guitar_device cuda; autochart's CUDA provider
   loads (CUDAExecutionProvider 15 nodes, CPU 2).

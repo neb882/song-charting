@@ -26,8 +26,8 @@ per take, behind a process boundary, so no AGPL code is imported.
     and cuDNN 9, which the cu132 torch lane's wheels bring in this Python's `nvidia` package (nvidia-curand adds
     cuRAND), and the driver's libcuda (/usr/lib/wsl/lib in WSL). For "cuda" those folders (`cuda_library_path`) go
     first on the node child's LD_LIBRARY_PATH, and only there: songcharter's own torch loads its own copies. With
-    that path (cu13/lib, cudnn/lib, /usr/lib/wsl/lib) the provider ran Fretformer 2's encoder in WSL on an RTX 5070,
-    driver 599.10: 357 nodes on CUDA, 31 on the CPU [here, 5070 spike: M4-00b]. The path is not part of a take's
+    that path (cu13/lib, cudnn/lib, /usr/lib/wsl/lib) the provider ran Fretformer 2's encoder in WSL on an RTX 5070:
+    357 nodes on CUDA, 31 on the CPU [here, 5070 spike: M4-00b]. The path is not part of a take's
     key: it changes where the provider loads from, not the chart.
 """
 from __future__ import annotations
