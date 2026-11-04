@@ -41,8 +41,8 @@ HEAD = 512
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".ogg", ".flac", ".m4a", ".opus", ".aac", ".wma", ".aif", ".aiff"}
 MAGIC = {b"RIFF": "a RIFF header (WAV)", b"OggS": "an Ogg header", b"ID3": "an ID3 tag (MP3)",
          b"fLaC": "a FLAC header", b"\x1a\x45\xdf\xa3": "a Matroska header (WebM, MKA)"}
-NEVER_NAMES = {"notes.chart": "a chart (it holds the lyrics)"}
-NEVER_SUFFIXES = {".png": "a picture (PNG)", ".chart": "a chart", ".mid": "a chart (MIDI)"}
+NEVER_SUFFIXES = {".png": "a picture (PNG)", ".chart": "a chart (notes.chart holds the lyrics)",
+                  ".mid": "a chart (MIDI)"}
 WORK_FILES = ("pipeline.json", "assemble.json", cache.MARKER)
 PREVIEW_KEYS = ("ok", "flags", "flags_by_kind", "remarks", "pages", "skipped", "error")
 
@@ -68,8 +68,6 @@ def refused(name: str, data: bytes | None = None, size: int | None = None) -> st
     suffix = os.path.splitext(lower)[1]
     if suffix in AUDIO_EXTENSIONS:
         return f"an audio extension ({suffix})"
-    if lower in NEVER_NAMES:
-        return NEVER_NAMES[lower]
     if suffix in NEVER_SUFFIXES:
         return NEVER_SUFFIXES[suffix]
     if size is not None and size > MAX_BYTES:
