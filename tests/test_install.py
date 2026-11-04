@@ -330,6 +330,25 @@ def test_a_release_installs_with_stand_ins(tmp_path):
     assert i.run("--from", str(i.dist)).returncode == 0 and len(i.log("curl.log")) == 1
 
 
+def test_the_prompt_names_the_licences_and_enter_goes_on(tmp_path):
+    """Without --yes, step 5 names the licences (NOTICE.txt, at the root of the app the tarball unpacks to) before
+    "Continue? [Y/n]". No stops the install, exit 1, before any download; Enter, as the guide says, goes on."""
+    i = Install(tmp_path)
+
+    def answer(text: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["bash", str(i.dist / "install.sh"), "--lane", "cpu", "--from", str(i.dist)],
+                              input=text, capture_output=True, text=True, env=i.env, timeout=120)
+
+    prompt = (f"Licences: {i.share}/app/{VERSION}/NOTICE.txt (some of the models are for non-commercial use only)\n"
+              "Continue? [Y/n] ")
+    p = answer("n\n")
+    assert p.returncode == 1 and p.stdout.endswith(prompt + "songcharter: stopped; nothing was downloaded.\n"), p.stdout
+    assert i.log("curl.log") == [] and list((i.share / "app").iterdir()) == [] and not i.launcher.exists()
+    p = answer("\n")
+    assert p.returncode == 0 and prompt in p.stdout, p.stdout + p.stderr
+    assert i.launcher.is_file() and (i.share / "app" / VERSION / "pyproject.toml").is_file()
+
+
 @pytest.mark.parametrize("served", ["wrong", "truncated"])
 def test_a_download_that_is_not_the_pinned_file_fails_the_install(tmp_path, served):
     i = Install(tmp_path)

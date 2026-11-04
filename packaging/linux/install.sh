@@ -289,7 +289,7 @@ main() {
   awk -v g="$total_gb" 'BEGIN { printf "time: about %d min at 25 Mbit/s, %d min at 100 Mbit/s (less when an earlier run got part of it)\n", g * 8000 / 25 / 60 + 0.5, g * 8000 / 100 / 60 + 0.5 }'
   if [ $yes -ne 1 ]; then
     local answer=""
-    printf 'Continue? [Y/n] '
+    printf 'Licences: %s/NOTICE.txt (some of the models are for non-commercial use only)\nContinue? [Y/n] ' "$app"
     read -r answer || answer=""
     case $answer in [nN]*) echo "songcharter: stopped; nothing was downloaded."; exit 1 ;; esac
   fi
