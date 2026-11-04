@@ -71,7 +71,9 @@ bash /dist/install.sh --from /dist --lane auto --yes >/tmp/install-2.log 2>&1 ||
 tail -n 4 /tmp/install-2.log
 grep -q "\"lane\": \"cpu\"" ~/.local/share/songcharter/runtime/runtime.json
 grep -q "\"lane_reason\": \"no NVIDIA GPU found\"" ~/.local/share/songcharter/runtime/runtime.json
-du -sh ~/.local/share/songcharter ~/.cache/uv ~/.cache/songcharter'
+du -sh ~/.local/share/songcharter ~/.cache/songcharter
+du -sh ~/.local/share/songcharter/runtime/uv-cache   # in the home: its own du, as one du counts a file once
+[ ! -e ~/.cache/uv ] || { echo "30-install: the install wrote ~/.cache/uv, not its own runtime/uv-cache"; exit 1; }'
 keep /tmp/install-2.log /home/friend/.local/share/songcharter/runtime/runtime.json \
   /home/friend/.local/share/songcharter/doctor.json
 

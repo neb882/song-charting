@@ -19,9 +19,11 @@ being imported instead.
   * **--from-shortcut.** The shortcut's window closes when the command ends, so on any non-zero exit the error stays
     on the screen with "Press Enter to close this window" (a launch failure must never just close the window).
   * **uninstall** removes the shortcut, the launcher, the app and runtime/state, then asks once whether the
-    downloads and the song caches and library go too (No keeps runtime/, uv's cache and the models, so a reinstall
-    downloads nothing). It offers to restore the .wslconfig songcharter backed up, and never deletes .wslconfig.
-    `--yes` answers yes to both questions.
+    downloads and the song caches and library go too (No keeps runtime/, which holds uv's cache, runtime/uv-cache,
+    and the models, so a reinstall downloads only install.sh and the app, about 1 MB; none of it with install.sh's
+    --from). It counts and deletes only songcharter's own folders: never the person's ~/.cache/uv, which other uv
+    projects share. It offers to restore the .wslconfig songcharter backed up, and never deletes .wslconfig. `--yes`
+    answers yes to both questions.
 """
 from __future__ import annotations
 
@@ -140,13 +142,6 @@ def main(argv: list[str] | None = None) -> int:
 
 # ------------------------------------------------------------------------------------------------ uninstall
 
-def uv_cache() -> Path:
-    """uv's cache, where uv puts it: $UV_CACHE_DIR, else $XDG_CACHE_HOME/uv, else ~/.cache/uv."""
-    if os.environ.get("UV_CACHE_DIR"):
-        return Path(os.environ["UV_CACHE_DIR"]).expanduser()
-    return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "uv"
-
-
 def du(paths: list[Path]) -> int:
     """`du -scb` of the paths that exist (a file hardlinked between them counts once), in bytes; 0 for none."""
     there = [str(p) for p in paths if p.exists()]
@@ -197,17 +192,18 @@ def uninstall(args: list[str], *, ask: Callable[[str, bool], bool] = _ask,
         _remove(path, say)
 
     runtime, models, cache = home / "runtime", user_cache() / "models", user_cache()
-    downloads = du([runtime, uv_cache(), models])
+    downloads = du([runtime, models])   # runtime/ holds uv's cache too (install.sh's runtime/uv-cache)
     songs = du([*(p for p in (cache.iterdir() if cache.is_dir() else []) if p != models),
                 home / "library", home / "uploads", home / "exports"])
     question = (f"Also delete the downloads (Python packages, Node, autochart and its models: about "
                 f"{downloads / GB:.1f} GB) and your song caches and library ({songs / GB:.1f} GB)? A reinstall reuses "
                 "the downloads if you keep them. [y/N]")
     if yes or ask(question, False):
-        for path in (home, cache, uv_cache()):
+        for path in (home, cache):
             _remove(path, say)
     else:
-        say(f"kept {runtime}, {uv_cache()} and {models}: a reinstall downloads nothing")
+        say(f"kept {runtime} and {models}: a reinstall reuses them, and downloads only install.sh and the app "
+            "(about 1 MB)")
 
     backups = (windows or {}).get("backups") or []
     if backups:

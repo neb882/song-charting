@@ -252,6 +252,7 @@ case $mode in
 esac
 '''
 UV = r'''#!/bin/sh
+echo "$1 ${UV_CACHE_DIR:-unset}" >>@FAKE@/uv.log
 case $1 in
   --version) echo "uv 0.13.5 (stand-in)" ;;
   python) echo "Python 3.13.17 is already installed" ;;
@@ -312,6 +313,7 @@ class Install:
             script = script.replace(f"@{key}@", value)
         (self.dist / "install.sh").write_text(script, encoding="utf-8")
         self.env = {"PATH": f"{self.fake / 'bin'}:/usr/bin:/bin", "HOME": str(self.home), "LC_ALL": "C.UTF-8",
+                    "UV_CACHE_DIR": str(self.home / ".cache" / "uv-shared"),   # the person's, for every uv project
                     **({"WSL_DISTRO_NAME": "Ubuntu-26.04"} if wsl else {})}
 
     def serve(self, name: str, data: bytes) -> None:
@@ -346,10 +348,14 @@ def sha(data: bytes) -> str:
 
 
 def test_a_release_installs_with_stand_ins(tmp_path):
-    """The ten steps through to the launcher; a rerun downloads nothing; a complete .part is used as it is."""
+    """The ten steps through to the launcher; a rerun downloads nothing; a complete .part is used as it is. Every uv
+    call has songcharter's own cache, runtime/uv-cache, over the person's $UV_CACHE_DIR (the release gate's finding:
+    uninstall once deleted the person's whole uv cache)."""
     i = Install(tmp_path)
     p = i.run("--from", str(i.dist))
     assert p.returncode == 0, p.stderr
+    ours = i.share / "runtime" / "uv-cache"
+    assert i.log("uv.log") == [f"--version {ours}", f"python {ours}", f"sync {ours}", f"sync {ours}"]
     assert f"songcharter {VERSION} is installed (lane cpu: asked for with --lane cpu)." in p.stdout
     assert i.launcher.read_text(encoding="utf-8") == (
         f'#!/bin/sh\nexec "{i.share}/runtime/env/bin/python" -P -m songcharter.launch "$@"\n')
@@ -462,8 +468,13 @@ def test_doctors_problems_still_install_and_a_changed_wslconfig_restarts_wsl(tmp
 
 @pytest.mark.parametrize("free_gb, ok", [(7, False), (9, True)])
 def test_the_cpu_lane_needs_8_gb_free(tmp_path, free_gb, ok):
-    """2.8 GB installed (M4-05's CI) and 5 GB of work folders: 7 GB free is refused, 9 GB installs."""
+    """2.8 GB installed (M4-05's CI) and 5 GB of work folders: 7 GB free is refused, 9 GB installs. What is
+    already here counts only from songcharter's own folders: 20 GB in the person's uv caches is not songcharter's."""
     i = Install(tmp_path)
+    for other in (i.home / ".cache" / "uv", i.home / ".cache" / "uv-shared"):
+        other.mkdir(parents=True)
+        with open(other / "another-project.whl", "wb") as f:
+            f.truncate(20 * 10 ** 9)   # sparse: its apparent size is what du -b counts
     (i.fake / "bin" / "df").write_text(f"#!/bin/sh\nprintf 'Avail\\n{free_gb * 1024 ** 3}\\n'\n", encoding="utf-8")
     p = i.run("--from", str(i.dist))
     assert (p.returncode == 0) is ok, p.stdout + p.stderr

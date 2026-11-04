@@ -144,7 +144,8 @@ def test_from_the_shortcut_a_failure_waits_for_enter(home):
 
 @pytest.fixture
 def installed(tmp_path, monkeypatch):
-    """An install in a temporary $HOME with every folder uninstall knows, on plain Linux (no WSL)."""
+    """An install in a temporary $HOME with every folder uninstall knows, on plain Linux (no WSL), and the uv cache
+    of another project of the person's (~/.cache/uv), which is not songcharter's: install.sh's is runtime/uv-cache."""
     user = tmp_path / "user"
     for var in ("SONGCHARTER_HOME", "XDG_CACHE_HOME", "UV_CACHE_DIR", "WSL_DISTRO_NAME"):
         monkeypatch.delenv(var, raising=False)
@@ -154,6 +155,7 @@ def installed(tmp_path, monkeypatch):
     files = {home / "app" / "0.1.0" / "pyproject.toml": 10, home / "runtime" / "state" / "install.done": 10,
              home / "runtime" / "runtime.json": 10, home / "runtime" / "env" / "lib" / "torch.so": 3000,
              home / "runtime" / "autochart" / "models" / "m.onnx": 4000, home / "bin" / "uv": 500,
+             home / "runtime" / "uv-cache" / "archive-v0" / "w": 5000,
              home / "library" / "a" / "notes.chart": 600, home / "uploads" / "u" / "song.mp3": 700,
              home / "exports" / "x.zip": 100, home / "logs" / "ui.log": 10, home / "doctor.json": 10,
              user / ".cache" / "uv" / "archive-v0" / "w": 5000,
@@ -187,14 +189,16 @@ def test_uninstall_no_keeps_the_downloads(installed):
     assert not (user / ".local" / "bin" / "songcharter").exists()
     cache = user / ".cache"
     for kept in (home / "runtime" / "runtime.json", home / "runtime" / "env" / "lib" / "torch.so", home / "bin" / "uv",
-                 cache / "uv" / "archive-v0" / "w", cache / "songcharter" / "models" / "hf" / "f",
+                 home / "runtime" / "uv-cache" / "archive-v0" / "w", cache / "uv" / "archive-v0" / "w",
+                 cache / "songcharter" / "models" / "hf" / "f",
                  cache / "songcharter" / "work" / "song-1" / "stems.npy", home / "library" / "a" / "notes.chart"):
         assert kept.is_file(), kept
     [(question, default)] = asked
     assert default is False and question.startswith(
         "Also delete the downloads (Python packages, Node, autochart and its models: about 0.0 GB) and your song "
         "caches and library (0.0 GB)?")
-    assert "[y/N]" in question and any("a reinstall downloads nothing" in s for s in said)
+    assert "[y/N]" in question and f"kept {home / 'runtime'} and {cache / 'songcharter' / 'models'}: a reinstall " \
+        "reuses them, and downloads only install.sh and the app (about 1 MB)" in said
     assert said[-1].startswith("To remove everything, if this Ubuntu holds nothing else: wsl --unregister Ubuntu")
 
 
@@ -203,12 +207,13 @@ def test_uninstall_yes_deletes_everything_and_sizes_the_question(installed, monk
     sizes = []
     monkeypatch.setattr(launch, "du", lambda paths: sizes.append(sorted(p.name for p in paths)) or 2_500_000_000)
     said, asked = run_uninstall([], [True])
-    assert sizes == [["models", "runtime", "uv"], ["exports", "library", "uploads", "work"]]
+    assert sizes == [["models", "runtime"], ["exports", "library", "uploads", "work"]]   # uv's cache is in runtime/
     assert "about 2.5 GB) and your song caches and library (2.5 GB)?" in asked[0][0]
     cache = user / ".cache"
-    for gone in (home, cache / "songcharter", cache / "uv", user / ".local" / "bin" / "songcharter"):
+    for gone in (home, cache / "songcharter", user / ".local" / "bin" / "songcharter"):
         assert not gone.exists(), gone
     assert (user / ".local" / "bin").is_dir()   # only our launcher goes
+    assert (cache / "uv" / "archive-v0" / "w").is_file()   # and never another project's uv cache
 
 
 def test_du_counts_a_hardlinked_file_once(tmp_path):

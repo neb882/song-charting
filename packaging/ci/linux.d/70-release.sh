@@ -167,7 +167,7 @@ keep /tmp/diagnostics.log /home/friend/diagnostics.zip
 
 friend "songcharter uninstall, answered with Enter (No)" '
 printf "\n" | songcharter uninstall | tee /tmp/uninstall.log
-grep -q "\[y/N\] kept .*: a reinstall downloads nothing$" /tmp/uninstall.log   # piped, it follows the prompt
+grep -q "\[y/N\] kept .*: a reinstall reuses them, and downloads only install.sh and the app (about 1 MB)$" /tmp/uninstall.log   # piped, it follows the prompt
 [ ! -e ~/.local/bin/songcharter ] && [ ! -e ~/.local/share/songcharter/app ] && [ -d ~/.local/share/songcharter/runtime/env ]'
 keep /tmp/uninstall.log
 "$CI_PY" packaging/ci/check_no_audio.py "$art"

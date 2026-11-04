@@ -16,6 +16,9 @@
 #   * --from takes the release assets (this script's tarball) from a folder or a URL prefix, for CI;
 #     $SONGCHARTER_RELEASE_URL replaces the release URL prefix (M4-07's check runs the guide's line against a local
 #     server). $SONGCHARTER_HOME moves the install (default ~/.local/share/songcharter).
+#   * uv's cache is songcharter's own, runtime/uv-cache ($UV_CACHE_DIR for every uv call here), never the person's
+#     ~/.cache/uv, which other uv projects share: the disk check counts only songcharter's folders, and uninstall
+#     deletes only them.
 #   * packaging/release/build.sh fills in the @...@ values below; this file in the repository is the template.
 #   * Needs bash, curl or wget, tar, xz and sha256sum, which Ubuntu's WSL image ships. Refuses to run as root.
 set -Eeuo pipefail
@@ -220,7 +223,7 @@ main() {
   local runtime=$home/runtime state=$home/runtime/state dl=$home/runtime/state/downloads
   local app=$home/app/$VERSION launcher=$HOME/.local/bin/songcharter
   local cache=${XDG_CACHE_HOME:-$HOME/.cache} uv=$home/bin/uv py=$home/runtime/env/bin/python
-  local uv_cache=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv}
+  local uv_cache=$home/runtime/uv-cache   # songcharter's own (the header): uninstall's No keeps it, Yes deletes it
   mkdir -p "$home/bin" "$home/app" "$dl"
   echo "songcharter $VERSION: the install, into $home"
 
@@ -251,7 +254,7 @@ main() {
   header disk 3 "Disk"
   local need present=0 free_home free_c="" left there=()
   need=$(($(need_gb "$lane") * GB))
-  for p in "$runtime" "$uv_cache" "$cache/songcharter"; do if [ -e "$p" ]; then there+=("$p"); fi; done
+  for p in "$runtime" "$cache/songcharter"; do if [ -e "$p" ]; then there+=("$p"); fi; done   # uv's cache is in runtime/
   if [ ${#there[@]} -gt 0 ]; then
     present=$({ du -scb -- "${there[@]}" 2>/dev/null || true; } | tail -n 1 | cut -f1)
     [[ $present =~ ^[0-9]+$ ]] || present=0
@@ -295,7 +298,7 @@ main() {
   fi
 
   header downloads 6 "uv, Python and the app"
-  export UV_HTTP_TIMEOUT=300 UV_HTTP_RETRIES=5 UV_PYTHON_INSTALL_DIR="$runtime/python"
+  export UV_HTTP_TIMEOUT=300 UV_HTTP_RETRIES=5 UV_PYTHON_INSTALL_DIR="$runtime/python" UV_CACHE_DIR="$uv_cache"
   if [ -x "$uv" ] && [ "$("$uv" --version 2>/dev/null | cut -d' ' -f2)" = "$UV_VERSION" ]; then
     echo "uv $UV_VERSION: already here"
   else

@@ -20,11 +20,13 @@
 #     offline        (the hook has cut the network) the clip into a new folder, and a clip never charted (34 s) into
 #                    another, so every stage runs offline too: each exits 0 and passes check_gate.py
 #     uninstall-keep (the network still cut) `songcharter uninstall` answering No: the launcher and the app go, and
-#                    runtime/env, the pipeline's models (~/.cache/songcharter/models) and uv's cache stay, each file of
-#                    the last two still there; then the install again, offline, so any download fails it: exit 0, no
-#                    download line either, under 3 minutes
+#                    runtime/env, the pipeline's models (~/.cache/songcharter/models) and uv's cache (songcharter's
+#                    own, runtime/uv-cache) stay, each file of the last two still there; then the install again,
+#                    offline, so any download fails it: exit 0, no download line either, under 3 minutes (from
+#                    --from's folder: on the guide's path the reinstall fetches install.sh and the app's tarball)
 #     uninstall-all  `songcharter uninstall` answering Yes: ~/.local/share/songcharter, ~/.cache/songcharter and the
-#                    launcher are gone, and nothing the install or a chart made stays in ~: no entry to depth 3 that the
+#                    launcher are gone, and nothing the install or a chart made stays in ~ (so no ~/.cache/uv either:
+#                    the install's uv cache is its own, and uninstall leaves the person's): no entry to depth 3 that the
 #                    install phase's snapshot did not list, but for e2e's own (~/e2e, ~/clips, the Songs folder,
 #                    ~/fakebin) and the XDG base folders themselves (~/.cache, ~/.config, ~/.local and the three in it),
 #                    which are not songcharter's; what is in them counts
@@ -205,15 +207,15 @@ install_again() {
   cp "$home/runtime/runtime.json" "$e2e/runtime.json"
   json_check "$home/runtime/runtime.json" 'r["lane"] == "cpu"' '"no NVIDIA GPU found" in r["lane_reason"]'
   local p size name
-  for p in "$home:du_home" "$HOME/.cache/uv:du_uv_cache" "$HOME/.cache/songcharter:du_songcharter_cache"; do
+  for p in "$home:du_home" "$home/runtime/uv-cache:du_uv_cache" "$HOME/.cache/songcharter:du_songcharter_cache"; do
     name=${p##*:}
     p=${p%:*}
     size=$(du -sh -- "$p" | cut -f1)
     echo "du -sh $p: $size"
-    figure "$name" "$size"   # each on its own: what the environments hardlink from uv's cache counts in both
+    figure "$name" "$size"   # each on its own: uv's cache is in the home, and the environments hardlink from it
   done
-  size=$(du -shc -- "$home" "$HOME/.cache/uv" "$HOME/.cache/songcharter" | tail -n 1 | cut -f1)
-  figure du_all_three "$size"   # one du: a file hardlinked between them counts once
+  size=$(du -shc -- "$home" "$HOME/.cache/songcharter" | tail -n 1 | cut -f1)
+  figure du_all "$size"   # one du: a file hardlinked between them counts once
 }
 
 home_entries() {   # the entries of ~ to depth 3, one per line, sorted bytewise
@@ -306,7 +308,7 @@ files_of() {   # FOLDER: each file under it with its size, sorted (empty when th
 }
 
 uninstall_keep() {
-  local models=$HOME/.cache/songcharter/models uv_cache=$HOME/.cache/uv
+  local models=$HOME/.cache/songcharter/models uv_cache=$home/runtime/uv-cache
   files_of "$models" >/tmp/models-before.txt
   files_of "$uv_cache" >/tmp/uv-before.txt
   echo "before: $(wc -l </tmp/models-before.txt) files in $models, $(wc -l </tmp/uv-before.txt) in $uv_cache"
@@ -346,7 +348,7 @@ uninstall_all() {
   for gone in "$home" "$HOME/.cache/songcharter" "$launcher"; do
     if [ -e "$gone" ]; then echo "e2e: $gone is still there"; left=1; else echo "gone: $gone"; fi
   done
-  [ -e "$HOME/.cache/uv" ] && echo "(uv's cache $HOME/.cache/uv is still there)" || echo "gone too: $HOME/.cache/uv"
+  [ ! -e "$home/runtime/uv-cache" ] || { echo "e2e: songcharter's uv cache $home/runtime/uv-cache is still there"; left=1; }
   [ $left -eq 0 ] || exit 1
 }
 
