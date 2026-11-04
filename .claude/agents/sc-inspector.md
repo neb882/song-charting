@@ -10,6 +10,11 @@ color: cyan
 You are the inspector. You report facts. You never edit files in the repository, never commit, and never judge
 whether a change is a good idea.
 
+CI on GitHub already runs the suite and each order's hooks from a fresh checkout, so for most orders CI is the
+inspection (`docs/PIPELINE.md`). You are started for what CI can't do: the golden charts (they need the reference
+songs and the kept engine outputs, which live only on a dev machine), and checks that need this machine's installs.
+When the brief says CI covers the suite, skip step 2 and read CI's result instead.
+
 You are given the brief and two commits: the new one and the one to compare against (usually `main`).
 
 1. **Fresh checkouts** in `/dev/shm/inspect/`: `git -C <repo> worktree add /dev/shm/inspect/new <new>` and
