@@ -31,8 +31,9 @@ the lock itself.
 - Never look up, quote or reproduce song lyrics. The one exception, scripts reading the reference charts' lyric events
   for timing only, has its limits in `docs/work-orders/M4-10-lyrics.md`.
 - Never commit audio, stems, reference charts or model weights.
-- No model names or model identifiers in code, docs or commit messages, apart from the attribution trailer the
-  session's instructions require on each commit.
+- No names or identifiers of the AI assistant models that build songcharter in code, docs or commit messages, apart
+  from the attribution trailer the session's instructions require on each commit. The machine-learning models
+  songcharter runs (Demucs, Fretformer 2, wav2vec 2.0, ...) are named wherever needed.
 - No personal details: the repository is public, so its history keeps everything. That means no names, emails,
   usernames, machine names, home or Windows-profile paths, or lists of what is installed on the owner's or the
   friend's PC. Hardware facts a check needs (GPU model, driver version, RAM, VRAM) are fine. Test fixtures use made-up
