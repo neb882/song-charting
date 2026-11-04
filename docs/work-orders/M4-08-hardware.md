@@ -6,11 +6,11 @@ PROGRESS.
 
 **Input:** a green `main` after M4-07, the full review workflow over the integrated v0.1 (M4-00, section 5; run at
 the release gate), and the advisor's review of the release candidate with its fixes merged. **The release comes
-first** [decision] (the advisor on the release candidate, finding 3): the owner tags `main`, builds the assets from
-the tag and publishes the pre-release (R1-R4 below), and part A then installs with the guide's line copied from the
-release page, as the friend will. So the download, the hash checks and the licence prompt's link are tried before he
-meets them, which `--from` and CI's local server cannot show. One version string, `0.1.0`, everywhere (the tarball,
-the app's folder, doctor): GitHub's pre-release flag is what marks it a candidate.
+first** [decision] (the owner, 2026-11-04, on the advisor's finding 3 on the release candidate): the owner tags
+`main`, builds the assets from the tag and publishes the pre-release (R1-R4 below), and part A then installs with
+the guide's line copied from the release page, as the friend will. So the download, the hash checks and the licence
+prompt's link are tried before he meets them, which `--from` and CI's local server cannot show. One version string,
+`0.1.0`, everywhere (the tarball, the app's folder, doctor): GitHub's pre-release flag is what marks it a candidate.
 
 ## Intent
 
