@@ -39,7 +39,7 @@
     },
     {
       "id": "M4",
-      "status": "building: wave 1, M4-03, M4-04 and M4-10 merged (each reviewed, CI green); M4-00b's CUDA 13 spike passed on the 5070; M4-05 building; M4-06 next; then M4-07, the full review, M4-08",
+      "status": "building: wave 1, M4-03, M4-04 and M4-10 merged (each reviewed, CI green); M4-00b's CUDA 13 spike passed on the 5070; M4-05 and M4-06 building; then M4-07, the full review, M4-08",
       "what": "a release the friend can use on his Windows PC, running in WSL2: a guided WSL setup, a one-line install, a Start-menu shortcut, a local UI, tested on his PC",
       "plan": "docs/work-orders/M4-00-plan.md: v0.1 is a guide to set up WSL, install.sh fetched from the pre-release and checked by hash (uv lanes cu132/cu126/cpu, allin1's own Python, Node, autochart with its models and its CUDA 13 provider, doctor.json, a .wslconfig with Windows' RAM minus 4 GB, a Start-menu shortcut), device checks with the CPU fallback shown, the local UI in WSL opened in the Windows browser (drop, options, progress with cancel, the static preview, zip and install into the Windows Songs folder), diagnostics, and CI end to end in ubuntu:26.04. Native Windows and the rest are M4-99; the native plan is commit f9f9377 and M4-00's appendix.",
       "risks": [
@@ -76,6 +76,15 @@
       "worktree": "<scratchpad>/wt/m4-05",
       "stage": "building (from main at 5b9d4f0)",
       "report": "<scratchpad>/briefs/m4-05.report.md",
+      "then": "sc-reviewer; CI is the inspection"
+    },
+    {
+      "order": "M4-06 ui-results",
+      "brief": "docs/work-orders/M4-06-ui-results.md",
+      "branch": "m4-06-ui-results",
+      "worktree": "<scratchpad>/wt/m4-06",
+      "stage": "building (from main at f5b37da)",
+      "report": "<scratchpad>/briefs/m4-06.report.md",
       "then": "sc-reviewer; CI is the inspection"
     }
   ],
