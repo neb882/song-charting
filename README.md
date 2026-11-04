@@ -44,8 +44,12 @@ songcharter chart song.mp3 --out "Songs/Artist - Title"
   `%LOCALAPPDATA%\songcharter` on Windows, `~/.cache/songcharter` elsewhere. The cache is pruned to 5 GB, and
   `--work DIR` puts the work files elsewhere.
 - **Model weights** are downloaded on first use and checked against pinned hashes.
-- **The page:** `songcharter ui` opens a local page in the browser: drop a song, keep or change the options, watch
-  each stage and cancel. `songcharter chart --events` writes the same progress as JSON lines for other programs.
+- **The page:** `songcharter ui` opens a local page in the browser: drop a song, keep or change the options (paste
+  the lyrics, if you want them on screen), watch each stage and cancel. Then look at the preview, install the song
+  into Clone Hero's Songs folder or save it as a zip. `songcharter chart --events` writes the same progress as JSON
+  lines for other programs.
+- **When something goes wrong:** `songcharter diagnostics --out FILE.zip` (or the page's Diagnostics link) makes
+  one file of logs and settings to send. It holds no audio, charts or lyrics.
 
 ## What does not live here
 

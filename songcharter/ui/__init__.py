@@ -7,6 +7,9 @@ What the UI keeps is in $SONGCHARTER_HOME (`home`: the launcher sets it, ~/.loca
     library/<16 hex>/<artist - title>/          the song folder a job builds (its .failed beside it)
     logs/ui-<yyyyMMdd>.log, logs/job-<yyyyMMdd-HHmmss>.log
     doctor.json                                 the install's doctor report: the page's header
+    exports/<name>.zip                          a zip the Done screen saved (M4-06)
+    replaced/<stamp>/<artist - title>/          an older chart of ours that an install replaced (M4-06)
+    ui.json                                     the page's settings: the Songs folder chosen (M4-06)
 """
 from __future__ import annotations
 

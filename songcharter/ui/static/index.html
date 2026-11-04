@@ -84,6 +84,11 @@
         </label>
         <label class="check"><input type="checkbox" name="preview" checked> Make a preview</label>
       </fieldset>
+      <fieldset>
+        <legend>Lyrics (optional)</legend>
+        <label>Paste lyrics <textarea name="lyrics" rows="8" autocomplete="off" spellcheck="false"></textarea></label>
+        <p class="small">A line per phrase, a blank line between sections. songcharter times them to the singing; it never looks lyrics up.</p>
+      </fieldset>
       <p id="options-error" class="error" hidden></p>
       <p class="actions"><button type="submit" id="chart">Chart it</button> <button type="button" id="other-song" class="plain">Another song</button></p>
     </form>
@@ -101,9 +106,59 @@
   <section id="done-screen" hidden>
     <h2 id="done-title"></h2>
     <p id="done-text"></p>
+    <div id="results" hidden>
+      <p id="lyrics-line" hidden></p>
+      <p id="lyrics-low" class="warn-text" hidden>The lyrics' timing may be off: check them in Clone Hero.</p>
+      <div id="preview" hidden>
+        <h3>Preview</h3>
+        <a id="overview-link" target="_blank" rel="noopener"><img id="overview" class="overview" alt="The overview: every instrument's notes against its sound"></a>
+        <p class="small">Blue bars are notes per beat; red marks a stretch where the instrument plays but the chart has no notes.</p>
+        <div id="pages" class="pages"></div>
+        <div id="flags-box">
+          <h3>Worth a look</h3>
+          <ul id="flags"></ul>
+          <ul id="remarks" class="small"></ul>
+        </div>
+      </div>
+      <p id="no-preview" hidden></p>
+      <div id="export-box" hidden>
+        <h3>Play it</h3>
+        <div id="ch-box">
+          <p id="ch-where" class="small"></p>
+          <form id="ch-form" novalidate hidden>
+            <label>Your Clone Hero Songs folder (for example <code>C:\Users\you\Documents\Clone Hero\Songs</code>)
+              <input name="folder" autocomplete="off" spellcheck="false"></label>
+            <p id="ch-error" class="error" hidden></p>
+            <p class="actions"><button type="submit" id="ch-save">Use this folder</button></p>
+          </form>
+          <p class="actions">
+            <button type="button" id="install">Install into Clone Hero</button>
+            <button type="button" id="ch-change" class="plain">Another folder</button>
+          </p>
+          <div id="install-msg" hidden>
+            <p id="install-text"></p>
+            <p class="actions">
+              <button type="button" id="replace" hidden>Replace it</button>
+              <a id="blocked-zip" class="button" download hidden>Save the zip</a>
+              <button type="button" id="open-song" class="plain" hidden>Open folder</button>
+            </p>
+            <p id="open-msg" class="small" hidden></p>
+          </div>
+        </div>
+        <p class="actions">
+          <button type="button" id="zip" class="plain">Save as a zip</button>
+          <button type="button" id="open-exports" class="plain" hidden>Open the exports folder</button>
+        </p>
+        <p class="small">The zip holds song.ogg, made from your recording. Sharing it is sharing the song.</p>
+        <p id="export-msg" class="small" hidden></p>
+      </div>
+    </div>
     <pre id="summary" hidden></pre>
     <p class="actions"><button type="button" id="again">Chart another song</button></p>
   </section>
 </main>
+<footer>
+  <p><a href="/api/diagnostics" download id="diagnostics">Diagnostics</a> <span class="small">This file holds logs and settings, no audio.</span></p>
+</footer>
 </body>
 </html>
