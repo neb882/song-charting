@@ -1125,17 +1125,23 @@ OOM = ("[autochart] expert: engine job\n[autochart] FAILED: expert: engine faile
 
 class Autochart:
     """autochart's driver as autochart.generate runs it (its `run`): each seed's take as the stand-in guitar writes it,
-    with the summary autochart writes; for the seed `fail`, a run that ends as one short of GPU memory would (exit 1,
-    onnxruntime's allocation error last: the skeptic's probe of the release candidate). `ran`: the seeds it ran."""
+    with the summary autochart writes; for the seed `fail`, by `how`, a run that ends as one short of GPU memory would
+    (1: exit 1, onnxruntime's allocation error last, as in the skeptic's probe of the release candidate), one killed
+    by a signal (-9, as the OOM killer would, with nothing on stderr), one that never ends ("timeout"), one that exits
+    0 without writing its take (0), or a bug in the driver ("bug", a KeyError). `ran`: the seeds it ran."""
 
-    def __init__(self, fail: int | None = None):
-        self.fail, self.ran = fail, []
+    def __init__(self, fail: int | None = None, how: int | str = 1):
+        self.fail, self.how, self.ran = fail, how, []
 
     def __call__(self, cmd, env, cwd, capture_output, text, timeout):
         seed = int(env["AC_SEED"])
         self.ran.append(seed)
         if seed == self.fail:
-            return subprocess.CompletedProcess(cmd, 1, "", OOM + "\n")
+            if self.how == "timeout":
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            if self.how == "bug":
+                raise KeyError("a bug in the driver")
+            return subprocess.CompletedProcess(cmd, self.how, "", OOM + "\n" if self.how > 0 else "")
         folder, audio = Path(cmd[cmd.index("--out") + 1]), Path(cmd[cmd.index("--audio") + 1])
         miss = 0 if seed == DEFAULT_SEED else seed // 101   # as the stand-in guitar: each later take misses a note
         _write(folder / "notes.chart", Track("Expert", "Single", [FretNote(tick(t), (lane,)) for j, (t, lane)
@@ -1154,7 +1160,9 @@ def test_a_guitar_take_that_fails_on_cuda_says_what_to_do(charted, tmp_path, mon
     the page's words, then autochart's own lines; nothing is recorded as a fallback. What it says holds: after take 2
     of 4 failed, Guitar takes 1 runs no take (the first finished) and the same chart again runs only the takes left;
     after take 1 failed, Device CPU charts the guitar on the CPU. With one take asked for, it does not suggest one. On
-    the CPU a failing take keeps autochart's message alone, as before."""
+    the CPU a failing take keeps autochart's message alone, as before. The review's F1 and F5: an engine killed by a
+    signal (SIGKILL: WSL's memory limit) says it was stopped, for memory, without the GPU advice; a timeout and an
+    exit 0 with no take keep autochart's message; a bug on CUDA is still a bug (exit 3, its traceback)."""
     root, result, _, _ = charted
     driver, runs = {}, iter(range(99))
     generate = AC.generate
@@ -1163,8 +1171,8 @@ def test_a_guitar_take_that_fails_on_cuda_says_what_to_do(charted, tmp_path, mon
                                                                        ac / "models"))
     monkeypatch.setattr(AC, "generate", lambda *a, **k: generate(*a, **k, run=driver["run"]))
 
-    def chart_it(work, fail=None, *extra, auto="cuda"):
-        driver["run"] = Autochart(fail)
+    def chart_it(work, fail=None, *extra, auto="cuda", how=1):
+        driver["run"] = Autochart(fail, how)
 
         class Real(standins(auto=auto)):
             guitar = Engines.guitar
@@ -1172,7 +1180,8 @@ def test_a_guitar_take_that_fails_on_cuda_says_what_to_do(charted, tmp_path, mon
         monkeypatch.setattr(P, "Engines", Real)
         code = main(["chart", str(root / "song.flac"), "--out", str(tmp_path / f"Out{next(runs)}"), "--work",
                      str(work), "--instruments", "guitar", "--events", *extra])
-        events = events_in(capsys.readouterr().err)
+        driver["err"] = capsys.readouterr().err
+        events = events_in(driver["err"])
         report = json.loads((work / "pipeline.json").read_text(encoding="utf-8"))
         takes = [(e["index"], e["count"]) for e in events if e["event"] == "take"]
         return code, events[-1], report, driver["run"].ran, takes
@@ -1208,6 +1217,26 @@ def test_a_guitar_take_that_fails_on_cuda_says_what_to_do(charted, tmp_path, mon
     assert (code, ran, takes) == (2, [DEFAULT_SEED, 101], [(1, 3), (2, 3)])
     assert last == {"event": "error", "kind": "tool", "message": f"autochart seed 101 failed (exit 1):\n{OOM}"}
     assert [f["stage"] for f in report["fallbacks"]] == ["device"]   # "auto" took the CPU: no GPU here
+    # the engine killed by a signal (the OOM killer at WSL's memory limit): stopped, for memory, not the GPU
+    c = warm_work(result, tmp_path, "c")
+    code, last, report, ran, takes = chart_it(c, 101, how=-9)
+    assert (code, ran, report["fallbacks"]) == (2, [DEFAULT_SEED, 101], [])
+    assert last == {"event": "error", "kind": "tool", "message": (
+        "The guitar's run was stopped in take 2 of 4 (signal 9, SIGKILL), which usually means WSL ran out of memory; "
+        "the takes that finished are kept. Close other programs (browsers, games, Clone Hero) and chart it again, or "
+        "set Guitar takes to 1 (it uses the first take if that one finished).\n\n"
+        "autochart seed 101 failed (exit -9):\n")}
+    # a timeout, and an exit 0 with no take: autochart's message alone, as before
+    code, last, report, ran, takes = chart_it(c, 101, how="timeout")
+    assert (code, ran, last["kind"]) == (2, [101], "tool")
+    assert last["message"] == f"autochart seed 101 did not finish within {3600 + 600} s"
+    code, last, report, ran, takes = chart_it(c, 101, how=0)
+    assert (code, ran, last["message"]) == (2, [101], "autochart seed 101 failed (exit 0):\n")
+    # a bug on CUDA is a bug: exit 3 with its traceback, no advice
+    code, last, report, ran, takes = chart_it(c, 101, how="bug")
+    assert (code, ran) == (3, [101]) and last == {"event": "error", "kind": "bug",
+                                                  "message": "KeyError: 'a bug in the driver'"}
+    assert "Traceback" in driver["err"] and "GPU" not in driver["err"]
 
 
 def test_every_fallback_is_recorded_and_warned(charted, tmp_path):
