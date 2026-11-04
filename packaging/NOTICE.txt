@@ -1,0 +1,143 @@
+songcharter: notices and licences
+==================================
+
+songcharter turns a song file into a Clone Hero song folder. The release (songcharter-<version>.tar.gz)
+holds only songcharter's own code and this file. Everything else below is downloaded by the install
+(install.sh), each from its own publisher and checked against a pinned hash, or later, on the first song
+that needs it. Nothing here is legal advice.
+
+Where things go on the PC (in Ubuntu, under WSL):
+  <home>     ~/.local/share/songcharter: the app (app/<version>/, with this file) and runtime/
+  <cache>    ~/.cache/songcharter: the models (models/) and the songs' work folders
+Most Python packages keep their licence texts in their *.dist-info folder, in
+<home>/runtime/env/lib/python3.13/site-packages/ (songcharter's environment) and
+<home>/runtime/allin1/lib/python3.13/site-packages/ (allin1's).
+
+Some models are for non-commercial use only: Fretformer 2 and the ADTOF drums model (CC BY-NC-SA 4.0),
+and htdemucs_6s, whose licence is unclear and which songcharter treats as non-commercial. The charts you
+make are yours. song.ogg is made from your recording: sharing it is sharing the song.
+
+
+songcharter
+  What:     the app: the pipeline, the local page, the install's helpers.
+  Licence:  MIT (LICENSE, at the release's root), except songcharter/engines/adtof.py (see ADTOF).
+  How:      the release.
+
+uv 0.13.5
+  What:     installs Python and the Python packages.
+  Licence:  MIT OR Apache-2.0.
+  How:      downloaded at install (github.com/astral-sh/uv releases), SHA-256 pinned.
+
+CPython 3.13.17 (python-build-standalone)
+  What:     the Python that songcharter and allin1 run in.
+  Licence:  the PSF License Agreement for Python. python-build-standalone builds it against libedit,
+            not GNU readline, and without GDBM, so no GPL library is linked (its docs, "Licensing").
+  How:      downloaded at install by uv (github.com/astral-sh/python-build-standalone).
+
+PyTorch (torch 2.15.0; 2.14.1 on the cu126 lane)
+  What:     runs the models.
+  Licence:  BSD-3-Clause (its LICENSE). The wheel's licence expression also names the libraries it
+            bundles: Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD-2-Clause, BSL-1.0, ISC, MIT, Zlib.
+  How:      downloaded at install (download.pytorch.org: the cpu, cu126 or cu132 build).
+
+torchaudio 2.11.1
+  What:     the lyrics aligner's forced alignment; also in allin1's environment.
+  Licence:  BSD-2-Clause.
+  How:      downloaded at install (download.pytorch.org).
+
+NVIDIA CUDA libraries (the nvidia-* wheels: cuBLAS, cuDNN, cuFFT, cuRAND and others)
+  What:     CUDA for PyTorch and for the guitar's CUDA provider.
+  Licence:  NVIDIA's proprietary licence (LicenseRef-NVIDIA-Proprietary, or "NVIDIA Proprietary
+            Software", on PyPI); the text is in each wheel.
+  How:      downloaded at install, on the GPU lanes (cu126, cu132) only. The cpu lane has none.
+
+Demucs 4.1.0, and its htdemucs_6s weights
+  What:     separates the song into stems (drums, bass, guitar, vocals, piano, other).
+  Licence:  code MIT. The weights (huggingface.co/adefossez/HTDemucs-6s at 3c5ee475) state no licence;
+            Demucs' README says their licence "is not clear" and that the 6-source model "likely" falls
+            under a non-commercial Creative Commons licence. songcharter treats them as non-commercial.
+  How:      the code at install; the weights at install, into <cache>/models/hf/. allin1's environment
+            has demucs-infer 4.4.0 (MIT) instead.
+
+All-In-One (all-in-one-infer 3.1.0), and its weights
+  What:     finds the song's sections (verse, chorus, solo) in a Python of its own.
+  Licence:  MIT. The weights (huggingface.co/taejunkim/allinone at 379e5fd0) are tagged MIT; they were
+            trained on the Harmonix Set. Its madmom-infer 0.2.0 is BSD-2-Clause.
+  How:      downloaded at install; the weights into <cache>/models/hf/.
+
+ADTOF (the drums model), songcharter's port and its weights
+  What:     the drums. ADTOF is by Zehren et al. (github.com/MZehren/ADTOF), whose repository, code
+            included, is CC BY-NC-SA 4.0. songcharter/engines/adtof.py was written from reading
+            xavriley/ADTOF-pytorch, a port of ADTOF that states no licence.
+  Licence:  the module songcharter/engines/adtof.py and the weights are treated as CC BY-NC-SA 4.0
+            (https://creativecommons.org/licenses/by-nc-sa/4.0/): non-commercial use, with attribution,
+            and adaptations shared under the same licence.
+  How:      the module is in the release; the weights (3.6 MB, xavriley/ADTOF-pytorch at 85c192e7) are
+            downloaded at install into <cache>/models/adtof/.
+
+autochart's engine
+  What:     the guitar. A separate program, run with Node through songcharter's driver
+            (eval/tools/autochart/ac_headless.cjs, part of the release, MIT).
+  Licence:  AGPL-3.0-or-later (its LICENSE and package.json).
+  How:      downloaded at install from github.com/dvar0/autochart at b5a41e8 (every file checked against
+            packaging/autochart/engine-files.sha256), so its full source is on the PC, in
+            <home>/runtime/autochart/src/. Its own third-party notices: src/docs/third-party-notices.md.
+            songcharter runs it on this PC only.
+
+Fretformer 2 (autochart's model pack)
+  What:     the guitar model.
+  Licence:  CC BY-NC-SA 4.0 (the pack's tag on the hub, and autochart's attribution file): non-commercial
+            use, with attribution, adaptations under the same licence. "The application itself is
+            AGPL-3.0-or-later; that application license does not remove this model's NonCommercial
+            restriction." The pack also holds ONNX conversions of htdemucs_6s (MIT, as autochart's
+            attribution states) and of Beat This! (MIT).
+  How:      downloaded at install (huggingface.co/Dvaro/autochart-models at 8a88855d) into
+            <home>/runtime/autochart/models/, with its attribution and licence texts in models/licenses/
+            (fretformer-2-attribution.txt, cc-by-nc-sa-4.0.txt, demucs-mit.txt, beat-this-mit.txt).
+
+Beat This!
+  What:     beat tracking, inside autochart's model pack.
+  Licence:  MIT, code and published weights (its README).
+  How:      downloaded at install, with Fretformer 2.
+
+Node.js 24.19.0
+  What:     runs scan-chart and autochart's engine.
+  Licence:  MIT for Node.js; its LICENSE also gives the licences of the code it bundles.
+  How:      downloaded at install (nodejs.org), SHA-256 pinned, into <home>/runtime/node/ (LICENSE there).
+
+onnxruntime-node 1.27.0, and its CUDA provider
+  What:     runs autochart's models; the provider runs them on the GPU.
+  Licence:  MIT (the npm package; the provider's NuGet package, Microsoft.ML.OnnxRuntime.Gpu.Linux
+            1.27.0, has an MIT LICENSE and a ThirdPartyNotices.txt).
+  How:      downloaded at install (npm); the provider on the GPU lanes only, by onnxruntime-node's own
+            installer from NuGet, its two libraries checked by SHA-256.
+
+scan-chart 8.0.1
+  What:     reads the finished chart as Clone Hero would, for the checks and the preview.
+  Licence:  MIT. Its npm dependencies are MIT, ISC, BSD, Apache-2.0, WTFPL and MPL-2.0 (exifreader,
+            stream-audio-fingerprint).
+  How:      downloaded at install (npm) into <home>/runtime/scan-chart/.
+
+FFmpeg (through imageio-ffmpeg 0.8.1)
+  What:     decodes the song file. A separate program that songcharter runs.
+  Licence:  imageio-ffmpeg is BSD-2-Clause. Its Linux ffmpeg binary (ffmpeg n9.0.2, a BtbN FFmpeg-Builds
+            "gpl" build) is configured with --enable-gpl --enable-version3, so it is under the GNU GPL,
+            version 3 or later. Sources: ffmpeg.org and github.com/BtbN/FFmpeg-Builds.
+  How:      downloaded at install, inside the imageio-ffmpeg wheel.
+
+The lyrics aligner's weights (wav2vec 2.0 large)
+  What:     times the lyrics you paste to the singing (torchaudio's WAV2VEC2_ASR_LARGE_LV60K_960H:
+            pre-trained on Libri-Light, 60,000 hours, fine-tuned on LibriSpeech, 960 hours).
+  Licence:  MIT: "Originally published by the authors of wav2vec 2.0 under MIT License and redistributed
+            with the same license" (torchaudio's bundle documentation).
+  How:      downloaded once, 1.26 GB, on the first song with lyrics (download.pytorch.org), SHA-256
+            pinned, into <cache>/models/lyrics/.
+
+The other Python packages
+  What:     about a hundred more in the two environments (numpy, scipy, librosa, matplotlib, the Hugging
+            Face hub's client and others).
+  Licence:  permissive (MIT, BSD, Apache-2.0, ISC, the PSF's and similar), except: lameenc 1.9.0
+            (LGPL-3.0-or-later, a Demucs dependency), soxr 1.1.0 (LGPL-2.1-or-later, librosa's
+            resampler), certifi (MPL-2.0) and tqdm (MPL-2.0 AND MIT). soundfile's wheel bundles
+            libsndfile and the codecs it links (LGPL and BSD; the wheel's licensing/license_notes.md).
+  How:      downloaded at install, from PyPI, as uv.lock and packaging/allin1/uv.lock pin them.
