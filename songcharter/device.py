@@ -555,8 +555,8 @@ def findings(r: dict, allin1_python: str | None = None) -> tuple[list[str], list
         config = w.get("wslconfig") or {}
         if w.get("memory_matches_config") is False:
             notes.append(f"WSL has {_gb(total)} GB of memory, but .wslconfig asks for "
-                         f"{_gb((config.get('memory_bytes') or 0) / MB)} GB: restart WSL (wsl --shutdown in "
-                         "PowerShell, then open Ubuntu again)")
+                         f"{_gb((config.get('memory_bytes') or 0) / MB)} GB: restart WSL. In Terminal "
+                         "(right-click Start), type wsl --shutdown, then open Ubuntu again")
         if not w.get("interop"):
             notes.append("Windows interop is off (cmd.exe does not run): no browser opens by itself, the Songs folder "
                          "is not found by itself, and there is no Start-menu shortcut")

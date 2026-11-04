@@ -885,8 +885,8 @@ def unreachable(ports: list[int], why: str, log_path: Path | None) -> str:
     span = f"port {ports[0]}" if len(ports) == 1 else f"ports {ports[0]}-{ports[-1]}"
     return (f"songcharter: error: Windows cannot reach this page: Windows' localhost did not answer on {span}, and "
             f"songcharter will not listen on another address ({why}). Try: close a program that uses those ports on "
-            "Windows, or start songcharter with another port (songcharter ui --port 8800); or restart WSL "
-            "(wsl --shutdown in PowerShell, then open Ubuntu again)."
+            "Windows, or start songcharter with another port (songcharter ui --port 8800); or restart WSL: in "
+            "Terminal (right-click Start), type wsl --shutdown, then open Ubuntu again."
             + (f" Details: {log_path}" if log_path is not None else ""))
 
 

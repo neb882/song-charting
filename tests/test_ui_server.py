@@ -262,8 +262,8 @@ def test_the_header_measures_wsls_memory_again(tmp_path, monkeypatch):
     monkeypatch.setattr(device, "memory", lambda: dict(total))
     before = S.App(home, report=lambda: pytest.fail("doctor.json is there")).status()
     assert before["source"] == "doctor.json" and left_out in before["notes"]
-    assert any(n.endswith("but .wslconfig asks for 12.0 GB: restart WSL (wsl --shutdown in PowerShell, then open "
-                          "Ubuntu again)") for n in before["notes"]), before["notes"]
+    assert any(n.endswith("but .wslconfig asks for 12.0 GB: restart WSL. In Terminal (right-click Start), type "
+                          "wsl --shutdown, then open Ubuntu again") for n in before["notes"]), before["notes"]
     total["total_mb"] = 11980   # WSL restarted with memory=12GB
     after = S.App(home, report=lambda: pytest.fail("doctor.json is there")).status()
     assert after["notes"] == [n for n in at_install["notes"] if n != left_out] and after["ok"] is True
@@ -742,7 +742,7 @@ def test_songcharter_ui_stops_rather_than_listen_where_others_reach(tmp_path, mo
     message = printed[-1]
     assert message.startswith(f"songcharter: error: Windows cannot reach this page: Windows' localhost did not answer "
                               f"on port {port}, and songcharter will not listen on another address ({why}")
-    for text in ("songcharter ui --port", "wsl --shutdown", f"Details: {log}"):
+    for text in ("songcharter ui --port", "in Terminal (right-click Start), type wsl --shutdown", f"Details: {log}"):
         assert text in message, text
     assert message in log.read_text(encoding="utf-8")
 
