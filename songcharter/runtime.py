@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import functools
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -186,7 +187,9 @@ def fetch(url: str, dest: Path | str, sha256: str | None, size: int | None = Non
             if 400 <= e.code < 500 and e.code not in (408, 429):   # no use asking again
                 raise StepFailed(f"could not download {url}: HTTP {e.code} {e.reason}") from e
             error = f"HTTP {e.code} {e.reason}"
-        except (urllib.error.URLError, OSError, ValueError) as e:   # a timeout, a reset, no network
+        except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
+            # a timeout, a reset, no network; HTTPException for a chunked response cut mid-chunk (IncompleteRead) and
+            # the other ends http.client sees that are not OSErrors
             error = f"{type(e).__name__}: {getattr(e, 'reason', None) or e}"
         if attempt == attempts - 1:
             raise StepFailed(f"could not download {url} ({attempts} tries): {error}")

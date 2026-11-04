@@ -27,10 +27,12 @@ def sha(data: bytes) -> str:
 
 class Server:
     """Serves `files` ({path: bytes}) on 127.0.0.1, with Range; `drop` (path -> bytes) closes the first response
-    after that many bytes; `no_range` ignores Range. `requests` records (path, Range header)."""
+    after that many bytes; `chunked` (path -> bytes) sends the first response chunked, with no Content-Length, as one
+    chunk of the whole size cut after that many bytes (GitHub's archives come chunked); `no_range` ignores Range.
+    `requests` records (path, Range header)."""
 
     def __init__(self):
-        self.files, self.drop, self.no_range, self.requests = {}, {}, set(), []
+        self.files, self.drop, self.chunked, self.no_range, self.requests = {}, {}, {}, set(), []
         server = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -42,6 +44,15 @@ class Server:
                 data = server.files.get(self.path)
                 if data is None:
                     self.send_error(404)
+                    return
+                cut = server.chunked.pop(self.path, None)
+                if cut is not None:
+                    self.send_response(200)
+                    self.send_header("Transfer-Encoding", "chunked")
+                    self.end_headers()
+                    self.wfile.write(b"%x\r\n" % len(data) + data[:cut])
+                    self.wfile.flush()
+                    self.close_connection = True
                     return
                 start = 0
                 rng = self.headers.get("Range")
@@ -115,6 +126,21 @@ def test_fetch_resumes_after_a_dropped_connection_and_restarts_without_range(ser
     (tmp_path / "b.part").write_bytes(b"x" * 1000)
     fetch(server.url + "/b", tmp_path / "b", sha(data), len(data))
     assert (tmp_path / "b").read_bytes() == data
+
+
+def test_fetch_retries_a_chunked_download_cut_mid_chunk(server, tmp_path):
+    """A chunked response (no Content-Length) cut in the middle of its chunk raises http.client.IncompleteRead, which
+    is neither an OSError nor a URLError: it is retried, and resumed, like any other dropped connection (the release
+    gate's finding: it ended the install as "an internal error (a bug)", exit 3, with no retry)."""
+    data = os.urandom(3_000_000)
+    server.files["/c"] = data
+    server.chunked["/c"] = 2_000_000   # the first 1 MiB block reaches the .part, the second is cut
+    said = []
+    fetch(server.url + "/c", tmp_path / "c", sha(data), None, said)
+    assert (tmp_path / "c").read_bytes() == data
+    assert server.requests == [("/c", None), ("/c", f"bytes={1 << 20}-")]
+    assert said[0] == "fetch c: ? MB" and any(s.startswith("fetch c: IncompleteRead") and s.endswith("trying again")
+                                              for s in said), said
 
 
 def test_fetch_prints_a_line_every_50_mb(server, tmp_path):
