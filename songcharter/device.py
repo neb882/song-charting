@@ -595,6 +595,35 @@ def report(full: bool = True) -> dict:
     return r
 
 
+def refresh(r: dict) -> dict:
+    """A report doctor wrote earlier (doctor.json: one with `ram`) with what changes without a reinstall measured
+    again: the memory, the free disk and, in WSL with interop, .wslconfig (so whether its memory is in force), then
+    its problems, notes and `ok` made again from them; the GPU, torch and the components stay as they were. The
+    install writes doctor.json before its last step sets WSL's memory, which applies only once WSL restarts, so the
+    page's header shows this (the release gate's finding: it kept the install's "WSL has 7.8 GB of memory, under 11
+    GB: allin1 is left out" for good). Any other report comes back as it is."""
+    if not isinstance(r, dict) or not isinstance(r.get("ram"), dict):
+        return r
+    from . import wsl
+    ram = memory()
+    disk = {**(r.get("disk") or {}), "home_free_mb": _free_mb(Path.home())}
+    if disk.get("windows_c_free_mb") is not None:
+        disk["windows_c_free_mb"] = _free_mb(wsl.MNT_C)
+    out = {**r, "ram": ram, "disk": disk}
+    w = r.get("wsl")
+    if isinstance(w, dict):
+        config = wsl.wslconfig() if w.get("interop") else (w.get("wslconfig") or {})
+        out["wsl"] = {**w, "wslconfig": config,
+                      "memory_matches_config": memory_matches((ram or {}).get("total_mb"), config.get("memory_bytes"))}
+    allin1 = None
+    if "allin1" not in (r.get("components") or {}):   # a quick report: whether an allin1 Python is configured
+        from .engines import sections
+        allin1 = sections.allin1_python(sections.Settings())
+    out["problems"], out["notes"] = findings(out, allin1)
+    out["ok"] = not out["problems"]
+    return out
+
+
 def summary(r: dict) -> list[str]:
     """doctor's lines for a report: one per item, then the problems and the notes (not the verdict)."""
     lines = [f"songcharter {r.get('songcharter')}, Python {r['python']['version']} ({r['python']['executable']}), "

@@ -190,6 +190,7 @@ class App:
         self._lock = threading.Lock()
         self._report = report
         self._quick: dict | None = None
+        self._fresh: tuple[tuple[int, int], dict] | None = None   # doctor.json's (mtime, size) and its refresh
         self._quick_lock = threading.Lock()
         self.install_lock = threading.Lock()   # one install (or Songs folder change) at a time
         self.installed: Path | None = None     # the song folder the last install put into Clone Hero's Songs
@@ -227,13 +228,25 @@ class App:
 
     # --- the doctor summary
     def doctor(self) -> dict:
-        """The report the header shows: doctor.json when it reads, else device.report(full=False), made once."""
+        """The report the header shows: doctor.json when it reads, with its memory, disk and .wslconfig measured again
+        (device.refresh, once for each version of the file: the install wrote it before WSL restarted with the memory
+        it set), else device.report(full=False), made once."""
+        path = self.home / "doctor.json"
         try:
-            r = json.loads((self.home / "doctor.json").read_text(encoding="utf-8"))
-            if isinstance(r, dict):
-                return {**r, "source": "doctor.json"}
+            st = path.stat()
+            r = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            pass
+            r = None
+        if isinstance(r, dict):
+            key = (st.st_mtime_ns, st.st_size)
+            with self._quick_lock:
+                if self._fresh is None or self._fresh[0] != key:
+                    try:
+                        fresh = device.refresh(r)
+                    except Exception:  # noqa: BLE001  the header shows the file as it is then
+                        fresh = r
+                    self._fresh = (key, {**fresh, "source": "doctor.json"})
+                return self._fresh[1]
         with self._quick_lock:
             if self._quick is None:
                 try:

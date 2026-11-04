@@ -238,6 +238,38 @@ def test_status_gives_the_doctor_summary_and_the_defaults(served, tmp_path):
     assert broken.status()["error"] == "ZeroDivisionError: division by zero" and broken.auto_device() is None
 
 
+def test_the_header_measures_wsls_memory_again(tmp_path, monkeypatch):
+    """The install writes doctor.json in step 8, before step 9 sets WSL's memory (12 GB on a 16 GB PC with no
+    .wslconfig, where WSL had 7.8 GB), which applies once WSL restarts. The header measures the memory and .wslconfig
+    again (the release gate's finding: it showed the install's "allin1 is left out" note for good): before the
+    restart that note and the restart's; after it, neither, and the rest of doctor.json's notes as they were."""
+    from songcharter import wsl
+    home = tmp_path / "home"
+    home.mkdir()
+    at_install = {**DOCTOR, "components": {"allin1": {"ok": True}}, "ram": {"total_mb": 7987},
+                  "disk": {"home_free_mb": 50000, "windows_c_free_mb": 90000},
+                  "wsl": {"interop": True, "windows_ram_mb": 16236, "memory_matches_config": None,
+                          "wslconfig": {"path": "C:\\Users\\x\\.wslconfig", "exists": False, "memory_bytes": None}}}
+    at_install["problems"], at_install["notes"] = device.findings(at_install)
+    left_out = ("WSL has 7.8 GB of memory, under 11 GB: allin1 is left out to save memory (the sections use the "
+                "librosa fallback)")
+    assert left_out in at_install["notes"]
+    (home / "doctor.json").write_text(json.dumps(at_install), encoding="utf-8")
+    monkeypatch.setattr(wsl, "wslconfig", lambda: {"path": "C:\\Users\\x\\.wslconfig", "exists": True,
+                                                   "memory_bytes": 12 * 2 ** 30, "swap_bytes": 8 * 2 ** 30})
+    monkeypatch.setattr(device, "_free_mb", lambda path: 40000)
+    total = {"total_mb": 7987}
+    monkeypatch.setattr(device, "memory", lambda: dict(total))
+    before = S.App(home, report=lambda: pytest.fail("doctor.json is there")).status()
+    assert before["source"] == "doctor.json" and left_out in before["notes"]
+    assert any(n.endswith("but .wslconfig asks for 12.0 GB: restart WSL (wsl --shutdown in PowerShell, then open "
+                          "Ubuntu again)") for n in before["notes"]), before["notes"]
+    total["total_mb"] = 11980   # WSL restarted with memory=12GB
+    after = S.App(home, report=lambda: pytest.fail("doctor.json is there")).status()
+    assert after["notes"] == [n for n in at_install["notes"] if n != left_out] and after["ok"] is True
+    assert after["notes"] == ["CPU mode: no NVIDIA GPU found", "the guitar runs on the CPU: no GPU"]
+
+
 def test_uploads(served, monkeypatch):
     ctx, port = served, served.port
     for name in ("notes.txt", "song", "song.mp3.exe", ""):
