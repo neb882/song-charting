@@ -8,8 +8,9 @@
 #                                  and HEAD's packaging/NOTICE.txt added at its root (beside LICENSE);
 #                                  check_no_audio.py checks every member before it counts
 #   install.sh                     packaging/linux/install.sh with its @...@ values filled in: the version, the
-#                                  tarball's SHA-256, the release URL prefix, and uv's release tarball with the
-#                                  SHA-256 published beside it (which must be the one pinned here)
+#                                  tarball's SHA-256, the release URL prefix, NOTICE.txt at the release's tag (the
+#                                  guide's link, which the licence prompt names on a first install), and uv's release
+#                                  tarball with the SHA-256 published beside it (which must be the one pinned here)
 #   SHA256SUMS                     both files'
 #   GUIDE.md                       docs/guide/windows-wsl.md with {{VERSION}} and {{INSTALL_SHA256}} (install.sh's
 #                                  SHA-256) filled in: the friend's guide, and the release's notes
@@ -32,6 +33,7 @@ UV_VERSION=0.13.5
 UV_URL=https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-x86_64-unknown-linux-gnu.tar.gz
 UV_SHA256=f68d291c75783122dad58ab77def0e13f3233f358731db5d6d7e8715603b928f   # its .sha256 on 2026-11-03 [here]
 RELEASE_URL=https://github.com/neb882/song-charting/releases/download/v$version
+NOTICE_URL=https://github.com/neb882/song-charting/blob/v$version/packaging/NOTICE.txt   # as the guide links it
 tarball=songcharter-$version.tar.gz
 
 mkdir -p "$out"
@@ -61,7 +63,8 @@ if [ "$published" != "$UV_SHA256" ]; then
 fi
 
 sed -e "s|@VERSION@|$version|g" -e "s|@APP_SHA256@|$app_sha|g" -e "s|@RELEASE_URL@|$RELEASE_URL|g" \
-  -e "s|@UV_URL@|$UV_URL|g" -e "s|@UV_SHA256@|$published|g" "$notice/install.sh" >"$out/install.sh.part"
+  -e "s|@NOTICE_URL@|$NOTICE_URL|g" -e "s|@UV_URL@|$UV_URL|g" -e "s|@UV_SHA256@|$published|g" "$notice/install.sh" \
+  >"$out/install.sh.part"
 if grep -n '@[A-Z0-9_]*@' "$out/install.sh.part"; then
   echo "build.sh: install.sh still has a value to fill in (above)" >&2
   exit 1

@@ -121,7 +121,7 @@ def allin1(w):
 
 
 def test_no_wslconfig_gets_one_in_crlf_with_the_rounded_target(windows):
-    """A "16 GB" PC reports 15.9 GiB: rounded to 16, less 4, gives memory=12GB (not 11.9GB), with swap=8GB, in a new
+    """A "16 GB" PC reports 15.9 GiB: rounded up to 16, less 4, gives memory=12GB (not 11.9GB), with swap=8GB, in a new
     file with CRLF line ends; no backup, as there was no file."""
     w = windows
     out, said, asked = apply(w)
@@ -192,6 +192,31 @@ def test_windows_ram_unknown_writes_nothing(windows):
     assert not out["changed"] and not asked and backups(w) == []
     assert w.config.read_text(encoding="utf-8") == "[wsl2]\nmemory=11GB\n"
     assert any("Windows' RAM could not be read" in s and "set it by hand" in s and "memory=" in s for s in said), said
+
+
+@pytest.mark.parametrize("ram_gib, target", [(15.4, 12), (15.9, 12), (16, 12), (14.0, 10), (14.1, 11), (11.1, 8),
+                                              (11.0, 7)])
+def test_windows_ram_is_rounded_up(ram_gib, target):
+    """The owner's decision at the release gate: the RAM a PC reports is always a little under what is installed, so
+    it is rounded up to a whole GB, not to the nearest: a PC sold as 16 GB that reports 15.4 GiB gets memory=12GB, not
+    11. 11 GiB or less (a target of 7 GB) is refused; just over it is a 12 GB PC (8 GB)."""
+    ram = round(ram_gib * GIB)
+    assert wslsetup.target_gb(ram) == target and wslsetup.pc_gb(ram) == target + 4
+    assert wslsetup.plan(None, ram) == wslsetup.Plan("refuse" if target < 8 else "write", None, ram, target)
+
+
+def test_a_15_4_gib_pc_is_a_16_gb_one(windows):
+    w = windows
+    w.cfg["ram"] = round(15.4 * GIB)
+    w.write()
+    out, said, _ = apply(w)
+    assert w.config.read_bytes() == b"[wsl2]\r\nmemory=12GB\r\nswap=8GB\r\n" and out["allin1"]
+    assert any("wrote memory=12GB and swap=8GB" in s and "(Windows has 16 GB of RAM)" in s for s in said), said
+    w.config.unlink()
+    w.cfg["ram"] = round(10.6 * GIB)   # refused, and named as the 11 GB PC it rounds up to
+    w.write()
+    with pytest.raises(wslsetup.Refused, match=r"at least 12 GB of RAM \(this one has 11 GB\)"):
+        apply(w)
 
 
 def test_a_pc_under_16_gb_leaves_allin1_out_and_one_under_12_is_refused(windows):

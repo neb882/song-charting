@@ -10,15 +10,20 @@ being imported instead.
   * **runtime.json** (songcharter.runtime) says where everything is. Missing, the install has not finished: exit 2.
     The install's own Python finds it beside its environment; $SONGCHARTER_HOME names another install.
   * **The environment** (`environment`): where songcharter finds Node, scan-chart, autochart, allin1's Python, ffmpeg
-    and the models, Node's folder first on PATH (assemble finds scan-chart's node there), and, once every model is
-    in, the hub and songcharter offline, so a launch with no network works. A variable the person set wins, but for
-    PATH.
+    and the models, Node's folder first on PATH (assemble finds scan-chart's node there), and, once the install's
+    models are in, the hub offline (HF_HUB_OFFLINE=1), so a launch with no network works. SONGCHARTER_OFFLINE is
+    left unset: the lyrics aligner's weights, which the install does not fetch, download on the first song with
+    lyrics (engines/lyrics.weights_path), and ADTOF's would come again if deleted. Each of songcharter's own
+    downloads is pinned and hash-checked and made only when its file is missing: a file already there never goes back
+    to the network. A variable the person set wins (SONGCHARTER_OFFLINE=1 forbids those downloads), but for PATH.
   * **--from-shortcut.** The shortcut's window closes when the command ends, so on any non-zero exit the error stays
     on the screen with "Press Enter to close this window" (a launch failure must never just close the window).
   * **uninstall** removes the shortcut, the launcher, the app and runtime/state, then asks once whether the
-    downloads and the song caches and library go too (No keeps runtime/, uv's cache and the models, so a reinstall
-    downloads nothing). It offers to restore the .wslconfig songcharter backed up, and never deletes .wslconfig.
-    `--yes` answers yes to both questions.
+    downloads and the song caches and library go too (No keeps runtime/, which holds uv's cache, runtime/uv-cache,
+    and the models, so a reinstall downloads only install.sh and the app, about 1 MB; none of it with install.sh's
+    --from). It counts and deletes only songcharter's own folders: never the person's ~/.cache/uv, which other uv
+    projects share. It offers to restore the .wslconfig songcharter backed up, and never deletes .wslconfig. `--yes`
+    answers yes to both questions.
 """
 from __future__ import annotations
 
@@ -63,8 +68,8 @@ def environment(runtime: Mapping, base: Mapping[str, str] | None = None) -> dict
     child Python, such as the UI's chart job, imports songcharter from the install, never from a songcharter/ folder
     in the current one), MPLCONFIGDIR in songcharter's cache (the preview's matplotlib keeps its font cache there, not
     in ~/.cache/matplotlib and ~/.config/matplotlib, which uninstall would leave), and, when models_complete,
-    HF_HUB_OFFLINE=1 and SONGCHARTER_OFFLINE=1; each only where `base` has no value of its own. PATH gets Node's
-    folder first."""
+    HF_HUB_OFFLINE=1 (never SONGCHARTER_OFFLINE: the module docstring); each only where `base` has no value of its
+    own. PATH gets Node's folder first."""
     from .cache import user_cache
     env = dict(os.environ if base is None else base)
     values = {"SONGCHARTER_HOME": runtime.get("home"), "SONGCHARTER_NODE": runtime.get("node"),
@@ -74,7 +79,7 @@ def environment(runtime: Mapping, base: Mapping[str, str] | None = None) -> dict
               "HF_HOME": runtime.get("hf_home"), "HF_HUB_DISABLE_SYMLINKS_WARNING": "1", "PYTHONUTF8": "1",
               "PYTHONSAFEPATH": "1", "MPLCONFIGDIR": user_cache() / "matplotlib"}
     if runtime.get("models_complete"):
-        values.update(HF_HUB_OFFLINE="1", SONGCHARTER_OFFLINE="1")
+        values["HF_HUB_OFFLINE"] = "1"
     for key, value in values.items():
         if value is not None:
             env.setdefault(key, str(value))
@@ -137,13 +142,6 @@ def main(argv: list[str] | None = None) -> int:
 
 # ------------------------------------------------------------------------------------------------ uninstall
 
-def uv_cache() -> Path:
-    """uv's cache, where uv puts it: $UV_CACHE_DIR, else $XDG_CACHE_HOME/uv, else ~/.cache/uv."""
-    if os.environ.get("UV_CACHE_DIR"):
-        return Path(os.environ["UV_CACHE_DIR"]).expanduser()
-    return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "uv"
-
-
 def du(paths: list[Path]) -> int:
     """`du -scb` of the paths that exist (a file hardlinked between them counts once), in bytes; 0 for none."""
     there = [str(p) for p in paths if p.exists()]
@@ -194,17 +192,18 @@ def uninstall(args: list[str], *, ask: Callable[[str, bool], bool] = _ask,
         _remove(path, say)
 
     runtime, models, cache = home / "runtime", user_cache() / "models", user_cache()
-    downloads = du([runtime, uv_cache(), models])
+    downloads = du([runtime, models])   # runtime/ holds uv's cache too (install.sh's runtime/uv-cache)
     songs = du([*(p for p in (cache.iterdir() if cache.is_dir() else []) if p != models),
                 home / "library", home / "uploads", home / "exports"])
     question = (f"Also delete the downloads (Python packages, Node, autochart and its models: about "
                 f"{downloads / GB:.1f} GB) and your song caches and library ({songs / GB:.1f} GB)? A reinstall reuses "
                 "the downloads if you keep them. [y/N]")
     if yes or ask(question, False):
-        for path in (home, cache, uv_cache()):
+        for path in (home, cache):
             _remove(path, say)
     else:
-        say(f"kept {runtime}, {uv_cache()} and {models}: a reinstall downloads nothing")
+        say(f"kept {runtime} and {models}: a reinstall reuses them, and downloads only install.sh and the app "
+            "(about 1 MB)")
 
     backups = (windows or {}).get("backups") or []
     if backups:

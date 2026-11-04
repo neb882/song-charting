@@ -16,6 +16,9 @@
 #   * --from takes the release assets (this script's tarball) from a folder or a URL prefix, for CI;
 #     $SONGCHARTER_RELEASE_URL replaces the release URL prefix (M4-07's check runs the guide's line against a local
 #     server). $SONGCHARTER_HOME moves the install (default ~/.local/share/songcharter).
+#   * uv's cache is songcharter's own, runtime/uv-cache ($UV_CACHE_DIR for every uv call here), never the person's
+#     ~/.cache/uv, which other uv projects share: the disk check counts only songcharter's folders, and uninstall
+#     deletes only them.
 #   * packaging/release/build.sh fills in the @...@ values below; this file in the repository is the template.
 #   * Needs bash, curl or wget, tar, xz and sha256sum, which Ubuntu's WSL image ships. Refuses to run as root.
 set -Eeuo pipefail
@@ -25,6 +28,7 @@ APP_SHA256="@APP_SHA256@"
 RELEASE_URL="${SONGCHARTER_RELEASE_URL:-@RELEASE_URL@}"
 UV_URL="@UV_URL@"
 UV_SHA256="@UV_SHA256@"
+NOTICE_URL="@NOTICE_URL@"   # the release's NOTICE.txt, which the licence prompt names until the app is here
 UV_VERSION=0.13.5
 PYTHON_VERSION=3.13.17
 WSL_NVIDIA_SMI=/usr/lib/wsl/lib/nvidia-smi   # WSL's, from the Windows driver [doc: NVIDIA's WSL guide]
@@ -139,6 +143,8 @@ choose_lane() {   # ASKED (auto or a lane): sets lane, lane_reason and lane_warn
         fail "$out: the GPU is out of reach, not missing, so this $before install is not moved to the CPU build. Restart Windows (or update the NVIDIA driver) and run the same line again; or add --lane cpu to move to the CPU build"
       fi
       lane=cpu lane_reason="nvidia-smi failed, so CUDA cannot run: $out"
+      # a first install (or a cpu one): said at step 2 and at the end, as nothing later would say it
+      lane_warning="the GPU is out of reach, not missing, so this is the CPU build: restart Windows (or update the NVIDIA driver), then paste the install line again: it switches to the GPU build (about 3 GB)"
       ;;
     ok)
       if [ "$major" -lt 528 ]; then
@@ -220,7 +226,7 @@ main() {
   local runtime=$home/runtime state=$home/runtime/state dl=$home/runtime/state/downloads
   local app=$home/app/$VERSION launcher=$HOME/.local/bin/songcharter
   local cache=${XDG_CACHE_HOME:-$HOME/.cache} uv=$home/bin/uv py=$home/runtime/env/bin/python
-  local uv_cache=${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv}
+  local uv_cache=$home/runtime/uv-cache   # songcharter's own (the header): uninstall's No keeps it, Yes deletes it
   mkdir -p "$home/bin" "$home/app" "$dl"
   echo "songcharter $VERSION: the install, into $home"
 
@@ -251,7 +257,7 @@ main() {
   header disk 3 "Disk"
   local need present=0 free_home free_c="" left there=()
   need=$(($(need_gb "$lane") * GB))
-  for p in "$runtime" "$uv_cache" "$cache/songcharter"; do if [ -e "$p" ]; then there+=("$p"); fi; done
+  for p in "$runtime" "$cache/songcharter"; do if [ -e "$p" ]; then there+=("$p"); fi; done   # uv's cache is in runtime/
   if [ ${#there[@]} -gt 0 ]; then
     present=$({ du -scb -- "${there[@]}" 2>/dev/null || true; } | tail -n 1 | cut -f1)
     [[ $present =~ ^[0-9]+$ ]] || present=0
@@ -288,14 +294,16 @@ main() {
   echo "about $total_gb GB: the Python packages for lane $lane ($(packages_gb "$lane") GB), then Node, autochart and its models$([ "$lane" = cpu ] || echo ", the CUDA provider") and the pipeline's models (about $REST_GB GB)"
   awk -v g="$total_gb" 'BEGIN { printf "time: about %d min at 25 Mbit/s, %d min at 100 Mbit/s (less when an earlier run got part of it)\n", g * 8000 / 25 / 60 + 0.5, g * 8000 / 100 / 60 + 0.5 }'
   if [ $yes -ne 1 ]; then
-    local answer=""
-    printf 'Licences: %s/NOTICE.txt (some of the models are for non-commercial use only)\nContinue? [Y/n] ' "$app"
+    local answer="" notice=$NOTICE_URL
+    # the app's own copy once a run has unpacked it (step 6); before that, on a first install, the release's
+    if [ -f "$app/NOTICE.txt" ]; then notice=$app/NOTICE.txt; fi
+    printf 'Licences: %s (some of the models are for non-commercial use only)\nContinue? [Y/n] ' "$notice"
     read -r answer || answer=""
     case $answer in [nN]*) echo "songcharter: stopped; nothing was downloaded."; exit 1 ;; esac
   fi
 
   header downloads 6 "uv, Python and the app"
-  export UV_HTTP_TIMEOUT=300 UV_HTTP_RETRIES=5 UV_PYTHON_INSTALL_DIR="$runtime/python"
+  export UV_HTTP_TIMEOUT=300 UV_HTTP_RETRIES=5 UV_PYTHON_INSTALL_DIR="$runtime/python" UV_CACHE_DIR="$uv_cache"
   if [ -x "$uv" ] && [ "$("$uv" --version 2>/dev/null | cut -d' ' -f2)" = "$UV_VERSION" ]; then
     echo "uv $UV_VERSION: already here"
   else
@@ -371,6 +379,7 @@ PY
   echo
   if [ -n "$before" ] && [ "$before" != "$lane" ]; then echo "lane changed: $before → $lane"; fi
   echo "songcharter $VERSION is installed (lane $lane: $lane_reason)."
+  if [ -n "$lane_warning" ]; then echo "warning: $lane_warning"; fi
   if [ $in_wsl -eq 1 ]; then echo "Start it from the Start menu (songcharter), or type songcharter in Ubuntu."
   else echo "Start it by typing songcharter."; fi
   case ":$PATH:" in

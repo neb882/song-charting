@@ -238,6 +238,75 @@ def test_status_gives_the_doctor_summary_and_the_defaults(served, tmp_path):
     assert broken.status()["error"] == "ZeroDivisionError: division by zero" and broken.auto_device() is None
 
 
+def test_the_header_measures_wsls_memory_again(tmp_path, monkeypatch):
+    """The install writes doctor.json in step 8, before step 9 sets WSL's memory (12 GB on a 16 GB PC with no
+    .wslconfig, where WSL had 7.8 GB), which applies once WSL restarts. The header measures the memory and .wslconfig
+    again (the release gate's finding: it showed the install's "allin1 is left out" note for good): before the
+    restart that note and the restart's; after it, neither, and the rest of doctor.json's notes as they were."""
+    from songcharter import wsl
+    home = tmp_path / "home"
+    home.mkdir()
+    at_install = {**DOCTOR, "components": {"allin1": {"ok": True}}, "ram": {"total_mb": 7987},
+                  "disk": {"home_free_mb": 50000, "windows_c_free_mb": 90000},
+                  "wsl": {"interop": True, "windows_ram_mb": 16236, "memory_matches_config": None,
+                          "wslconfig": {"path": "C:\\Users\\x\\.wslconfig", "exists": False, "memory_bytes": None}}}
+    at_install["problems"], at_install["notes"] = device.findings(at_install)
+    left_out = ("WSL has 7.8 GB of memory, under 11 GB: allin1 is left out to save memory (the sections use the "
+                "librosa fallback)")
+    assert left_out in at_install["notes"]
+    (home / "doctor.json").write_text(json.dumps(at_install), encoding="utf-8")
+    monkeypatch.setattr(wsl, "wslconfig", lambda: {"path": "C:\\Users\\x\\.wslconfig", "exists": True,
+                                                   "memory_bytes": 12 * 2 ** 30, "swap_bytes": 8 * 2 ** 30})
+    monkeypatch.setattr(device, "_free_mb", lambda path: 40000)
+    total = {"total_mb": 7987}
+    monkeypatch.setattr(device, "memory", lambda: dict(total))
+    before = S.App(home, report=lambda: pytest.fail("doctor.json is there")).status()
+    assert before["source"] == "doctor.json" and left_out in before["notes"]
+    assert any(n.endswith("but .wslconfig asks for 12.0 GB: restart WSL (wsl --shutdown in PowerShell, then open "
+                          "Ubuntu again)") for n in before["notes"]), before["notes"]
+    total["total_mb"] = 11980   # WSL restarted with memory=12GB
+    after = S.App(home, report=lambda: pytest.fail("doctor.json is there")).status()
+    assert after["notes"] == [n for n in at_install["notes"] if n != left_out] and after["ok"] is True
+    assert after["notes"] == ["CPU mode: no NVIDIA GPU found", "the guitar runs on the CPU: no GPU"]
+
+
+def test_a_running_page_reads_a_rewritten_doctor_json_and_survives_a_failing_refresh(served, monkeypatch):
+    """The review's F-2: the header's refresh is kept per version of doctor.json (its mtime and size), so a running
+    page shows the file a rerun of the install writes (a lane change after a driver update), and measures each version
+    once; a refresh that raises shows the file as written, and /api/status still answers."""
+    made = []
+    monkeypatch.setattr(device, "refresh", lambda r: made.append(r["device"]["chosen"]) or
+                        {**r, "notes": [*r["notes"], "measured again"]})
+
+    def status():
+        code, _, body = call(served.port, "GET", "/api/status")
+        assert code == 200, body
+        return json.loads(body)
+
+    def rewrite(report):
+        path = served.home / "doctor.json"
+        before = path.stat().st_mtime_ns
+        path.write_text(json.dumps(report), encoding="utf-8")
+        os.utime(path, ns=(before + 10 ** 9, before + 10 ** 9))   # a later version, whatever the clock's grain
+
+    first = status()
+    assert first["notes"] == [*DOCTOR["notes"], "measured again"] and status() == {**first, "job": None}
+    assert made == ["cpu"]   # once for this version
+    rerun = {**DOCTOR, "device": {"chosen": "cuda", "reason": None}, "guitar_device": "cuda", "notes": []}
+    rewrite(rerun)
+    st = status()
+    assert st["device"] == {"chosen": "cuda", "reason": None} and st["notes"] == ["measured again"]
+    assert made == ["cpu", "cuda"] and served.app.auto_device() == "cuda"
+
+    def broken(r):
+        raise ZeroDivisionError("division by zero")
+
+    monkeypatch.setattr(device, "refresh", broken)
+    rewrite({**rerun, "notes": ["as written"]})
+    st = status()
+    assert st["notes"] == ["as written"] and st["source"] == "doctor.json" and st["device"]["chosen"] == "cuda"
+
+
 def test_uploads(served, monkeypatch):
     ctx, port = served, served.port
     for name in ("notes.txt", "song", "song.mp3.exe", ""):
@@ -663,9 +732,10 @@ def test_stopping_the_server_kills_the_running_charts_whole_tree(tmp_path, how):
 
 # a chart's end as the page sees it: the song folder's four files, a work folder with pipeline.json and the preview's
 # pictures, and the result event; with --lyrics=/dev/fd/<n>, the text read as `songcharter chart` reads it (its
-# SHA-256 and word count reported: proof it came whole, with no word of it)
+# SHA-256 and word count reported: proof it came whole, with no word of it). Mode "linger": after the result, the
+# process exits only once work/release exists (a real chart's interpreter takes a second or more to exit)
 BUILT = r'''
-import hashlib, json, sys
+import hashlib, json, sys, time
 from pathlib import Path
 mode, out, work = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
 given = next((a[len("--lyrics="):] for a in sys.argv if a.startswith("--lyrics=")), None)
@@ -697,6 +767,9 @@ for name in ("overview.png", "page_01.png", "page_02.png", "flags.txt", "page_1.
                    "confidence": {"median": 0.2, "low": True}}} if given else {})}), encoding="utf-8")
 ev(event="result", ok=ok, exit=0 if ok else 1, folder=str(out), work=str(work), preview=str(preview),
    summary="gate: OK" if ok else "gate: FAILED", lyrics_sha256=sha)
+deadline = time.monotonic() + 30
+while mode == "linger" and not (work / "release").exists() and time.monotonic() < deadline:
+    time.sleep(0.02)
 '''
 LYRICS = "zorp blen-dak\nquiv\n\n[Glorp]\nsmee plin\n"
 LYRIC_WORDS = ("zorp", "blen", "dak", "quiv", "Glorp", "smee", "plin")
@@ -920,6 +993,38 @@ def test_a_blocked_install_answers_403_with_the_zip(finished, tmp_path, monkeypa
         status, answer = post(ctx, "/api/jobs/current/install", {"replace": replace})
         assert status == 409 and answer["ours"] is False, replace
     assert sorted(p.name for p in other.iterdir()) == ["song.ini"]
+
+
+def test_the_done_screen_can_install_while_the_chart_is_still_exiting(finished, tmp_path):
+    """The release gate's finding: the page asks for the results the moment it reads the `result` event (app.js),
+    and the chart's process exits a second or more later (the interpreter's teardown, a CUDA context on a GPU). The
+    job then counts as finished: its results are installable, and the zip and the install work, all while its state
+    is still running (the stand-in exits only when this test lets it)."""
+    ctx = finished
+    ctx.mode = "linger"
+    songs = tmp_path / "Songs"
+    songs.mkdir()
+    assert post(ctx, "/api/clonehero", {"folder": str(songs)})[0] == 200
+    status, _, body = call(ctx.port, "POST", "/api/jobs", json.dumps({"upload": ctx.upload["id"]}).encode(),
+                           guarded(ctx.port))
+    assert status == 202, body
+    conn = http.client.HTTPConnection("127.0.0.1", ctx.port, timeout=30)
+    try:
+        conn.request("GET", "/api/jobs/current/events", headers={"Host": f"127.0.0.1:{ctx.port}"})
+        for line in conn.getresponse():   # the stream as app.js follows it, up to the result event
+            if line.startswith(b"data: ") and json.loads(line[6:])["event"] == "result":
+                break
+        res = json.loads(get(ctx, "/api/jobs/current/results")[2])
+        assert res["state"] == "running" and res["ok"] is True and res["installable"] is True, res
+        status, answer = post(ctx, "/api/jobs/current/export/zip")
+        assert status == 200 and answer["name"] == f"{res['name']}.zip", answer
+        status, answer = post(ctx, "/api/jobs/current/install", {"replace": False})
+        assert status == 200 and answer["installed"] == str(songs / res["name"]), answer
+        assert ctx.app.jobs.current.state == "running"   # all of it before the chart's process ended
+    finally:
+        (ctx.work / "release").write_text("go", encoding="utf-8")
+        conn.close()
+    assert wait_state(ctx, "done").returncode == 0
 
 
 def test_a_chart_that_failed_its_gate_is_not_exported_or_installed(finished, tmp_path):

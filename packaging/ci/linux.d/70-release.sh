@@ -11,9 +11,10 @@
 #      it, but for https://github.com/ becoming the local server's address (the one change, checked), and with
 #      $SONGCHARTER_RELEASE_URL, install.sh's override for this check, naming the same server for the tarball:
 #      - a changed install.sh served: `sha256sum -c` fails, and the installer never runs;
-#      - answering No at "Continue? [Y/n]": "install.sh: OK", the line naming NOTICE.txt, exit 1, no tarball fetched;
+#      - answering No at "Continue? [Y/n]": "install.sh: OK", the line naming NOTICE.txt at the release's tag (the
+#        guide's link: the app, which holds a copy, is not here yet), exit 1, no tarball fetched;
 #      - pressing Enter: the whole install, exit 0, with install.sh and the tarball fetched from the server, and the
-#        NOTICE.txt that the prompt named in place and identical to packaging/NOTICE.txt;
+#        app's own NOTICE.txt (which a rerun's prompt names) in place and identical to packaging/NOTICE.txt;
 #   5. the guide's other commands in Ubuntu, as written, in a login shell (a new Ubuntu window's PATH): `songcharter`
 #      (its page answers), `songcharter diagnostics --out diagnostics.zip` (check_no_audio.py passes on the zip) and
 #      `songcharter uninstall` answered with Enter (No: the launcher goes, the downloads stay).
@@ -121,7 +122,7 @@ printf "n\n" | bash -c "$LINE" >/tmp/line-no.log 2>&1 || code=$?
 tail -n 4 /tmp/line-no.log
 [ "$code" -eq 1 ] || { echo "70-release: exit $code, not 1"; cat /tmp/line-no.log; exit 1; }
 grep -qx "install.sh: OK" /tmp/line-no.log
-grep -qF "Licences: $HOME/.local/share/songcharter/app/$VERSION/NOTICE.txt (some of the models are for non-commercial use only)" /tmp/line-no.log
+grep -qF "Licences: https://github.com/neb882/song-charting/blob/v$VERSION/packaging/NOTICE.txt (some of the models are for non-commercial use only)" /tmp/line-no.log   # the app, with its copy, is not here yet
 grep -q "Continue? \[Y/n\] songcharter: stopped; nothing was downloaded.$" /tmp/line-no.log'
 keep /tmp/line-no.log
 [ "$(served "$tarball")" -eq 0 ] || fail "the tarball was fetched before the answer"
@@ -133,6 +134,7 @@ tail -n 6 /tmp/line-yes.log
 [ "$code" -eq 0 ] || { echo "70-release: exit $code, not 0"; tail -n 40 /tmp/line-yes.log; exit 1; }
 grep -qx "install.sh: OK" /tmp/line-yes.log
 grep -q "^songcharter $VERSION is installed (lane " /tmp/line-yes.log
+grep -qF "Licences: https://github.com/neb882/song-charting/blob/v$VERSION/packaging/NOTICE.txt (" /tmp/line-yes.log
 sha256sum ~/.local/share/songcharter/app/$VERSION/NOTICE.txt'
 keep /tmp/line-yes.log
 [ "$(served install.sh)" -eq 3 ] && [ "$(served "$tarball")" -eq 1 ] ||
@@ -167,7 +169,7 @@ keep /tmp/diagnostics.log /home/friend/diagnostics.zip
 
 friend "songcharter uninstall, answered with Enter (No)" '
 printf "\n" | songcharter uninstall | tee /tmp/uninstall.log
-grep -q "\[y/N\] kept .*: a reinstall downloads nothing$" /tmp/uninstall.log   # piped, it follows the prompt
+grep -q "\[y/N\] kept .*: a reinstall reuses them, and downloads only install.sh and the app (about 1 MB)$" /tmp/uninstall.log   # piped, it follows the prompt
 [ ! -e ~/.local/bin/songcharter ] && [ ! -e ~/.local/share/songcharter/app ] && [ -d ~/.local/share/songcharter/runtime/env ]'
 keep /tmp/uninstall.log
 "$CI_PY" packaging/ci/check_no_audio.py "$art"

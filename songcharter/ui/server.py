@@ -55,7 +55,10 @@ one chart runs at a time as a child process group (jobs.py). In WSL the Windows 
   * POST /api/jobs/current/cancel: 200 with the job's state after the cancel; 409 when no job runs.
 
 **After the build** (M4-06). The routes on "the chart" use the current job's `result` event; those that export or
-install need one that passed its gate (else 400): a .failed folder is for a look, not for Clone Hero.
+install need one that passed its gate (else 400): a .failed folder is for a look, not for Clone Hero. A job whose
+`result` is out has its chart in place (the chart prints it last), so these routes take it at once, while its process
+is still exiting (a second or more, with its state still `running`): the page asks for the results the moment it
+reads that event (the release gate's finding: the Done screen once hid "Install into Clone Hero" after a normal chart).
   * GET /api/jobs/current/results: {"job", "state", "ok", "folder", "name", "installable", "preview", "lyrics"}:
     the preview's overview and pages as URLs with its flags and remarks, or {"why"} there is none; pipeline.json's
     lyrics as counts ({"given", "added", "words", "phrases", "why", "low"}), null when none were given. 404 before
@@ -187,6 +190,7 @@ class App:
         self._lock = threading.Lock()
         self._report = report
         self._quick: dict | None = None
+        self._fresh: tuple[tuple[int, int], dict] | None = None   # doctor.json's (mtime, size) and its refresh
         self._quick_lock = threading.Lock()
         self.install_lock = threading.Lock()   # one install (or Songs folder change) at a time
         self.installed: Path | None = None     # the song folder the last install put into Clone Hero's Songs
@@ -224,13 +228,25 @@ class App:
 
     # --- the doctor summary
     def doctor(self) -> dict:
-        """The report the header shows: doctor.json when it reads, else device.report(full=False), made once."""
+        """The report the header shows: doctor.json when it reads, with its memory, disk and .wslconfig measured again
+        (device.refresh, once for each version of the file: the install wrote it before WSL restarted with the memory
+        it set), else device.report(full=False), made once."""
+        path = self.home / "doctor.json"
         try:
-            r = json.loads((self.home / "doctor.json").read_text(encoding="utf-8"))
-            if isinstance(r, dict):
-                return {**r, "source": "doctor.json"}
+            st = path.stat()
+            r = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            pass
+            r = None
+        if isinstance(r, dict):
+            key = (st.st_mtime_ns, st.st_size)
+            with self._quick_lock:
+                if self._fresh is None or self._fresh[0] != key:
+                    try:
+                        fresh = device.refresh(r)
+                    except Exception:  # noqa: BLE001  the header shows the file as it is then
+                        fresh = r
+                    self._fresh = (key, {**fresh, "source": "doctor.json"})
+                return self._fresh[1]
         with self._quick_lock:
             if self._quick is None:
                 try:
@@ -493,10 +509,11 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- after the build
     def _built(self) -> Path:
-        """The current job's song folder, when its chart passed the gate and is in place; else Refused(400)."""
+        """The current job's song folder, when its chart passed the gate and is in place (its `result` is out,
+        whatever its process is still doing: the module docstring); else Refused(400)."""
         job = self.app.jobs.current
         result = job.result() if job is not None else None
-        if result is None or job.state != "done":
+        if result is None:
             raise Refused(400, "no finished chart yet")
         folder = Path(str(result.get("folder")))
         if not result.get("ok"):
@@ -726,7 +743,7 @@ def results(job) -> dict:
         return out
     folder = Path(str(result.get("folder")))
     out.update(ok=bool(result.get("ok")), folder=str(folder), name=folder.name,
-               installable=bool(result.get("ok")) and job.state == "done" and folder.is_dir())
+               installable=bool(result.get("ok")) and folder.is_dir())   # its state may still be running: exiting
     try:
         pipeline = json.loads((Path(str(result.get("work"))) / "pipeline.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):

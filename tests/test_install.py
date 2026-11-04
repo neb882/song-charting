@@ -79,17 +79,22 @@ def test_the_lane_from_nvidia_smi(tmp_path, driver, cap, want):
     assert lane(tmp_path, GPU.format(driver, cap)) == want
 
 
+OUT_OF_REACH = ("the GPU is out of reach, not missing, so this is the CPU build: restart Windows (or update the NVIDIA "
+                "driver), then paste the install line again: it switches to the GPU build (about 3 GB)")
+
+
 def test_no_gpu_and_a_gpu_out_of_reach(tmp_path):
     """No nvidia-smi, or one that lists nothing, is no GPU. One that fails (WSL's after a Windows update) is a GPU out
-    of reach: a fresh install takes the cpu lane and says why; an existing GPU install is never moved to the cpu lane
-    without --lane cpu."""
+    of reach: a fresh install takes the cpu lane, says why, and warns what to do once the GPU is back (the release
+    gate's finding: nothing ever said to rerun); an existing GPU install is never moved to the cpu lane without
+    --lane cpu."""
     assert lane(tmp_path) == ("cpu", "no NVIDIA GPU found", "")
     assert lane(tmp_path / "empty", "exit 0") == ("cpu", "no NVIDIA GPU found", "")
     blocked = 'echo "Failed to initialize NVML: GPU access blocked by the operating system"; exit 255'
     assert lane(tmp_path / "fresh", blocked) == (
         "cpu", "nvidia-smi failed, so CUDA cannot run: nvidia-smi failed (exit 255): Failed to initialize NVML: GPU "
-               "access blocked by the operating system", "")
-    assert lane(tmp_path / "was-cpu", blocked, previous="cpu")[0] == "cpu"
+               "access blocked by the operating system", OUT_OF_REACH)
+    assert lane(tmp_path / "was-cpu", blocked, previous="cpu")[::2] == ("cpu", OUT_OF_REACH)
     p = sourced(tmp_path / "was-gpu", "choose_lane auto; echo chose $lane", blocked, previous="cu132")
     assert p.returncode == 2 and "chose" not in p.stdout
     assert p.stderr.splitlines()[-1] == (
@@ -99,10 +104,31 @@ def test_no_gpu_and_a_gpu_out_of_reach(tmp_path):
         "CPU build. Run the same command again to continue.")
     assert lane(tmp_path / "was-gpu", blocked, previous="cu132", asked="cpu") == (
         "cpu", "asked for with --lane cpu", "")
+    from songcharter import device
+    assert "asked for with --lane cpu".startswith(device.ASKED_LANE)   # doctor reads it so (no "paste again" note)
     p = sourced(tmp_path / "was-cu126", "choose_lane auto; echo chose $lane", blocked, previous="cu126")
     assert p.returncode == 2 and "chose" not in p.stdout
     assert "the GPU is out of reach, not missing, so this cu126 install is not moved" in p.stderr.splitlines()[-1]
     assert lane(tmp_path / "asked", GPU.format("581.57", "8.9"), asked="cu126")[0] == "cu126"
+
+
+@pytest.mark.parametrize("before", ["cu126", "cu132"])
+def test_the_guard_reads_runtime_json_as_runtime_py_writes_it(tmp_path, before):
+    """previous_lane reads runtime.json line by line (sed), so the guard depends on the layout runtime._write_json
+    gives it: here the file runtime_record writes and set_allin1 (the memory rule) rewrites, not a hand-written one
+    (the release gate's tests-3: with a compact layout every test passed, and a failing nvidia-smi moved a GPU install
+    to the cpu lane)."""
+    from songcharter import runtime as R
+    home = tmp_path / "home"
+    (home / "runtime" / "allin1" / "bin").mkdir(parents=True)
+    (home / "runtime" / "allin1" / "bin" / "python").write_text("", encoding="utf-8")
+    R._write_json(R.runtime_file(home), R.runtime_record(R.Setup(home, tmp_path / "app", before, "a GPU")))
+    assert R.set_allin1(home, False)
+    assert sourced(tmp_path, 'echo "[$(previous_lane)]"').stdout == f"[{before}]\n"
+    blocked = 'echo "Failed to initialize NVML: GPU access blocked by the operating system"; exit 255'
+    p = sourced(tmp_path, "choose_lane auto; echo chose $lane", blocked)
+    assert p.returncode == 2 and "chose" not in p.stdout, p.stdout
+    assert f"the GPU is out of reach, not missing, so this {before} install is not moved" in p.stderr
 
 
 def test_an_nvidia_smi_that_does_not_answer_is_a_gpu_out_of_reach(tmp_path):
@@ -174,6 +200,9 @@ def test_build_writes_the_three_assets(tmp_path):
             'v0.1.0-test}"') in script
     assert ('UV_URL="https://github.com/astral-sh/uv/releases/download/0.13.5/uv-x86_64-unknown-linux-gnu.tar.gz"'
             in script and f'UV_SHA256="{UV_SHA256}"' in script and "@VERSION@" not in script)
+    notice = "https://github.com/neb882/song-charting/blob/v0.1.0-test/packaging/NOTICE.txt"   # the guide's link
+    guide_md = (ROOT / "docs" / "guide" / "windows-wsl.md").read_text(encoding="utf-8")
+    assert f'NOTICE_URL="{notice}"' in script and notice.replace("0.1.0-test", "{{VERSION}}") in guide_md
     # the launcher and every call of the install's Python keep a songcharter/ folder in the current one out (-P)
     assert """exec "%s" -P -m songcharter.launch""" in script and '"$py" -m' not in script
     sums = (out / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
@@ -225,6 +254,7 @@ def test_build_ships_install_sh_and_the_guide_as_head_has_them(tmp_path):
 
 VERSION = "0.0.0-test"
 UV_URL = "https://uv.invalid/0.13.5/uv-x86_64-unknown-linux-gnu.tar.gz"
+NOTICE_URL = "https://rel.invalid/blob/v0.0.0-test/packaging/NOTICE.txt"
 PYTHON = r'''#!/bin/bash
 # the environments' stand-in python: what each helper does is in mode-<module> (ok by default)
 fake=@FAKE@
@@ -252,6 +282,7 @@ case $mode in
 esac
 '''
 UV = r'''#!/bin/sh
+echo "$1 ${UV_CACHE_DIR:-unset}" >>@FAKE@/uv.log
 case $1 in
   --version) echo "uv 0.13.5 (stand-in)" ;;
   python) echo "Python 3.13.17 is already installed" ;;
@@ -303,15 +334,17 @@ class Install:
                 (self.fake / "bin" / name).write_text(body.replace("@FAKE@", str(self.fake)), encoding="utf-8")
                 (self.fake / "bin" / name).chmod(0o755)
         self.uv = tar_gz({"uv-x86_64-unknown-linux-gnu/uv": (UV.replace("@FAKE@", str(self.fake)).encode(), 0o755)})
-        self.app = tar_gz({f"songcharter-{VERSION}/pyproject.toml": (b"[project]\n", 0o644)})
+        self.app = tar_gz({f"songcharter-{VERSION}/pyproject.toml": (b"[project]\n", 0o644),
+                           f"songcharter-{VERSION}/NOTICE.txt": (b"the licences\n", 0o644)})
         self.serve("uv-x86_64-unknown-linux-gnu.tar.gz", self.uv)
         (self.dist / f"songcharter-{VERSION}.tar.gz").write_bytes(self.app)
         script = INSTALL.read_text(encoding="utf-8")
         for key, value in (("VERSION", VERSION), ("APP_SHA256", sha(self.app)), ("RELEASE_URL", "https://rel.invalid"),
-                           ("UV_URL", UV_URL), ("UV_SHA256", sha(self.uv))):
+                           ("NOTICE_URL", NOTICE_URL), ("UV_URL", UV_URL), ("UV_SHA256", sha(self.uv))):
             script = script.replace(f"@{key}@", value)
         (self.dist / "install.sh").write_text(script, encoding="utf-8")
         self.env = {"PATH": f"{self.fake / 'bin'}:/usr/bin:/bin", "HOME": str(self.home), "LC_ALL": "C.UTF-8",
+                    "UV_CACHE_DIR": str(self.home / ".cache" / "uv-shared"),   # the person's, for every uv project
                     **({"WSL_DISTRO_NAME": "Ubuntu-26.04"} if wsl else {})}
 
     def serve(self, name: str, data: bytes) -> None:
@@ -346,10 +379,14 @@ def sha(data: bytes) -> str:
 
 
 def test_a_release_installs_with_stand_ins(tmp_path):
-    """The ten steps through to the launcher; a rerun downloads nothing; a complete .part is used as it is."""
+    """The ten steps through to the launcher; a rerun downloads nothing; a complete .part is used as it is. Every uv
+    call has songcharter's own cache, runtime/uv-cache, over the person's $UV_CACHE_DIR (the release gate's finding:
+    uninstall once deleted the person's whole uv cache)."""
     i = Install(tmp_path)
     p = i.run("--from", str(i.dist))
     assert p.returncode == 0, p.stderr
+    ours = i.share / "runtime" / "uv-cache"
+    assert i.log("uv.log") == [f"--version {ours}", f"python {ours}", f"sync {ours}", f"sync {ours}"]
     assert f"songcharter {VERSION} is installed (lane cpu: asked for with --lane cpu)." in p.stdout
     assert i.launcher.read_text(encoding="utf-8") == (
         f'#!/bin/sh\nexec "{i.share}/runtime/env/bin/python" -P -m songcharter.launch "$@"\n')
@@ -362,22 +399,29 @@ def test_a_release_installs_with_stand_ins(tmp_path):
 
 
 def test_the_prompt_names_the_licences_and_enter_goes_on(tmp_path):
-    """Without --yes, step 5 names the licences (NOTICE.txt, at the root of the app the tarball unpacks to) before
-    "Continue? [Y/n]". No stops the install, exit 1, before any download; Enter, as the guide says, goes on."""
+    """Without --yes, step 5 names the licences before "Continue? [Y/n]": on a first install the release's
+    NOTICE.txt (its URL: the app that holds a copy is downloaded only after the answer, the release gate's finding),
+    once the app is here its own copy. No stops the install, exit 1, before any download; Enter, as the guide says,
+    goes on."""
     i = Install(tmp_path)
 
     def answer(text: str) -> subprocess.CompletedProcess:
         return subprocess.run(["bash", str(i.dist / "install.sh"), "--lane", "cpu", "--from", str(i.dist)],
                               input=text, capture_output=True, text=True, env=i.env, timeout=120)
 
-    prompt = (f"Licences: {i.share}/app/{VERSION}/NOTICE.txt (some of the models are for non-commercial use only)\n"
-              "Continue? [Y/n] ")
+    def prompt(notice: str) -> str:
+        return f"Licences: {notice} (some of the models are for non-commercial use only)\nContinue? [Y/n] "
+
     p = answer("n\n")
-    assert p.returncode == 1 and p.stdout.endswith(prompt + "songcharter: stopped; nothing was downloaded.\n"), p.stdout
+    assert p.returncode == 1 and p.stdout.endswith(prompt(NOTICE_URL) + "songcharter: stopped; nothing was "
+                                                   "downloaded.\n"), p.stdout
     assert i.log("curl.log") == [] and list((i.share / "app").iterdir()) == [] and not i.launcher.exists()
     p = answer("\n")
-    assert p.returncode == 0 and prompt in p.stdout, p.stdout + p.stderr
+    assert p.returncode == 0 and prompt(NOTICE_URL) in p.stdout, p.stdout + p.stderr
     assert i.launcher.is_file() and (i.share / "app" / VERSION / "pyproject.toml").is_file()
+    here = i.share / "app" / VERSION / "NOTICE.txt"
+    p = answer("n\n")   # a rerun: the app is here, with its copy
+    assert p.returncode == 1 and prompt(str(here)) in p.stdout and here.read_text() == "the licences\n", p.stdout
 
 
 @pytest.mark.parametrize("served", ["wrong", "truncated"])
@@ -460,10 +504,43 @@ def test_doctors_problems_still_install_and_a_changed_wslconfig_restarts_wsl(tmp
     assert not (i.share / "runtime" / "state" / "restart-wsl").exists()
 
 
+def test_a_first_install_with_the_gpu_out_of_reach_ends_with_what_to_do(tmp_path):
+    """The lane's warning is said at step 2 and again after the install's last line, where the person reads."""
+    i = Install(tmp_path)
+    stand_in(i.fake / "bin", "nvidia-smi", 'echo "Failed to initialize NVML: GPU access blocked"; exit 255')
+    p = i.run("--from", str(i.dist), "--lane", "auto")
+    assert p.returncode == 0, p.stderr
+    lines = p.stdout.splitlines()
+    assert lines.count(f"warning: {OUT_OF_REACH}") == 2 and lines[lines.index(
+        f"songcharter {VERSION} is installed (lane cpu: nvidia-smi failed, so CUDA cannot run: nvidia-smi failed (exit "
+        "255): Failed to initialize NVML: GPU access blocked).") + 1] == f"warning: {OUT_OF_REACH}"
+
+
+def test_what_runtime_holds_counts_as_here_already(tmp_path):
+    """A rerun or a lane change counts what songcharter's runtime/ holds, uv's cache in it included, toward the space
+    it needs (the review's F-1): with 4 GB in runtime/uv-cache, 6 GB free is enough for the cpu lane's 8 GB; without
+    that credit it would be refused for space it already has."""
+    i = Install(tmp_path)
+    cache = i.share / "runtime" / "uv-cache"
+    cache.mkdir(parents=True)
+    with open(cache / "a-wheel.whl", "wb") as f:
+        f.truncate(4 * 10 ** 9)   # sparse: its apparent size is what du -b counts
+    (i.fake / "bin" / "df").write_text(f"#!/bin/sh\nprintf 'Avail\\n{6 * 10 ** 9}\\n'\n", encoding="utf-8")
+    p = i.run("--from", str(i.dist))
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "lane cpu needs about 8 GB (the downloads unpacked, and 5 GB of work folders); 4.0 GB of it is here " \
+        "already" in p.stdout
+
+
 @pytest.mark.parametrize("free_gb, ok", [(7, False), (9, True)])
 def test_the_cpu_lane_needs_8_gb_free(tmp_path, free_gb, ok):
-    """2.8 GB installed (M4-05's CI) and 5 GB of work folders: 7 GB free is refused, 9 GB installs."""
+    """2.8 GB installed (M4-05's CI) and 5 GB of work folders: 7 GB free is refused, 9 GB installs. What is
+    already here counts only from songcharter's own folders: 20 GB in the person's uv caches is not songcharter's."""
     i = Install(tmp_path)
+    for other in (i.home / ".cache" / "uv", i.home / ".cache" / "uv-shared"):
+        other.mkdir(parents=True)
+        with open(other / "another-project.whl", "wb") as f:
+            f.truncate(20 * 10 ** 9)   # sparse: its apparent size is what du -b counts
     (i.fake / "bin" / "df").write_text(f"#!/bin/sh\nprintf 'Avail\\n{free_gb * 1024 ** 3}\\n'\n", encoding="utf-8")
     p = i.run("--from", str(i.dist))
     assert (p.returncode == 0) is ok, p.stdout + p.stderr

@@ -44,6 +44,8 @@ page.
 - If it stops halfway, paste the same line again: it carries on from where it stopped.
 - If it says the guitar runs on the CPU because the driver is older than 580: update the driver, then paste the line
   again. It switches to the GPU build (about 3 GB).
+- If it says the GPU is out of reach (this can happen after a Windows update): restart Windows, then paste the line
+  again. It switches to the GPU build too.
 - At the end, it sets how much memory WSL may use and restarts WSL, and the window closes.
 
 ## 4. Start songcharter
@@ -76,8 +78,8 @@ page.
 ## 7. Remove it
 
 - In Ubuntu, type `songcharter uninstall`. It removes songcharter and its Start-menu shortcut. When it asks about the
-  downloads, answer No (press Enter) to keep them for a later reinstall. If it asks to restore `.wslconfig`, answer
-  Yes (y) to give WSL back the memory setting it had before songcharter.
+  downloads, answer No (press Enter) to keep them: a later reinstall then downloads only about 1 MB. If it asks to
+  restore `.wslconfig`, answer Yes (y) to give WSL back the memory setting it had before songcharter.
 - To remove everything, after `songcharter uninstall`: in Terminal (Admin), type `wsl --unregister Ubuntu`. (`songcharter uninstall` prints this
   line at its end, with your Ubuntu's name.)
 

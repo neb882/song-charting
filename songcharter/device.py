@@ -44,6 +44,8 @@ SMI_FAILED = "nvidia-smi failed, so CUDA cannot run"   # nvidia-smi is there but
 SMI_MISSING = "nvidia-smi not found"
 SMI_NO_GPU = "nvidia-smi listed no GPU"
 GUITAR_NO_GPU = "no GPU"
+ASKED_LANE = "asked for with --lane"   # how runtime.json's lane_reason begins when the install was asked for a lane
+                                       # (install.sh's choose_lane: "asked for with --lane cpu")
 GUITAR_CU126 = ("the cu126 lane: onnxruntime-node needs CUDA 13, so a 580 or newer driver. Then paste the install line "
                 "again: it switches to the GPU build (about 3 GB)")
 WSL_NVIDIA_SMI = Path("/usr/lib/wsl/lib/nvidia-smi")   # WSL's, from the Windows driver [doc: NVIDIA's WSL guide]
@@ -534,6 +536,11 @@ def findings(r: dict, allin1_python: str | None = None) -> tuple[list[str], list
     dev = r.get("device") or {}
     if dev.get("chosen") == "cpu":
         notes.append(f"CPU mode: {dev.get('reason')}")
+    asked = str((r.get("install") or {}).get("lane_reason") or "").startswith(ASKED_LANE)   # --lane cpu, on purpose
+    if dev.get("reason") == CPU_LANE and r.get("gpu") and not asked:   # installed with no GPU in reach, say
+        notes.append(f"{r['gpu'].get('name') or 'an NVIDIA GPU'} answers now, but this install has the CPU build: "
+                     "paste the install line again, which picks the lane again (the GPU build needs NVIDIA driver "
+                     "528 or newer, the guitar on the GPU 580)")
     if r.get("guitar_device") == "cpu":
         notes.append(f"the guitar runs on the CPU: {r.get('guitar_reason')}")
     a = comps.get("allin1")
@@ -584,7 +591,7 @@ def report(full: bool = True) -> dict:
         "cpu": {"logical": os.cpu_count(), "threads_default": default_threads()}, "ram": ram,
         "disk": {"home_free_mb": _free_mb(Path.home()),
                  "windows_c_free_mb": _free_mb(wsl.MNT_C) if in_wsl and wsl.MNT_C.is_dir() else None},
-        "components": comps,
+        "components": comps, "install": _install(),
     }
     allin1 = None
     if not full:
@@ -593,6 +600,46 @@ def report(full: bool = True) -> dict:
     r["problems"], r["notes"] = findings(r, allin1)
     r["ok"] = not r["problems"]
     return r
+
+
+def _install() -> dict | None:
+    """The install's lane and why ({"lane", "lane_reason"}, from runtime.json under $SONGCHARTER_HOME, which the
+    launcher sets), else None (not run from an install)."""
+    home = os.environ.get("SONGCHARTER_HOME")
+    try:
+        rt = json.loads((Path(home) / "runtime" / "runtime.json").read_text(encoding="utf-8")) if home else None
+    except (OSError, ValueError):
+        return None
+    return {"lane": rt.get("lane"), "lane_reason": rt.get("lane_reason")} if isinstance(rt, dict) else None
+
+
+def refresh(r: dict) -> dict:
+    """A report doctor wrote earlier (doctor.json: one with `ram`) with what changes without a reinstall measured
+    again: the memory, the free disk and, in WSL with interop, .wslconfig (so whether its memory is in force), then
+    its problems, notes and `ok` made again from them; the GPU, torch and the components stay as they were. The
+    install writes doctor.json before its last step sets WSL's memory, which applies only once WSL restarts, so the
+    page's header shows this (the release gate's finding: it kept the install's "WSL has 7.8 GB of memory, under 11
+    GB: allin1 is left out" for good). Any other report comes back as it is."""
+    if not isinstance(r, dict) or not isinstance(r.get("ram"), dict):
+        return r
+    from . import wsl
+    ram = memory()
+    disk = {**(r.get("disk") or {}), "home_free_mb": _free_mb(Path.home())}
+    if disk.get("windows_c_free_mb") is not None:
+        disk["windows_c_free_mb"] = _free_mb(wsl.MNT_C)
+    out = {**r, "ram": ram, "disk": disk}
+    w = r.get("wsl")
+    if isinstance(w, dict):
+        config = wsl.wslconfig() if w.get("interop") else (w.get("wslconfig") or {})
+        out["wsl"] = {**w, "wslconfig": config,
+                      "memory_matches_config": memory_matches((ram or {}).get("total_mb"), config.get("memory_bytes"))}
+    allin1 = None
+    if "allin1" not in (r.get("components") or {}):   # a quick report: whether an allin1 Python is configured
+        from .engines import sections
+        allin1 = sections.allin1_python(sections.Settings())
+    out["problems"], out["notes"] = findings(out, allin1)
+    out["ok"] = not out["problems"]
+    return out
 
 
 def summary(r: dict) -> list[str]:

@@ -25,17 +25,66 @@ def test_environment_fills_in_what_the_person_has_not_set():
     assert env["PATH"] == "/h/runtime/node/bin:/usr/bin:/bin"                     # but for PATH: Node first, once
     assert {k: env[k] for k in ("SONGCHARTER_HOME", "SONGCHARTER_AUTOCHART", "SONGCHARTER_ALLIN1_PYTHON",
                                 "SONGCHARTER_SCAN_CHART", "FFMPEG", "HF_HUB_DISABLE_SYMLINKS_WARNING",
-                                "PYTHONUTF8", "HF_HUB_OFFLINE", "SONGCHARTER_OFFLINE")} == {
+                                "PYTHONUTF8", "HF_HUB_OFFLINE")} == {
         "SONGCHARTER_HOME": "/h", "SONGCHARTER_AUTOCHART": "/h/runtime/autochart",
         "SONGCHARTER_ALLIN1_PYTHON": "/h/runtime/allin1/bin/python", "SONGCHARTER_SCAN_CHART":
         "/h/runtime/scan-chart/scan.cjs", "FFMPEG": "/h/runtime/env/ffmpeg", "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
-        "PYTHONUTF8": "1", "HF_HUB_OFFLINE": "1", "SONGCHARTER_OFFLINE": "1"}
+        "PYTHONUTF8": "1", "HF_HUB_OFFLINE": "1"}
     assert env["PYTHONSAFEPATH"] == "1"
+    assert "SONGCHARTER_OFFLINE" not in env   # the lyrics weights download on first use (the release gate's major)
     assert base == {"PATH": "/usr/bin:/h/runtime/node/bin:/bin", "SONGCHARTER_NODE": "/my/node", "HF_HOME": "/my/hf"}
     env = launch.environment({**RUNTIME, "allin1_python": None, "models_complete": False}, {"PATH": "/bin"})
     assert "SONGCHARTER_ALLIN1_PYTHON" not in env   # the memory rule left allin1 out: the librosa fallback
     assert "HF_HUB_OFFLINE" not in env and "SONGCHARTER_OFFLINE" not in env
-    assert launch.environment(RUNTIME, {"SONGCHARTER_OFFLINE": "0"})["SONGCHARTER_OFFLINE"] == "0"
+    for mine in ("0", "1"):   # the person's own value stays
+        assert launch.environment(RUNTIME, {"SONGCHARTER_OFFLINE": mine})["SONGCHARTER_OFFLINE"] == mine
+
+
+def test_the_installed_app_downloads_the_lyrics_weights_on_first_use(tmp_path, monkeypatch):
+    """The release gate's major finding: runtime_record always writes models_complete, and the launcher once set
+    SONGCHARTER_OFFLINE=1 with it, so the aligner's weights (which the install does not fetch) could never download
+    and pasted lyrics were never added. Here: runtime.json as runtime_record writes it, launch.main's environment,
+    then the lyrics engine's lookup with a stand-in for the download. It downloads once; the file then there is only
+    checked (no download); the hub stays offline; SONGCHARTER_OFFLINE=1 set by the person still refuses it."""
+    import dataclasses
+    import hashlib
+
+    from songcharter import runtime as R
+    from songcharter.engines import lyrics as E
+    home = tmp_path / "home"
+    R.runtime_file(home).parent.mkdir(parents=True)
+    R._write_json(R.runtime_file(home), R.runtime_record(R.Setup(home, tmp_path / "app", "cpu")))
+    assert json.loads(R.runtime_file(home).read_text(encoding="utf-8"))["models_complete"] is True
+    weights = b"stand-in weights"
+    method = dataclasses.replace(E.METHODS[E.DEFAULT_METHOD], sha256=hashlib.sha256(weights).hexdigest())
+    models, downloads, seen = tmp_path / "models", [], []
+
+    def download(url, part):
+        downloads.append(url)
+        part.write_bytes(weights)
+
+    def chart(argv):   # what the chart's lyrics stage does, under the environment the launcher set
+        seen.append({k: os.environ.get(k) for k in ("SONGCHARTER_OFFLINE", "HF_HUB_OFFLINE")})
+        try:
+            return 0 if E.weights_path(method, models, download=download).read_bytes() == weights else 1
+        except E.Unavailable as e:
+            seen.append(str(e))
+            return 2
+
+    monkeypatch.setattr(launch, "_cli", chart)
+    for person in ({}, {"SONGCHARTER_OFFLINE": "1"}):
+        monkeypatch.setattr(os, "environ", {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path),
+                                            "SONGCHARTER_HOME": str(home), **person})
+        if person:
+            (models / "lyrics" / method.file).unlink()
+            assert launch.main(["chart", "s.mp3", "--out", "o", "--lyrics", "l.txt"]) == 2
+            assert seen[-2:] == [{"SONGCHARTER_OFFLINE": "1", "HF_HUB_OFFLINE": "1"},
+                                 f"the aligner's weights are not in {models / 'lyrics'} and SONGCHARTER_OFFLINE=1"]
+            assert len(downloads) == 1 and not (models / "lyrics" / method.file).exists()
+            continue
+        assert launch.main(["chart", "s.mp3", "--out", "o", "--lyrics", "l.txt"]) == 0
+        assert seen == [{"SONGCHARTER_OFFLINE": None, "HF_HUB_OFFLINE": "1"}] and downloads == [method.url]
+        assert launch.main([]) == 0 and downloads == [method.url]   # already there: checked, not fetched again
 
 
 @pytest.fixture
@@ -95,7 +144,8 @@ def test_from_the_shortcut_a_failure_waits_for_enter(home):
 
 @pytest.fixture
 def installed(tmp_path, monkeypatch):
-    """An install in a temporary $HOME with every folder uninstall knows, on plain Linux (no WSL)."""
+    """An install in a temporary $HOME with every folder uninstall knows, on plain Linux (no WSL), and the uv cache
+    of another project of the person's (~/.cache/uv), which is not songcharter's: install.sh's is runtime/uv-cache."""
     user = tmp_path / "user"
     for var in ("SONGCHARTER_HOME", "XDG_CACHE_HOME", "UV_CACHE_DIR", "WSL_DISTRO_NAME"):
         monkeypatch.delenv(var, raising=False)
@@ -105,6 +155,7 @@ def installed(tmp_path, monkeypatch):
     files = {home / "app" / "0.1.0" / "pyproject.toml": 10, home / "runtime" / "state" / "install.done": 10,
              home / "runtime" / "runtime.json": 10, home / "runtime" / "env" / "lib" / "torch.so": 3000,
              home / "runtime" / "autochart" / "models" / "m.onnx": 4000, home / "bin" / "uv": 500,
+             home / "runtime" / "uv-cache" / "archive-v0" / "w": 5000,
              home / "library" / "a" / "notes.chart": 600, home / "uploads" / "u" / "song.mp3": 700,
              home / "exports" / "x.zip": 100, home / "logs" / "ui.log": 10, home / "doctor.json": 10,
              user / ".cache" / "uv" / "archive-v0" / "w": 5000,
@@ -138,14 +189,16 @@ def test_uninstall_no_keeps_the_downloads(installed):
     assert not (user / ".local" / "bin" / "songcharter").exists()
     cache = user / ".cache"
     for kept in (home / "runtime" / "runtime.json", home / "runtime" / "env" / "lib" / "torch.so", home / "bin" / "uv",
-                 cache / "uv" / "archive-v0" / "w", cache / "songcharter" / "models" / "hf" / "f",
+                 home / "runtime" / "uv-cache" / "archive-v0" / "w", cache / "uv" / "archive-v0" / "w",
+                 cache / "songcharter" / "models" / "hf" / "f",
                  cache / "songcharter" / "work" / "song-1" / "stems.npy", home / "library" / "a" / "notes.chart"):
         assert kept.is_file(), kept
     [(question, default)] = asked
     assert default is False and question.startswith(
         "Also delete the downloads (Python packages, Node, autochart and its models: about 0.0 GB) and your song "
         "caches and library (0.0 GB)?")
-    assert "[y/N]" in question and any("a reinstall downloads nothing" in s for s in said)
+    assert "[y/N]" in question and f"kept {home / 'runtime'} and {cache / 'songcharter' / 'models'}: a reinstall " \
+        "reuses them, and downloads only install.sh and the app (about 1 MB)" in said
     assert said[-1].startswith("To remove everything, if this Ubuntu holds nothing else: wsl --unregister Ubuntu")
 
 
@@ -154,12 +207,13 @@ def test_uninstall_yes_deletes_everything_and_sizes_the_question(installed, monk
     sizes = []
     monkeypatch.setattr(launch, "du", lambda paths: sizes.append(sorted(p.name for p in paths)) or 2_500_000_000)
     said, asked = run_uninstall([], [True])
-    assert sizes == [["models", "runtime", "uv"], ["exports", "library", "uploads", "work"]]
+    assert sizes == [["models", "runtime"], ["exports", "library", "uploads", "work"]]   # uv's cache is in runtime/
     assert "about 2.5 GB) and your song caches and library (2.5 GB)?" in asked[0][0]
     cache = user / ".cache"
-    for gone in (home, cache / "songcharter", cache / "uv", user / ".local" / "bin" / "songcharter"):
+    for gone in (home, cache / "songcharter", user / ".local" / "bin" / "songcharter"):
         assert not gone.exists(), gone
     assert (user / ".local" / "bin").is_dir()   # only our launcher goes
+    assert (cache / "uv" / "archive-v0" / "w").is_file()   # and never another project's uv cache
 
 
 def test_du_counts_a_hardlinked_file_once(tmp_path):
