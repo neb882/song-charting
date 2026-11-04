@@ -460,24 +460,31 @@ def test_check_says_each_step_and_the_failure_line(tmp_path, app, capsys):
     assert capsys.readouterr().err == line and failure.read_text(encoding="utf-8") == line
 
 
-def test_npm_ci_keeps_its_cache_inside_the_install_and_deletes_it(tmp_path, app):
-    """npm's default cache, ~/.npm, is outside what uninstall removes (M4-05's review): npm ci gets a cache in
-    runtime/state, which is gone once it has run, whether it succeeded or not."""
+def test_npm_ci_keeps_its_cache_inside_the_install(tmp_path, app):
+    """npm's default cache, ~/.npm, is outside what uninstall removes (M4-05's review): both npm ci runs (scan-chart's
+    and autochart's) get one in runtime/state. After a failure it stays, with the debug log npm's last line names and
+    the tarballs a rerun reuses (the review workflow's dry run); after a success it is gone."""
     seen = []
     def run(cmd, **kw):
         cache = Path(kw["env"]["npm_config_cache"])
-        cache.mkdir(parents=True)
-        (cache / "tarball").write_bytes(b"x")
-        seen.append(cache)
+        (cache / "_logs").mkdir(parents=True, exist_ok=True)
+        (cache / "_logs" / "debug-0.log").write_text("npm's log", encoding="utf-8")
+        seen.append((Path(kw["cwd"]).name, cache))
         nm = Path(kw["cwd"]) / "node_modules" / "scan-chart"
         nm.mkdir(parents=True, exist_ok=True)
         (nm / "package.json").write_text("{}", encoding="utf-8")
-        return subprocess.CompletedProcess(cmd, len(seen) - 1, "", "")   # the second run fails
+        return subprocess.CompletedProcess(cmd, 1 if len(seen) == 1 else 0, "", "")   # the first run fails
 
     s = R.Setup(tmp_path / "home", app, "cpu", "test", download=True, say=lambda s: None, run=run)
-    R.step_scan_chart(s)
-    assert seen[0] == s.runtime / "state" / "npm-cache" and not seen[0].exists()
-    (s.runtime / "scan-chart" / R.STAMP).unlink()
-    with pytest.raises(R.StepFailed, match="exited 1"):
+    cache = s.runtime / "state" / "npm-cache"
+    with pytest.raises(R.StepFailed, match=f"exited 1 .*kept in {cache}"):
         R.step_scan_chart(s)
-    assert not seen[1].exists()
+    assert seen[0] == ("scan-chart", cache) and (cache / "_logs" / "debug-0.log").is_file()
+    R.step_scan_chart(s)   # the rerun succeeds: the cache goes
+    assert not cache.exists()
+    for name in ("autochart", "anything"):   # the same for every folder npm ci runs in
+        folder = tmp_path / name
+        folder.mkdir()
+        (folder / "package-lock.json").write_text("{}", encoding="utf-8")
+        R._npm_ci(s, folder, folder / "node_modules" / "scan-chart" / "package.json", name)
+        assert seen[-1] == (name, cache) and not cache.exists()
