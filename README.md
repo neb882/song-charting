@@ -39,6 +39,8 @@ songcharter chart song.mp3 --out "Songs/Artist - Title"
   `%LOCALAPPDATA%\songcharter` on Windows, `~/.cache/songcharter` elsewhere. The cache is pruned to 5 GB, and
   `--work DIR` puts the work files elsewhere.
 - **Model weights** are downloaded on first use and checked against pinned hashes.
+- **The page:** `songcharter ui` opens a local page in the browser: drop a song, keep or change the options, watch
+  each stage and cancel. `songcharter chart --events` writes the same progress as JSON lines for other programs.
 
 ## What does not live here
 
