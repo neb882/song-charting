@@ -209,7 +209,8 @@ M4-07, the full review workflow, and the owner's and the friend's time.
 
 Each was tested with stand-ins only; only the real install shows them.
 - **Lyrics on the installed app:** the first song charted from the page with lyrics pasted downloads the aligner's
-  weights once (1.26 GB, no progress line meanwhile): its time, and "Lyrics: N words in M phrases" on the Done screen.
+  weights once (1.26 GB; its progress lines go to the job's log, not the page): its time, and "Lyrics: N words in M
+  phrases" on the Done screen.
   A second song with lyrics downloads nothing. CI only shows that the launcher's variables let the download start.
 - **The Done screen after a real chart on the GPU:** "Install into Clone Hero" and the zip are there at once, with no
   reload (the process's exit, CUDA's teardown included, takes longer than the tests' stand-in).
@@ -218,5 +219,7 @@ Each was tested with stand-ins only; only the real install shows them.
 - **The licence prompt** on the first install names the release's NOTICE.txt at its tag: does that link open?
 - **uv's cache** is `~/.local/share/songcharter/runtime/uv-cache`: its `du -sh`, and no `~/.cache/uv` made by the
   install.
+- **The memory rule rounds Windows' RAM up** (the owner's decision): on the friend's PC, record the RAM Windows
+  reports (doctor's "Windows RAM") and the `memory=` the install wrote (12GB for a 16 GB PC, whatever it reports).
 - **A GPU out of reach** (nvidia-smi failing, as after some Windows updates) cannot be arranged at will: if it happens
   on a first install, the warning at its end, and `songcharter doctor`'s note once the GPU answers.

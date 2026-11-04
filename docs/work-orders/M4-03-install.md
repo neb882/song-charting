@@ -132,11 +132,13 @@ Steps, each printing a header:
   `--yes`.
 - **Windows' RAM unknown:** write nothing, and say how to set it by hand.
 - **Rounding:** Windows' RAM is rounded to the nearest whole GB before the 4 GB are taken off. A "16 GB" PC reports
-  about 15.9 GiB, which must give `memory=12GB`, not `11.9GB`.
+  about 15.9 GiB, which must give `memory=12GB`, not `11.9GB`. [The owner, at the release gate: rounded **up** to a
+  whole GB, as reported RAM is always a little under what is installed, so a 16 GB PC that reports 15.4 GiB also gets
+  `memory=12GB`; `wslsetup.pc_gb`.]
 - **Test override:** `--windows-ram-gb N` (or `SONGCHARTER_WINDOWS_RAM_GB=N`) replaces the measured value. M4-08 part A
   uses it to write the friend's 16 GB `.wslconfig` on a larger PC, and the tests use it.
-- **The resulting WSL memory under 11 GB** (a PC under 16 GB; as built, one whose RAM rounds to 14 GB or less: 15
-  GB gives `memory=11GB`, 11.8 * 10^9 bytes, which keeps allin1): `runtime.json`'s `allin1_python` is null, so the
+- **The resulting WSL memory under 11 GB** (a PC under 16 GB; as built, rounding up, one of 14 GiB or less: over
+  14 GiB gives `memory=11GB`, 11.8 * 10^9 bytes, which keeps allin1): `runtime.json`'s `allin1_python` is null, so the
   sections use the librosa fallback, which holds no 7.8 GB model run. The install says so. Under 8 GB it refuses:
   "songcharter needs a PC with at least 12 GB of RAM".
 - `.wslconfig` is written with CRLF line ends, Windows' convention; WSL reads either [inference].
@@ -277,7 +279,7 @@ Steps:
      - the four memory cases, with the backup written and the other sections kept;
      - CRLF;
      - the under-11-GB rule;
-     - rounding (a measured 15.9 GiB writes `memory=12GB`);
+     - rounding (a measured 15.9 GiB writes `memory=12GB`; rounding up since the release gate, so 15.4 GiB does too);
      - `--windows-ram-gb 16` on a 64 GB stand-in writes `memory=12GB`.
    - **`winshortcut`:** a written `.lnk` parsed by LnkParse3 (dev extra) gives the target, arguments, working folder
      and icon exactly.
