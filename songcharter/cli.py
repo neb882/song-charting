@@ -7,6 +7,7 @@
     songcharter assemble <config.json> [--out DIR]
     songcharter doctor [--json PATH] [--quick]
     songcharter ui [--port N] [--no-browser] [--from-shortcut]
+    songcharter diagnostics --out PATH
 
 `chart` runs the whole pipeline on one song file (pipeline.py): decode, separation, the engines, then assemble's
 build and gate, then the preview of the built folder; progress goes to stderr, a line per stage with its time, and
@@ -15,7 +16,9 @@ builds a song folder from a config that names existing charts. `doctor` (device.
 and what it needs: a line per item (WSL and Windows, the GPU, torch's device and the guitar's, memory, disk, the
 components), then the problems and notes, and `doctor: OK` or `doctor: N problems`; --json writes the report
 (doctor.json) too, and --quick skips the CUDA matmul, autochart's CUDA provider check and allin1's probe. `ui`
-(ui/server.py) serves the local page on 127.0.0.1 and opens it in the browser.
+(ui/server.py) serves the local page on 127.0.0.1 and opens it in the browser. `diagnostics` (diagnostics.py) writes
+the zip to send when something went wrong: logs, settings and the reports, never audio; it prints the zip's path, and
+in WSL also its Windows path.
 
 `chart --events` also writes the run's events (pipeline.py's module docstring) to stderr, each as one line
 `@@songcharter <json>` (ASCII), for the UI's job (ui/jobs.py); then, after the summary, `result` {"ok", "exit",
@@ -36,6 +39,7 @@ a name that is a mode word (stems, labels, off) is taken as the mode. The names 
 summary's warnings list them when a name matches none).
 
 Exit status of `doctor`: 0 no problem, 1 problems (listed), 2 bad usage or the report could not be written, 3 a bug.
+Exit status of `diagnostics`: 0 written, 2 it could not be written, 3 a bug.
 
 Exit status (`chart` and `assemble`):
   0  the song folder passed the gate and is in the output folder;
@@ -204,6 +208,31 @@ def _doctor(args) -> int:
     return 0 if report["ok"] else 1
 
 
+def _diagnostics(args) -> int:
+    """`songcharter diagnostics --out PATH`: the bundle of $SONGCHARTER_HOME (the UI's home) and the cache."""
+    from . import clonehero, diagnostics
+    from .ui import home
+    out = args.out.expanduser().absolute()
+    try:
+        path = diagnostics.bundle(home(), out)
+    except KeyboardInterrupt:
+        print("songcharter: interrupted", file=sys.stderr)
+        return 130
+    except OSError as e:
+        print(f"songcharter: error: cannot write {out}: {e}", file=sys.stderr)
+        return 2
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+        print("songcharter: internal error (a bug, please report it with the traceback above)", file=sys.stderr)
+        return 3
+    print(f"diagnostics: {path}")
+    winpath = clonehero.windows_path(path)
+    if winpath:
+        print(f"in Windows: {winpath}")
+    print("It holds logs and settings, no audio.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     # a song name or path the console's code page cannot show (cp1252 when Windows redirects stdout) must not turn
     # a finished build into a crash; stderr already escapes such characters
@@ -282,6 +311,12 @@ def main(argv: list[str] | None = None) -> int:
     u.add_argument("--no-browser", action="store_true", help="print the page's address, open no browser")
     u.add_argument("--from-shortcut", action="store_true",
                    help="started by the Start-menu shortcut (noted in the log)")
+    g = sub.add_parser("diagnostics", help="write a zip of the logs and settings to send when something went wrong",
+                       description="Write one zip that explains what happened: doctor.json and a fresh quick check, "
+                                   "the install's runtime.json, the page's settings and Clone Hero folder, the newest "
+                                   "logs, and the reports of the newest work folders. It never holds audio, stems, "
+                                   "charts or pictures.")
+    g.add_argument("--out", type=Path, required=True, metavar="PATH", help="the zip to write")
     args = parser.parse_args(argv)
     if args.command is None:
         parser.print_help()
@@ -291,6 +326,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "ui":
         from .ui import server
         return server.main(port=args.port, browser=not args.no_browser, from_shortcut=args.from_shortcut)
+    if args.command == "diagnostics":
+        return _diagnostics(args)
     events = args.command == "chart" and args.events
 
     def failed(code: int, kind: str, message: str) -> int:
