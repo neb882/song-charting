@@ -1,7 +1,7 @@
 # songcharter
 
 Turns a song file into a Clone Hero song folder (`songcharter chart <song> --out DIR`). It is built for the owner's
-friend, who plays Guitar on Expert on a native Windows PC with an RTX 4070.
+friend, who plays Guitar on Expert on a Windows PC with an RTX 4070; v0.1 runs there in WSL2.
 
 ## Start here
 
@@ -22,11 +22,17 @@ SONGCHARTER_SCAN_CHART=$PWD/tools/scan-chart/scan.cjs uv run pytest -q -p no:cac
 Without uv: `pip install -e ".[dev,separate,drums,bass,sections,preview]"`, with torch from PyTorch's cpu index first.
 The friend's install is `packaging/linux/install.sh` (M4-03), and `songcharter doctor` checks a machine.
 
+On a dev machine that agents share, run every heavy job (the full suite, a golden run, an install, a real chart) as
+`tools/heavy.sh <command>`: it queues them on one lock, so two never run at once. `python -m eval.golden run` takes
+the lock itself.
+
 ## Hard rules
 
-- Never look up, quote or reproduce song lyrics.
+- Never look up, quote or reproduce song lyrics. The one exception, scripts reading the reference charts' lyric events
+  for timing only, has its limits in `docs/work-orders/M4-10-lyrics.md`.
 - Never commit audio, stems, reference charts or model weights.
-- No model names or model identifiers in code, docs or commit messages.
+- No model names or model identifiers in code, docs or commit messages, apart from the attribution trailer the
+  session's instructions require on each commit.
 - No personal details: the repository is public, so its history keeps everything. That means no names, emails,
   usernames, machine names, home or Windows-profile paths, or lists of what is installed on the owner's or the
   friend's PC. Hardware facts a check needs (GPU model, driver version, RAM, VRAM) are fine. Test fixtures use made-up

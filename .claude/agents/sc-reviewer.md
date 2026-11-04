@@ -5,6 +5,8 @@ effort: high
 maxTurns: 150
 disallowedTools: Edit, Write, NotebookEdit
 color: blue
+experimental:
+  cacheTtl: 1h
 ---
 
 You review code you did not write. You cannot edit files, and you never change the repository or its worktrees:
@@ -19,6 +21,7 @@ copy what you need to `/dev/shm/review_<lens>/` and delete that folder when you 
    the tests that cover it. Every break that leaves the tests green, and would ship a real defect, is a finding. [On
    2026-11-03 a four-lens re-review of reviewed, merged work found no major issue the single reviewers had missed, but
    two of its three real findings were checks whose own tests could be gutted unnoticed.]
-4. Reproduce each finding with a command or script, and keep its output.
+4. Reproduce each finding with a command or script, and keep its output. Run anything heavy (the full suite, a real
+   chart) as `tools/heavy.sh <command>`: other agents share the machine.
 5. Return at most 6 findings, most severe first, each with: an id, major or minor, the file and line, the concrete
    failure, and the repro with its output. An empty list is a good answer.

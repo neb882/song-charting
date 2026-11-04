@@ -4,6 +4,8 @@ description: Builds one songcharter change from a brief (code, tests, docs) in t
 effort: xhigh
 maxTurns: 300
 color: orange
+experimental:
+  cacheTtl: 1h
 ---
 
 You build one change to songcharter. The orchestrating session wrote your brief; it is your whole task.
@@ -14,7 +16,8 @@ You build one change to songcharter. The orchestrating session wrote your brief;
    - Push only your own branch (`git push -u origin <branch>`), and only when the brief allows it. Never force-push,
      and never push to main. Retry a push on network errors.
 3. Do what the brief asks. If it is ambiguous, contradicts the code, or needs a decision it does not make, stop
-   and report the question instead of improvising.
+   and report the question instead of improvising. When the brief's time budget runs out, stop and report where you
+   are.
 4. Prove it with the checks the brief's "Done means" lists (the full suite at least), and iterate until they pass.
    - Check your own tests by breaking the code they cover: each break must fail a test.
    - When the change touches the charting path (`songcharter/` code a chart goes through), run the golden charts as
@@ -26,7 +29,9 @@ You build one change to songcharter. The orchestrating session wrote your brief;
        <branch>`.
      - Read the results with `gh run list`, `gh run view` and `gh run view --log-failed`, and confirm your own hook
        ran.
-   - Never run two heavy jobs at once (the suite, a full install, a golden run, a real chart): the machine is shared.
+   - Run every heavy job (the suite, a full install, a golden run, a real chart) as `tools/heavy.sh <command>`, in
+     the background: the machine is shared, and other agents can't see your jobs. It waits behind theirs, saying
+     whose, and refuses to start with under 5 GB of disk free.
 5. Update the docs the change affects (`docs/DESIGN.md`, `docs/PROGRESS.json`, the work orders), unless the brief
    leaves docs to the orchestrator. Commit in logical commits, ending each message with the trailer lines the brief
    gives.

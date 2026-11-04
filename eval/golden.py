@@ -44,6 +44,8 @@ Logs go to <out>/logs/, score.py's full output to <out>/scores/.
   * **The output folder** is locked first and cleared of what an earlier run or diff left there (summary.json,
     report.md, report.json, logs/, scores/, the song folders its summary names) before anything else is checked, so a
     run that is refused, fails or is killed leaves no summary for a diff to read.
+  * **One heavy job at a time:** once its checks pass, a run waits for the dev machine's heavy-job lock (heavy()),
+    the one tools/heavy.sh takes for the suite, an install or a real chart, and says who holds it.
   * Exit status: 0 every song built (a failed gate is recorded, not an error); 1 a song's build failed or a kept
     folder changed; 2 bad input or environment (a missing reference set, scan-chart or node, an output folder in use
     or that is a file, another sections backend); 3 a bug (with its traceback); 130 interrupted.
@@ -101,6 +103,7 @@ RUNS = ".runs"                              # <work>/.runs/<run>/: each run's ow
 SCAN_NOTES = HERE / "scorer" / "scan_notes.cjs"
 SCORE = HERE / "scorer" / "score.py"
 THREAD_VARS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMBA_NUM_THREADS")
+HEAVY_LOCK = "/dev/shm/songcharter-heavy.lock"    # tools/heavy.sh's: one heavy job at a time on a dev machine
 
 
 class Refused(Exception):
@@ -173,6 +176,36 @@ def locked(path: Path, wait: bool = True) -> Iterator[None]:
             fcntl.flock(f, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         except BlockingIOError as e:
             raise Refused(f"{path} is locked: another run is using this output folder") from e
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+@contextmanager
+def heavy(what: str) -> Iterator[None]:
+    """One heavy job at a time on a dev machine that several agents share (docs/PIPELINE.md, Long runs): tools/heavy.sh's
+    lock ($SONGCHARTER_HEAVY_LOCK, default /dev/shm/songcharter-heavy.lock) while the block runs, waiting for it and
+    naming its holder (<lock>.who) when another job has it. Not taken when tools/heavy.sh already holds it for this
+    job ($SONGCHARTER_HEAVY_HELD), or when $SONGCHARTER_HEAVY_LOCK is "off"."""
+    where = os.environ.get("SONGCHARTER_HEAVY_LOCK") or HEAVY_LOCK
+    if where == "off" or os.environ.get("SONGCHARTER_HEAVY_HELD"):
+        yield
+        return
+    path = Path(where)
+    who = path.with_name(path.name + ".who")
+    with open(path, "a+") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            try:
+                holder = who.read_text(encoding="utf-8").strip() or "?"
+            except OSError:
+                holder = "?"
+            print(f"golden: waiting for the heavy-job lock {path}, held by: {holder}", file=sys.stderr, flush=True)
+            fcntl.flock(f, fcntl.LOCK_EX)
+        who.write_text(f"{os.getpid()} {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {what}\n",
+                       encoding="utf-8")
         try:
             yield
         finally:
@@ -708,7 +741,8 @@ def _cmd_run(a: argparse.Namespace, out: Path) -> int:
     head = checkout(code)
     ctx.say(f"golden run: {len(songs)} songs from {code} ({(head['commit'] or '?')[:12]}"
             f"{', with changes' if head['dirty'] else ''}); rerun {', '.join(rerun) or 'none'}; kept folders in {work}")
-    summary, status = run(songs, ctx, holding=True)
+    with heavy(f"golden run --out {out}"):
+        summary, status = run(songs, ctx, holding=True)
     ctx.say(f"summary: {ctx.out / 'summary.json'} ({summary['run']['seconds']:.0f} s)")
     return status
 
