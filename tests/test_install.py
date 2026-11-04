@@ -105,6 +105,25 @@ def test_no_gpu_and_a_gpu_out_of_reach(tmp_path):
     assert lane(tmp_path / "asked", GPU.format("581.57", "8.9"), asked="cu126")[0] == "cu126"
 
 
+@pytest.mark.parametrize("before", ["cu126", "cu132"])
+def test_the_guard_reads_runtime_json_as_runtime_py_writes_it(tmp_path, before):
+    """previous_lane reads runtime.json line by line (sed), so the guard depends on the layout runtime._write_json
+    gives it: here the file runtime_record writes and set_allin1 (the memory rule) rewrites, not a hand-written one
+    (the release gate's tests-3: with a compact layout every test passed, and a failing nvidia-smi moved a GPU install
+    to the cpu lane)."""
+    from songcharter import runtime as R
+    home = tmp_path / "home"
+    (home / "runtime" / "allin1" / "bin").mkdir(parents=True)
+    (home / "runtime" / "allin1" / "bin" / "python").write_text("", encoding="utf-8")
+    R._write_json(R.runtime_file(home), R.runtime_record(R.Setup(home, tmp_path / "app", before, "a GPU")))
+    assert R.set_allin1(home, False)
+    assert sourced(tmp_path, 'echo "[$(previous_lane)]"').stdout == f"[{before}]\n"
+    blocked = 'echo "Failed to initialize NVML: GPU access blocked by the operating system"; exit 255'
+    p = sourced(tmp_path, "choose_lane auto; echo chose $lane", blocked)
+    assert p.returncode == 2 and "chose" not in p.stdout, p.stdout
+    assert f"the GPU is out of reach, not missing, so this {before} install is not moved" in p.stderr
+
+
 def test_an_nvidia_smi_that_does_not_answer_is_a_gpu_out_of_reach(tmp_path):
     """A timeout (exit 124) is a GPU out of reach, as songcharter.device counts it: a fresh install says so, a GPU
     install is not moved to cpu."""
