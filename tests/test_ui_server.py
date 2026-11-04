@@ -663,9 +663,10 @@ def test_stopping_the_server_kills_the_running_charts_whole_tree(tmp_path, how):
 
 # a chart's end as the page sees it: the song folder's four files, a work folder with pipeline.json and the preview's
 # pictures, and the result event; with --lyrics=/dev/fd/<n>, the text read as `songcharter chart` reads it (its
-# SHA-256 and word count reported: proof it came whole, with no word of it)
+# SHA-256 and word count reported: proof it came whole, with no word of it). Mode "linger": after the result, the
+# process exits only once work/release exists (a real chart's interpreter takes a second or more to exit)
 BUILT = r'''
-import hashlib, json, sys
+import hashlib, json, sys, time
 from pathlib import Path
 mode, out, work = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
 given = next((a[len("--lyrics="):] for a in sys.argv if a.startswith("--lyrics=")), None)
@@ -697,6 +698,9 @@ for name in ("overview.png", "page_01.png", "page_02.png", "flags.txt", "page_1.
                    "confidence": {"median": 0.2, "low": True}}} if given else {})}), encoding="utf-8")
 ev(event="result", ok=ok, exit=0 if ok else 1, folder=str(out), work=str(work), preview=str(preview),
    summary="gate: OK" if ok else "gate: FAILED", lyrics_sha256=sha)
+deadline = time.monotonic() + 30
+while mode == "linger" and not (work / "release").exists() and time.monotonic() < deadline:
+    time.sleep(0.02)
 '''
 LYRICS = "zorp blen-dak\nquiv\n\n[Glorp]\nsmee plin\n"
 LYRIC_WORDS = ("zorp", "blen", "dak", "quiv", "Glorp", "smee", "plin")
@@ -920,6 +924,38 @@ def test_a_blocked_install_answers_403_with_the_zip(finished, tmp_path, monkeypa
         status, answer = post(ctx, "/api/jobs/current/install", {"replace": replace})
         assert status == 409 and answer["ours"] is False, replace
     assert sorted(p.name for p in other.iterdir()) == ["song.ini"]
+
+
+def test_the_done_screen_can_install_while_the_chart_is_still_exiting(finished, tmp_path):
+    """The release gate's finding: the page asks for the results the moment it reads the `result` event (app.js),
+    and the chart's process exits a second or more later (the interpreter's teardown, a CUDA context on a GPU). The
+    job then counts as finished: its results are installable, and the zip and the install work, all while its state
+    is still running (the stand-in exits only when this test lets it)."""
+    ctx = finished
+    ctx.mode = "linger"
+    songs = tmp_path / "Songs"
+    songs.mkdir()
+    assert post(ctx, "/api/clonehero", {"folder": str(songs)})[0] == 200
+    status, _, body = call(ctx.port, "POST", "/api/jobs", json.dumps({"upload": ctx.upload["id"]}).encode(),
+                           guarded(ctx.port))
+    assert status == 202, body
+    conn = http.client.HTTPConnection("127.0.0.1", ctx.port, timeout=30)
+    try:
+        conn.request("GET", "/api/jobs/current/events", headers={"Host": f"127.0.0.1:{ctx.port}"})
+        for line in conn.getresponse():   # the stream as app.js follows it, up to the result event
+            if line.startswith(b"data: ") and json.loads(line[6:])["event"] == "result":
+                break
+        res = json.loads(get(ctx, "/api/jobs/current/results")[2])
+        assert res["state"] == "running" and res["ok"] is True and res["installable"] is True, res
+        status, answer = post(ctx, "/api/jobs/current/export/zip")
+        assert status == 200 and answer["name"] == f"{res['name']}.zip", answer
+        status, answer = post(ctx, "/api/jobs/current/install", {"replace": False})
+        assert status == 200 and answer["installed"] == str(songs / res["name"]), answer
+        assert ctx.app.jobs.current.state == "running"   # all of it before the chart's process ended
+    finally:
+        (ctx.work / "release").write_text("go", encoding="utf-8")
+        conn.close()
+    assert wait_state(ctx, "done").returncode == 0
 
 
 def test_a_chart_that_failed_its_gate_is_not_exported_or_installed(finished, tmp_path):

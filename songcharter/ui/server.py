@@ -55,7 +55,10 @@ one chart runs at a time as a child process group (jobs.py). In WSL the Windows 
   * POST /api/jobs/current/cancel: 200 with the job's state after the cancel; 409 when no job runs.
 
 **After the build** (M4-06). The routes on "the chart" use the current job's `result` event; those that export or
-install need one that passed its gate (else 400): a .failed folder is for a look, not for Clone Hero.
+install need one that passed its gate (else 400): a .failed folder is for a look, not for Clone Hero. A job whose
+`result` is out has its chart in place (the chart prints it last), so these routes take it at once, while its process
+is still exiting (a second or more, with its state still `running`): the page asks for the results the moment it
+reads that event (the release gate's finding: the Done screen once hid "Install into Clone Hero" after a normal chart).
   * GET /api/jobs/current/results: {"job", "state", "ok", "folder", "name", "installable", "preview", "lyrics"}:
     the preview's overview and pages as URLs with its flags and remarks, or {"why"} there is none; pipeline.json's
     lyrics as counts ({"given", "added", "words", "phrases", "why", "low"}), null when none were given. 404 before
@@ -493,10 +496,11 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- after the build
     def _built(self) -> Path:
-        """The current job's song folder, when its chart passed the gate and is in place; else Refused(400)."""
+        """The current job's song folder, when its chart passed the gate and is in place (its `result` is out,
+        whatever its process is still doing: the module docstring); else Refused(400)."""
         job = self.app.jobs.current
         result = job.result() if job is not None else None
-        if result is None or job.state != "done":
+        if result is None:
             raise Refused(400, "no finished chart yet")
         folder = Path(str(result.get("folder")))
         if not result.get("ok"):
@@ -726,7 +730,7 @@ def results(job) -> dict:
         return out
     folder = Path(str(result.get("folder")))
     out.update(ok=bool(result.get("ok")), folder=str(folder), name=folder.name,
-               installable=bool(result.get("ok")) and job.state == "done" and folder.is_dir())
+               installable=bool(result.get("ok")) and folder.is_dir())   # its state may still be running: exiting
     try:
         pipeline = json.loads((Path(str(result.get("work"))) / "pipeline.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
