@@ -193,3 +193,14 @@ def test_uninstall_keeps_a_launcher_that_is_not_ours_and_yes_answers_both(instal
     assert (profile / ".wslconfig").read_text(encoding="utf-8") == "[wsl2]\nmemory=6GB\n"
     assert said[-1].startswith("To remove everything, if this Ubuntu holds nothing else: wsl --unregister Ubuntu-26.04")
     assert launch.uninstall(["--all"]) == 2
+
+
+def test_matplotlib_keeps_its_caches_in_songcharters(monkeypatch, tmp_path):
+    """The preview's matplotlib writes ~/.cache/matplotlib and ~/.config/matplotlib unless MPLCONFIGDIR says
+    otherwise, and uninstall removes neither (M4-05's CI): the launcher points it into songcharter's cache, which
+    uninstall's "delete everything" removes; a value of the user's own is kept."""
+    from songcharter.cache import user_cache
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+    assert launch.environment({}, {})["MPLCONFIGDIR"] == str(user_cache() / "matplotlib")
+    assert user_cache() == tmp_path / "xdg" / "songcharter"
+    assert launch.environment({}, {"MPLCONFIGDIR": "/mine"})["MPLCONFIGDIR"] == "/mine"

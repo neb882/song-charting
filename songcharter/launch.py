@@ -61,15 +61,18 @@ def environment(runtime: Mapping, base: Mapping[str, str] | None = None) -> dict
     SONGCHARTER_AUTOCHART, SONGCHARTER_ALLIN1_PYTHON (only when it is not null: the memory rule),
     SONGCHARTER_SCAN_CHART, FFMPEG, HF_HOME, HF_HUB_DISABLE_SYMLINKS_WARNING=1, PYTHONUTF8=1, PYTHONSAFEPATH=1 (a
     child Python, such as the UI's chart job, imports songcharter from the install, never from a songcharter/ folder
-    in the current one), and, when models_complete, HF_HUB_OFFLINE=1 and SONGCHARTER_OFFLINE=1; each only where
-    `base` has no value of its own. PATH gets Node's folder first."""
+    in the current one), MPLCONFIGDIR in songcharter's cache (the preview's matplotlib keeps its font cache there, not
+    in ~/.cache/matplotlib and ~/.config/matplotlib, which uninstall would leave), and, when models_complete,
+    HF_HUB_OFFLINE=1 and SONGCHARTER_OFFLINE=1; each only where `base` has no value of its own. PATH gets Node's
+    folder first."""
+    from .cache import user_cache
     env = dict(os.environ if base is None else base)
     values = {"SONGCHARTER_HOME": runtime.get("home"), "SONGCHARTER_NODE": runtime.get("node"),
               "SONGCHARTER_AUTOCHART": runtime.get("autochart"),
               "SONGCHARTER_ALLIN1_PYTHON": runtime.get("allin1_python"),
               "SONGCHARTER_SCAN_CHART": runtime.get("scan_chart"), "FFMPEG": runtime.get("ffmpeg"),
               "HF_HOME": runtime.get("hf_home"), "HF_HUB_DISABLE_SYMLINKS_WARNING": "1", "PYTHONUTF8": "1",
-              "PYTHONSAFEPATH": "1"}
+              "PYTHONSAFEPATH": "1", "MPLCONFIGDIR": user_cache() / "matplotlib"}
     if runtime.get("models_complete"):
         values.update(HF_HUB_OFFLINE="1", SONGCHARTER_OFFLINE="1")
     for key, value in values.items():
