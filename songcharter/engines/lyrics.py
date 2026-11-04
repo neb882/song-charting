@@ -25,8 +25,9 @@
     SHA-256 and the libraries' versions) and the times by syllable index, never the text: a hit is a file with this
     key and as many syllables as the text parses into.
   * **Unavailable** (`Unavailable`, `missing`): torch or torchaudio not installed (`pip install songcharter[lyrics]`,
-    which the app includes), a torchaudio without the bundle or forced_align, or the weights that cannot be had. The
-    pipeline then charts without lyrics and warns; lyrics never fail a chart.
+    which the app includes), a torchaudio without the bundle or forced_align, the weights that cannot be had, or a
+    text with no letter the bundle spells (another script: no syllable would have a time to spread the others from,
+    so they would all sit at 0 s). The pipeline then charts without lyrics and warns; lyrics never fail a chart.
 
 Nothing here prints, logs or records any word of the text: errors carry their type and counts only.
 """
@@ -56,6 +57,8 @@ RATE = 16000             # the bundles' sample rate
 HOP = 320                # samples per frame: 20 ms
 LOW_SCORE = 0.05         # a word whose characters average under this on the path is a weak one
 LOW_MEDIAN = 0.25        # a song whose words' median is under this is warned about
+NOTHING_SPELLED = ("none of the {n} words has a letter the aligner spells (it aligns the letters a-z, and does not "
+                   "romanize other scripts)")
 
 
 @dataclass(frozen=True)
@@ -388,6 +391,8 @@ def align(text: str, vocals: np.ndarray, out: Path | str, settings: Settings = S
     n = len(lyrics.syllables)
     if n == 0:
         raise ValueError("the lyrics hold no word")
+    if not any(c.isalpha() for s in lyrics.syllables for c in s.spelling):
+        raise Unavailable(NOTHING_SPELLED.format(n=lyrics.words))
     libs = aligner.versions()
     key = cache_key(vocals, text, settings, libs)
     path = Path(out) / "lyrics.json"
@@ -396,6 +401,8 @@ def align(text: str, vocals: np.ndarray, out: Path | str, settings: Settings = S
         return Result(lyrics, tuple(done["times"]["starts"]), tuple(done["times"]["ends"]), path, True, done)
     starts, ends, char_scores, run = aligner.run(lyrics, vocals, settings)
     spelled = sum(1 for x in starts if x is not None)
+    if not spelled:   # nothing to spread the rest from: every syllable would sit at 0 s
+        raise Unavailable(NOTHING_SPELLED.format(n=lyrics.words))
     starts, ends = _spread(starts, ends)
     method = METHODS[settings.method]
     info = {"engine": ENGINE, "version": VERSION, "key": key, "settings": asdict(settings), "versions": libs,

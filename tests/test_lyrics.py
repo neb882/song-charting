@@ -92,6 +92,18 @@ def test_markup_and_punctuation():
     assert not any(s.text.endswith(("-", "=")) for s in x.syllables)
 
 
+def test_every_markup_symbol_is_left_out_of_the_display():
+    """Each symbol Clone Hero acts on, in made-up words, against the display written out by hand."""
+    text = 'zo+rp bl=en d#ak qu^iv f*im w%ob dr$ee ca/fe sm\u00a7ee <pl>in ta_ko "vex" -gl-'
+    x = L.parse(text)
+    assert [s.text for s in x.syllables] == ["zorp", "blen", "dak", "quiv", "fim", "wob", "dree", "cafe", "smee",
+                                             "plin", "ta", "ko", "'vex'", "gl"]
+    assert x.dropped == 11 + 2 + 2          # + = # ^ * % $ / \u00a7 < >, the two quotes changed, gl's two hyphens
+    phrases, _ = L.place(x, even_starts(x), tm120())
+    assert L.shown_lines(L.read_events(written_events(phrases, tm120()))) == [
+        "zorp blen dak quiv fim wob dree cafe smee plin ta ko 'vex' gl"]
+
+
 def test_spelling_for_the_aligner():
     assert L.spelling("Café") == "cafe" and L.spelling("wob’s") == "wob's"
     assert L.spelling("12") == "twelve" and L.spelling("1999") == "onethousandninehundredninetynine"
@@ -205,6 +217,11 @@ def test_lyrics_read_back_is_checked(tmp_path):
     issues = lyrics_read_back(path, c)
     assert [i.kind for i in issues] == ["lyricsReadBack"] and "blen" not in issues[0].message
     assert "differ at event 2" in issues[0].message
+    blen = phrases[0].syllables[1][0]
+    path.write_text(write_chart(c).replace(f'{blen} = E "lyric blen"', f'{blen + 48} = E "lyric blen"'),
+                    encoding="utf-8", newline="")
+    issues = lyrics_read_back(path, c)                    # the same text a 1/16 later
+    assert [i.kind for i in issues] == ["lyricsReadBack"] and "differ at event 2" in issues[0].message
 
 
 # ------------------------------------------------------------------------------------------------ the engine
@@ -214,11 +231,11 @@ class Aligner:
     gets loud, 0.4 s apart; one the aligner cannot spell gets no time; every character scores 0.6. Counts its
     runs."""
 
-    def __init__(self, score: float = 0.6):
-        self.runs, self.score = 0, score
+    def __init__(self, score: float = 0.6, version: str = "1"):
+        self.runs, self.score, self.version = 0, score, version
 
     def versions(self):
-        return {"songcharter": "test", "stand-in": "1"}
+        return {"songcharter": "test", "stand-in": self.version}
 
     def run(self, lyrics, vocals, settings):
         self.runs += 1
@@ -259,6 +276,9 @@ def test_the_cache(tmp_path):
                     aligner=a)
         assert not r.cached and a.runs == before + 1, other.keys()
     E.align(TEXT, stem, tmp_path, aligner=a)
+    newer = Aligner(version="2")                              # a library upgrade: the times are made again
+    assert not E.align(TEXT, stem, tmp_path, aligner=newer).cached and newer.runs == 1
+    E.align(TEXT, stem, tmp_path, aligner=a)
     before = a.runs
     (tmp_path / "lyrics.json").write_text("{not json", encoding="utf-8")
     assert not E.align(TEXT, stem, tmp_path, aligner=a).cached and a.runs == before + 1
@@ -267,6 +287,28 @@ def test_the_cache(tmp_path):
     info = json.loads(data)
     assert info["counts"]["words"] == 14 and info["counts"]["unspelled_words"] == 1
     assert info["confidence"]["median"] == 0.6 and info["confidence"]["low"] is False
+
+
+OTHER_SCRIPT = "\u0437\u043e\u0440\u043f \u0431\u043b\u0435\u043d\n\u03b6\u03bf\u03c1\u03c0 \u03b2\u03bb\u03b5\u03bd"   # made up
+
+
+def test_a_text_the_aligner_cannot_spell_is_left_out(tmp_path):
+    """Made-up words in Cyrillic and Greek letters: no syllable has a letter to time, so none can be spread from
+    another; the lyrics are unavailable, saying why, instead of all landing at 0 s. One spelled word is enough."""
+    a = Aligner()
+    with pytest.raises(E.Unavailable, match="none of the 4 words has a letter the aligner spells"):
+        E.align(OTHER_SCRIPT, vocal_stem(), tmp_path, aligner=a)
+    assert a.runs == 0 and not (tmp_path / "lyrics.json").exists()
+
+    class Silent(Aligner):   # an aligner that gives no syllable a time
+        def run(self, lyrics, vocals, settings):
+            starts, ends, scores, info = super().run(lyrics, vocals, settings)
+            return [None] * len(starts), [None] * len(ends), scores, info
+
+    with pytest.raises(E.Unavailable, match="none of the 1 words"):
+        E.align("zorp", vocal_stem(), tmp_path, aligner=Silent())
+    r = E.align(OTHER_SCRIPT + " zorp", vocal_stem(), tmp_path, aligner=a)
+    assert r.info["counts"]["spelled_syllables"] == 1 and min(r.starts) > 4.0
 
 
 def test_unspelled_syllables_are_spread_between_their_neighbours():
@@ -320,6 +362,36 @@ def test_the_forced_alignment_on_made_up_emissions():
     assert all(sc and min(sc) > 0.9 for sc in scores)
 
 
+def never_called(url, dest):
+    raise AssertionError("downloaded")
+
+
+def test_the_windows_stitch_into_one_pass_over_the_song():
+    """emissions() on a stand-in network whose frames depend only on their own 400 samples (a strided
+    convolution, as the bundles' first layer): the windows with their context, stitched, give exactly one pass over
+    the whole song, for a song of several windows that ends partway through one."""
+    torch = pytest.importorskip("torch")
+
+    class Net(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            torch.manual_seed(0)
+            self.conv = torch.nn.Conv1d(1, 5, kernel_size=400, stride=320)
+
+        def forward(self, x):
+            return self.conv(x[:, None, :]).transpose(1, 2), None
+
+    net = Net().eval()
+    settings = E.Settings(window_s=1.0, context_s=0.2)      # 50-frame windows, 10 frames of context
+    rng = np.random.default_rng(1)
+    audio = rng.standard_normal(int(3.7 * E.RATE)).astype(np.float32)
+    stitched = E.emissions(net, audio, settings, torch)
+    with torch.inference_mode():
+        whole = torch.log_softmax(net(torch.from_numpy(audio)[None])[0][0], dim=-1).numpy()
+    assert stitched.shape == whole.shape == ((len(audio) - 400) // 320 + 1, 5)
+    assert np.allclose(stitched, whole, atol=1e-5)
+
+
 def test_missing_libraries_and_unreachable_weights(tmp_path, monkeypatch):
     import importlib.util
     monkeypatch.delenv("SONGCHARTER_OFFLINE", raising=False)
@@ -339,6 +411,16 @@ def test_missing_libraries_and_unreachable_weights(tmp_path, monkeypatch):
     assert not list((tmp_path / "lyrics").iterdir())
     with pytest.raises(E.Unavailable, match="not the pinned"):
         E.weights_path(m, tmp_path, download=lambda url, dest: dest.write_bytes(b"not the weights"))
+    assert not list((tmp_path / "lyrics").iterdir())          # the bad .part is gone
+    # weights already in place are checked too: the right ones load, others are refused and left for the person
+    import hashlib
+    small = E.Method("X", "u", hashlib.sha256(b"zorp weights").hexdigest(), "w.pth", 12, True, "|", "")
+    got = E.weights_path(small, tmp_path, download=lambda url, dest: dest.write_bytes(b"zorp weights"))
+    assert got == tmp_path / "lyrics" / "w.pth" and got.read_bytes() == b"zorp weights"
+    assert E.weights_path(small, tmp_path, download=never_called) == got
+    got.write_bytes(b"blen weights")
+    with pytest.raises(E.Unavailable, match="delete it and run again"):
+        E.weights_path(small, tmp_path, download=never_called)
     monkeypatch.setenv("SONGCHARTER_OFFLINE", "1")
 
     def never(url, dest):
@@ -464,6 +546,15 @@ def test_a_missing_aligner_never_fails_a_chart(song, tmp_path, monkeypatch, caps
         assert f"lyrics: not added ({why})" in result.warnings
         assert "lyric" not in (result.folder / "notes.chart").read_text(encoding="utf-8")
     assert report["lyrics"]["error"] == "RuntimeError" and report["lyrics"]["where"]
+
+
+def test_lyrics_with_nothing_to_spell_are_left_out_with_why(song, tmp_path, monkeypatch):
+    result, report, _ = run(song, tmp_path, monkeypatch, with_lyrics()(), lyrics=OTHER_SCRIPT)
+    why = "none of the 4 words has a letter the aligner spells (it aligns the letters a-z, and does not romanize " \
+          "other scripts)"
+    assert result.ok and report["lyrics"]["added"] is False and report["lyrics"]["why"] == why
+    assert f"lyrics: not added ({why})" in result.warnings
+    assert "lyric" not in (result.folder / "notes.chart").read_text(encoding="utf-8")
 
 
 def test_an_unsure_alignment_is_warned_about(song, tmp_path, monkeypatch):
