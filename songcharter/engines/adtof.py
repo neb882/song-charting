@@ -35,7 +35,7 @@ import json
 import os
 import platform
 import time
-import urllib.request
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -103,16 +103,11 @@ def models_dir() -> Path:
     return user_cache() / "models"
 
 
-def _download(url: str, dest: Path, attempts: int = 3) -> None:
-    for i in range(attempts):
-        try:
-            with urllib.request.urlopen(url, timeout=60) as r, open(dest, "wb") as f:
-                for block in iter(lambda: r.read(1 << 20), b""):
-                    f.write(block)
-            return
-        except OSError:
-            if i == attempts - 1:
-                raise
+def _download(url: str, dest: Path) -> None:
+    """runtime.download_part, songcharter's one downloader (resumed, retried, a short or broken-off body never taken
+    for the file), with its lines on stderr."""
+    from ..runtime import download_part
+    download_part(url, dest, say=lambda text: print(text, file=sys.stderr, flush=True))
 
 
 def weights_path(models: Path | str | None = None, download: Callable[[str, Path], None] | None = None) -> Path:

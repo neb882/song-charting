@@ -14,8 +14,9 @@
     lacks or an ad-lib costs nothing. A syllable starts at its first character's frame and ends at its last's; one
     with no character the bundle spells is spread evenly between its neighbours.
   * **Weights** at a pinned URL with a pinned SHA-256, in models/lyrics/ (adtof.models_dir()), downloaded on first
-    use and checked whenever they are loaded, then loaded with torch.load(weights_only=True). SONGCHARTER_OFFLINE=1
-    forbids the download.
+    use (runtime.download_part, songcharter's one downloader: retried, its lines on stderr, and a cut download kept
+    as its .part, which the next song with lyrics resumes) and checked whenever they are loaded, then loaded with
+    torch.load(weights_only=True). SONGCHARTER_OFFLINE=1 forbids the download.
   * **Confidence** (info["confidence"]): per word, the mean probability of its characters on the path; the median
     over the song, its 10th percentile, and the share of words under LOW_SCORE (on the six references' stems a word
     under 0.05 is off by more than 250 ms in 0.19 of cases, the others in 0.08). A median under LOW_MEDIAN (0.25) is
@@ -37,8 +38,9 @@ import hashlib
 import json
 import math
 import os
+import functools
+import sys
 import time
-import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
@@ -47,6 +49,7 @@ import numpy as np
 
 from .. import __version__
 from .. import audio as A
+from ..errors import SongcharterError
 from ..lyrics import Lyrics, parse
 from .adtof import _sha256, models_dir
 
@@ -157,22 +160,18 @@ def versions() -> dict[str, str]:
             "numpy": np.__version__}
 
 
-def _download(url: str, dest: Path, attempts: int = 3) -> None:
-    for i in range(attempts):
-        try:
-            with urllib.request.urlopen(url, timeout=60) as r, open(dest, "wb") as f:
-                for block in iter(lambda: r.read(1 << 20), b""):
-                    f.write(block)
-            return
-        except OSError:
-            if i == attempts - 1:
-                raise
+def _download(url: str, dest: Path, size: int | None = None) -> None:
+    """runtime.download_part, songcharter's one downloader (resumed, retried, a short or broken-off body never taken
+    for the file), with its lines on stderr."""
+    from ..runtime import download_part
+    download_part(url, dest, size, say=lambda text: print(text, file=sys.stderr, flush=True))
 
 
 def weights_path(method: Method, models: Path | str | None = None,
                  download: Callable[[str, Path], None] | None = None) -> Path:
     """The pinned weights, models/lyrics/<file>, downloaded on first use to a .part file and renamed once its SHA-256
-    matches; a file already there is checked too. Unavailable when they cannot be had."""
+    matches; a file already there is checked too. Unavailable when they cannot be had. A download that fails leaves
+    its .part, which the next call resumes; one whose SHA-256 is wrong is deleted."""
     path = Path(models or models_dir()) / "lyrics" / method.file
     if not path.is_file():
         if os.environ.get("SONGCHARTER_OFFLINE") == "1":
@@ -180,9 +179,8 @@ def weights_path(method: Method, models: Path | str | None = None,
         path.parent.mkdir(parents=True, exist_ok=True)
         part = path.with_name(path.name + ".part")
         try:
-            (download or _download)(method.url, part)
-        except OSError as e:
-            part.unlink(missing_ok=True)
+            (download or functools.partial(_download, size=method.bytes))(method.url, part)
+        except (OSError, SongcharterError) as e:   # its .part stays: the next song with lyrics resumes it
             raise Unavailable(f"the aligner's weights could not be downloaded from {method.url} "
                               f"({type(e).__name__}: {e})") from None
         got = _sha256(part)

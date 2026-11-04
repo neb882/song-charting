@@ -77,6 +77,7 @@ STAMP = ".songcharter-npm"   # in a folder npm ci filled: its lock's SHA-256 and
 PROGRESS_BYTES = 50 * 10 ** 6   # fetch prints a line every 50 MB
 TIMEOUT_S = 60.0                # fetch's socket timeout
 ATTEMPTS = 4                    # fetch's tries (3 retries), each resuming the last
+RETRY_PAUSE_S = 2.0             # the pause before retry n is n times this
 MB = 10 ** 6
 
 
@@ -139,20 +140,21 @@ def _total(response, have: int) -> int | None:
     return have + int(length) if length and length.isdigit() else None
 
 
-def fetch(url: str, dest: Path | str, sha256: str | None, size: int | None = None, *,
-          say: Callable[[str], None] = _say, attempts: int = ATTEMPTS, timeout: float = TIMEOUT_S,
-          pause: Callable[[float], None] = time.sleep) -> Path:
-    """`url` downloaded to `dest` through dest.part, resumed with a Range request where the .part holds a start (up
-    to `attempts` tries, 3 retries by default, each resuming the last; a `timeout`-s socket timeout), with a line
-    every 50 MB, then checked (its size and SHA-256, where given) and renamed into place. A `dest` already there and
-    right is kept, with no request. SONGCHARTER_OFFLINE=1 refuses the download. Raises StepFailed."""
-    dest = Path(dest)
-    if file_ok(dest, sha256, size):
-        return dest
-    if offline():
-        raise StepFailed(f"{dest.name} is not here and SONGCHARTER_OFFLINE=1 forbids downloading it")
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    part, name = dest.with_name(dest.name + ".part"), dest.name
+def download_part(url: str, part: Path | str, size: int | None = None, *, name: str | None = None,
+                  say: Callable[[str], None] = _say, attempts: int = ATTEMPTS, timeout: float = TIMEOUT_S,
+                  pause: Callable[[float], None] = time.sleep) -> Path:
+    """`url` into `part`: the downloader every download of songcharter's own goes through (fetch, and the engines'
+    weights in engines/adtof.py and engines/lyrics.py). Resumed with a Range request where `part` holds a start (a
+    server that ignores Range sends the whole file again), up to `attempts` tries (3 retries by default, each resuming
+    the last) with a `timeout`-s socket timeout, and a line every 50 MB (`name`: the file's, by default `part`'s name
+    without .part). It is whole once it holds `size` bytes, or the length the server gives (Content-Length or
+    Content-Range): a body that ends short of that is a cut connection and is tried again, never taken for the file;
+    so is one that breaks off mid-chunk (http.client's IncompleteRead). Raises StepFailed, at once for a 4xx but 408
+    and 429, else after the last try. It checks no SHA-256 and renames nothing (the caller does both), and a part left
+    by a failure is resumed by the next call."""
+    part = Path(part)
+    name = name or part.name.removesuffix(".part")
+    part.parent.mkdir(parents=True, exist_ok=True)
     for attempt in range(attempts):
         have = part.stat().st_size if part.is_file() else 0
         if size is not None and have > size:
@@ -166,6 +168,8 @@ def fetch(url: str, dest: Path | str, sha256: str | None, size: int | None = Non
                 if have and r.status != 206:   # the server ignored the Range: the whole file again
                     have = 0
                 total = _total(r, have)
+                if total is None and size is not None:
+                    total = size
                 of = "?" if total is None else str(total // MB)
                 say(f"fetch {name}: resuming at {have // MB} of {of} MB" if have else f"fetch {name}: {of} MB")
                 t0, done = time.monotonic(), have
@@ -194,7 +198,23 @@ def fetch(url: str, dest: Path | str, sha256: str | None, size: int | None = Non
         if attempt == attempts - 1:
             raise StepFailed(f"could not download {url} ({attempts} tries): {error}")
         say(f"fetch {name}: {error}; trying again")
-        pause(2.0 * (attempt + 1))
+        pause(RETRY_PAUSE_S * (attempt + 1))
+    return part
+
+
+def fetch(url: str, dest: Path | str, sha256: str | None, size: int | None = None, *,
+          say: Callable[[str], None] = _say, attempts: int = ATTEMPTS, timeout: float = TIMEOUT_S,
+          pause: Callable[[float], None] = time.sleep) -> Path:
+    """`url` downloaded to `dest` through dest.part (download_part: resumed, retried, a line every 50 MB), then
+    checked (its size and SHA-256, where given) and renamed into place. A `dest` already there and right is kept,
+    with no request. SONGCHARTER_OFFLINE=1 refuses the download. Raises StepFailed."""
+    dest = Path(dest)
+    if file_ok(dest, sha256, size):
+        return dest
+    if offline():
+        raise StepFailed(f"{dest.name} is not here and SONGCHARTER_OFFLINE=1 forbids downloading it")
+    part = download_part(url, dest.with_name(dest.name + ".part"), size, name=dest.name, say=say, attempts=attempts,
+                         timeout=timeout, pause=pause)
     got_size = part.stat().st_size
     if size is not None and got_size != size:
         part.unlink()
@@ -205,7 +225,7 @@ def fetch(url: str, dest: Path | str, sha256: str | None, size: int | None = Non
             part.unlink()
             raise StepFailed(f"{url} has SHA-256 {got}, not the pinned {sha256}")
     os.replace(part, dest)
-    say(f"fetch {name}: done, {got_size // MB} MB")
+    say(f"fetch {dest.name}: done, {got_size // MB} MB")
     return dest
 
 

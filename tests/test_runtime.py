@@ -143,6 +143,50 @@ def test_fetch_retries_a_chunked_download_cut_mid_chunk(server, tmp_path):
                                               for s in said), said
 
 
+@pytest.mark.parametrize("cut", ["chunked", "short"])
+def test_the_engines_weights_come_through_the_shared_downloader(server, tmp_path, monkeypatch, capsys, cut):
+    """The review of the release gate's fixes (F-3): the lyrics aligner's weights (1.26 GB, now downloaded on the
+    installed app) and ADTOF's had a downloader of their own, which took a body cut short of its Content-Length for
+    the file (then refused it as a wrong SHA-256, which reads as tampering), let a chunked one cut mid-chunk end as
+    IncompleteRead, and resumed nothing. Both now go through runtime.download_part: retried, resumed with a Range
+    request, a cut .part resumed by the next call too, and their lines on stderr."""
+    import dataclasses
+
+    from songcharter.engines import adtof as AD
+    from songcharter.engines import lyrics as E
+    monkeypatch.setattr(R, "RETRY_PAUSE_S", 0.0, raising=False)   # (raising=False: the test also runs on older code)
+    data = os.urandom(3_000_000)
+    server.files["/w.pth"] = data
+    cut_at = 2_000_000
+    resumed = 1 << 20 if cut == "chunked" else cut_at   # a chunk's cut drops the block it was in
+    models = tmp_path / "models"
+
+    def cut_once():
+        server.requests.clear()
+        (server.chunked if cut == "chunked" else server.drop)["/w.pth"] = cut_at
+
+    method = dataclasses.replace(E.METHODS[E.DEFAULT_METHOD], url=server.url + "/w.pth", sha256=sha(data),
+                                 bytes=len(data))
+    cut_once()
+    path = E.weights_path(method, models)
+    assert path.read_bytes() == data and not path.with_name(path.name + ".part").exists()
+    assert server.requests == [("/w.pth", None), ("/w.pth", f"bytes={resumed}-")]
+    err = capsys.readouterr().err
+    assert f"fetch {method.file}: resuming at {resumed // MB} of 3 MB" in err and "trying again" in err
+    path.unlink()   # a .part a failed run left: the next song with lyrics resumes it
+    path.with_name(path.name + ".part").write_bytes(data[:1_000_000])
+    server.requests.clear()
+    assert E.weights_path(method, models).read_bytes() == data
+    assert server.requests == [("/w.pth", "bytes=1000000-")]
+    monkeypatch.setattr(AD, "WEIGHTS", AD.Weights(server.url + "/w.pth", sha(data), "w.pth"))
+    cut_once()
+    assert AD.weights_path(models).read_bytes() == data
+    assert server.requests == [("/w.pth", None), ("/w.pth", f"bytes={resumed}-")]
+    server.files.clear()   # a 404: no file, and the lyrics say why, as a failed download
+    with pytest.raises(E.Unavailable, match="could not be downloaded from .*HTTP 404"):
+        E.weights_path(dataclasses.replace(method, file="other.pth"), models)
+
+
 def test_fetch_prints_a_line_every_50_mb(server, tmp_path):
     data = bytes(120 * MB)
     server.files["/big"] = data
