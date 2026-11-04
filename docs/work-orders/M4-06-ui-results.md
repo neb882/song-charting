@@ -121,6 +121,19 @@ Must not touch: `pipeline.py`, `engines/*`, `wsl.py`, `device.py`, `packaging/li
 - The page's footer has "Diagnostics" with "This file holds logs and settings, no audio."
 - Through the browser, the zip lands in Windows' Downloads. The CLI prints its path, and in WSL also its Windows path.
 
+### Lyrics (from M4-10)
+
+- **The options form** gets an optional "Paste lyrics" box: a multi-line text area, wired to `Options.lyrics` (the
+  text as pasted; `None` when the box is empty or blank). Under it: "A line per phrase, a blank line between
+  sections. songcharter times them to the singing; it never looks lyrics up."
+- **The text goes only into the chart.** Never into a log, `ui.json`, the job's records, an error page or the
+  diagnostics. The job holds it in memory and passes it on.
+- **The Done screen** shows pipeline.json's `lyrics`: "Lyrics: N words in M phrases", or "Lyrics not added: <why>"
+  (`why`: torchaudio missing, the weights out of reach, or the aligner failing), and a note when `confidence.low` is
+  true: "The lyrics' timing may be off: check them in Clone Hero."
+- **The diagnostics** may hold `pipeline.json`, `assemble.json` and `report.json`, which count the lyrics and never
+  hold a word; `notes.chart`, which does, is already never in the bundle.
+
 ## Done means
 
 [dev] In the dev container:

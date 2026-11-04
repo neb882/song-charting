@@ -178,3 +178,20 @@ M4-07, the full review workflow, and the owner's and the friend's time.
   172.16.0.0/12 and stops otherwise. Under `networkingMode=mirrored`, the server must stop rather than listen on
   the PC's LAN address; check that it does, and that nothing listens on a non-loopback address (`ss -ltn`).
 - `explorer.exe` and the shortcut's `ui --from-shortcut` are likewise tested only with stand-ins.
+
+## Added at M4-10's merge
+
+- Chart one song with `--lyrics` (the owner's own text for the test song, never committed or shown) and check that
+  Clone Hero shows the lyrics in time; scan-chart's `hasLyrics` is the only check so far.
+- The aligner on CUDA: its time, its VRAM peak, and that its times match the CPU's (determinism is checked on the
+  CPU only).
+
+## Added at M4-06's merge
+
+- **Install into Clone Hero, on Windows:** the Songs folder found (including a OneDrive-moved Documents), the copy
+  and renames on `/mnt/c`, a replace (409, then Replace), and the chart playing after Scan Songs. With OneDrive or
+  antivirus holding the folder if that can be arranged: the retries, and the zip offered when blocked.
+- Whether Clone Hero lists a dot-folder in Songs (a `.tmp` or `.old` of ours left by a blocked install).
+- **Open folder:** explorer.exe on a `C:\...` and a `\\wsl.localhost\...` path, and on a song whose name has a comma
+  (explorer may read commas as separators).
+- **Save as a zip:** where it lands, with a non-ASCII song name.

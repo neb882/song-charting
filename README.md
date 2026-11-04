@@ -35,12 +35,21 @@ songcharter chart song.mp3 --out "Songs/Artist - Title"
   and `--solos off` turns them off.
 - **A preview** of how the chart fits the audio is written next to the work files: the run's summary prints its
   path. `--no-preview` turns it off.
+- **Lyrics:** `--lyrics lyrics.txt` times the song's lyrics to its vocal stem and writes them into the chart, for
+  Clone Hero's lyrics display. Paste them into a text file yourself, a line per phrase and a blank line between
+  sections; songcharter never looks lyrics up. The aligner (`songcharter[lyrics]`, which the app includes) downloads
+  its weights (1.26 GB) on first use; without it the chart is made without lyrics, with a warning. The text goes
+  into the chart and nowhere else: the reports count the words, they never hold them.
 - **The work files** (the decode, the stems, each engine's output) go to a per-user cache:
   `%LOCALAPPDATA%\songcharter` on Windows, `~/.cache/songcharter` elsewhere. The cache is pruned to 5 GB, and
   `--work DIR` puts the work files elsewhere.
 - **Model weights** are downloaded on first use and checked against pinned hashes.
-- **The page:** `songcharter ui` opens a local page in the browser: drop a song, keep or change the options, watch
-  each stage and cancel. `songcharter chart --events` writes the same progress as JSON lines for other programs.
+- **The page:** `songcharter ui` opens a local page in the browser: drop a song, keep or change the options (paste
+  the lyrics, if you want them on screen), watch each stage and cancel. Then look at the preview, install the song
+  into Clone Hero's Songs folder or save it as a zip. `songcharter chart --events` writes the same progress as JSON
+  lines for other programs.
+- **When something goes wrong:** `songcharter diagnostics --out FILE.zip` (or the page's Diagnostics link) makes
+  one file of logs and settings to send. It holds no audio, charts or lyrics.
 
 ## What does not live here
 

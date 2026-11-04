@@ -17,6 +17,8 @@ built; a merge commit on main names the result.
 | `M4-03-install.md` | the WSL install line, the shortcut and the uninstall, and the review fixes |
 | `M4-04-ui-server.md` | `songcharter ui`, `chart --events` and cancel; the review's six fixes and the LAN fallback closed |
 | `M4-05a-ci-skeleton.md` | the CI workflow and its hook runners |
+| `M4-06-ui-results.md` | the Done screen, the install into Clone Hero's Songs folder, diagnostics and the lyrics box; the review's fixes |
+| `M4-10-lyrics.md` | lyrics from pasted text: five aligners measured on the references (timings only), the build, and the review's fixes |
 | `pipeline-review.md` | an advisor's review of how work is run (2026-11-04), finding by finding, with what was done |
 | `takes-experiment.md`, `takes-experiment-verifier.md` | spliced guitar takes against one take, and the verifier's corrections (which win where they differ) |
 | `strumming-research.json` | the pick-noise detector for sparse guitar stretches, and why no fill was built |

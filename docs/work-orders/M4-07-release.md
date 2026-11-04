@@ -142,3 +142,9 @@ job). Otherwise it is done by hand on GitHub's release page with the same files 
 - M4-03: `build.sh`, `install.sh`;
 - M4-05: the end-to-end run the guide's commands rely on;
 - M4-06: diagnostics.
+
+## Added at M4-10's merge
+
+- NOTICE: torchaudio (BSD-2-Clause) and the lyrics aligner's weights (wav2vec 2.0 large, MIT, as torchaudio's
+  bundle documentation states), fetched on the first `--lyrics` run.
+- The guide: the first song with lyrics downloads 1.26 GB once.

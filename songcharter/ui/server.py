@@ -53,6 +53,33 @@ one chart runs at a time as a child process group (jobs.py). In WSL the Windows 
     once the job's process has exited (up to 10 s more), so the state is final then. A Last-Event-ID header resumes
     after that index.
   * POST /api/jobs/current/cancel: 200 with the job's state after the cancel; 409 when no job runs.
+
+**After the build** (M4-06). The routes on "the chart" use the current job's `result` event; those that export or
+install need one that passed its gate (else 400): a .failed folder is for a look, not for Clone Hero.
+  * GET /api/jobs/current/results: {"job", "state", "ok", "folder", "name", "installable", "preview", "lyrics"}:
+    the preview's overview and pages as URLs with its flags and remarks, or {"why"} there is none; pipeline.json's
+    lyrics as counts ({"given", "added", "words", "phrases", "why", "low"}), null when none were given. 404 before
+    the first job.
+  * GET /api/jobs/current/preview/<name>: only overview.png and page_NN.png from the result's preview folder (the
+    work folder's preview/), by an exact pattern; anything else 404.
+  * POST /api/jobs/current/export/zip: clonehero.export_zip into $SONGCHARTER_HOME/exports/<name>.zip; answers
+    {"url": "/api/exports/<name>.zip", "name", "windows_path"}. GET /api/exports/<name>.zip downloads it
+    (Content-Disposition: attachment): a single name ending .zip that is a file in exports/; anything else 404.
+  * GET /api/clonehero: clonehero.describe ({"folder", "windows_path", "source", "under_onedrive", "guess"}).
+    POST /api/clonehero {"folder"}: clonehero.set_songs_folder (400 with why when it does not exist or cannot be
+    written), then the same answer.
+  * POST /api/jobs/current/install {"replace"}: clonehero.install of the chart into the Songs folder (no path comes
+    from the page): 200 {"installed", "windows_path", "replaced", "note"}; 400 with no chart or no Songs folder;
+    409 {"exists", "ours", "folder", "windows_path"} when that folder is there (a replace of one songcharter did not
+    make is refused the same way); 403 {"blocked", "why", "zip_url", "under_onedrive", "older"}, after making the
+    zip, when Windows did not let it finish (`older`: where the older chart stays when it could not be put back,
+    also named in `why`). One install at a time.
+  * POST /api/open {"what": "song" | "exports"}: explorer.exe on the last installed song's folder or the exports
+    folder (wsl.open_url with its Windows path), only those two; {"opened", "path", "windows_path"}.
+  * GET /api/diagnostics: the diagnostics bundle (diagnostics.py) as a download, songcharter-diagnostics-<stamp>.zip.
+
+**The lyrics** a job is given never reach a log, a record or an answer here: the request's body is never logged, the
+job's options say only whether there are some, and its errors name the option, never the text (jobs.py).
 """
 from __future__ import annotations
 
@@ -67,6 +94,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -77,9 +105,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Iterable
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
-from .. import __version__, cache, device, wsl
+from .. import __version__, cache, clonehero, device, diagnostics, wsl
 from ..errors import InputError
 from ..timed import DIFFICULTIES, INSTRUMENTS
 from . import home as default_home
@@ -102,6 +130,9 @@ HELLO_TIMEOUT_S = 0.5
 CHUNK = 1 << 20
 STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                 ".css": "text/css; charset=utf-8"}
+PREVIEW_NAME = re.compile(r"^(?:overview|page_\d{2,3})\.png$")   # preview.py's files: overview.png, page_01.png, ...
+PREVIEW_PAGE = re.compile(r"^page_\d{2,3}\.png$")
+OPEN = ("song", "exports")         # POST /api/open's only two folders
 
 
 def console_line(text: str) -> None:
@@ -157,6 +188,22 @@ class App:
         self._report = report
         self._quick: dict | None = None
         self._quick_lock = threading.Lock()
+        self.install_lock = threading.Lock()   # one install (or Songs folder change) at a time
+        self.installed: Path | None = None     # the song folder the last install put into Clone Hero's Songs
+        self._documents: tuple[Path | None] | None = None
+        self._documents_lock = threading.Lock()
+
+    # --- Clone Hero
+    def documents(self) -> Path | None:
+        """<Documents>/Clone Hero/Songs (clonehero.documents_songs), asked of Windows once: Documents does not move
+        while the page runs."""
+        with self._documents_lock:
+            if self._documents is None:
+                self._documents = (clonehero.documents_songs(),)
+            return self._documents[0]
+
+    def clonehero(self) -> dict:
+        return clonehero.describe(self.home, self.documents)
 
     # --- the guards' lists
     def allow(self, host: str, port: int) -> None:
@@ -380,6 +427,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, job.snapshot())
         if path == "/api/jobs/current/events":
             return self._events()
+        if path == "/api/jobs/current/results":
+            job = app.jobs.current
+            if job is None:
+                return self._refuse(404, "no job yet")
+            return self._json(200, results(job))
+        if path.startswith("/api/jobs/current/preview/"):
+            return self._preview(unquote(path[len("/api/jobs/current/preview/"):]))
+        if path.startswith("/api/exports/"):
+            return self._export(unquote(path[len("/api/exports/"):]))
+        if path == "/api/clonehero":
+            return self._json(200, app.clonehero())
+        if path == "/api/diagnostics":
+            return self._diagnostics()
         name = "index.html" if path == "/" else path[1:]
         if name in app.static:   # an exact name: no path is joined from the request
             return self._send(200, app.static[name], STATIC_TYPES.get(Path(name).suffix, "application/octet-stream"))
@@ -408,7 +468,133 @@ class Handler(BaseHTTPRequestHandler):
             except NotRunning:
                 raise Refused(409, "no chart is running") from None
             return self._json(200, {"job": job.id, "state": job.state})
+        if path == "/api/jobs/current/export/zip":
+            self._drain()
+            out = clonehero.export_zip(self._built(), app.home)
+            app.log(f"exported {out}")
+            return self._json(200, {"url": export_url(out.name), "name": out.name,
+                                    "windows_path": clonehero.windows_path(out)})
+        if path == "/api/clonehero":
+            folder = self._read_json().get("folder")
+            if not isinstance(folder, str):
+                raise Refused(400, "folder is the Songs folder's path, as text")
+            with app.install_lock:
+                try:
+                    saved = clonehero.set_songs_folder(app.home, folder)
+                except InputError as e:
+                    raise Refused(400, str(e)) from None
+            app.log(f"the Clone Hero Songs folder is {saved}")
+            return self._json(200, app.clonehero())
+        if path == "/api/jobs/current/install":
+            return self._install(self._read_json().get("replace") is True)
+        if path == "/api/open":
+            return self._open(self._read_json().get("what"))
         raise Refused(404, "not found")
+
+    # --- after the build
+    def _built(self) -> Path:
+        """The current job's song folder, when its chart passed the gate and is in place; else Refused(400)."""
+        job = self.app.jobs.current
+        result = job.result() if job is not None else None
+        if result is None or job.state != "done":
+            raise Refused(400, "no finished chart yet")
+        folder = Path(str(result.get("folder")))
+        if not result.get("ok"):
+            raise Refused(400, f"the chart did not pass its check: it is in {folder} for a look, not for Clone Hero")
+        if not folder.is_dir():
+            raise Refused(400, f"the chart's folder {folder} is not there any more")
+        return folder
+
+    def _preview(self, name: str) -> None:
+        job = self.app.jobs.current
+        result = job.result() if job is not None else None
+        folder = result.get("preview") if result else None
+        if not folder or not PREVIEW_NAME.match(name):
+            return self._refuse(404, "not found")
+        path = Path(folder) / name
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return self._refuse(404, "not found")
+        return self._send(200, data, "image/png")
+
+    def _export(self, name: str) -> None:
+        folder = self.app.home / clonehero.EXPORTS
+        # one name, no folder: no separator of either kind, so ".." cannot climb (a name may hold "...", as a song's
+        # does), nor a leading dot (the .part files)
+        if not name.endswith(".zip") or name.startswith(".") or "/" in name or "\\" in name or "\0" in name:
+            return self._refuse(404, "not found")
+        path = folder / name
+        if path.parent != folder or not path.is_file():
+            return self._refuse(404, "not found")
+        return self._download(path, name)
+
+    def _download(self, path: Path, name: str) -> None:
+        """A file as an attachment, streamed: the browser saves it into Downloads."""
+        size = path.stat().st_size
+        ascii_name = name.encode("ascii", "replace").decode().replace("?", "_").replace('"', "_")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Length", str(size))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Disposition",
+                         f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name, safe='')}")
+        self.end_headers()
+        if self.command == "HEAD":
+            return
+        with open(path, "rb") as f:
+            shutil.copyfileobj(f, self.wfile, CHUNK)
+
+    def _diagnostics(self) -> None:
+        app = self.app
+        name = f"songcharter-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+        with tempfile.TemporaryDirectory(prefix="songcharter-diagnostics-") as tmp:
+            out = diagnostics.bundle(app.home, Path(tmp) / name, report=app._report,
+                                     clonehero_info=lambda home: app.clonehero())
+            app.log(f"diagnostics: {name} ({out.stat().st_size} bytes)")
+            self._download(out, name)
+
+    def _install(self, replace: bool) -> None:
+        app = self.app
+        song = self._built()
+        with app.install_lock:
+            songs, source = clonehero.songs_folder(app.home, app.documents)
+            if songs is None:
+                raise Refused(400, "no Clone Hero Songs folder is known: give it first")
+            try:
+                done = clonehero.install(song, songs, app.home, replace=replace)
+            except clonehero.Exists as e:
+                return self._json(409, {"error": str(e), "exists": True, "ours": e.ours, "folder": str(e.target),
+                                        "windows_path": clonehero.windows_path(e.target)})
+            except clonehero.Blocked as e:
+                out = clonehero.export_zip(song, app.home)
+                app.log(f"install into {songs} blocked ({e.why}); the zip is {out}")
+                older = None if e.old is None else clonehero.windows_path(e.old) or str(e.old)
+                return self._json(403, {"error": e.why, "blocked": True, "why": e.why, "zip_url": export_url(out.name),
+                                        "under_onedrive": clonehero.under_onedrive(songs), "older": older})
+            except InputError as e:
+                raise Refused(400, str(e)) from None
+            app.installed = done.target
+        app.log(f"installed {done.target}" + (f"; the older chart went to {done.replaced}" if done.replaced else "")
+                + (f"; {done.note}" if done.note else ""))
+        return self._json(200, {"installed": str(done.target), "windows_path": clonehero.windows_path(done.target),
+                                "replaced": None if done.replaced is None else str(done.replaced),
+                                "note": done.note})
+
+    def _open(self, what: Any) -> None:
+        app = self.app
+        if what not in OPEN:
+            raise Refused(400, f"what is one of {', '.join(OPEN)}")
+        if what == "song":
+            if app.installed is None or not app.installed.is_dir():
+                raise Refused(400, "no song was installed into Clone Hero from this page")
+            folder = app.installed
+        else:
+            folder = app.home / clonehero.EXPORTS
+            folder.mkdir(parents=True, exist_ok=True)
+        winpath = clonehero.windows_path(folder)
+        opened = winpath is not None and wsl.open_url(winpath)
+        return self._json(200, {"opened": bool(opened), "path": str(folder), "windows_path": winpath})
 
     def _length(self, limit: int) -> int:
         raw = self.headers.get("Content-Length")
@@ -512,6 +698,60 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
             if ended and not new:
                 return
+
+
+def export_url(name: str) -> str:
+    return "/api/exports/" + quote(name, safe="")
+
+
+def _preview_why(pv: Any) -> str:
+    """Why there is no preview, from pipeline.json's `preview`."""
+    if not isinstance(pv, dict):
+        return "the run left no record of it"
+    if pv.get("skipped") == "turned off":
+        return "it was turned off in the options"
+    if pv.get("skipped"):
+        return f"it needs matplotlib and librosa ({pv['skipped']})"
+    if pv.get("error"):
+        return f"it failed ({pv['error']})"
+    return "its pictures are not there any more"
+
+
+def results(job) -> dict:
+    """GET /api/jobs/current/results (the module docstring), from the job's result event and its pipeline.json."""
+    result = job.result()
+    out: dict[str, Any] = {"job": job.id, "state": job.state, "ok": None, "folder": None, "name": None,
+                           "installable": False, "preview": None, "lyrics": None}
+    if result is None:
+        return out
+    folder = Path(str(result.get("folder")))
+    out.update(ok=bool(result.get("ok")), folder=str(folder), name=folder.name,
+               installable=bool(result.get("ok")) and job.state == "done" and folder.is_dir())
+    try:
+        pipeline = json.loads((Path(str(result.get("work"))) / "pipeline.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pipeline = {}
+    pipeline = pipeline if isinstance(pipeline, dict) else {}
+    pv = pipeline.get("preview")
+    where = Path(result["preview"]) if result.get("preview") else None
+    if where is not None and (where / "overview.png").is_file():
+        try:
+            pages = sorted((p.name for p in where.iterdir() if PREVIEW_PAGE.match(p.name)),
+                           key=lambda name: int(name[5:-4]))   # page_100 after page_99
+        except OSError:
+            pages = []
+        base = "/api/jobs/current/preview/"
+        pv = pv if isinstance(pv, dict) else {}
+        out["preview"] = {"overview": base + "overview.png", "pages": [base + p for p in pages],
+                          "flags": list(pv.get("flags") or []), "remarks": list(pv.get("remarks") or [])}
+    else:
+        out["preview"] = {"why": _preview_why(pv)}
+    ly = pipeline.get("lyrics")
+    if isinstance(ly, dict):
+        out["lyrics"] = {"given": bool(ly.get("given")), "added": bool(ly.get("added")), "words": ly.get("words"),
+                         "phrases": (ly.get("chart") or {}).get("phrases"), "why": ly.get("why"),
+                         "low": bool((ly.get("confidence") or {}).get("low"))}
+    return out
 
 
 class Server(ThreadingHTTPServer):

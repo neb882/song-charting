@@ -53,6 +53,11 @@ own difficulties, star power, fills and sections, and a Clone Hero folder that i
      song.ini must hold the metadata scan-chart requires and a rating for every charted instrument, and the folder no
      other chart, ini or audio file. Without node or tools/scan-chart's node_modules, the re-implementation stands
      in for scan-chart and the gate warns that scan-chart was not run.
+  * **Lyrics** (optional: `assemble(config, lyrics=...)`, the text with each syllable's start, which the pipeline
+     aligns; never in the config, whose copy goes into report.json): each syllable is quantized onto the grid and
+     the phrases are written as phrase_start, lyric and phrase_end events in [Events] (lyrics.place, DESIGN.md
+     2.15). The gate reads them back from notes.chart (every event as written) and has scan-chart find them.
+     report.json counts them; it never holds a word.
   7. **Report.** report.json in the folder: the grid's stats, per-part offsets and what quantizing and trimming did,
      note counts per difficulty, phrases (and the share of drum fills that end on a crash), sections, ratings, the
      sync check, the gate (with scan-chart's verdict) and every warning. Times in the report are seconds of the
@@ -100,10 +105,11 @@ from typing import Any
 import numpy as np
 
 from . import audio as A
+from . import lyrics as L
 from .beatgrid import FREE_SHARE, BeatGrid, beat_grid
 from .chart import DRUM_ACTIVATION, OPEN, STAR_POWER, Chart, DrumHit, FretNote, SongInfo, Track
 from .errors import InputError, ToolError
-from .importers import read_chart, read_song
+from .importers import _chart_sections, _decode, read_chart, read_song
 from .package import PackageResult, build_song_folder
 from .quantize import (RULES, TRACK_DIFFICULTY, TRACK_INSTRUMENT, QuantizeReport, estimate_offset, quantize_part,
                        sustain_kept)
@@ -982,6 +988,20 @@ def scan_chart_song(data: dict) -> TimedSong:
     return TimedSong("scan-chart", parts, [(s["msTime"] / 1000, s["name"]) for s in data.get("sections") or []])
 
 
+def lyrics_read_back(path: Path, chart: Chart) -> list[GateIssue]:
+    """notes.chart's lyric events (phrase_start, lyric, phrase_end) read back against the ones written, in order:
+    an error when they differ, naming only where (the text is never in a message)."""
+    lines = _chart_sections(_decode(Path(path).read_bytes())).get("Events", [])
+    read = [(int(m[1]), m[2]) for m in map(L.EVENT.fullmatch, lines) if m]
+    want = [(t, " ".join(text.replace('"', "`").split()))
+            for t, _, text in sorted(chart.lyrics, key=lambda r: (r[0], r[1]))]
+    if read == want:
+        return []
+    at = next((i for i, (a, b) in enumerate(zip(read, want)) if a != b), min(len(read), len(want)))
+    return [GateIssue(None, None, "lyricsReadBack", f"notes.chart holds {len(read)} lyric events, {len(want)} were "
+                      f"written; they first differ at event {at}")]
+
+
 def verify_folder(folder, chart: Chart, pad_seconds: float, audio_seconds: float | None = None, *,
                   scan_chart: bool | None = None, record: dict | None = None) -> list[GateIssue]:
     """The gate on a written song folder (DESIGN.md 2.13 steps 2-4): its files, its song.ini, notes.chart read back
@@ -1018,6 +1038,8 @@ def verify_folder(folder, chart: Chart, pad_seconds: float, audio_seconds: float
 
     issues += checked(song)
     issues += scan_rules(song, pad_seconds, audio_seconds, chart.tempo)
+    if chart.lyrics:
+        issues += lyrics_read_back(folder / "notes.chart", chart)
     command, version = (None, "turned off") if scan_chart is False else find_scan_chart()
     if command is None:
         summary: dict[str, Any] = {"ran": False, "reason": version}
@@ -1040,6 +1062,13 @@ def verify_folder(folder, chart: Chart, pad_seconds: float, audio_seconds: float
                        "metadata_issues": [i.get("metadataIssue") for i in data.get("metadataIssues") or []],
                        "chart_issues": len(data.get("chartIssues") or []), "self_check_errors": len(own),
                        "tempo_markers": data.get("tempoMarkerCount")}
+            if chart.lyrics:   # Clone Hero reads them only if scan-chart's parser finds them
+                summary["has_lyrics"] = data.get("hasLyrics")
+                if "hasLyrics" not in data:   # a scan.cjs older than this check
+                    own.append(GateIssue(None, None, "lyricsNotChecked", "scan-chart's script does not report "
+                                         "lyrics (tools/scan-chart/scan.cjs is older): not checked", error=False))
+                elif not data["hasLyrics"]:
+                    own.append(GateIssue(None, None, "noLyrics", "scan-chart finds no lyrics in notes.chart"))
             found += own
     if record is not None:
         record["scan_chart"] = summary
@@ -1218,11 +1247,12 @@ def _remove_build(folder: Path) -> None:
         folder.rmdir()
 
 
-def assemble(config: AssembleConfig | dict | str | Path) -> AssembleResult:
+def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | None = None) -> AssembleResult:
     """Build the song folder a config describes (the module docstring), write report.json into it and return the
     chart, the report and every issue. Errors in the checks or the gate do not raise: the build goes to
     <output>.failed for inspection (`AssembleResult.folder`), <output> keeps what it held, and `AssembleResult.ok`
-    is False. Bad inputs and a song.ogg out of sync raise, and leave both folders as they were."""
+    is False. Bad inputs and a song.ogg out of sync raise, and leave both folders as they were. `lyrics`: the text
+    and its syllables' starts in seconds of the decode, written as [Events] lyrics."""
     if isinstance(config, (str, Path)):
         config = load_config(config)
     elif isinstance(config, dict):
@@ -1389,6 +1419,11 @@ def assemble(config: AssembleConfig | dict | str | Path) -> AssembleResult:
         own = by_inst[part.instrument] if part.take_difficulties == "all" else {}
         tracks += _ladder(placed[CHART_INSTRUMENT[part.instrument]], own, tm, [t for t, _ in sections], loud)
     chart = fit_chart(Chart(info, tm, sections, [t for t in tracks if LEVEL_KEY[t.difficulty] in cfg.levels]))
+    if lyrics is not None:   # only the counts go into the report
+        phrases, stats = L.place(lyrics.lyrics, lyrics.starts, tm, pad,
+                                 end_tick=last_tick_by(tm, song_end - CLIP_MARGIN_S))
+        chart.lyrics = L.events(phrases)
+        report["lyrics"] = {**stats, "events": len(chart.lyrics), "markup_dropped": lyrics.lyrics.dropped}
 
     # checks
     issues: list[GateIssue] = []
