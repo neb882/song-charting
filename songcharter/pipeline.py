@@ -39,7 +39,9 @@
     even for device "cuda". Every move to the CPU is a **fallback**: recorded (stage, from, to, reason) in
     pipeline.json's `fallbacks` and ChartResult.fallbacks, and warned about, but for device "auto" on a machine with
     no NVIDIA GPU at all (recorded only): "auto" choosing the CPU, separation's fallback, allin1 on the CPU while
-    torch here runs on CUDA, and a guitar take whose transcriber autochart ran on the CPU.
+    torch here runs on CUDA, and a guitar take whose transcriber autochart ran on the CPU. A guitar take that fails
+    on CUDA is not run again on the CPU (v0.1): its ToolError says first what to try (`take_failed`: the engine
+    failing, or killed for memory), and the takes that finished stay in the cache for the next run.
   * **GPU memory.** On CUDA, torch's cache is emptied after the separation and after the drums, and each stage
     that runs in this process records torch's own peak (`torch_peak_vram_mb`: reset as it begins).
   * **Solos** ("labels" by default): every section the sections engine names "Solo" (allin1's solo label), within
@@ -92,6 +94,7 @@ import json
 import os
 import platform
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -230,16 +233,70 @@ def guitar_takes(asked: int | None, device: str) -> tuple[int, str]:
 
     The evidence behind the default (the takes experiment, DESIGN.md 2.7): 4 takes spliced by agreement gave +0.013
     Expert F1@50 over 1 take on 5 reference songs (Lucretia apart: our grid misses its beats), mostly precision, and
-    4 beat 3; on the owner's GPU 4 takes cost 3.41x the guitar stage (+5.75 min a song), worth it. On a CPU each take
-    after the first is one more transcription, 217 s for the 6:52 test song on the dev container (DESIGN.md 5, M3), so
-    3 more would add about 11 min for that small gain. 2 takes are never the default (two cannot outvote each other),
-    nor 3 (+0.006 to +0.0105 over 1, below 4)."""
+    4 beat 3. Their cost on the owner's RTX 5070: 3.41x the guitar stage over the takes experiment's seven songs
+    (+5.75 min a song), and 3.9x for the 6:52 test song in the GPU smoke test through the real install (854 s for 4
+    takes against about 219 s for one, +10.6 min); kept as the default at the release gate (M4-08 times the friend's
+    4070). On a CPU each take after the first is one more transcription, 217 s for the test song on the dev container
+    (DESIGN.md 5, M3), so 3 more would add about 11 min for that small gain. 2 takes are never the default (two
+    cannot outvote each other), nor 3 (+0.006 to +0.0105 over 1, below 4)."""
     if asked is not None:
         return asked, f"{asked} asked for"
     if device == "cuda":
         return CUDA_TAKES, (f"the default on cuda: {CUDA_TAKES} takes spliced gave +0.013 Expert F1@50 over 1, for "
-                            "3.41x the guitar stage's time")
+                            "3.9x the guitar stage's time (the GPU smoke test on an RTX 5070: 854 s for the 6:52 "
+                            "test song, about 219 s for 1 take)")
     return 1, "the default on the cpu: 1 take (each one more is another transcription there, about 3.6 min for a 7-min song)"
+
+
+AUTOCHART_EXIT = re.compile(r"autochart seed \d+ failed \(exit (-?\d+)\)")   # engines/autochart.py's ToolError
+
+
+def take_failed(index: int | None, count: int | None, error: BaseException) -> ToolError | None:
+    """The error for a guitar take that failed on CUDA, `index` of `count` (None when no take was running), by
+    autochart's exit code (its ToolError's first line, so engines/autochart.py stays as it is): a positive one is a
+    failure inside the engine, as a GPU short of memory mid-take would give (gpu_failed); a negative one is the
+    engine killed by a signal, SIGKILL most likely from the kernel's OOM killer at WSL's memory limit (stopped).
+    None for the rest, a timeout or an exit 0 with no summary, whose message stays autochart's own."""
+    m = AUTOCHART_EXIT.match(str(error))
+    code = int(m.group(1)) if m else 0
+    if code > 0:
+        return gpu_failed(index, count, error)
+    if code < 0:
+        return stopped(index, count, -code, error)
+    return None
+
+
+def _take_clauses(index: int | None, count: int | None) -> tuple[str, str, str]:
+    """take_failed's shared clauses: where (" in take k of n"), what is kept, and the Guitar takes 1 advice. Each
+    holds for the next chart of the same file: a take's take.json is written once it finishes, so the takes that
+    finished are kept and only the rest run again, and Guitar takes 1 reuses the first take when it finished on CUDA.
+    "Kept" is left out for take 1, and the takes-1 advice when one take was asked for."""
+    where = f" in take {index} of {count}" if index else ""
+    kept = "; the takes that finished are kept" if index and index > 1 else ""
+    one = "" if count == 1 else ", or set Guitar takes to 1 (it uses the first take if that one finished)"
+    return where, kept, one
+
+
+def gpu_failed(index: int | None, count: int | None, error: BaseException) -> ToolError:
+    """A take whose engine failed on CUDA (take_failed): what to do, in the page's words, then autochart's own lines.
+    Device CPU makes the guitar's take again on the CPU (and the sections, whose cache key holds the device). No
+    retry on the CPU in v0.1 (PROGRESS, deferred)."""
+    where, kept, one = _take_clauses(index, count)
+    return ToolError(f"The guitar's GPU run failed{where}{kept}. Close programs that use the GPU (games, Clone Hero, "
+                     f"video) and chart it again{one}. If it fails again, set Device to CPU.\n\n{error}")
+
+
+def stopped(index: int | None, count: int | None, signum: int, error: BaseException) -> ToolError:
+    """A take whose engine was killed by signal `signum` (take_failed): that it was stopped, and, for SIGKILL, that
+    this usually means WSL ran out of memory (memory, not the GPU: Device CPU would not help), then what helps."""
+    where, kept, one = _take_clauses(index, count)
+    try:
+        name = signal.Signals(signum).name
+    except ValueError:
+        name = "an unknown signal"
+    why = ", which usually means WSL ran out of memory" if signum == 9 else ""   # SIGKILL (not on Windows)
+    return ToolError(f"The guitar's run was stopped{where} (signal {signum}, {name}){why}{kept}. Close other programs "
+                     f"(browsers, games, Clone Hero) and chart it again{one}.\n\n{error}")
 
 
 def take_seeds(takes: int) -> tuple[int, ...]:
@@ -805,13 +862,28 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
                              f"{', '.join(map(str, seeds))}) on {gdev}" + (", the first alone first" if probe else ""))
         del mix, stems   # autochart reads decode.wav; the arrays are not needed again
 
+        running: dict[str, int] = {}   # the take that runs now: autochart's error names only its seed
+
         def on_take(first: int) -> Callable[[int, int, int], None]:
             """The take event for a call whose seeds start at seeds[first]: numbered among all the stage's seeds."""
-            return lambda index, count, seed: emit({"event": "take", "index": first + index, "count": len(seeds),
-                                                    "seed": seed})
+            def heard(index: int, count: int, seed: int) -> None:
+                running.update(index=first + index, count=len(seeds))
+                emit({"event": "take", "index": first + index, "count": len(seeds), "seed": seed})
+            return heard
 
-        runs = engines.guitar(wav, work / "guitar", seeds[:1] if probe else seeds, gdev, meta["name"], meta["artist"],
-                              scratch=scratch, on_take=on_take(0))
+        def run_takes(chosen: Sequence[int], first: int) -> list[Run]:
+            """The takes of `chosen` (seeds from seeds[first]); one that fails on CUDA says what to do (take_failed)."""
+            running.clear()
+            try:
+                return engines.guitar(wav, work / "guitar", chosen, gdev, meta["name"], meta["artist"],
+                                      scratch=scratch, on_take=on_take(first))
+            except ToolError as e:
+                told = take_failed(running.get("index"), running.get("count"), e) if gdev == "cuda" else None
+                if told is None:
+                    raise
+                raise told from e
+
+        runs = run_takes(seeds[:1] if probe else seeds, 0)
         moved = None
         if probe:
             used = (runs[0].info.get("devices") or {}).get("transcriber")  # not reported: taken as on CUDA
@@ -822,8 +894,7 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
                 n_takes, seeds = 1, seeds[:1]
                 why = f"{why}; but autochart's transcriber ran on {used} for the first take, so that take alone"
             else:
-                runs += engines.guitar(wav, work / "guitar", seeds[1:], gdev, meta["name"], meta["artist"],
-                                       scratch=scratch, on_take=on_take(1))
+                runs += run_takes(seeds[1:], 1)
         for r in runs[1 if moved else 0:]:
             used = (r.info.get("devices") or {})
             if gdev == "cuda" and used and any(v == "cpu" for v in used.values()):

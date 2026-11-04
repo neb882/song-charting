@@ -45,9 +45,10 @@ songcharter chart song.mp3 --out "Songs/Artist - Title"
   its weights (1.26 GB) on first use, the installed app's included (`SONGCHARTER_OFFLINE=1` forbids it); without
   them the chart is made without lyrics, with a warning. The text goes
   into the chart and nowhere else: the reports count the words, they never hold them.
-- **The work files** (the decode, the stems, each engine's output) go to a per-user cache:
-  `%LOCALAPPDATA%\songcharter` on Windows, `~/.cache/songcharter` elsewhere. The cache is pruned to 5 GB, and
-  `--work DIR` puts the work files elsewhere.
+- **The work files** (the decode, the stems, each engine's output) go to a per-user cache, `~/.cache/songcharter`:
+  in v0.1, which runs in WSL, that is inside Ubuntu, whose disk grows on C:. (`%LOCALAPPDATA%\songcharter` is the
+  cache of a native Windows run, which v0.1 does not ship.) The cache is pruned to 5 GB, and `--work DIR` puts the
+  work files elsewhere.
 - **Model weights** are downloaded on first use and checked against pinned hashes.
 - **The page:** `songcharter ui` opens a local page in the browser: drop a song, keep or change the options (paste
   the lyrics, if you want them on screen), watch each stage and cancel. Then look at the preview, install the song

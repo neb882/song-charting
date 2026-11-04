@@ -86,6 +86,7 @@ job's options say only whether there are some, and its errors name the option, n
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import ipaddress
 import json
@@ -131,6 +132,7 @@ KEEPALIVE_S = 15.0
 END_WAIT_S = 10.0                  # after a closing event, the stream waits this long for the job's process to exit
 HELLO_TIMEOUT_S = 0.5
 CHUNK = 1 << 20
+DISK_FULL = "C: (or WSL's disk) is full: free some space on C:, then drop the song again"   # an upload's 507
 STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                 ".css": "text/css; charset=utf-8"}
 PREVIEW_NAME = re.compile(r"^(?:overview|page_\d{2,3})\.png$")   # preview.py's files: overview.png, page_01.png, ...
@@ -230,7 +232,15 @@ class App:
     def doctor(self) -> dict:
         """The report the header shows: doctor.json when it reads, with its memory, disk and .wslconfig measured again
         (device.refresh, once for each version of the file: the install wrote it before WSL restarted with the memory
-        it set), else device.report(full=False), made once."""
+        it set), else device.report(full=False), made once; either way with the free disk measured again on every
+        call (device.refresh_disk: cheap, and a session of charts fills the disk while the server stays up)."""
+        r = self._doctor()
+        try:
+            return device.refresh_disk(r)
+        except Exception:  # noqa: BLE001  the header shows the report as it was last measured
+            return r
+
+    def _doctor(self) -> dict:
         path = self.home / "doctor.json"
         try:
             st = path.stat()
@@ -260,8 +270,8 @@ class App:
         r = self.doctor()
         job = self.jobs.current
         threads = (r.get("cpu") or {}).get("threads_default") or device.default_threads()
-        return {**{k: r.get(k) for k in ("device", "gpu", "guitar_device", "guitar_reason", "notes", "ok", "source",
-                                          "error")},
+        return {**{k: r.get(k) for k in ("device", "gpu", "guitar_device", "guitar_reason", "problems", "notes", "ok",
+                                          "source", "error")},
                 "job": job.snapshot(events=False) if job is not None else None,
                 "defaults": {"instruments": list(INSTRUMENTS), "levels": ["expert"], "solos": "labels", "takes": None,
                              "device": "auto", "preview": True, "threads": None, "threads_default": threads,
@@ -382,6 +392,18 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 pass
         elif n > DRAIN:
+            self.close_connection = True
+
+    def _skip(self, n: int) -> None:
+        """Read and drop the `n` bytes left of a body this server stopped keeping (at most MAX_UPLOAD), so the browser
+        sees the answer and not a reset."""
+        try:
+            while n > 0:
+                got = self.rfile.read(min(n, CHUNK))
+                if not got:
+                    return
+                n -= len(got)
+        except OSError:
             self.close_connection = True
 
     # --- the methods
@@ -655,21 +677,26 @@ class Handler(BaseHTTPRequestHandler):
         part = folder / f".incoming-{secrets.token_hex(8)}.part"
         sha = hashlib.sha256()
         self.body_read = True
+        left = n
         try:
             with open(part, "wb") as f:
-                left = n
                 while left > 0:
                     got = self.rfile.read(min(left, CHUNK))
                     if not got:
                         raise Refused(400, f"the upload stopped after {n - left} of {n} bytes")
                     sha.update(got)
-                    f.write(got)
                     left -= len(got)
+                    f.write(got)
             key = sha.hexdigest()
             target = folder / key[:cache.KEY_HEX]
             target.mkdir(exist_ok=True)
             dest = target / (cache.safe_name(stem) + ext.lower())
             os.replace(part, dest)
+        except OSError as e:   # a full disk is the person's to fix (507), not a bug (500)
+            if e.errno != errno.ENOSPC:
+                raise
+            self._skip(left)
+            raise Refused(507, DISK_FULL) from None
         finally:
             part.unlink(missing_ok=True)
         from .. import pipeline   # numpy loads with it
@@ -677,9 +704,17 @@ class Handler(BaseHTTPRequestHandler):
         meta, origin = pipeline.song_metadata(Path(name), tags, {})   # the name as dropped, not its safe form
         record = {"id": target.name, "name": name, "file": dest.name, "bytes": n, "sha256": key, "metadata": meta,
                   "origin": origin, "uploaded": time.time()}
-        tmp = target / "upload.json.part"
-        tmp.write_text(json.dumps(record, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
-        os.replace(tmp, target / "upload.json")
+        tmp, had = target / "upload.json.part", (target / "upload.json").is_file()
+        try:
+            tmp.write_text(json.dumps(record, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+            os.replace(tmp, target / "upload.json")
+        except OSError as e:
+            tmp.unlink(missing_ok=True)
+            if e.errno != errno.ENOSPC:
+                raise
+            if not had:   # a song with no record is of no use, and holds the space until the 7-day prune
+                dest.unlink(missing_ok=True)
+            raise Refused(507, DISK_FULL) from None
         os.utime(target)
         self.app.log(f"upload {target.name}: {name} ({n} bytes)")
         return {"id": target.name, "name": name, "bytes": n, "tags": meta, "origin": origin}
@@ -852,8 +887,8 @@ def unreachable(ports: list[int], why: str, log_path: Path | None) -> str:
     span = f"port {ports[0]}" if len(ports) == 1 else f"ports {ports[0]}-{ports[-1]}"
     return (f"songcharter: error: Windows cannot reach this page: Windows' localhost did not answer on {span}, and "
             f"songcharter will not listen on another address ({why}). Try: close a program that uses those ports on "
-            "Windows, or start songcharter with another port (songcharter ui --port 8800); or restart WSL "
-            "(wsl --shutdown in PowerShell, then open Ubuntu again)."
+            "Windows, or start songcharter with another port (songcharter ui --port 8800); or restart WSL: in "
+            "Terminal (right-click Start), type wsl --shutdown, then open Ubuntu again."
             + (f" Details: {log_path}" if log_path is not None else ""))
 
 

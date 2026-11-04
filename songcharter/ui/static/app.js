@@ -68,6 +68,10 @@ function renderStatus(st) {
   if (st.guitar_device === "cuda") text($("guitar"), "guitar on the GPU");
   else if (st.guitar_device) text($("guitar"), `guitar on the CPU: ${st.guitar_reason || ""}`);
   else text($("guitar"), "");
+  // doctor's problems (the disk measured again on every status): shown, never blocking "Chart it"
+  const problems = st.problems || [];
+  $("problems").replaceChildren(...problems.map((p) => make("li", null, p)));
+  $("problems").hidden = !problems.length;
   const notes = $("notes");
   notes.replaceChildren(...(st.notes || []).map((n) => make("li", null, n)));
   $("details").hidden = !(st.notes || []).length;
@@ -393,6 +397,18 @@ function again() {
   state.upload = null;
   dropError("");
   show("drop-screen");
+  refreshStatus();   // a session of charts fills the disk: the header measures it again for the next song
+}
+
+async function refreshStatus() {
+  try {
+    const r = await api("GET", "/api/status");
+    if (r.status !== 200) return;
+    state.status = r.data;
+    renderStatus(r.data);
+  } catch (e) {
+    // the server is gone: the next request says so
+  }
 }
 
 // ------------------------------------------------------------------------------------------------ the Done screen

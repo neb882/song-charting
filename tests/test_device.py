@@ -371,13 +371,14 @@ def test_wsl_memory_against_wslconfig():
     assert problems == [] and r["wsl"]["memory_matches_config"] is False
     assert notes == ["WSL has 7.8 GB of memory, under 11 GB: allin1 is left out to save memory (the sections use the "
                      "librosa fallback)",
-                     "WSL has 7.8 GB of memory, but .wslconfig asks for 12.0 GB: restart WSL (wsl --shutdown in "
-                     "PowerShell, then open Ubuntu again)"]
+                     "WSL has 7.8 GB of memory, but .wslconfig asks for 12.0 GB: restart WSL. In Terminal "
+                     "(right-click Start), type wsl --shutdown, then open Ubuntu again"]
     assert D.memory_matches(7987, None) is None and D.memory_matches(None, 2 ** 30) is None
     # WSL's memory=8GB shows about 7.8 GB, which is not under the 8 GB limit (units of 10^9 bytes); 7 GB is
     problems, _ = D.findings(base_report(wsl=wsl_part(None, 6900), ram={"total_mb": 6900}))
     assert problems == ["WSL has 6.7 GB of memory, under 8 GB: set memory in %UserProfile%\\.wslconfig (the install "
-                        "writes it), then restart WSL (wsl --shutdown)"]
+                        "writes it), then restart WSL: in Terminal (right-click Start), type wsl --shutdown, then "
+                        "open Ubuntu again"]
 
 
 def test_problems_and_notes():
