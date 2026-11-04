@@ -307,6 +307,155 @@ def test_a_running_page_reads_a_rewritten_doctor_json_and_survives_a_failing_ref
     assert st["notes"] == ["as written"] and st["source"] == "doctor.json" and st["device"]["chosen"] == "cuda"
 
 
+def test_the_header_measures_the_disk_on_every_status(served, monkeypatch):
+    """The advisor's finding 6 on the release candidate: /api/status gives doctor's problems, and measures the free
+    disk on every call, so the same server shows C: filling up during a session of charts, with no restart; the full
+    refresh (which reads .wslconfig through cmd.exe) still runs once for each version of doctor.json."""
+    from songcharter import wsl
+    config = {"path": "C:\\Users\\x\\.wslconfig", "exists": True, "memory_bytes": 12 * 2 ** 30}
+    at_install = {**DOCTOR, "components": {"allin1": {"ok": True}}, "ram": {"total_mb": 11980},
+                  "disk": {"home_free_mb": 50000, "windows_c_free_mb": 90000},
+                  "wsl": {"interop": True, "windows_ram_mb": 16236, "memory_matches_config": True, "wslconfig": config}}
+    at_install["problems"], at_install["notes"] = device.findings(at_install)
+    assert at_install["problems"] == []
+    (served.home / "doctor.json").write_text(json.dumps(at_install), encoding="utf-8")
+    asked, free = [], {"mb": 50000}
+    monkeypatch.setattr(wsl, "wslconfig", lambda: asked.append(1) or dict(config))
+    monkeypatch.setattr(device, "memory", lambda: {"total_mb": 11980})
+    monkeypatch.setattr(device, "_free_mb", lambda path: free["mb"])
+
+    def status():
+        code, _, body = call(served.port, "GET", "/api/status")
+        assert code == 200, body
+        return json.loads(body)
+
+    st = status()
+    assert st["problems"] == [] and st["ok"] is True and st["notes"] == at_install["notes"]
+    free["mb"] = 3000   # some charts later, the same server
+    st = status()
+    assert st["problems"] == [f"only 2.9 GB free in WSL ({Path.home()}): a chart needs 6 GB",
+                              "only 2.9 GB free on C:, where WSL's disk grows: a chart needs 6 GB"]
+    assert st["ok"] is False and st["notes"] == at_install["notes"]
+    free["mb"] = 40000   # space freed
+    st = status()
+    assert st["problems"] == [] and st["ok"] is True and asked == [1]
+
+
+PAGE = r"""
+const vm = require("vm"), fs = require("fs");
+const els = {};
+const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [],
+  replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); },
+  addEventListener() {}, classList: { add() {}, remove() {} } });
+const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node,
+  addEventListener() {} };
+let xhr = null;
+class XMLHttpRequest {
+  constructor() { this.on = {}; this.upload = { addEventListener() {} }; xhr = this; }
+  open() {} setRequestHeader() {} send() {}
+  addEventListener(kind, f) { this.on[kind] = f; }
+}
+const asked = [];
+const fetch = async (path) => { asked.push(path);
+  return { status: 200, json: async () => ({ device: { chosen: "cpu" }, problems: ["later"], notes: [] }) }; };
+const ctx = { document, window: { addEventListener() {} }, XMLHttpRequest, encodeURIComponent, console, fetch,
+  setInterval() {}, clearInterval() {}, setTimeout() {} };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(process.argv[2], "utf8"), ctx);
+const out = {};
+const items = () => els.problems.children.map((c) => [c.tag, c.textContent]);
+ctx.renderStatus({ device: { chosen: "cpu", reason: "r" }, problems: ["only 2.9 GB free on C:"], notes: ["n"] });
+out.low = { hidden: els.problems.hidden, items: items(), chart: document.getElementById("chart").disabled };
+ctx.renderStatus({ device: { chosen: "cpu", reason: "r" }, problems: [], notes: [] });
+out.fine = { hidden: els.problems.hidden, items: items() };
+ctx.upload({ name: "big.wav" });
+xhr.status = 507;
+xhr.responseText = JSON.stringify({ error: process.argv[3] });
+xhr.on.load();
+out.drop = { hidden: els["drop-error"].hidden, text: els["drop-error"].textContent };
+ctx.again();   // "Chart another song": the header asks for the status again
+setImmediate(() => {
+  out.again = { asked, items: items() };
+  console.log(JSON.stringify(out));
+});
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_page_shows_the_problems_the_full_disk_and_the_errors_lines(tmp_path):
+    """The page (app.js run in node with a stand-in DOM): doctor's problems in a list above the Details, in the page's
+    error style, hidden when there are none, and "Chart it" left enabled (a short song may still fit), and asked for
+    again by "Chart another song"; an upload's 507 shows its message on the drop screen; the Done screen's text keeps
+    its lines (an error's advice, then the engine's own lines)."""
+    files = S.static_files()
+    script = tmp_path / "page.cjs"
+    script.write_text(PAGE, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(files["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js), S.DISK_FULL], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["low"] == {"hidden": False, "items": [["li", "only 2.9 GB free on C:"]], "chart": False}
+    assert out["fine"] == {"hidden": True, "items": []}
+    assert out["drop"] == {"hidden": False, "text": S.DISK_FULL}
+    assert out["again"] == {"asked": ["/api/status"], "items": [["li", "later"]]}
+    html = files["index.html"].decode()
+    assert '<ul id="problems" class="error" hidden></ul>' in html
+    assert html.index('id="guitar"') < html.index('id="problems"') < html.index('id="details"')
+    css = files["app.css"].decode()
+    assert "#done-text { white-space: pre-wrap;" in css and ".error { color: var(--bad); white-space: pre-wrap; }" in css
+
+
+def test_an_upload_that_fills_the_disk_answers_507(served, monkeypatch):
+    """The skeptic's probe of finding 6: an upload that meets a full disk (ENOSPC) answers 507 with what to do, not a
+    500 logged as a bug; the rest of the body is read, so the browser gets the answer and not a reset; nothing is left
+    behind, and the next upload works. So does one whose record (upload.json) meets it."""
+    import builtins
+    import errno
+    real = builtins.open
+
+    class Full:
+        def __init__(self, f):
+            self.f = f
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.f.close()
+
+        def write(self, data):
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+    def full_open(path, mode="r", *a, **k):
+        f = real(path, mode, *a, **k)
+        return Full(f) if str(path).endswith(".part") and "w" in mode else f
+
+    monkeypatch.setattr(S, "open", full_open, raising=False)
+    data = song(served.home / "tmp.wav", seconds=20.0)
+    assert len(data) > 3 * S.CHUNK   # the disk fills at the first chunk, with most of the body still to come
+    status, body = upload(served, data, "big.wav")
+    assert status == 507 and body == {"error": S.DISK_FULL}
+    uploads = served.home / "uploads"
+    assert not list(uploads.glob(".incoming-*")) and not list(uploads.glob("*/*.wav"))
+    assert not any("internal error" in line for line in served.lines)
+    monkeypatch.delattr(S, "open")
+    status, body = upload(served, data, "big.wav")
+    assert status == 200, body
+    (uploads / body["id"] / "upload.json").unlink()
+    write_text = Path.write_text
+
+    def full_write(self, *a, **k):
+        if self.name == "upload.json.part":
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return write_text(self, *a, **k)
+
+    monkeypatch.setattr(Path, "write_text", full_write)
+    status, body = upload(served, data, "big.wav")
+    assert status == 507 and body == {"error": S.DISK_FULL}
+    assert not list(uploads.glob("*/upload.json*")) and not any("internal error" in line for line in served.lines)
+
+
 def test_uploads(served, monkeypatch):
     ctx, port = served, served.port
     for name in ("notes.txt", "song", "song.mp3.exe", ""):

@@ -624,10 +624,7 @@ def refresh(r: dict) -> dict:
         return r
     from . import wsl
     ram = memory()
-    disk = {**(r.get("disk") or {}), "home_free_mb": _free_mb(Path.home())}
-    if disk.get("windows_c_free_mb") is not None:
-        disk["windows_c_free_mb"] = _free_mb(wsl.MNT_C)
-    out = {**r, "ram": ram, "disk": disk}
+    out = {**r, "ram": ram, "disk": _disk_now(r.get("disk") or {})}
     w = r.get("wsl")
     if isinstance(w, dict):
         config = wsl.wslconfig() if w.get("interop") else (w.get("wslconfig") or {})
@@ -638,6 +635,29 @@ def refresh(r: dict) -> dict:
         from .engines import sections
         allin1 = sections.allin1_python(sections.Settings())
     out["problems"], out["notes"] = findings(out, allin1)
+    out["ok"] = not out["problems"]
+    return out
+
+
+def _disk_now(disk: dict) -> dict:
+    """A report's `disk` with the free space measured again: in the home folder, and on C: when it was measured."""
+    from . import wsl
+    out = {**disk, "home_free_mb": _free_mb(Path.home())}
+    if out.get("windows_c_free_mb") is not None:
+        out["windows_c_free_mb"] = _free_mb(wsl.MNT_C)
+    return out
+
+
+def refresh_disk(r: dict) -> dict:
+    """A report (refresh()'s) with only its free disk measured again, and its problems and `ok` made again from it
+    (its notes do not depend on the disk). Cheap (two statvfs calls, no cmd.exe or PowerShell), so the page's header
+    runs it on every status: a session of charts fills the disk, through the work cache and the WSL disk it grows on
+    C:, while the server stays up (the advisor's finding 6 on the release candidate). A report with no `disk` comes
+    back as it is."""
+    if not isinstance(r, dict) or not isinstance(r.get("disk"), dict):
+        return r
+    out = {**r, "disk": _disk_now(r["disk"])}
+    out["problems"] = findings(out)[0]
     out["ok"] = not out["problems"]
     return out
 
