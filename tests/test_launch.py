@@ -25,17 +25,66 @@ def test_environment_fills_in_what_the_person_has_not_set():
     assert env["PATH"] == "/h/runtime/node/bin:/usr/bin:/bin"                     # but for PATH: Node first, once
     assert {k: env[k] for k in ("SONGCHARTER_HOME", "SONGCHARTER_AUTOCHART", "SONGCHARTER_ALLIN1_PYTHON",
                                 "SONGCHARTER_SCAN_CHART", "FFMPEG", "HF_HUB_DISABLE_SYMLINKS_WARNING",
-                                "PYTHONUTF8", "HF_HUB_OFFLINE", "SONGCHARTER_OFFLINE")} == {
+                                "PYTHONUTF8", "HF_HUB_OFFLINE")} == {
         "SONGCHARTER_HOME": "/h", "SONGCHARTER_AUTOCHART": "/h/runtime/autochart",
         "SONGCHARTER_ALLIN1_PYTHON": "/h/runtime/allin1/bin/python", "SONGCHARTER_SCAN_CHART":
         "/h/runtime/scan-chart/scan.cjs", "FFMPEG": "/h/runtime/env/ffmpeg", "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
-        "PYTHONUTF8": "1", "HF_HUB_OFFLINE": "1", "SONGCHARTER_OFFLINE": "1"}
+        "PYTHONUTF8": "1", "HF_HUB_OFFLINE": "1"}
     assert env["PYTHONSAFEPATH"] == "1"
+    assert "SONGCHARTER_OFFLINE" not in env   # the lyrics weights download on first use (the release gate's major)
     assert base == {"PATH": "/usr/bin:/h/runtime/node/bin:/bin", "SONGCHARTER_NODE": "/my/node", "HF_HOME": "/my/hf"}
     env = launch.environment({**RUNTIME, "allin1_python": None, "models_complete": False}, {"PATH": "/bin"})
     assert "SONGCHARTER_ALLIN1_PYTHON" not in env   # the memory rule left allin1 out: the librosa fallback
     assert "HF_HUB_OFFLINE" not in env and "SONGCHARTER_OFFLINE" not in env
-    assert launch.environment(RUNTIME, {"SONGCHARTER_OFFLINE": "0"})["SONGCHARTER_OFFLINE"] == "0"
+    for mine in ("0", "1"):   # the person's own value stays
+        assert launch.environment(RUNTIME, {"SONGCHARTER_OFFLINE": mine})["SONGCHARTER_OFFLINE"] == mine
+
+
+def test_the_installed_app_downloads_the_lyrics_weights_on_first_use(tmp_path, monkeypatch):
+    """The release gate's major finding: runtime_record always writes models_complete, and the launcher once set
+    SONGCHARTER_OFFLINE=1 with it, so the aligner's weights (which the install does not fetch) could never download
+    and pasted lyrics were never added. Here: runtime.json as runtime_record writes it, launch.main's environment,
+    then the lyrics engine's lookup with a stand-in for the download. It downloads once; the file then there is only
+    checked (no download); the hub stays offline; SONGCHARTER_OFFLINE=1 set by the person still refuses it."""
+    import dataclasses
+    import hashlib
+
+    from songcharter import runtime as R
+    from songcharter.engines import lyrics as E
+    home = tmp_path / "home"
+    R.runtime_file(home).parent.mkdir(parents=True)
+    R._write_json(R.runtime_file(home), R.runtime_record(R.Setup(home, tmp_path / "app", "cpu")))
+    assert json.loads(R.runtime_file(home).read_text(encoding="utf-8"))["models_complete"] is True
+    weights = b"stand-in weights"
+    method = dataclasses.replace(E.METHODS[E.DEFAULT_METHOD], sha256=hashlib.sha256(weights).hexdigest())
+    models, downloads, seen = tmp_path / "models", [], []
+
+    def download(url, part):
+        downloads.append(url)
+        part.write_bytes(weights)
+
+    def chart(argv):   # what the chart's lyrics stage does, under the environment the launcher set
+        seen.append({k: os.environ.get(k) for k in ("SONGCHARTER_OFFLINE", "HF_HUB_OFFLINE")})
+        try:
+            return 0 if E.weights_path(method, models, download=download).read_bytes() == weights else 1
+        except E.Unavailable as e:
+            seen.append(str(e))
+            return 2
+
+    monkeypatch.setattr(launch, "_cli", chart)
+    for person in ({}, {"SONGCHARTER_OFFLINE": "1"}):
+        monkeypatch.setattr(os, "environ", {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path),
+                                            "SONGCHARTER_HOME": str(home), **person})
+        if person:
+            (models / "lyrics" / method.file).unlink()
+            assert launch.main(["chart", "s.mp3", "--out", "o", "--lyrics", "l.txt"]) == 2
+            assert seen[-2:] == [{"SONGCHARTER_OFFLINE": "1", "HF_HUB_OFFLINE": "1"},
+                                 f"the aligner's weights are not in {models / 'lyrics'} and SONGCHARTER_OFFLINE=1"]
+            assert len(downloads) == 1 and not (models / "lyrics" / method.file).exists()
+            continue
+        assert launch.main(["chart", "s.mp3", "--out", "o", "--lyrics", "l.txt"]) == 0
+        assert seen == [{"SONGCHARTER_OFFLINE": None, "HF_HUB_OFFLINE": "1"}] and downloads == [method.url]
+        assert launch.main([]) == 0 and downloads == [method.url]   # already there: checked, not fetched again
 
 
 @pytest.fixture

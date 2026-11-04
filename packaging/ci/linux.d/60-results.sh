@@ -5,9 +5,14 @@
 #      engine): done, ok; its results and preview pictures; the zip exported and downloaded (check_no_audio.py must
 #      find its song.ogg); a Songs folder at "$CI_TMP/Jörg's Söngs/Clone Hero/Songs" set through the API, the clip
 #      installed (200) with its four files checked, again (409, ours), then replaced (200, the older one in replaced/);
-#   3. the server again with SONGCHARTER_OFFLINE=1 and HF_HUB_OFFLINE=1, and the clip charted with lyrics pasted (bass
-#      only: the stages before are cached): the aligner's weights are out of reach, so the chart is made without them,
-#      with a warning; no pasted word in any log, record or bundle (only notes.chart may ever hold one);
+#   3. the server again with the variables the launcher sets for a finished install (launch.environment over a
+#      runtime.json with models_complete, as runtime_record writes it: HF_HUB_OFFLINE=1), and the clip charted with
+#      lyrics pasted (bass only: the stages before are cached). The aligner's weights are not here, so the chart must
+#      try their first-use download (the release gate's major finding: the launcher once forbade it, and this hook
+#      took that for the expected result). https_proxy names a port nothing listens on, so the download fails at once
+#      and CI never fetches the 1.26 GB: the chart is made without lyrics, with a warning, and the reason must be the
+#      failed download, not a refusal. No pasted word in any log, record or bundle (only notes.chart may ever hold
+#      one);
 #   4. the diagnostics bundle through the API and `songcharter diagnostics --out`: check_no_audio.py passes on each,
 #      as the zip and unpacked. The bundles, the results and the logs go to $CI_ART/60-results.
 # Run by packaging/ci/run-hooks.sh with bash -euo pipefail; uses CI_PY, CI_TMP, CI_ART and CI_CLIP (M4-05a's contract).
@@ -140,10 +145,12 @@ if phase == "chart":
     expect(400, "open another folder", request("POST", "/api/open", {"what": "/etc"}))
 else:
     ly = res["lyrics"]
-    assert ly and ly["given"] and not ly["added"] and ly["why"], ly   # the weights offline (or torchaudio missing)
+    tried = "the aligner's weights could not be downloaded from https://download.pytorch.org/"   # the dead proxy's
+    assert ly and ly["given"] and not ly["added"] and (ly["why"] or "").startswith(tried), ly
     warned = [e["text"] for e in job["events"] if e["event"] == "warning" and e["text"].startswith("lyrics:")]
     assert warned, job["events"]
-    say(f"the lyrics: not added ({ly['why']}); warned: {warned}")
+    say(f"the lyrics: not added, as the first-use download was tried and the dead proxy refused it ({ly['why']}); "
+        f"warned: {warned}")
     assert job["options"]["lyrics"] is True, job["options"]   # whether given: never the text
     seen = [stream, json.dumps(job).encode(), json.dumps(res).encode()]
     for root in (home, Path(result["work"])):
@@ -169,7 +176,21 @@ PY
 start
 drive chart
 stop
-start SONGCHARTER_OFFLINE=1 HF_HUB_OFFLINE=1
+# the launcher's variables for a finished install, one NAME=VALUE a line (PATH aside: the runtime names no Node here)
+mapfile -t installed < <("$CI_PY" - "$home" <<'PY'
+import sys
+from songcharter import launch
+env = launch.environment({"home": sys.argv[1], "models_complete": True}, base={})
+print("\n".join(f"{k}={v}" for k, v in sorted(env.items()) if k != "PATH"))
+PY
+)
+echo "60-results: the launcher's variables: ${installed[*]}"
+case " ${installed[*]} " in
+  *" HF_HUB_OFFLINE=1 "*) ;;
+  *) echo "60-results: the launcher's variables for a finished install have no HF_HUB_OFFLINE=1" >&2; exit 1 ;;
+esac
+dead=http://127.0.0.1:9   # the discard port: nothing listens there
+start "${installed[@]}" https_proxy=$dead HTTPS_PROXY=$dead no_proxy= NO_PROXY=
 drive lyrics
 stop
 trap - EXIT
