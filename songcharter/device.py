@@ -44,6 +44,8 @@ SMI_FAILED = "nvidia-smi failed, so CUDA cannot run"   # nvidia-smi is there but
 SMI_MISSING = "nvidia-smi not found"
 SMI_NO_GPU = "nvidia-smi listed no GPU"
 GUITAR_NO_GPU = "no GPU"
+ASKED_LANE = "asked for with --lane"   # how runtime.json's lane_reason begins when the install was asked for a lane
+                                       # (install.sh's choose_lane: "asked for with --lane cpu")
 GUITAR_CU126 = ("the cu126 lane: onnxruntime-node needs CUDA 13, so a 580 or newer driver. Then paste the install line "
                 "again: it switches to the GPU build (about 3 GB)")
 WSL_NVIDIA_SMI = Path("/usr/lib/wsl/lib/nvidia-smi")   # WSL's, from the Windows driver [doc: NVIDIA's WSL guide]
@@ -534,7 +536,8 @@ def findings(r: dict, allin1_python: str | None = None) -> tuple[list[str], list
     dev = r.get("device") or {}
     if dev.get("chosen") == "cpu":
         notes.append(f"CPU mode: {dev.get('reason')}")
-    if dev.get("reason") == CPU_LANE and r.get("gpu"):   # installed with no GPU in reach (a Windows update), say
+    asked = str((r.get("install") or {}).get("lane_reason") or "").startswith(ASKED_LANE)   # --lane cpu, on purpose
+    if dev.get("reason") == CPU_LANE and r.get("gpu") and not asked:   # installed with no GPU in reach, say
         notes.append(f"{r['gpu'].get('name') or 'an NVIDIA GPU'} answers now, but this install has the CPU build: "
                      "paste the install line again, which picks the lane again (the GPU build needs NVIDIA driver "
                      "528 or newer, the guitar on the GPU 580)")
@@ -588,7 +591,7 @@ def report(full: bool = True) -> dict:
         "cpu": {"logical": os.cpu_count(), "threads_default": default_threads()}, "ram": ram,
         "disk": {"home_free_mb": _free_mb(Path.home()),
                  "windows_c_free_mb": _free_mb(wsl.MNT_C) if in_wsl and wsl.MNT_C.is_dir() else None},
-        "components": comps,
+        "components": comps, "install": _install(),
     }
     allin1 = None
     if not full:
@@ -597,6 +600,17 @@ def report(full: bool = True) -> dict:
     r["problems"], r["notes"] = findings(r, allin1)
     r["ok"] = not r["problems"]
     return r
+
+
+def _install() -> dict | None:
+    """The install's lane and why ({"lane", "lane_reason"}, from runtime.json under $SONGCHARTER_HOME, which the
+    launcher sets), else None (not run from an install)."""
+    home = os.environ.get("SONGCHARTER_HOME")
+    try:
+        rt = json.loads((Path(home) / "runtime" / "runtime.json").read_text(encoding="utf-8")) if home else None
+    except (OSError, ValueError):
+        return None
+    return {"lane": rt.get("lane"), "lane_reason": rt.get("lane_reason")} if isinstance(rt, dict) else None
 
 
 def refresh(r: dict) -> dict:

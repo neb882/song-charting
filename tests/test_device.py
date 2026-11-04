@@ -337,6 +337,27 @@ def test_a_gpu_that_answers_on_a_cpu_lane_install_says_to_rerun_the_install():
     for reason, gpu in ((D.CPU_LANE, None), (D.ASKED_CPU, RTX), (D.NO_GPU, None)):
         _, notes = D.findings(base_report(device={"chosen": "cpu", "reason": reason}, gpu=gpu))
         assert not any("answers now" in n for n in notes), (reason, notes)
+    # installed with --lane cpu on purpose: pasting the install line again would move it to the GPU build, so no note
+    # (the review of the gate fixes); the lane asked for comes from runtime.json's lane_reason, as install.sh writes it
+    asked = {"lane": "cpu", "lane_reason": "asked for with --lane cpu"}
+    _, notes = D.findings({**r, "install": asked})
+    assert not any("answers now" in n for n in notes), notes
+    _, notes = D.findings({**r, "install": {"lane": "cpu", "lane_reason": "nvidia-smi failed, so CUDA cannot run: x"}})
+    assert any("answers now" in n for n in notes), notes
+
+
+def test_the_report_reads_the_installs_lane(tmp_path, monkeypatch):
+    """doctor's `install`: runtime.json's lane and lane_reason under $SONGCHARTER_HOME (the launcher's), else None."""
+    monkeypatch.delenv("SONGCHARTER_HOME", raising=False)
+    assert D._install() is None
+    monkeypatch.setenv("SONGCHARTER_HOME", str(tmp_path))
+    assert D._install() is None   # no runtime.json
+    (tmp_path / "runtime").mkdir()
+    (tmp_path / "runtime" / "runtime.json").write_text(json.dumps({"lane": "cpu", "lane_reason": "asked for with "
+                                                                   "--lane cpu", "home": "/h"}), encoding="utf-8")
+    assert D._install() == {"lane": "cpu", "lane_reason": "asked for with --lane cpu"}
+    (tmp_path / "runtime" / "runtime.json").write_text("{", encoding="utf-8")
+    assert D._install() is None
 
 
 def test_wsl_memory_against_wslconfig():
@@ -409,8 +430,8 @@ def test_the_report_runs_here(monkeypatch, tmp_path):
     for full in (False, True):
         r = D.report(full=full)
         assert set(r) == {"songcharter", "written", "platform", "python", "wsl", "gpu", "gpu_error", "torch", "device",
-                          "guitar_device", "guitar_reason", "cpu", "ram", "disk", "components", "problems", "notes",
-                          "ok"}
+                          "guitar_device", "guitar_reason", "cpu", "ram", "disk", "components", "install",
+                          "problems", "notes", "ok"}
         assert set(r["components"]) == {"ffmpeg", "node", "scan_chart", "autochart", "demucs", "librosa",
                                         "matplotlib"} | ({"autochart_cuda", "allin1"} if full else set())
         assert r["ok"] == (not r["problems"]) and json.loads(json.dumps(r)) == r

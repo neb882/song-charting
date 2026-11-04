@@ -104,6 +104,8 @@ def test_no_gpu_and_a_gpu_out_of_reach(tmp_path):
         "CPU build. Run the same command again to continue.")
     assert lane(tmp_path / "was-gpu", blocked, previous="cu132", asked="cpu") == (
         "cpu", "asked for with --lane cpu", "")
+    from songcharter import device
+    assert "asked for with --lane cpu".startswith(device.ASKED_LANE)   # doctor reads it so (no "paste again" note)
     p = sourced(tmp_path / "was-cu126", "choose_lane auto; echo chose $lane", blocked, previous="cu126")
     assert p.returncode == 2 and "chose" not in p.stdout
     assert "the GPU is out of reach, not missing, so this cu126 install is not moved" in p.stderr.splitlines()[-1]
