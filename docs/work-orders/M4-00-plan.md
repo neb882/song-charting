@@ -1,7 +1,7 @@
 # M4 plan: songcharter v0.1 for the friend, on WSL2
 
 *Rewritten 2026-11-03 on branch `m4-plan`, after the owner moved v0.1 from native Windows to WSL2. The native plan's
-orders are kept in this branch's history (commit f9f9377); its findings are in the appendix. Evidence tags follow
+orders are kept in this branch's history (commit 6e7ab41); its findings are in the appendix. Evidence tags follow
 DESIGN.md: [here] measured in this dev container, [doc] read from documentation or a package, [code] read from this
 repository, [inference], [untested], [decision] a choice made here.*
 
@@ -11,7 +11,7 @@ repository, [inference], [untested], [decision] a choice made here.*
 |---|---|---|
 | route | v0.1 runs in WSL2 on the friend's Windows PC, not natively | the owner, 2026-11-03 |
 | delivery | a GitHub pre-release on neb882/song-charting | the owner |
-| licence | MIT for songcharter's own code (LICENSE on `main`, 12ebf10); NOTICE lists the third parties | the owner |
+| licence | MIT for songcharter's own code (LICENSE on `main`, 3fe738c); NOTICE lists the third parties | the owner |
 | the friend's PC | Windows 11 with Smart App Control **on**; RTX 4070, 12 GB; 16–32 GB of RAM (plan for 16) | the friend, through the owner |
 
 **Why WSL2.**
@@ -219,7 +219,7 @@ Ubuntu holds nothing else.
 
 ## Appendix: why not native Windows on this PC
 
-The native plan (commit f9f9377) remains the route for a PC without Smart App Control, or for a signed release
+The native plan (commit 6e7ab41) remains the route for a PC without Smart App Control, or for a signed release
 (M4-99). What it found:
 - **Smart App Control on** blocks unsigned code loaded by the Windows loader and script engines, with no per-app
   exception (section 1). Every Python extension module and torch DLL is such a file.

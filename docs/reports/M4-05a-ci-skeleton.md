@@ -1,15 +1,15 @@
 # M4-05a report: the CI skeleton
 
-Branch `m4-05a-ci-skeleton` (from main 8a00e3f), worktree
+Branch `m4-05a-ci-skeleton` (from main 56b5591), worktree
 `/tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad/wt/m4-05a`. Pushed. The remote head is
-37737f1 (`git ls-remote` agrees). **CI is green on 37737f1.**
+5fdb80e (`git ls-remote` agrees). **CI is green on 5fdb80e.**
 
 ## Commits
 
 | commit | what |
 |---|---|
-| 6e459ef | CI skeleton: the workflow, the hook runners and the CI helpers (M4-05a). 8 new files, 639 lines |
-| 37737f1 | CI: imageio-ffmpeg on the pip path, since the runner has no ffmpeg (a fix after the first run) |
+| 0a9ef34 | CI skeleton: the workflow, the hook runners and the CI helpers (M4-05a). 8 new files, 639 lines |
+| 5fdb80e | CI: imageio-ffmpeg on the pip path, since the runner has no ffmpeg (a fix after the first run) |
 
 Files (all new; nothing under `songcharter/`, `tests/`, `docs/` or `pyproject.toml` was touched, checked with `git diff
 --name-only main..HEAD`):
@@ -169,12 +169,12 @@ Files (all new; nothing under `songcharter/`, `tests/`, `docs/` or `pyproject.to
   - the six files that failed in CI, with `FFMPEG` set to imageio-ffmpeg's bundled 7.0.2: `138 passed in 552.51s`.
 
 ### 2. [CI]
-- **Run 1, on 6e459ef:** https://github.com/neb882/song-charting/actions/runs/41687417489. **It failed**:
+- **Run 1, on 0a9ef34:** https://github.com/neb882/song-charting/actions/runs/41687417489. **It failed**:
   - linux took 2m07s. The suite ended `10 failed, 455 passed, 1 skipped, 46 errors in 53.08s`;
   - every error line is `ToolError: ffmpeg not found` or `No module named 'imageio_ffmpeg'`, and the 3 assertion
     failures quote the same message;
   - windows was green in 27s.
-- **Run 2, on 37737f1:** https://github.com/neb882/song-charting/actions/runs/41690822922. **Both jobs green.**
+- **Run 2, on 5fdb80e:** https://github.com/neb882/song-charting/actions/runs/41690822922. **Both jobs green.**
   - **linux 4m16s** (ubuntu-24.04 image 20261025.353):
     - install 54 s; it printed `python 3.13.17 torch 2.15.0+cpu`;
     - scan-chart 1 s; Node v24.19.0;
@@ -245,9 +245,9 @@ Files (all new; nothing under `songcharter/`, `tests/`, `docs/` or `pyproject.to
   - lint tools: `/tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad/lintvenv` (35 MB);
   - test folders: `/dev/shm/m4-05a` (29 MB). The chart's work folder and the pytest basetemp were deleted.
 
-## Round 2: the review's five minor findings (commit 820fc00)
+## Round 2: the review's five minor findings (commit 627c8f0)
 
-**Commit and CI.** All five were fixed in 820fc00, with tests in the new `packaging/ci/test_ci.py`: 78 pytest tests,
+**Commit and CI.** All five were fixed in 627c8f0, with tests in the new `packaging/ci/test_ci.py`: 78 pytest tests,
 stdlib and pytest only.
 - Both CI jobs now run it in a step "Test the CI tools", before the suite and the hooks. The Windows job runs it with
   Windows' own pwsh.
@@ -256,7 +256,7 @@ stdlib and pytest only.
     `511 passed, 1 skipped in 256.17s`; `no Linux hooks`;
   - windows 47s: test_ci `64 passed, 14 skipped in 21.00s` (13 bash-runner tests skip on Windows, and make_clip has
     no numpy there); `no Windows hooks`.
-- **Proof that the tests fail without the fixes:** the same test_ci.py, beside 37737f1's scripts and READMEs, gives
+- **Proof that the tests fail without the fixes:** the same test_ci.py, beside 5fdb80e's scripts and READMEs, gives
   `45 failed, 33 passed`. The failures cover every fix:
   - F1: 7 bash and 7 pwsh tests (6 stray entries plus the missing folder, per runner);
   - F2: 4 new header kinds, 20 archive cases (10 archives, each given as its folder and as the file), the clean

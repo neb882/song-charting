@@ -2,7 +2,7 @@
  "golden": 1,
  "about": "python -m eval.golden run (eval/golden.py). Everything but `run` is the same for two runs of one commit.",
  "code": {
-  "commit": "656991d57b66b958a6adb1d570b4bbf39590f4b5",
+  "commit": "072ed208c95a86b4a5d1ac71c839d0975a8395d3",
   "dirty": []
  },
  "options": {
@@ -1624,7 +1624,7 @@
   },
   "golden": {
    "path": "/tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad/wt/m4-04",
-   "commit": "fa55ced7b4b20abc5e4d8cd9b42bee547fc9f1d7",
+   "commit": "39df8d1596389659a445d7c3cefbcf547178bb14",
    "branch": "m4-04-ui-server",
    "dirty": []
   },
@@ -1683,7 +1683,7 @@
      "guitar"
     ],
     "unasked": [],
-    "kept_from": "11615e29fc9e032ca7e7d53a7083f2c79b64769b",
+    "kept_from": "77b2afda5051cd955649d46db0b8da6abf02b2d2",
     "kept_at": "2026-11-03T12:58:32",
     "stale": {
      "drums": "unchanged",
@@ -1740,7 +1740,7 @@
      "guitar"
     ],
     "unasked": [],
-    "kept_from": "11615e29fc9e032ca7e7d53a7083f2c79b64769b",
+    "kept_from": "77b2afda5051cd955649d46db0b8da6abf02b2d2",
     "kept_at": "2026-11-03T13:07:27",
     "stale": {
      "drums": "unchanged",
@@ -1797,7 +1797,7 @@
      "guitar"
     ],
     "unasked": [],
-    "kept_from": "11615e29fc9e032ca7e7d53a7083f2c79b64769b",
+    "kept_from": "77b2afda5051cd955649d46db0b8da6abf02b2d2",
     "kept_at": "2026-11-03T13:18:16",
     "stale": {
      "drums": "unchanged",
@@ -1854,7 +1854,7 @@
      "guitar"
     ],
     "unasked": [],
-    "kept_from": "11615e29fc9e032ca7e7d53a7083f2c79b64769b",
+    "kept_from": "77b2afda5051cd955649d46db0b8da6abf02b2d2",
     "kept_at": "2026-11-03T12:43:15",
     "stale": {
      "drums": "unchanged",
@@ -1911,7 +1911,7 @@
      "guitar"
     ],
     "unasked": [],
-    "kept_from": "11615e29fc9e032ca7e7d53a7083f2c79b64769b",
+    "kept_from": "77b2afda5051cd955649d46db0b8da6abf02b2d2",
     "kept_at": "2026-11-03T13:33:27",
     "stale": {
      "drums": "unchanged",
@@ -1968,7 +1968,7 @@
      "guitar"
     ],
     "unasked": [],
-    "kept_from": "11615e29fc9e032ca7e7d53a7083f2c79b64769b",
+    "kept_from": "77b2afda5051cd955649d46db0b8da6abf02b2d2",
     "kept_at": "2026-11-03T13:42:53",
     "stale": {
      "drums": "unchanged",
@@ -2025,7 +2025,7 @@
      "guitar"
     ],
     "unasked": [],
-    "kept_from": "11615e29fc9e032ca7e7d53a7083f2c79b64769b",
+    "kept_from": "77b2afda5051cd955649d46db0b8da6abf02b2d2",
     "kept_at": "2026-11-03T14:01:49",
     "stale": {
      "drums": "unchanged",

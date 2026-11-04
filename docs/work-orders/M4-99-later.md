@@ -5,7 +5,7 @@ the golden charts.
 
 ## Native Windows
 
-- **A native Windows release.** The native plan is in this branch's history (commit f9f9377, `docs/work-orders/`
+- **A native Windows release.** The native plan is in this branch's history (commit 6e7ab41, `docs/work-orders/`
   there), and its findings are in M4-00's appendix:
   - Inno Setup, `bootstrap.ps1`, the per-file autochart check, Windows lanes;
   - the guitar on WebGPU, with a WebGPU spike first;

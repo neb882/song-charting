@@ -1,20 +1,20 @@
 # M4-03 (install): builder's report
 
-Branch `m4-03-install` from `main` 656991d, worktree
+Branch `m4-03-install` from `main` 072ed20, worktree
 `/tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad/wt/m4-03`. Pushed to `origin/m4-03-install`
-(the order allows it). It merges with today's `main` (3402bfd) with no conflict (`git merge-tree`); this branch adds 13
+(the order allows it). It merges with today's `main` (d700b40) with no conflict (`git merge-tree`); this branch adds 13
 files and changes none that exist (`git diff --stat main...HEAD`).
 
 ## 1. Commits
 
 | commit | what |
 |---|---|
-| 3737c4d | `songcharter/runtime.py`, `launch.py`, `wslsetup.py`, `winshortcut.py` and their four test files |
-| f6df825 | `packaging/linux/install.sh`, `packaging/release/build.sh`, `tests/test_install.py` |
-| f5e0311 | Fix, found by the dev install: the install's Python imported `songcharter/` from the current folder (see 4.1). Also, `check` now reports an app file that differs instead of copying it. |
-| 2756b3c | `packaging/ci/linux.d/30-install.sh`, `packaging/ci/windows.d/30-shortcut.ps1` |
-| e6233a8 | `fetch` makes 3 retries (4 tries, the spec's wording). huggingface_hub's `EntryNotFoundError` (base: `Exception`) is now a step failure, not a bug. |
-| 866e2dd | Test: 12 GB or more is kept whatever Windows' RAM is (the mutation pass found this gap) |
+| 801eff6 | `songcharter/runtime.py`, `launch.py`, `wslsetup.py`, `winshortcut.py` and their four test files |
+| b3a690d | `packaging/linux/install.sh`, `packaging/release/build.sh`, `tests/test_install.py` |
+| 5c9e4c1 | Fix, found by the dev install: the install's Python imported `songcharter/` from the current folder (see 4.1). Also, `check` now reports an app file that differs instead of copying it. |
+| afe591f | `packaging/ci/linux.d/30-install.sh`, `packaging/ci/windows.d/30-shortcut.ps1` |
+| f1f622d | `fetch` makes 3 retries (4 tries, the spec's wording). huggingface_hub's `EntryNotFoundError` (base: `Exception`) is now a step failure, not a bug. |
+| 55c34ea | Test: 12 GB or more is kept whatever Windows' RAM is (the mutation pass found this gap) |
 
 Not touched: `pipeline.py`, `cli.py`, `engines/*`, `wsl.py`, `device.py`, `ui/`, `docs/`, `pyproject.toml`, the locks,
 `ci.yml`, `packaging/autochart/*`, every other hook. No M4-04 file.
@@ -72,14 +72,14 @@ Not touched: `pipeline.py`, `cli.py`, `engines/*`, `wsl.py`, `device.py`, `ui/`,
 ### [dev] 1: the suite, with the new tests
 
 `SONGCHARTER_SCAN_CHART=/home/user/song-charting/tools/scan-chart/scan.cjs <venv>/bin/python -m pytest -q -p no:cacheprovider --basetemp=/dev/shm/pt_m4_03 -rs`
-(at e6233a8's tree):
+(at f1f622d's tree):
 ```
 SKIPPED [1] tests/test_engines_sections.py:525: no allin1 Python configured ($SONGCHARTER_ALLIN1_PYTHON)
 SKIPPED [2] tests/test_package.py:34: run `npm install` in tools/scan-chart
 624 passed, 3 skipped in 791.01s (0:13:11)
 ```
-- These are the same three skips as main. 866e2dd only extends one wslsetup test: `tests/test_wslsetup.py` gives
-  `11 passed`, and CI ran the whole suite on 866e2dd (section 4).
+- These are the same three skips as main. 55c34ea only extends one wslsetup test: `tests/test_wslsetup.py` gives
+  `11 passed`, and CI ran the whole suite on 55c34ea (section 4).
 - I installed LnkParse3 1.6.0 into the shared scratchpad venv (pip), so that venv's runs include the LnkParse3 tests.
 - New tests: 49, in `test_runtime.py` 15, `test_launch.py` 7, `test_wslsetup.py` 11, `test_winshortcut.py` 4 and
   `test_install.py` 12 (6 of them one parametrized test).
@@ -127,7 +127,7 @@ The order's list, and where each is tested:
 
 **Breaking the code** (`scratchpad/m4-03-mutate.py`, in a scratch git copy): there were 60 breaks across `runtime.py`,
 `launch.py`, `wslsetup.py`, `winshortcut.py`, `install.sh` and `build.sh`. The first pass missed 3:
-- **#34:** the "12 GB or more is kept" branch. A new test (866e2dd) catches it now, rechecked.
+- **#34:** the "12 GB or more is kept" branch. A new test (55c34ea) catches it now, rechecked.
 - **#32:** `du`'s existence filter. It is equivalent: `du` totals the paths that exist anyway.
 - **#49:** the ANSI length check. It is equivalent: the Unicode check fires whenever it would.
 
@@ -165,7 +165,7 @@ exit 0 after 154 s
 there), `~/.cache/uv` 4.7 MB of its own, and `~/.cache/songcharter` 67 MB.
 
 **The bug.** The first rerun was started with the current folder in the main checkout. It printed `No module named
-songcharter.runtime`, and setup's exit 1 passed as doctor's problems. That is the bug fixed in f5e0311 (4.1). After a
+songcharter.runtime`, and setup's exit 1 passed as doctor's problems. That is the bug fixed in 5c9e4c1 (4.1). After a
 rebuild, two more runs, both from inside the main checkout:
 ```
 run A: exit 0 after 10 s     (new tarball: app re-extracted, songcharter rebuilt, "Prepared 1 package", nothing downloaded)
@@ -193,7 +193,7 @@ check_gate exit 0
 
 ## 4. CI (neb882/song-charting)
 
-- **Run 41727211028** on 2756b3c (https://github.com/neb882/song-charting/actions/runs/41727211028): **success, both
+- **Run 41727211028** on afe591f (https://github.com/neb882/song-charting/actions/runs/41727211028): **success, both
   jobs.**
   - **linux:** the suite gave `623 passed, 4 skipped`; the skips are allin1's probe and the 3 LnkParse3 tests, as that
     venv has no LnkParse3. Then `all 3 Linux hooks passed: 10-lanes.sh 11s 20-device.sh 4s 30-install.sh 118s`.
@@ -214,7 +214,7 @@ check_gate exit 0
     ```
     WScript.Shell reads (diagnosis only): `TargetPath=` empty, `Arguments=/c "echo ok> %TEMP%\lnk-ok.txt || pause"`,
     `WorkingDirectory=C:\Users\runneradmin`, `IconLocation=C:\Windows\System32\wsl.exe,0`.
-- **Run 41730370579** on 866e2dd, the branch's head (https://github.com/neb882/song-charting/actions/runs/41730370579):
+- **Run 41730370579** on 55c34ea, the branch's head (https://github.com/neb882/song-charting/actions/runs/41730370579):
   **success, both jobs.**
   - **linux:** suite `623 passed, 4 skipped in 207.91s`; `all 3 Linux hooks passed: 10-lanes.sh 12s 20-device.sh 5s
     30-install.sh 138s`, with `the reinstall downloaded nothing` and `30-install: ok`.
@@ -321,7 +321,7 @@ check_gate exit 0
 
 ## 9. Review round 1 (the reviewer's six findings, all fixed)
 
-Commits: **9b0570d** (F5), **f0e82d2** (F1–F4, F6).
+Commits: **9d2314d** (F5), **16b81bc** (F1–F4, F6).
 
 - **F1 (downloads' hash checks):** tests now run the whole filled install.sh on stand-ins: curl serving files, uv
   inside its own tarball, the environments' python whose helpers' behaviour is set per test, `id` (not root), `df`
@@ -355,7 +355,7 @@ Commits: **9b0570d** (F5), **f0e82d2** (F1–F4, F6).
 - **F4 (setup's result):**
   - "doctor.json is this run's" is now its `stat -c %y` (nanoseconds) before and after, not `-nt` against a stamp,
     which compares whole seconds on some bash versions;
-  - tests: setup's exit 1 before doctor stops the install before the launcher (f5e0311's case);
+  - tests: setup's exit 1 before doctor stops the install before the launcher (5c9e4c1's case);
   - doctor's problems (exit 1, `doctor.json` written) still install, with exit 1;
   - a changed `.wslconfig` prints the restart line and calls `cmd.exe /d /c wsl.exe --shutdown`; with no flag,
     neither happens;
@@ -373,6 +373,6 @@ Commits: **9b0570d** (F5), **f0e82d2** (F1–F4, F6).
 (dropping the helper's own-line check, the last-line-wins rule, `say_failed`'s file write, and passing exit 2
 through). All 15 are caught ("missed: 0").
 
-**Suite at f0e82d2:** `641 passed, 3 skipped in 1058.62s` (the same three skips; `m4-03-logs/suite-2.txt`).
-**CI run 41735308840** on f0e82d2 (https://github.com/neb882/song-charting/actions/runs/41735308840): success, both
+**Suite at 16b81bc:** `641 passed, 3 skipped in 1058.62s` (the same three skips; `m4-03-logs/suite-2.txt`).
+**CI run 41735308840** on 16b81bc (https://github.com/neb882/song-charting/actions/runs/41735308840): success, both
 jobs.

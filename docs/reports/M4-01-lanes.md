@@ -1,7 +1,7 @@
 # M4-01 (lanes and locks): builder's report
 
-Branch `m4-01-lanes` from `main` 8a00e3f, worktree
-`/tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad/wt/m4-01`, final commit **fde5b53**. Not
+Branch `m4-01-lanes` from `main` 56b5591, worktree
+`/tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad/wt/m4-01`, final commit **2579784**. Not
 pushed (the coordinator said not to; and M4-05a's workflow is not on this branch, so a push would run nothing).
 
 **Verdict:** built, with the coordinator's torchaudio decision (option B, plus the probe guard) applied. Done-means
@@ -12,13 +12,13 @@ CPU proxy of it passes (section 3).
 
 | commit | what |
 |---|---|
-| cd904b1 | `pyproject.toml`: `packaging>=24` in `dev`; new extras `ffmpeg`, `app`, `cpu`, `cu126`, `cu132` (cu132 with `nvidia-curand==10.4.4.72; sys_platform == 'linux'`, cited as [here, 5070 spike]); `[tool.uv]` (`required-version = "==0.13.5"`, conflicts, Linux x86_64 only); torch sourced per lane from three explicit PyTorch indexes. `uv.lock`, 114 packages. |
-| c316f57 | `packaging/allin1/pyproject.toml` and `uv.lock`, as the order specified. |
-| 5886a0d | `packaging/check_wheels.py`, `tests/test_check_wheels.py`. |
-| 35f25e7 | `packaging/ci/linux.d/10-lanes.sh`. |
-| afbf42b | allin1: torchaudio by lane. cpu and cu126 take `2.11.1+cpu` from the cpu index; cu132 takes `2.11.1+cu132` from its own. The reason is in a comment beside the sources: allin1 only imports torchaudio; PyPI's 2.11.1 is a CUDA 13 build; cu126's index has no 2.11.1. torchaudio moves from `dependencies` into the three lane extras, because uv refuses an extra-scoped source for a package the extra does not list. Lock: 105 packages (two torchaudio builds). |
-| 9dd5348 | check_wheels: the named exception `CROSS_INDEX = {"cu126": {"torchaudio": "cpu"}}`. The cpu lane's torchaudio comes from its own index, so it needs none. Details below. |
-| fde5b53 | 10-lanes: the guard. allin1's cpu lane is synced into `$CI_TMP` and `tests/test_engines_sections.py -k probe` runs with `$CI_PY` (default `python3`) and `SONGCHARTER_ALLIN1_PYTHON` set to it; a skipped probe test fails the hook too. |
+| d7f14b2 | `pyproject.toml`: `packaging>=24` in `dev`; new extras `ffmpeg`, `app`, `cpu`, `cu126`, `cu132` (cu132 with `nvidia-curand==10.4.4.72; sys_platform == 'linux'`, cited as [here, 5070 spike]); `[tool.uv]` (`required-version = "==0.13.5"`, conflicts, Linux x86_64 only); torch sourced per lane from three explicit PyTorch indexes. `uv.lock`, 114 packages. |
+| d2f7d3f | `packaging/allin1/pyproject.toml` and `uv.lock`, as the order specified. |
+| 8e9d6a7 | `packaging/check_wheels.py`, `tests/test_check_wheels.py`. |
+| dcd820b | `packaging/ci/linux.d/10-lanes.sh`. |
+| 9cabeff | allin1: torchaudio by lane. cpu and cu126 take `2.11.1+cpu` from the cpu index; cu132 takes `2.11.1+cu132` from its own. The reason is in a comment beside the sources: allin1 only imports torchaudio; PyPI's 2.11.1 is a CUDA 13 build; cu126's index has no 2.11.1. torchaudio moves from `dependencies` into the three lane extras, because uv refuses an extra-scoped source for a package the extra does not list. Lock: 105 packages (two torchaudio builds). |
+| 327c92d | check_wheels: the named exception `CROSS_INDEX = {"cu126": {"torchaudio": "cpu"}}`. The cpu lane's torchaudio comes from its own index, so it needs none. Details below. |
+| 2579784 | 10-lanes: the guard. allin1's cpu lane is synced into `$CI_TMP` and `tests/test_engines_sections.py -k probe` runs with `$CI_PY` (default `python3`) and `SONGCHARTER_ALLIN1_PYTHON` set to it; a skipped probe test fails the hook too. |
 
 **How the exception works:**
 - The compile's input is now a generated pyproject.toml of the pins.
@@ -72,13 +72,13 @@ ok packaging/allin1 cu132: 82 packages, torch 2.15.0+cu132, torchaudio 2.11.1+cu
 
 **3. Sync and the suite: pass.** `UV_PROJECT_ENVIRONMENT=/dev/shm/m4-01/env uv sync --frozen --extra cpu --extra app
 --extra dev` → `Installed 67 packages` (exit 0). The suite, as CLAUDE.md runs it, with that Python:
-- main 8a00e3f: `509 passed, 3 skipped`;
-- 35f25e7: `529 passed, 3 skipped`;
-- fde5b53: `533 passed, 3 skipped in 542.36s` (509 + the 24 new tests; `scratchpad/m4-01-scripts/logs/suite3.txt`).
+- main 56b5591: `509 passed, 3 skipped`;
+- dcd820b: `529 passed, 3 skipped`;
+- 2579784: `533 passed, 3 skipped in 542.36s` (509 + the 24 new tests; `scratchpad/m4-01-scripts/logs/suite3.txt`).
 - The skips are the same three each time: the configured-allin1 probe, and `test_package`'s two (no `node_modules`
   in a fresh checkout).
 
-**4. allin1's environment and the real probe: pass** (it failed at c316f57).
+**4. allin1's environment and the real probe: pass** (it failed at d2f7d3f).
 `UV_PROJECT_ENVIRONMENT=/dev/shm/m4-01/allin1 uv sync --frozen --project packaging/allin1 --extra cpu` installs
 63 packages, including `torch==2.15.0+cpu` and `torchaudio==2.11.1+cpu`. Then
 `SONGCHARTER_ALLIN1_PYTHON=/dev/shm/m4-01/allin1/bin/python <env>/bin/python -m pytest -q tests/test_engines_sections.py
@@ -104,13 +104,13 @@ and torchaudio, which the lock omits, read by HEAD (`scratchpad/m4-01-scripts/si
 | cu126 | 3.90 GB (80) | 3.82 GB (82) | 3.91 GB (87) | about 3.9 |
 | cu132 | 3.30 GB (81) | 3.16 GB (82) | 3.31 GB (88) | about 3.2 (curand adds 0.06) |
 
-**6. pip in a fresh venv: pass** (on cd904b1; root `pyproject.toml` has changed since only in a comment).
+**6. pip in a fresh venv: pass** (on d7f14b2; root `pyproject.toml` has changed since only in a comment).
 - `pip install -e ".[dev,separate,drums,bass,sections,preview]"` installed; `pip check` was clean; everything
   imported.
 - torch went in first from the cpu index, as M4-05a's CI does.
 - `pip install --dry-run -e ".[app,cpu]"` works.
 
-**The hook (fde5b53), locally, as CI runs it:** exit 0 in 39 s. It printed the six ok lines and the six dry-run
+**The hook (2579784), locally, as CI runs it:** exit 0 in 39 s. It printed the six ok lines and the six dry-run
 lines above, then:
 ```
 allin1-cpu: Installed 63 packages in 217ms
@@ -118,8 +118,8 @@ allin1-cpu: Installed 63 packages in 217ms
 5 passed, 24 deselected in 19.60s
 ```
 
-**The guard catches the old failure.** In a scratch checkout of fde5b53, with `packaging/allin1` put back to
-c316f57 (PyPI's torchaudio):
+**The guard catches the old failure.** In a scratch checkout of 2579784, with `packaging/allin1` put back to
+d2f7d3f (PyPI's torchaudio):
 - **The whole hook exits 1**, at the wheels check. With torchaudio compared in full:
   ```
   FAIL packaging/allin1 cpu: ... torchaudio: 2.11.1 in the lock, 2.11.1+cpu in the compile
@@ -172,7 +172,7 @@ Python 3.13, `$CI_PY` with songcharter and pytest, and the network; it adds abou
   - `scratchpad/m4-01-scripts/`: `mutate.py`, `sizes.py` and `logs/`;
   - `scratchpad/briefs/m4-01.torchaudio-option-a.diff`, now obsolete.
 
-## 6. Review round: F1 fixed (commit 80f32aa), F2 left alone
+## 6. Review round: F1 fixed (commit c0a145c), F2 left alone
 
 **F1:** the check certified the indexes, not the lock.
 - **The fix:** once the compile matches, `lock_wheel_problems()` reads `uv.lock` itself. Each kept pin but the
@@ -193,6 +193,6 @@ Python 3.13, `$CI_PY` with songcharter and pytest, and the network; it adds abou
   - an sdist-only entry passing;
   - a missing entry passing.
 - 39 tests pass with uv 0.13.5 and 0.11.32.
-- **Suite (80f32aa):** `548 passed, 3 skipped in 522.34s (0:08:42)` (509 + the 39 tests of test_check_wheels.py; logs/suite4.txt).
+- **Suite (c0a145c):** `548 passed, 3 skipped in 522.34s (0:08:42)` (509 + the 39 tests of test_check_wheels.py; logs/suite4.txt).
 
 **F2** (deferred by the coordinator): with no lane extra, `uv sync` installs PyPI's CUDA torch. No change.

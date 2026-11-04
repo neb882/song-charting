@@ -1,8 +1,8 @@
 # Report: the M4 work orders, re-planned for WSL2
 
 Branch `m4-plan` in `/tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad/wt/m4-plan`, rebased
-onto `main` (394dd1c: LICENSE, golden charts). Two commits:
-- f9f9377: the native plan, kept so its orders stay in history;
+onto `main` (de76c06: LICENSE, golden charts). Two commits:
+- 6e7ab41: the native plan, kept so its orders stay in history;
 - the WSL re-plan on top (hash at the end).
 
 Not pushed.
@@ -45,7 +45,7 @@ Not pushed.
 | M4-06 ui-results | preview, zip, install into the Windows Songs folder under /mnt/c (saved → registry Documents incl. OneDrive), rename retried ~5 s on EACCES/EBUSY/EPERM, blocked message for security software or OneDrive, diagnostics (with `clonehero.json`, no audio) |
 | M4-07 release | the friend's guide (checks, `wsl --install`, driver, the one hash-checked install line, start, chart, diagnostics, remove), NOTICE, guide rendering in build.sh, a hook running the guide's exact line; the `gh release create --prerelease` command |
 | M4-08 hardware | A: the owner's 5070, a fresh `Ubuntu-26.04` distro with WSL memory 12 GB (and SAC on if agreed), A1–A12 and pass lines; B: the friend alone with the guide |
-| M4-99 later | native Windows (the f9f9377 plan; blocked by SAC without signing), CUDA on native Windows, signing, highway, metronome, quick fixes, ×2/÷2, polish workspace, Preview in Clone Hero, weekly cu132 job, settings.ini, estimates, window-free start, updates, memory tuning |
+| M4-99 later | native Windows (the 6e7ab41 plan; blocked by SAC without signing), CUDA on native Windows, signing, highway, metronome, quick fixes, ×2/÷2, polish workspace, Preview in Clone Hero, weekly cu132 job, settings.ini, estimates, window-free start, updates, memory tuning |
 
 ## Waves
 
@@ -255,7 +255,7 @@ Still open from before: delete `m4-workflow-push-probe` on GitHub.
 
 ## Commit
 
-7b59cc7 on `m4-plan` (on top of f9f9377, the native plan, and main 394dd1c); not pushed. 16 files: the work orders, PROGRESS, `packaging/autochart/`.
+db12675 on `m4-plan` (on top of 6e7ab41, the native plan, and main de76c06); not pushed. 16 files: the work orders, PROGRESS, `packaging/autochart/`.
 
 ## Round 3: the advisor's review of the WSL plan (12 findings, all taken in)
 

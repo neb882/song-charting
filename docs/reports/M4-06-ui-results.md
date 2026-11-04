@@ -1,15 +1,15 @@
 # M4-06 report: the UI after the build (preview, zip, Clone Hero, diagnostics, the lyrics box)
 
-Branch `m4-06-ui-results` (worktree `<scratchpad>/wt/m4-06`), from main at 0f714d4 (f5b37da plus a PROGRESS-only
+Branch `m4-06-ui-results` (worktree `<scratchpad>/wt/m4-06`), from main at 006993b (0e4520c plus a PROGRESS-only
 commit). The order touches no file on the chart path, so no golden run was made.
 
 ## Commits
 
-- 6eb824d M4-06 review fixes: the older chart's renames tested; a stranded .old named, and our leftovers dealt with
-- 1db8138 ui: the preview's pages in page order, page_100 after page_99
-- 785788d diagnostics: one rule for charts (the .chart suffix), so a mutation cannot hide behind a second
-- 4bc3f8c M4-06: the page after the build: preview, zip, Clone Hero, diagnostics, the lyrics box
-- 6bc8cff M4-06: clonehero.py (the Songs folder, install, the zip) and the diagnostics bundle
+- 590370e M4-06 review fixes: the older chart's renames tested; a stranded .old named, and our leftovers dealt with
+- 6c6b1ad ui: the preview's pages in page order, page_100 after page_99
+- 6887e79 diagnostics: one rule for charts (the .chart suffix), so a mutation cannot hide behind a second
+- b9398b6 M4-06: the page after the build: preview, zip, Clone Hero, diagnostics, the lyrics box
+- e6b38d0 M4-06: clonehero.py (the Songs folder, install, the zip) and the diagnostics bundle
 
 Each ends with the two trailer lines the brief gives.
 
@@ -88,10 +88,10 @@ Each ends with the two trailer lines the brief gives.
 
 ## Checks
 
-- **The full suite** (dev container, at 785788d, under the heavy-job lock):
+- **The full suite** (dev container, at 6887e79, under the heavy-job lock):
   `SONGCHARTER_SCAN_CHART=<repo>/tools/scan-chart/scan.cjs tools/heavy.sh <venv python> -m pytest
   -q -p no:cacheprovider --basetemp=/dev/shm/m4-06/pt-suite` → `799 passed, 4 skipped in 569.80s (0:09:29)`.
-  The last commit (1db8138) changes one line of server.py and its test: `pytest tests/test_ui_server.py` → `43 passed
+  The last commit (6c6b1ad) changes one line of server.py and its test: `pytest tests/test_ui_server.py` → `43 passed
   in 12.87s` (and that test fails without the line).
 - **The order's tests alone:** `pytest tests/test_clonehero.py tests/test_diagnostics.py tests/test_ui_server.py
   tests/test_ui_jobs.py` → `111 passed in 24.41s` (before the last two commits; each file rerun after them).
@@ -183,7 +183,7 @@ The Done screen's JavaScript has no unit test; it was checked through the screen
 
 ### CI
 
-- **Run 41782384888 on 1db8138: success** (both jobs): https://github.com/neb882/song-charting/actions/runs/41782384888.
+- **Run 41782384888 on 6c6b1ad: success** (both jobs): https://github.com/neb882/song-charting/actions/runs/41782384888.
   The suite there: `799 passed, 4 skipped in 238.71s`. The hooks: `all 5 Linux hooks passed: 10-lanes.sh 9s
   20-device.sh 4s 30-install.sh 181s 40-ui.sh 19s 60-results.sh 46s`. Read from `gh run view --log --job`, the order's
   own hook ran whole:
@@ -194,7 +194,7 @@ The Done screen's JavaScript has no unit test; it was checked through the screen
     SONGCHARTER_OFFLINE=1)`, `no pasted word in 22 logs, records and answers`;
   - `check_no_audio: ok` on `d.zip`, `d/` (unpacked), `chart-diagnostics.zip` and `lyrics-diagnostics.zip`;
     `60-results: ok`; then the artifacts' own check: `ok, 35 files and 35 archive members, no audio`.
-- Run 41781352824 on 785788d was cancelled by the workflow's concurrency group when 1db8138 was pushed (its windows
+- Run 41781352824 on 6887e79 was cancelled by the workflow's concurrency group when 6c6b1ad was pushed (its windows
   job had passed).
 
 ## Not done, uncertain, or left for others
@@ -235,7 +235,7 @@ names: "Jörg", "Jorg", "Fixture Band", "Contoso", `/home/sc`).
 ## Review fixes
 
 The review (`m4-06.review.md`): no major finding, two minor. Both choices the builder flagged hold (the replace
-sequence; no export or install of a failed-gate chart). Fixed in 6eb824d.
+sequence; no export or install of a failed-gate chart). Fixed in 590370e.
 
 - **F1 (test gap):** `failing_rename` in tests/test_clonehero.py now refuses any of the three renames (into place
   `failures`, the older chart aside `aside`, its put-back `back`). New tests: the rename aside refused 3 times then
@@ -268,7 +268,7 @@ sequence; no export or install of a failed-gate chart). Fixed in 6eb824d.
   marks, so it stays in Songs; whether Clone Hero lists dot-folders at all is M4-08's to see.
 - **Checks:** `pytest tests/test_ui_server.py tests/test_clonehero.py tests/test_diagnostics.py tests/test_ui_jobs.py`
   -> `117 passed in 27.05s` (the files covering the diff). The full suite was not rerun locally; CI runs it.
-- **CI:** run 41785468704 on 6eb824d: **success**, both jobs
+- **CI:** run 41785468704 on 590370e: **success**, both jobs
   (https://github.com/neb882/song-charting/actions/runs/41785468704). Suite `805 passed, 4 skipped in 292.77s`;
   `all 5 Linux hooks passed: ... 60-results.sh 51s`; from its log, the hook's `installed again: 409`, `replaced: 200`,
   the lyrics run (`not added (the aligner's weights ... SONGCHARTER_OFFLINE=1)`, `no pasted word in 22 logs, records

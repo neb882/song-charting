@@ -1,17 +1,17 @@
 # Report: golden charts (`eval/golden.py`)
 
-Worktree `S/wt/golden`, branch `golden` from `main` (11615e2). Not pushed. S below is
+Worktree `S/wt/golden`, branch `golden` from `main` (77b2afd). Not pushed. S below is
 /tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad.
 
 ## Commits (on `golden`)
 
 | commit | what |
 |---|---|
-| 2e755db | `eval/golden.py` (run, diff), the track hash in `eval/scorer/scan_notes.cjs`, `tests/test_golden.py` |
-| 299f93a | the kept folders' own format number (`KEPT_FORMAT`), the commits recorded as a run starts, sharper tests |
-| 0947cee | fix: a changed file's name lost its first character in the summary's `dirty` list (porcelain output stripped) |
-| 0cdfbab | docs: CLAUDE.md release gate, sc-inspector, eval/README, DESIGN 3.6 and §11, PROGRESS; a detached checkout shows no branch name |
-| c597b48 | docs only: the real `--rerun` results and their cost (DESIGN 3.6, eval/README, sc-inspector) |
+| aea15a7 | `eval/golden.py` (run, diff), the track hash in `eval/scorer/scan_notes.cjs`, `tests/test_golden.py` |
+| d38a400 | the kept folders' own format number (`KEPT_FORMAT`), the commits recorded as a run starts, sharper tests |
+| f8f4177 | fix: a changed file's name lost its first character in the summary's `dirty` list (porcelain output stripped) |
+| c7da998 | docs: CLAUDE.md release gate, sc-inspector, eval/README, DESIGN 3.6 and §11, PROGRESS; a detached checkout shows no branch name |
+| f4570cb | docs only: the real `--rerun` results and their cost (DESIGN 3.6, eval/README, sc-inspector) |
 
 Files: `eval/golden.py` (new, 854 lines), `tests/test_golden.py` (new, 24 tests), `eval/scorer/scan_notes.cjs`
 (+hash, +scan-chart beside `$SONGCHARTER_SCAN_CHART`), `CLAUDE.md`, `.claude/agents/sc-inspector.md`,
@@ -73,8 +73,8 @@ SONGCHARTER_AUTOCHART=S/eval/tools/autochart SONGCHARTER_ALLIN1_PYTHON=S/researc
 
 `SONGCHARTER_SCAN_CHART=/home/user/song-charting/tools/scan-chart/scan.cjs S/venv/bin/python -m pytest -q -p no:cacheprovider --basetemp=/dev/shm/pt_golden`
 in S/wt/golden:
-- at 0cdfbab (final): `500 passed, 3 skipped in 459.31s (0:07:39)`
-- at 0947cee: `500 passed, 3 skipped in 457.52s (0:07:37)`
+- at c7da998 (final): `500 passed, 3 skipped in 459.31s (0:07:39)`
+- at f8f4177: `500 passed, 3 skipped in 457.52s (0:07:37)`
 - `main` in the fresh worktree before any change: `476 passed, 3 skipped in 477.67s`. The 24 new tests all run
   (`tests/test_golden.py`: `24 passed`); the 3 skips are main's.
 
@@ -91,7 +91,7 @@ removed.
 ### A baseline exists
 
 `cd S/wt/golden && S/venv/bin/python -m eval.golden run --code S/wt/golden-main --refs S/eval/refs --work S/golden/work --stems S/sepcache/cache --threads 2 --out S/golden/base`
-(S/wt/golden-main: a detached worktree of main at 11615e2, removed afterwards). Last lines:
+(S/wt/golden-main: a detached worktree of main at 77b2afd, removed afterwards). Last lines:
 
 ```
   test_song: cold: kept folder made in 1081 s, then built in 82 s, gate OK; every engine cached; 1164 s in all
@@ -99,8 +99,8 @@ summary: S/golden/base/summary.json (4664 s)
 real	77m44.317s
 exit 0
 ```
-S/golden/base/summary.json: code 11615e29fc9e…, dirty [], 7 songs, all exit 0, gate OK, 84 part-levels. Its `run`
-section's `golden.dirty` shows "claude/agents/sc-inspector.md": that run used the tool before the 0947cee fix (the
+S/golden/base/summary.json: code 77b2afda5051…, dirty [], 7 songs, all exit 0, gate OK, 84 part-levels. Its `run`
+section's `golden.dirty` shows "claude/agents/sc-inspector.md": that run used the tool before the f8f4177 fix (the
 docs were uncommitted then); the `run` section is informational only.
 
 Pooled F1@50 on main: guitar Expert 0.8527 (6 songs), Hard 0.8010, Medium 0.7474, Easy 0.6150 (4); bass Expert
@@ -121,7 +121,7 @@ Pooled F1@50 on main: guitar Expert 0.8527 (6 songs), Hard 0.8010, Medium 0.7474
 | test_song | 412 s | 1081 s | 650 / 188 s | 75 s | 76 s |
 | the set | | 4825 s (80 min) | | | 388 s (6.5 min) |
 
-\* made in the one-song smoke run just before the baseline (same code, main 11615e2); in the baseline it was warm (46 s).
+\* made in the one-song smoke run just before the baseline (same code, main 77b2afd); in the baseline it was warm (46 s).
 Warm columns from the first warm run (main_w1). A cold song in `run` costs the kept folder plus one warm build.
 
 ### Determinism
@@ -182,7 +182,7 @@ by two runs is tested with stand-ins only (`test_two_runs_at_once_make_a_kept_fo
 
 ### --rerun with the real engines
 
-From S/wt/golden at 0cdfbab (no `--code`; songcharter/ is identical to main), kept folders fingerprinted before and
+From S/wt/golden at c7da998 (no `--code`; songcharter/ is identical to main), kept folders fingerprinted before and
 after (S/golden/rerun.sh, log in S/golden/checks/rerun.log):
 ```
 217 files, 4.55 GB (apparent), runs folder entries: 0
@@ -243,7 +243,7 @@ to /dev/shm and are deleted.
 - **Not compared:** sections, song.ini values, the audio. A change to the separation's code does not show (the kept
   stems); a change to the decode or the separation's key shows as `decode`/`separate` among the engines that ran
   (unasked). One CPU take only: the CUDA default (4 spliced takes) is not covered. Linux/WSL only (fcntl, hard links).
-- Kept engine outputs are main 11615e2's code; a later engine change without `--rerun` compares that output on both
+- Kept engine outputs are main 77b2afd's code; a later engine change without `--rerun` compares that output on both
   sides (report.md's "kept folders made by" row shows which commit made them).
 - Warm times were measured while I edited docs and ran unit tests; main_w2 overlapped the full suite.
 - Left in place on purpose: S/golden/work (kept folders, 663 MB), S/golden/base (baseline), S/golden/checks
@@ -252,7 +252,7 @@ to /dev/shm and are deleted.
 
 ## Review fixes (G1–G4), after the first report
 
-Commits: 66c480b (code and tests), c986c6e (docs), plus the PROGRESS line below. Not pushed.
+Commits: 33e4e58 (code and tests), 60d092e (docs), plus the PROGRESS line below. Not pushed.
 
 - **G1 (rerun on one side).** Docs: `RERUN` set once and passed to both runs, with the cost (per run and song: about
   half a minute for drums or bass, 1.5–3 min for sections, 3.5–11 min for the guitar). `compare()`: a run-level
@@ -277,14 +277,14 @@ Commits: 66c480b (code and tests), c986c6e (docs), plus the PROGRESS line below.
 - **G4 (exit codes).** `main`: Refused and OSError → 2, KeyboardInterrupt → 130, any other exception → traceback and
   3; `--threads` below 1 refused. Test: `test_bad_input_exits_2_and_a_bug_exits_3`.
 - Break-checks: 16 mutations of the fixes (S/golden/mut/mutate2.py), each failing a test; the earlier 35 still do.
-- Suite at c986c6e: `509 passed, 3 skipped in 453.71s (0:07:33)`.
+- Suite at 60d092e: `509 passed, 3 skipped in 453.71s (0:07:33)`.
 
 **The skeptic's scenarios, run for real** (S/golden/scenarios.sh, log in S/golden/checks/review/), Take Me Out and
-Creep: release N = bass.py:266 `>= 5` → `>= 3` with no VERSION bump, N+1 = its revert; kept folders by 11615e2.
+Creep: release N = bass.py:266 `>= 5` → `>= 3` with no VERSION bump, N+1 = its revert; kept folders by 77b2afd.
 - Fixed gate (`--rerun bass` on both): `diff N_rerun N1_rerun --expect none: exit 1` (8 bass rows UNEXPECTED, "identical: no"); with `--expect bass`: exit 0, 8 changed.
 - The skeptic's gate (old without, new with `--rerun bass`): exit 1, "bass was rerun in the new run only: the old
-  run's bass came from the kept folders (made by 11615e29fc9e), not from its own code (2833f96a770a)" plus the stale line.
-- `--rerun` forgotten on both: exit 1 (the old run's bass stale against 11615e2).
+  run's bass came from the kept folders (made by 77b2afda5051), not from its own code (2833f96a770a)" plus the stale line.
+- `--rerun` forgotten on both: exit 1 (the old run's bass stale against 77b2afd).
 - old(no rerun) against old(rerun), one commit: exit 1, now with both causes named above the verdict.
 - A refused run (`--rerun basss`) on an out with a summary: "cleared … summary.json, logs, scores, take_me_out, creep", exit 2; the diff then exits 2.
 - A run killed with SIGKILL after 25 s on an out with a summary: only logs/ left; the diff exits 2.
@@ -293,9 +293,9 @@ Creep: release N = bass.py:266 `>= 5` → `>= 3` with no VERSION bump, N+1 = its
 
 **The docs' gate commands, run as written** (the ```sh blocks extracted verbatim from CLAUDE.md and
 sc-inspector.md, RERUN="" and EXPECT=none, run at the same time; S/golden/checks/gate/): CLAUDE.md's from the release
-checkout (c986c6e) against main at /dev/shm/golden-old: both runs 406 s, `golden diff: no UNEXPECTED change`,
+checkout (60d092e) against main at /dev/shm/golden-old: both runs 406 s, `golden diff: no UNEXPECTED change`,
 "CLAUDE.md block exit 0". The inspector's from fresh checkouts /dev/shm/inspect/{old,new}: 406 and 407 s, "inspector
 block exit 0". The new run against S/golden/base: exit 0, identical. The README's block is the same commands as
 CLAUDE.md's. All temporary worktrees, branches and /dev/shm outputs removed; S/golden/work untouched (fingerprints).
-Final commits: 66c480b, c986c6e, and the PROGRESS line after them. The suite ran at c986c6e (the PROGRESS commit is
+Final commits: 33e4e58, 60d092e, and the PROGRESS line after them. The suite ran at 60d092e (the PROGRESS commit is
 JSON only).

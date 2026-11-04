@@ -52,7 +52,7 @@ before and after a change, every part's track hash compared.*
 | solo evaluation | every solo rule (off, labels, stems, the stem test on every section, their union and intersection) through `starpower.place_solos` on pipeline-shaped builds of the six references and the test song, on fold-0, ensemble and librosa sections, against the human solos and the two the friend confirmed (§2.10) |
 | defaults review | the review of branch `pipeline-defaults` (options, cache, tests, docs), each finding reproduced by a verifier: among them a real autochart take traced with strace, a prune that fails partway with NTFS's name order imitated, and two real runs racing a prune |
 | pipeline-defaults runs | `songcharter chart` with branch `pipeline-defaults`'s defaults in the dev container: Take Me Out and the test song on copies of their warm work folders, two 35-s cuts of Take Me Out (one with the work folder in the cache), and the clip's before-and-after on the excerpt that failed (§5, M3) |
-| golden runs | `python -m eval.golden` in the dev container (CPU, 2 threads): the baseline of `main` at 11615e2 on the seven songs, two warm runs of it, a deliberate one-line change to the bass Hard reduction on a scratch branch, and `main` and that change built at the same time (§3.6) |
+| golden runs | `python -m eval.golden` in the dev container (CPU, 2 threads): the baseline of `main` at 77b2afd on the seven songs, two warm runs of it, a deliberate one-line change to the bass Hard reduction on a scratch branch, and `main` and that change built at the same time (§3.6) |
 
 ---
 
@@ -1543,7 +1543,7 @@ v1's absolute targets, kept as information only:
   chained with `&&` from a `rm -rf` of both output folders. Bad input exits 2, a bug 3 (never 1, which is a failed
   build or an UNEXPECTED diff).
 - **Runs** [here, golden runs]:
-  - **The baseline**, `main` at 11615e2 on the seven songs: every gate OK; Expert F1@50 pooled over the songs guitar
+  - **The baseline**, `main` at 77b2afd on the seven songs: every gate OK; Expert F1@50 pooled over the songs guitar
     0.853 (6 songs), bass 0.825 (5), drums 0.962 (5), beat F1 0.876 (6); Take Me Out's guitar 0.909, bass 0.912,
     drums 0.944, as in §3.5.
   - **Cold** (a kept folder made, the stems hard-linked from the seeded separation cache, so no separation ran): 474 s
@@ -2556,7 +2556,7 @@ decides), and the p95-drift click test (critique G4).
   folder test setting `USERPROFILE`, which Windows' `Path.home()` reads instead of `HOME` (it failed under
   Windows' lookup, emulated, and passes with it) [here].
 
-**Golden charts** (branch `golden`, on `main` at 11615e2) [here, golden runs]:
+**Golden charts** (branch `golden`, on `main` at 77b2afd) [here, golden runs]:
 - `eval/golden.py` (`run`, `diff`) and `tests/test_golden.py`; `eval/scorer/scan_notes.cjs` prints each track's
   `calculateTrackHash` and finds scan-chart beside `$SONGCHARTER_SCAN_CHART` (§3.6).
 - The release gate (`CLAUDE.md`) and the inspector (`.claude/agents/sc-inspector.md`) name the commands;

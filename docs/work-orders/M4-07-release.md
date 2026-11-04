@@ -86,7 +86,7 @@ The release itself ships only songcharter's code and this file. Check each licen
 
 | component | status |
 |---|---|
-| songcharter | MIT (LICENSE, `main` 12ebf10) |
+| songcharter | MIT (LICENSE, `main` 3fe738c) |
 | uv | MIT OR Apache-2.0, downloaded |
 | CPython (python-build-standalone) | PSF licence, downloaded |
 | PyTorch | BSD-3-Clause, downloaded |

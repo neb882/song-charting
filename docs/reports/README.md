@@ -6,7 +6,9 @@ details and lyrics.
 
 Paths in a report that start with `/tmp/claude-0/…/scratchpad` or `/dev/shm` name the building session's own
 scratch files: they were never in the repository and no longer exist. Commit hashes refer to the branch as it was
-built; a merge commit on main names the result.
+built; a merge commit on main names the result. On 2026-11-04 the history was rewritten to remove details of the
+owner's and the friend's PCs, which changed every commit's hash: the hashes in these files were mapped to the new
+ones then, but the CI runs they link still name the old ones.
 
 | report | what |
 |---|---|

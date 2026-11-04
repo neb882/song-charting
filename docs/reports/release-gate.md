@@ -1,18 +1,18 @@
 # The release gate for v0.1, 2026-11-04
 
-The release gate as `docs/PIPELINE.md` sets it, run on main at ceaf1dc (every M4 order merged), with the GPU smoke
-test that ran beside it, then the gate's fixes (branch `m4-gate-fixes`, merged at a5ea646). The advisor's review of
+The release gate as `docs/PIPELINE.md` sets it, run on main at fc7bdad (every M4 order merged), with the GPU smoke
+test that ran beside it, then the gate's fixes (branch `m4-gate-fixes`, merged at 11a480c). The advisor's review of
 the release candidate and the owner's approval come after this report.
 
 ## The gate
 
-1. **The full suite:** CI on every merge (812 passed, 4 skipped at ceaf1dc; 833 passed, 4 skipped with the gate's
+1. **The full suite:** CI on every merge (812 passed, 4 skipped at fc7bdad; 833 passed, 4 skipped with the gate's
    fixes, locally and in CI).
-2. **The golden charts, the whole reference set:** 656991d (`eval/baseline`'s commit) against ceaf1dc,
+2. **The golden charts, the whole reference set:** 072ed20 (`eval/baseline`'s commit) against fc7bdad,
    `--rerun drums,bass,guitar` on both, `--threads 2`: old exit 0 (3293 s), new exit 0 (2620 s), diff exit 0, "no
    UNEXPECTED change; every song's results identical". Pooled Expert F1@50: guitar 0.853, bass 0.825, drums 0.962;
-   beat F1 0.876. The fixes' branch ran them again at 052436e (it touches `engines/adtof.py`): identical to ceaf1dc.
-3. **The full review** (`.claude/workflows/full-review.js`, run wf_be907e55-8b2, 7 agents) over 8a00e3f...ceaf1dc:
+   beat F1 0.876. The fixes' branch ran them again at 2245e37 (it touches `engines/adtof.py`): identical to fc7bdad.
+3. **The full review** (`.claude/workflows/full-review.js`, run wf_be907e55-8b2, 7 agents) over 56b5591...fc7bdad:
    two majors confirmed (lyrics never downloaded under the launcher's offline flag; the Done screen hiding Install
    while the chart's process exits) and a dozen minor findings, all fixed on `m4-gate-fixes` (below), then reviewed
    again: no major, three minor, fixed in round 2.
@@ -26,7 +26,7 @@ the release candidate and the owner's approval come after this report.
 
 ## The GPU smoke test
 
-The first end-to-end chart on a GPU, through the real installer, on main at c0753d6, in an isolated HOME on the
+The first end-to-end chart on a GPU, through the real installer, on main at feceac7, in an isolated HOME on the
 owner's WSL2 (a copy of install.sh with the Windows side off: no .wslconfig, shortcut or WSL restart; WSL had 22 GB).
 Run by a session on the owner's PC.
 
@@ -50,27 +50,27 @@ Run by a session on the owner's PC.
 
 ## The fixes
 
-The findings of the full review over v0.1 (workflow run wf_be907e55-8b2, diff 8a00e3f...ceaf1dc), fixed on
-`m4-gate-fixes` from main at c0753d6, in the worktree `<scratchpad>/wt/gate-fixes`. Each finding was reproduced
+The findings of the full review over v0.1 (workflow run wf_be907e55-8b2, diff 56b5591...fc7bdad), fixed on
+`m4-gate-fixes` from main at feceac7, in the worktree `<scratchpad>/wt/gate-fixes`. Each finding was reproduced
 before its fix, each new test was checked by breaking the code it covers, and no file on the charting path changed.
 
 ### Commits
 
 | commit | what |
 |---|---|
-| 4a684cd | Lyrics on an installed copy: the launcher no longer sets SONGCHARTER_OFFLINE |
-| 98e30ba | The Done screen: results, export and install take a job once its result is out |
-| c8cbcae | install: a uv cache of songcharter's own; uninstall touches only songcharter's folders |
-| 68f221f | runtime.fetch: a chunked download cut mid-chunk is retried |
-| 12dcb63 | test_install: the lane guard against runtime.json as runtime.py writes it |
-| e21db25 | install.sh: the licence prompt names a NOTICE.txt that exists |
-| 8923bd8 | The page's header measures memory, disk and .wslconfig again |
-| 730b81f | A first install with the GPU out of reach says what to do once it is back |
-| 4cb90f0 | Docs for the release gate's fixes |
+| 6ff7ecc | Lyrics on an installed copy: the launcher no longer sets SONGCHARTER_OFFLINE |
+| 87045ff | The Done screen: results, export and install take a job once its result is out |
+| 55af472 | install: a uv cache of songcharter's own; uninstall touches only songcharter's folders |
+| f7f9c1f | runtime.fetch: a chunked download cut mid-chunk is retried |
+| 564372e | test_install: the lane guard against runtime.json as runtime.py writes it |
+| c26b8e7 | install.sh: the licence prompt names a NOTICE.txt that exists |
+| 9546084 | The page's header measures memory, disk and .wslconfig again |
+| f951a75 | A first install with the GPU out of reach says what to do once it is back |
+| edbd073 | Docs for the release gate's fixes |
 
-**Every finding reproduced against the code before the fixes.** The reviewers' three scripts at ceaf1dc (main's code;
-c0753d6 changed only PROGRESS) gave their reported output (below, per finding). Then the branch's new and changed
-tests, copied into a `git archive` of ceaf1dc, ran against its code: 13 failed, one or more per finding:
+**Every finding reproduced against the code before the fixes.** The reviewers' three scripts at fc7bdad (main's code;
+feceac7 changed only PROGRESS) gave their reported output (below, per finding). Then the branch's new and changed
+tests, copied into a `git archive` of fc7bdad, ran against its code: 13 failed, one or more per finding:
 `test_environment_fills_in_what_the_person_has_not_set` and `test_the_installed_app_downloads_the_lyrics_weights_on_
 first_use` (major 1), `test_the_done_screen_can_install_while_the_chart_is_still_exiting` (major 2),
 `test_uninstall_no_keeps_the_downloads`, `test_uninstall_yes_deletes_everything_and_sizes_the_question`,
@@ -84,7 +84,7 @@ docs (grep), each as its finding quotes it.
 
 ### The checks
 
-- **CI, run 41850766306 on 4cb90f0: success**, both jobs (https://github.com/neb882/song-charting/actions/runs/41850766306).
+- **CI, run 41850766306 on edbd073: success**, both jobs (https://github.com/neb882/song-charting/actions/runs/41850766306).
   Read from `gh run view --log --job 126646123107`:
   - the CI tools' tests `86 passed in 29.99s`; the suite `820 passed, 4 skipped in 291.84s`;
   - `all 7 Linux hooks passed: 10-lanes.sh 12s 20-device.sh 5s 30-install.sh 139s 40-ui.sh 21s 50-e2e.sh 389s
@@ -100,12 +100,12 @@ docs (grep), each as its finding quotes it.
     downloaded`; uninstall-all `gone: .../songcharter` (three lines) and `nothing new left in ~ (to depth 3)` (so no
     `~/.cache/uv`); 30-install's new `~/.cache/uv` check passed; uninstall's No prints `... [y/N] kept
     .../runtime and ...: a reinstall reuses them, and downloads only install.sh and the app (about 1 MB)`;
-  - 70-release: `Licences: https://github.com/neb882/song-charting/blob/v0.1.0-ci-4cb90f0/packaging/NOTICE.txt (some
+  - 70-release: `Licences: https://github.com/neb882/song-charting/blob/v0.1.0-ci-edbd073/packaging/NOTICE.txt (some
     of the models are for non-commercial use only)` on the first install, and `the installed NOTICE.txt is
     packaging/NOTICE.txt`.
 - **Locally** (the session's venv, `tools/heavy.sh` of the main checkout, queued behind the release gate's golden
   run): `bash <scratchpad>/gate-fixes/local_checks.sh`, its log `local_checks.log`:
-  - the full suite at 4cb90f0, `SONGCHARTER_SCAN_CHART` set: `820 passed, 4 skipped in 580.61s` (skipped: the allin1
+  - the full suite at edbd073, `SONGCHARTER_SCAN_CHART` set: `820 passed, 4 skipped in 580.61s` (skipped: the allin1
     test with no `$SONGCHARTER_ALLIN1_PYTHON`, the torchaudio test (the dev venv has none), test_package's two
     scan-chart tests);
   - `60-results.sh` on the branch, with a stand-in torchaudio and the branch's code on PYTHONPATH (the launcher's
@@ -126,7 +126,7 @@ docs (grep), each as its finding quotes it.
 
 #### 1. Lyrics never worked on an installed copy (correct-1, tests-1, install-lyrics-offline, docs-lyrics-offline)
 
-**Reproduced** with the reviewers' `offline_lyrics.py` at ceaf1dc: `launcher sets SONGCHARTER_OFFLINE = 1
+**Reproduced** with the reviewers' `offline_lyrics.py` at fc7bdad: `launcher sets SONGCHARTER_OFFLINE = 1
 HF_HUB_OFFLINE = 1`, `Unavailable: the aligner's weights are not in .../lyrics and SONGCHARTER_OFFLINE=1`,
 `download attempted: False`.
 
@@ -168,7 +168,7 @@ and SONGCHARTER_OFFLINE=1" and the hook fails. The privacy checks (no pasted wor
 
 #### 2. The Done screen could hide "Install into Clone Hero" and the zip (tests-2)
 
-**Reproduced** with the reviewers' `race.py` at ceaf1dc: `results right after the result event: state=running ok=True
+**Reproduced** with the reviewers' `race.py` at fc7bdad: `results right after the result event: state=running ok=True
 installable=False`, then `installable=True` 1.3 s later.
 
 **Fix** (`songcharter/ui/server.py`): a job whose `result` event is out has its chart in place (the CLI prints it
@@ -187,7 +187,7 @@ state check in `_built()` fails it (`no finished chart yet`); restoring it in `r
 
 ### The minor findings
 
-- **install-uv-cache-not-ours: fixed** (c8cbcae). Reproduced from the finding (uninstall's Yes removed
+- **install-uv-cache-not-ours: fixed** (55af472). Reproduced from the finding (uninstall's Yes removed
   `~/.cache/uv`; the disk check counted it). install.sh exports `UV_CACHE_DIR=<home>/runtime/uv-cache` with its other
   uv variables before its first uv call (`uv --version`, `uv python install`, both `uv sync`s), over any
   `$UV_CACHE_DIR` the person has. The disk check counts `runtime/` (which holds it) and `~/.cache/songcharter` only.
@@ -204,11 +204,11 @@ state check in `_built()` fails it (`no finished chart yet`); restoring it in `r
     (sparse) in the person's uv caches, 7 GB free is still refused; uninstall's Yes leaves another project's
     `~/.cache/uv`. Broken three ways (no export; the person's cache counted; uninstall deleting `~/.cache/uv`): each
     fails a test.
-- **install-fetch-incompleteread: fixed** (68f221f). Reproduced by the new test before the fix (`http.client.
+- **install-fetch-incompleteread: fixed** (f7f9c1f). Reproduced by the new test before the fix (`http.client.
   IncompleteRead: IncompleteRead(951424 bytes read, 97152 more expected)` out of `fetch`). `fetch` now retries any
   `http.client.HTTPException` like the other network errors, resuming the `.part`. Test: a chunked response cut in its
   chunk after 2 MB; the first 1 MiB block reached the `.part`, and the retry resumes at `bytes=1048576-`.
-- **install-stale-doctor: fixed, by the header not depending on it** (8923bd8). Refreshing doctor.json after step 9
+- **install-stale-doctor: fixed, by the header not depending on it** (9546084). Refreshing doctor.json after step 9
   would not help: WSL has its new memory only after the restart that ends the install. `device.refresh(r)` takes a
   report doctor wrote (one with `ram`), measures the memory, the free disk and, with interop, `.wslconfig` again, and
   makes its problems, notes and `ok` again with `findings`; the GPU, torch and the components stay. `App.doctor` shows
@@ -217,19 +217,19 @@ state check in `_built()` fails it (`no finished chart yet`); restoring it in `r
   the "restart WSL" one) and after it (neither, the other notes as they were). Broken twice (no refresh; a stale
   .wslconfig): it fails. Not changed: the install's own closing summary, printed before the restart, and the GPU in
   the header (both in PROGRESS's deferred list); diagnostics already carries a fresh doctor-now.json.
-- **install-notice-before-app / docs-licence-notice-absent: fixed** (e21db25). Reproduced (the prompt named
+- **install-notice-before-app / docs-licence-notice-absent: fixed** (c26b8e7). Reproduced (the prompt named
   `app/0.0.0-test/NOTICE.txt` with `app/` empty). install.sh gets `NOTICE_URL="@NOTICE_URL@"`, which build.sh fills
   with the guide's own link (`https://github.com/neb882/song-charting/blob/v<version>/packaging/NOTICE.txt`); the
   prompt names it until `app/<version>/NOTICE.txt` exists, and that file on a rerun. Tests: the first prompt (the URL),
   Enter installing, then a rerun's prompt (the app's copy, which exists); build.sh's filled value is the guide's link.
   70-release.sh checks the first install's prompt (No and Enter) names the release's URL. Broken (always the app's
   path): the test fails. The tag exists only once M4-08 pushes it (as for the guide's link; PROGRESS).
-- **docs-reinstall-downloads: fixed** (c8cbcae, 4cb90f0). Uninstall's No now says "kept <runtime> and <models>: a
+- **docs-reinstall-downloads: fixed** (55af472, edbd073). Uninstall's No now says "kept <runtime> and <models>: a
   reinstall reuses them, and downloads only install.sh and the app (about 1 MB)"; 70-release.sh greps the new line;
   the launcher's docstring, the guide (section 7), M4-08 (A16, its pass list, M4-05's baseline line) and M4-03 (a
   bracketed note) say the same.
-- **docs-kill-timeout: fixed** (4cb90f0). DESIGN 2.0's proc.py row: SIGKILL after 5 s (`KILL_TIMEOUT_S`).
-- **docs-allin1-rule: fixed** (4cb90f0). Checked: `plan(None, ram).target_gb` gives memory=10GB (10.7e9 bytes, left
+- **docs-kill-timeout: fixed** (edbd073). DESIGN 2.0's proc.py row: SIGKILL after 5 s (`KILL_TIMEOUT_S`).
+- **docs-allin1-rule: fixed** (edbd073). Checked: `plan(None, ram).target_gb` gives memory=10GB (10.7e9 bytes, left
   out) at 14 GiB and 11GB (11.8e9, kept) at 15 GiB. wslsetup's docstring and M4-03 now say "a PC whose RAM rounds to
   14 GB or less". Whether a nominal 16 GB PC that reports under 15.5 GiB should get 12GB is left open (PROGRESS).
 - **docs-lyrics-offline: fixed with major 1.** The guide ("The first song with lyrics downloads 1.26 GB, once"),
@@ -237,10 +237,10 @@ state check in `_built()` fails it (`no finished chart yet`); restoring it in `r
   on first --lyrics use") are now true as written. README now says the installed app's too, and that
   `SONGCHARTER_OFFLINE=1` forbids it; DESIGN 4.2 describes the launcher's variables; PROGRESS's M4-10 item says the
   download now works on an installed copy and how to move it to the install.
-- **tests-3: fixed** (12dcb63). Reproduced with `lane_contract.sh` (compact layout: `chose cpu`). The new test writes
+- **tests-3: fixed** (564372e). Reproduced with `lane_contract.sh` (compact layout: `chose cpu`). The new test writes
   runtime.json with `runtime_record`, rewrites it with `set_allin1`, then checks `previous_lane` and the refusal for
   cu126 and cu132. Mutation R3 (`json.dumps` without `indent`) now fails it.
-- **install-first-install-gpu-blocked: fixed, both notes** (730b81f). Reproduced (`lane=cpu`, no warning). A first
+- **install-first-install-gpu-blocked: fixed, both notes** (f951a75). Reproduced (`lane=cpu`, no warning). A first
   install (or a cpu one) with nvidia-smi failing sets `lane_warning`: "the GPU is out of reach, not missing, so this
   is the CPU build: restart Windows (or update the NVIDIA driver), then paste the install line again: it switches to
   the GPU build (about 3 GB)". It is said at step 2 and again right after "is installed" (every lane warning now is).
@@ -273,18 +273,18 @@ lyrics: the only words are the hooks' and tests' made-up ones. No audio, weights
 
 ### Review fixes, round 2
 
-The review of 4cb90f0 (`gate-fixes.review.md`: no major, three minors, two notes) and the owner's decision on the
-memory rule, fixed on the same branch from 4cb90f0.
+The review of edbd073 (`gate-fixes.review.md`: no major, three minors, two notes) and the owner's decision on the
+memory rule, fixed on the same branch from edbd073.
 
 | commit | what |
 |---|---|
-| 0695f8b | One downloader: the engines' weights go through runtime.download_part (F-3) |
-| fc07c79 | Tests for the disk check's credit and the header's per-version cache (F-1, F-2) |
-| 196f95a | doctor: no "paste the install line again" for an install asked for the cpu lane (the review's note) |
-| 912b440 | The WSL memory rule rounds Windows' RAM up to a whole GB (the owner's decision) |
-| 052436e | Docs: one downloader, the memory rule, the uv note (the review's second note) |
+| a6c8a8c | One downloader: the engines' weights go through runtime.download_part (F-3) |
+| 5b24ffd | Tests for the disk check's credit and the header's per-version cache (F-1, F-2) |
+| 15b5a8e | doctor: no "paste the install line again" for an install asked for the cpu lane (the review's note) |
+| 0c66fa1 | The WSL memory rule rounds Windows' RAM up to a whole GB (the owner's decision) |
+| 2245e37 | Docs: one downloader, the memory rule, the uv note (the review's second note) |
 
-**Each change against the old code.** The round's new tests, copied into a `git archive` of 4cb90f0 and run against
+**Each change against the old code.** The round's new tests, copied into a `git archive` of edbd073 and run against
 its code: 13 failed. F-3's two fail with the review's symptoms (`http.client.IncompleteRead: IncompleteRead(951424
 bytes read, 97152 more expected)` for a chunked cut; `Unavailable: the aligner's weights from http://127.0.0.1:.../
 w.pth have SHA-256 9ca4..., not the pinned e1eb...` for a short body). Also failing: the asked-lane note test, the
@@ -335,23 +335,23 @@ they should (those were test gaps over correct code): the reviewer's mutations f
 
 #### Round 2's checks
 
-- **CI, run 41862406694 on 052436e: success**, both jobs (https://github.com/neb882/song-charting/actions/runs/41862406694;
+- **CI, run 41862406694 on 2245e37: success**, both jobs (https://github.com/neb882/song-charting/actions/runs/41862406694;
   both waited about 20 minutes in GitHub's queue). From the linux job's log: the suite `833 passed, 4 skipped in
   354.97s`; `all 7 Linux hooks passed: 10-lanes.sh 16s 20-device.sh 6s 30-install.sh 156s 40-ui.sh 21s 50-e2e.sh 424s
   60-results.sh 74s 70-release.sh 60s`; 60-results's lyrics phase through the shared downloader (`could not be
   downloaded from https://download.pytorch.org/...`, after its retries: 22 s more than before), `nothing downloaded`
   for the offline reinstall, `nothing new left in ~`, and the first install's licence prompt naming the release's URL.
 - **Locally, one heavy job** (`tools/heavy.sh bash <scratchpad>/gate-fixes/round2_checks.sh`, after the test song's
-  chart): the full suite at 052436e `833 passed, 4 skipped in 542.90s`; then the **golden charts**, because
+  chart): the full suite at 2245e37 `833 passed, 4 skipped in 542.90s`; then the **golden charts**, because
   engines/adtof.py is in ENGINE_FILES: `python -m eval.golden run --out <scratchpad>/gate-fixes/golden-branch --threads
-  2 --rerun drums,bass,guitar` from a detached checkout of 052436e (2579 s, every song's gate OK), and `diff
-  <scratchpad>/gate/golden-new <scratchpad>/gate-fixes/golden-branch --expect none` against the release gate's ceaf1dc
+  2 --rerun drums,bass,guitar` from a detached checkout of 2245e37 (2579 s, every song's gate OK), and `diff
+  <scratchpad>/gate/golden-new <scratchpad>/gate-fixes/golden-branch --expect none` against the release gate's fc7bdad
   run (same reruns): `golden diff: no UNEXPECTED change`; report.md: engines that ran drums, bass and guitar on 7
   songs on both sides, "Every song's results (hashes, counts, scores) identical: yes".
 - **Mutations**, each alone, then restored: the review's I4 (no `"$runtime"` in the disk loop), R4 (the header's cache
   keyed on the first call only) and R5 (no try/except around the refresh) each fail the new tests; so does dropping
-  the asked-lane condition. The F-3 and rounding tests fail on 4cb90f0's code itself (above).
-- **Scan** of `git diff 4cb90f0..HEAD` and the round's commit messages: only the required trailers; no lyrics, audio,
+  the asked-lane condition. The F-3 and rounding tests fail on edbd073's code itself (above).
+- **Scan** of `git diff edbd073..HEAD` and the round's commit messages: only the required trailers; no lyrics, audio,
   model names or personal details.
 - The covering test files while building: test_runtime 20 passed; test_lyrics, test_engines_adtof and test_launch 50
   passed, 1 skipped; test_install 33 passed; test_wslsetup 21 passed; the new device and UI server tests passed.

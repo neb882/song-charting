@@ -1,17 +1,17 @@
 # M4-02 (device) builder report
 
-Branch `m4-02-device` from `main` 8a00e3f, in the worktree
+Branch `m4-02-device` from `main` 56b5591, in the worktree
 `/tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad/wt/m4-02`. Pushed to `origin/m4-02-device` to run CI, as the order allows.
 
 ## Commits
 
-On `m4-02-device`, from 8a00e3f:
-- `91272a9` M4-02: autochart's node child gets the CUDA 13 library path (engines/autochart.py, its tests, eval/gpu.sh's comment)
-- `8eb1645` M4-02: wsl.py, device.py and songcharter doctor (plus tests/test_wsl.py, tests/test_device.py, packaging/ci/linux.d/20-device.sh)
-- `4df47b2` M4-02: the pipeline records fallbacks, frees GPU memory and samples memory (pipeline.py, tests/test_pipeline.py)
-- `4b2db1b` Merge main (23802b8: M4-05a's CI and M4-01's lanes) into m4-02-device, so that the 20-device hook runs in CI.
+On `m4-02-device`, from 56b5591:
+- `a5d1cf9` M4-02: autochart's node child gets the CUDA 13 library path (engines/autochart.py, its tests, eval/gpu.sh's comment)
+- `c1db8a0` M4-02: wsl.py, device.py and songcharter doctor (plus tests/test_wsl.py, tests/test_device.py, packaging/ci/linux.d/20-device.sh)
+- `d15f562` M4-02: the pipeline records fallbacks, frees GPU memory and samples memory (pipeline.py, tests/test_pipeline.py)
+- `d22c6a9` Merge main (2b8bc02: M4-05a's CI and M4-01's lanes) into m4-02-device, so that the 20-device hook runs in CI.
   It merged cleanly and changes nothing under songcharter/ or in my tests.
-  - The golden gate ran on 4df47b2. The merge changes no chart code.
+  - The golden gate ran on d15f562. The merge changes no chart code.
   - M4-01 set the precedent ("Merge main into m4-01-lanes").
 
 **Pushed** (the order allows a push to run CI): `git push -u origin m4-02-device` created the branch. CI run
@@ -174,13 +174,13 @@ their engine.json says). The evidence is copied to `/tmp/claude-0/-home-user/530
 
 ### 1. The full suite (CLAUDE.md's command)
 `SONGCHARTER_SCAN_CHART=/home/user/song-charting/tools/scan-chart/scan.cjs <venv python> -m pytest -q -p no:cacheprovider --basetemp=/dev/shm/pt_m4_02`
-(with OMP/MKL/OPENBLAS at 2 threads), at 4df47b2:
+(with OMP/MKL/OPENBLAS at 2 threads), at d15f562:
 ```
 531 passed, 3 skipped in 601.30s (0:10:01)
 exit 0
 ```
 The 3 skips are of the kinds the earlier inspected suite had (500 passed, 3 skipped): scan-chart's npm-install
-tests and the opt-in allin1 run. On the merged tree (4b2db1b): `tests/test_wsl.py tests/test_device.py
+tests and the opt-in allin1 run. On the merged tree (d22c6a9): `tests/test_wsl.py tests/test_device.py
 tests/test_engines_autochart.py packaging/ci/test_ci.py` gave `83 passed, 21 skipped in 7.64s`.
 
 **Breaking the code:** 35 mutations, each run against its tests. Every one failed a test (35 CAUGHT, 0 MISSED):
@@ -197,7 +197,7 @@ tests/test_engines_autochart.py packaging/ci/test_ci.py` gave `83 passed, 21 ski
 
 ### 2. `songcharter doctor --json /dev/shm/m4-02/doctor.json` with real installs
 `SONGCHARTER_AUTOCHART`, `SONGCHARTER_ALLIN1_PYTHON` and `SONGCHARTER_SCAN_CHART` as above. Run twice: at the start,
-and at 4df47b2 after the golden runs. The second run:
+and at d15f562 after the golden runs. The second run:
 ```
 exit 0
 ... autochart: ok, 2026.06.16-cross-platform-runtime (.../eval/tools/autochart)
@@ -214,18 +214,18 @@ check really ran node here: the dev venv has no nvidia-curand, so the provider s
 loader error the spike predicted.
 
 ### 3. The golden charts (CLAUDE.md's release gate, `--rerun guitar` on both sides because engines/autochart.py changed)
-Old: `git worktree add --detach /dev/shm/m4-02/golden-old 8a00e3f` (a private path, not /dev/shm/golden-old, because
+Old: `git worktree add --detach /dev/shm/m4-02/golden-old 56b5591` (a private path, not /dev/shm/golden-old, because
 three builders share the machine). Outputs under /dev/shm/m4-02/golden/. Script: `scratchpad/m4-02probe/golden_side.sh`.
 ```
 python -m eval.golden run --code /dev/shm/m4-02/golden-old --out /dev/shm/m4-02/golden/old --threads 2 --rerun guitar   -> exit 0 (3809 s)
-python -m eval.golden run --out /dev/shm/m4-02/golden/new --threads 2 --rerun guitar                                    -> exit 0 (2858 s; code 4df47b2, clean)
+python -m eval.golden run --out /dev/shm/m4-02/golden/new --threads 2 --rerun guitar                                    -> exit 0 (2858 s; code d15f562, clean)
 python -m eval.golden diff /dev/shm/m4-02/golden/old /dev/shm/m4-02/golden/new --expect none                            -> exit 0
 golden diff: no UNEXPECTED change; report: /dev/shm/m4-02/golden/new/report.md
 ```
 - From report.md: "Parts changed as expected: 0. Every song's results (hashes, counts, scores) identical: yes."
-- Engines rerun: guitar on 7 songs on both sides. Kept folders made by 11615e2; none were made cold.
+- Engines rerun: guitar on 7 songs on both sides. Kept folders made by 77b2afd; none were made cold.
 - Pooled Expert F1@50: guitar 0.8527, bass 0.8247, drums 0.9617; beat F1 0.8755, all +0.0000.
-- I also compared the new summary's per-part track hashes with the baseline `golden/base/summary.json` (11615e2): they
+- I also compared the new summary's per-part track hashes with the baseline `golden/base/summary.json` (77b2afd): they
   are identical for all 7 songs, so the guitar reruns reproduced the kept takes.
 
 **Runs that did not count:**
@@ -307,15 +307,15 @@ CI_TMP and CI_ART, and writes only doctor JSON to CI_ART.
 ## Review fixes (R1, R2, R3), after the first report
 
 ### Commits (pushed)
-- `5b666ba` **R2:** `Sampler._sample` notes the stage and a generation counter under the lock before its reads, and
+- `fd3c23b` **R2:** `Sampler._sample` notes the stage and a generation counter under the lock before its reads, and
   drops a sample whose stage ended meanwhile. The generation goes up by one at each begin and each end.
-- `377bce1` **R3:** `.wslconfig` values are read git-config style. A trailing `#` or `;` comment outside quotes goes,
+- `82ab27a` **R3:** `.wslconfig` values are read git-config style. A trailing `#` or `;` comment outside quotes goes,
   and so do the quotes around the value. A BOM left by a decoder is ignored.
   - New `update_wslconfig(text, values)` for M4-03, so an update never writes a second `memory=` line:
     - the first `[wsl2]` line that sets a key, whatever its case, quotes or comment, is replaced, and later ones are dropped;
     - a missing key goes after `[wsl2]`'s last line, and `[wsl2]` is added when there is none;
     - every other line and the line ends are kept (CRLF for a new file).
-- `210d13c` **R1:** `choose()` and `report()` pass nvidia-smi's error to `_decide`. When nvidia-smi is there but fails
+- `69f1cd4` **R1:** `choose()` and `report()` pass nvidia-smi's error to `_decide`. When nvidia-smi is there but fails
   (anything but "not found" or "listed no GPU"), the reason is "nvidia-smi failed, so CUDA cannot run: <error>", on
   either lane.
   - The pipeline then warns `CUDA does not run here (<error>): the models run on the CPU` and records the reason.
@@ -342,7 +342,7 @@ CI_TMP and CI_ART, and writes only doctor JSON to CI_ART.
     "MISSED" once in my runner: a stale .pyc from an earlier same-size mutation within the same second. By hand it fails.
 
 ### Checks
-- Full suite at 210d13c: `576 passed, 3 skipped in 472.08s (0:07:52)`, exit 0.
+- Full suite at 69f1cd4: `576 passed, 3 skipped in 472.08s (0:07:52)`, exit 0.
 - CI run 41718987663 (https://github.com/neb882/song-charting/actions/runs/41718987663): **success**.
   - linux: the suite `578 passed, 1 skipped`; `20-device.sh ok in 5 s` (23 tests); all 2 Linux hooks passed.
   - windows: success.

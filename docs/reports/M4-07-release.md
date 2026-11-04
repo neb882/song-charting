@@ -1,20 +1,20 @@
 # M4-07: the friend's guide, NOTICE, and the pre-release assets (builder's report)
 
-Branch `m4-07-release` (worktree `<scratchpad>/wt/m4-07`), from main at 1b8c15a (5e9be04 plus "PROGRESS: M4-07 in
+Branch `m4-07-release` (worktree `<scratchpad>/wt/m4-07`), from main at 5fc1f1e (a192108 plus "PROGRESS: M4-07 in
 flight"). Pushed to origin to run CI; nothing published (no tag, no release, no draft).
 
 ## Commits (main..m4-07-release)
 
 | commit | what |
 |---|---|
-| d0cf182 | `packaging/NOTICE.txt`: every third party, its licence as its package states it, and how it arrives |
-| 96bd3df | `docs/guide/windows-wsl.md` (the template) and `packaging/release/build.sh`: `dist/GUIDE.md` rendered, NOTICE.txt at the tarball's root |
-| f070ade | `install.sh`'s Continue prompt names `<app>/NOTICE.txt`, with its test in `tests/test_install.py` |
-| ae3bee6 | `test_build_writes_the_three_assets`: the file list grows by GUIDE.md (outside the brief's tests/ allowance, see "Deviation") |
-| b07108e | CI hook `packaging/ci/linux.d/70-release.sh` |
-| 928202c | the guide after the read-through as the friend (seven fixes, below) |
+| 186c9bb | `packaging/NOTICE.txt`: every third party, its licence as its package states it, and how it arrives |
+| 8fc8862 | `docs/guide/windows-wsl.md` (the template) and `packaging/release/build.sh`: `dist/GUIDE.md` rendered, NOTICE.txt at the tarball's root |
+| 441cae7 | `install.sh`'s Continue prompt names `<app>/NOTICE.txt`, with its test in `tests/test_install.py` |
+| d2e5bc3 | `test_build_writes_the_three_assets`: the file list grows by GUIDE.md (outside the brief's tests/ allowance, see "Deviation") |
+| 8d43859 | CI hook `packaging/ci/linux.d/70-release.sh` |
+| e811088 | the guide after the read-through as the friend (seven fixes, below) |
 
-| 2130ff6 | 70-release: uninstall's "kept" line follows the `[y/N]` prompt when piped (CI run 1's one failure); git in the container, as the other hooks have it |
+| 452ce63 | 70-release: uninstall's "kept" line follows the `[y/N]` prompt when piped (CI run 1's one failure); git in the container, as the other hooks have it |
 
 ## What changed
 
@@ -50,7 +50,7 @@ API's model tags; the repositories' LICENSE files at their pinned commits throug
 
 | component | found | source | as the order's table? |
 |---|---|---|---|
-| songcharter | MIT (LICENSE, 12ebf10); songcharter/engines/adtof.py treated as CC BY-NC-SA 4.0 (its docstring, DESIGN 4.2) | the repository | yes; NOTICE adds the adtof.py carve-out, which is in the release |
+| songcharter | MIT (LICENSE, 3fe738c); songcharter/engines/adtof.py treated as CC BY-NC-SA 4.0 (its docstring, DESIGN 4.2) | the repository | yes; NOTICE adds the adtof.py carve-out, which is in the release |
 | uv 0.13.5 | MIT OR Apache-2.0 | PyPI license_expression; astral-sh/uv LICENSE-MIT at 0.13.5 | yes |
 | CPython 3.13.17 | PSF License Agreement; python-build-standalone links libedit, not GNU readline, and leaves GDBM out | python-build-standalone docs/running.rst, "Licensing" | yes (detail added) |
 | PyTorch 2.15.0 / 2.14.1 | own LICENSE: BSD-3-Clause; the wheels' License-Expression: `Apache-2.0 AND Apache-2.0 WITH LLVM-exception AND BSD-2-Clause AND BSD-3-Clause AND BSL-1.0 AND ISC AND MIT AND Zlib` (2.14.1: without ISC and Zlib), for what they bundle | pytorch/pytorch LICENSE at v2.15.0; the .metadata of torch-2.15.0+cpu and +cu132 on download-r2.pytorch.org; PyPI for 2.14.1 | **differs in detail**: BSD-3-Clause is its own code; the wheel carries more licences. NOTICE names both. |
@@ -96,7 +96,7 @@ NOTICE says so.
   - `songcharter diagnostics --out diagnostics.zip`, not the order's bare `songcharter diagnostics`: `--out` is
     required (cli.py), and in WSL the command prints "in Windows: \\wsl.localhost\..." for the zip;
   - section 7 adds that `songcharter uninstall` prints the unregister line with the Ubuntu's real name.
-- **The read-through as the friend** (start to finish, rendered), and what it changed (commit 928202c): how to open
+- **The read-through as the friend** (start to finish, rendered), and what it changed (commit e811088): how to open
   Command Prompt (Start menu, `cmd`); answer Yes to Windows' question for the admin Terminal; the Ubuntu user name in
   lower-case letters with no spaces, and Ubuntu from the Start menu if its window does not open after the restart;
   Ctrl+V pastes as well as a right-click; what "install.sh: FAILED" means (nothing ran; don't run it another way; ask
@@ -131,12 +131,12 @@ Logs, GUIDE.md, SHA256SUMS, the server log and the diagnostics zip go to `$CI_AR
 
 ## Checks
 
-1. **[dev] the render.** `bash packaging/release/build.sh 0.1.0-dev /dev/shm/m4-07/dist` at 928202c: exit 0;
+1. **[dev] the render.** `bash packaging/release/build.sh 0.1.0-dev /dev/shm/m4-07/dist` at e811088: exit 0;
    `GUIDE.md SHA256SUMS install.sh songcharter-0.1.0-dev.tar.gz`; GUIDE.md 868 words, no `{{`. Read start to finish
    (above). The tarball: `songcharter-0.1.0-dev/NOTICE.txt` and `/LICENSE` listed; a second build of the same commit,
-   NOTICE.txt's mtime changed, gave the same SHA-256 (ec1f62bb... at d0cf182).
-2. **The full suite** (dev container, `tools/heavy.sh`, the session's venv, SONGCHARTER_SCAN_CHART set) at 928202c:
-   `811 passed, 4 skipped in 581.80s (0:09:41)`, exit 0. The later commit, 2130ff6, changes only the hook.
+   NOTICE.txt's mtime changed, gave the same SHA-256 (ec1f62bb... at 186c9bb).
+2. **The full suite** (dev container, `tools/heavy.sh`, the session's venv, SONGCHARTER_SCAN_CHART set) at e811088:
+   `811 passed, 4 skipped in 581.80s (0:09:41)`, exit 0. The later commit, 452ce63, changes only the hook.
 3. **tests/test_install.py**: 28 passed. **Tests of the tests** (each break restored after):
    - the prompt test, 4 breaks of install.sh, each failed it: no Licences line; LICENSE named instead of NOTICE.txt;
      No not stopping; Enter stopping;
@@ -150,17 +150,17 @@ Logs, GUIDE.md, SHA256SUMS, the server log and the diagnostics zip go to `$CI_AR
    root"); install.sh's prompt without the Licences line (the No case fails); the guide's line with `;` instead of
    `&&` before `bash install.sh`, and with `releases/latest/download` (both: "not the expected one"); a fifth file in
    the out folder ("build.sh wrote: ...").
-5. **[CI]** run 1, https://github.com/neb882/song-charting/actions/runs/41796214912 (at 928202c): windows success;
+5. **[CI]** run 1, https://github.com/neb882/song-charting/actions/runs/41796214912 (at e811088): windows success;
    linux: the suite and hooks 10-60 passed, 70-release passed every step through the full install, the page and
    diagnostics, and failed at the last check (uninstall's "kept" line, a bug in the check: the uninstall itself
    did what the guide says). From its log: `install.sh: FAILED` / `sha256sum: WARNING: 1 computed checksum did NOT
-   match` for the changed file; `Licences: /home/friend/.local/share/songcharter/app/0.1.0-ci-928202c/NOTICE.txt
+   match` for the changed file; `Licences: /home/friend/.local/share/songcharter/app/0.1.0-ci-e811088/NOTICE.txt
    (some of the models are for non-commercial use only)` / `Continue? [Y/n] songcharter: stopped; nothing was
-   downloaded.`; Enter: `doctor: OK`, `songcharter 0.1.0-ci-928202c is installed (lane cpu: no NVIDIA GPU found).` in
+   downloaded.`; Enter: `doctor: OK`, `songcharter 0.1.0-ci-e811088 is installed (lane cpu: no NVIDIA GPU found).` in
    39 s; `70-release: the installed NOTICE.txt is packaging/NOTICE.txt`; the page: `songcharter is at
    http://127.0.0.1:8765/ ...`, `SIGTERM: stopping`, `stopped`; diagnostics: `check_no_audio: ok, 1 files and 6
    archive members`.
-6. **[CI]** run 2, https://github.com/neb882/song-charting/actions/runs/41798811539 (at 2130ff6): **success**,
+6. **[CI]** run 2, https://github.com/neb882/song-charting/actions/runs/41798811539 (at 452ce63): **success**,
    windows and linux. Its last lines: `-- songcharter uninstall, answered with Enter (No): ok in 1 s`,
    `70-release: ok`, `==== hook linux.d/70-release.sh ok in 61 s`, `all 7 Linux hooks passed: 10-lanes.sh 13s
    20-device.sh 6s 30-install.sh 154s 40-ui.sh 21s 50-e2e.sh 415s 60-results.sh 56s 70-release.sh 61s`. Every step
@@ -173,8 +173,8 @@ Logs, GUIDE.md, SHA256SUMS, the server log and the diagnostics zip go to `$CI_AR
    `test_build_writes_the_three_assets` asserted the out folder holds exactly three files, so the order's build.sh
    change fails the suite as it stood (and CI runs no hook after a failed suite). The brief allowed only the prompt's
    test in tests/. I sent the orchestrator a message when I found it (no answer came during the build) and changed
-   that assertion in its own commit, ae3bee6: the list gains GUIDE.md, and it now also asserts NOTICE.txt and
-   LICENSE at the tarball's root and the guide's line with install.sh's hash. Dropping ae3bee6 brings the failure
+   that assertion in its own commit, d2e5bc3: the list gains GUIDE.md, and it now also asserts NOTICE.txt and
+   LICENSE at the tarball's root and the guide's line with install.sh's hash. Dropping d2e5bc3 brings the failure
    back; redoing it differently is the orchestrator's call.
 2. **"Every command in the guide is one CI has run"** holds for the Ubuntu commands only. The Windows ones
    (`nvidia-smi` in Command Prompt, `wsl --update`, `wsl --install`, `wsl --shutdown`, `wsl --unregister Ubuntu`) and
@@ -254,8 +254,8 @@ wheel and binary (240 MB) were deleted after reading.
 ## Review fixes (by the orchestrator)
 
 The review (no major finding, five minor) was fixed on the branch by the orchestrator, since the builder's session had ended
-in a machine restart: 911cbfc (the guide's uninstall, diagnostics and licence wording; build.sh reading install.sh and
+in a machine restart: 559e5a8 (the guide's uninstall, diagnostics and licence wording; build.sh reading install.sh and
 the guide from HEAD and naming uncommitted changes; the hook allowing one fetching line in the guide, and its
-tampered-install marker made live) and 7d5d36d (the new test's clone copies objects). Breaking build.sh three ways
+tampered-install marker made live) and e00114f (the new test's clone copies objects). Breaking build.sh three ways
 (install.sh or the guide from the working copy, no note) each fails the new test. CI run 41819654756: suite 812
 passed, 4 skipped; all 7 Linux hooks passed, 70-release among them.

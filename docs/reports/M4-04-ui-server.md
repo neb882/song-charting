@@ -1,6 +1,6 @@
 # M4-04 report: the local UI in WSL (server, jobs, progress, cancel)
 
-Branch `m4-04-ui-server` (worktree `scratchpad/wt/m4-04`), from `main` at 656991d. Pushed (head f5c717b); not
+Branch `m4-04-ui-server` (worktree `scratchpad/wt/m4-04`), from `main` at 072ed20. Pushed (head 0c30c99); not
 merged, and `main` not merged in (the director does that).
 Paths below: `S` = `/tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad`.
 
@@ -8,11 +8,11 @@ Paths below: `S` = `/tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab
 
 | commit | what |
 |---|---|
-| 508698b | `songcharter ui`, `chart --events`, `proc.Tree`, the job and its cancel; the page; tests; hook `40-ui.sh` |
-| a463e70 | one cancel at a time (the jobs lock held throughout); `Tree.kill` waits (≤ 2 s) after SIGKILL for the group to empty; two tests added after mutation testing |
-| fa55ced | a closed SSE stream means a final state; a new job waits (≤ 10 s) for one whose result is out; the hook polls the state; an empty `data:` icon |
-| 415e638 | the job's reader always ends the job, even when its log cannot be written (a full disk); a test that fails on the old reader |
-| f5c717b | tests: made-up names only (the coordinator's new rule: real artist names and a profile-shaped path replaced) |
+| 8fab293 | `songcharter ui`, `chart --events`, `proc.Tree`, the job and its cancel; the page; tests; hook `40-ui.sh` |
+| 55d9d5d | one cancel at a time (the jobs lock held throughout); `Tree.kill` waits (≤ 2 s) after SIGKILL for the group to empty; two tests added after mutation testing |
+| 39df8d1 | a closed SSE stream means a final state; a new job waits (≤ 10 s) for one whose result is out; the hook polls the state; an empty `data:` icon |
+| d2ce128 | the job's reader always ends the job, even when its log cannot be written (a full disk); a test that fails on the old reader |
+| 0c30c99 | tests: made-up names only (the coordinator's new rule: real artist names and a profile-shaped path replaced) |
 
 Each ends with the two attribution lines. No model names elsewhere.
 
@@ -64,7 +64,7 @@ events tests; `tests/test_engines_autochart.py` one `on_take` test.
 4. **The page sends every non-empty song field** (`--title=...`), so the chart gets what the page shows; the
    "Unknown" placeholders stay empty (the CLI's default). pipeline.json then says "given" for those fields.
 5. **Self-check: any non-passing answer** (another token, or none) moves to the next port; after all 20, the
-   fallback re-binds the first free port on 127.0.0.1 and on WSL's own address (superseded in 608c45b: see the end
+   fallback re-binds the first free port on 127.0.0.1 and on WSL's own address (superseded in 98fe145: see the end
    of "Review fixes"). URL opened:
    `http://localhost:<port>/` in WSL (what the check proved), `http://127.0.0.1:<port>/` elsewhere.
 6. **`--port N` means that port only** (the "already running" check and the bind); out of range exits 2.
@@ -84,11 +84,11 @@ events tests; `tests/test_engines_autochart.py` one `on_take` test.
 
 `SONGCHARTER_SCAN_CHART=/home/user/song-charting/tools/scan-chart/scan.cjs S/venv/bin/python -m pytest -q -p no:cacheprovider --basetemp=/dev/shm/pt_m4_04`
 
-- at 508698b: `625 passed, 3 skipped in 727.56s (0:12:07)`
-- at fa55ced: `626 passed, 3 skipped in 819.46s (0:13:39)` (ran partly beside the first golden run)
-- at 415e638 and f5c717b: the UI tests locally (`test_ui_jobs.py test_ui_server.py test_proc.py`: 47 passed at
-  415e638; jobs + server 43 passed at f5c717b), and the full suite in CI (below). Not rerun locally at f5c717b: after the golden run, M4-10's
-  golden run held `tools/heavy.sh`'s lock for hours, and f5c717b changes only test fixtures since 415e638.
+- at 8fab293: `625 passed, 3 skipped in 727.56s (0:12:07)`
+- at 39df8d1: `626 passed, 3 skipped in 819.46s (0:13:39)` (ran partly beside the first golden run)
+- at d2ce128 and 0c30c99: the UI tests locally (`test_ui_jobs.py test_ui_server.py test_proc.py`: 47 passed at
+  d2ce128; jobs + server 43 passed at 0c30c99), and the full suite in CI (below). Not rerun locally at 0c30c99: after the golden run, M4-10's
+  golden run held `tools/heavy.sh`'s lock for hours, and 0c30c99 changes only test fixtures since d2ce128.
 
 The named tests: `test_proc.py` (child + grandchild `sleep 60`, both dead by pid after `Tree.kill`; SIGTERM ignored
 → SIGKILL after the timeout; a leader gone by itself, its orphan still killed; zombies count as gone).
@@ -129,7 +129,7 @@ stages: decode 0.3 s, separate 22.1 s, drums 2.2 s, bass 3.8 s, sections 2.0 s, 
 ```
 
 **Without `--events`, against main** (`clip_events.sh warm`: main's checkout, then this branch, same warm cache).
-`main` had moved to 3402bfd by then; 656991d..3402bfd touches no `songcharter/` file (docs, `packaging/ci/test_ci.py`,
+`main` had moved to d700b40 by then; 072ed20..d700b40 touches no `songcharter/` file (docs, `packaging/ci/test_ci.py`,
 an agent file). Results:
 - stdout: identical but for the stage times and the output folder's path (17 lines);
 - stderr: identical but for the times and the output folder's name (17 lines); no `@@songcharter` anywhere;
@@ -164,7 +164,7 @@ song, a 3-take job, Cancel with its confirm accepted. Screens `S/m4-04/page/{1-d
 with doctor's notes; title prefilled "clip", the others with the "Unknown" placeholder; one row per stage with ✓,
 time and detail; "take 2 of 3" under Guitar; the warning listed; "Ready" with the summary; "Cancelled" with the
 Guitar row ✕ "cancelled". Console: no CSP violation, no script error (only Chromium's `/favicon.ico` 404, since
-fixed with an empty `data:` icon). This run found the race fixed in fa55ced (decision 8).
+fixed with an empty `data:` icon). This run found the race fixed in 39df8d1 (decision 8).
 
 ### 4. The golden charts
 
@@ -173,11 +173,11 @@ staleness check needs the guitar rerun), `EXPECT=none`, `--threads 2`, the env o
 (`EVAL_DATA`, `SONGCHARTER_GOLDEN`, `SONGCHARTER_AUTOCHART`, `SONGCHARTER_ALLIN1_PYTHON` = research/timing/venv2,
 `SONGCHARTER_SCAN_CHART`).
 
-- **Old** (main 656991d, the merge base): my first run, `python -m eval.golden run --code /dev/shm/m4-04/golden-old
+- **Old** (main 072ed20, the merge base): my first run, `python -m eval.golden run --code /dev/shm/m4-04/golden-old
   --out /dev/shm/m4-04/golden/old --threads 2 --rerun guitar` → `old exit 0 in 6252 s`, all 7 songs gate OK. The
   machine restarted at 01:29 UTC and wiped /dev/shm; as the coordinator said, the old side is that run's saved
-  summary (`S/briefs/baseline/summary.main-656991d.json`: commit 656991d, rerun guitar, 7 songs), copied back.
-- **New** (f5c717b, clean): `tools/heavy.sh python -m eval.golden run --out /dev/shm/m4-04/golden/new --threads 2
+  summary (`S/briefs/baseline/summary.main-072ed20.json`: commit 072ed20, rerun guitar, 7 songs), copied back.
+- **New** (0c30c99, clean): `tools/heavy.sh python -m eval.golden run --out /dev/shm/m4-04/golden/new --threads 2
   --rerun guitar` → `new exit 0 in 2887 s`; every song `gate OK; ran guitar`, e.g. take_me_out "Expert F1@50 bass
   0.912, drums 0.944, guitar 0.909", all_the_small_things "guitar 0.971".
 - **Diff**: `python -m eval.golden diff /dev/shm/m4-04/golden/old /dev/shm/m4-04/golden/new --expect none` →
@@ -189,20 +189,20 @@ Evidence (no audio): `S/m4-04/golden-evidence/` (new.log, summary.json, report.m
 
 ### Personal details (the coordinator's new rule, before the final push)
 
-`git diff 656991d...HEAD` and `git log --format=%B 656991d..HEAD` grepped for home and profile paths (`/home/`,
+`git diff 072ed20...HEAD` and `git log --format=%B 072ed20..HEAD` grepped for home and profile paths (`/home/`,
 `/root`, `/tmp/claude`, the scratchpad, `Users\`), emails, the repository owner's name, machine names and artist
-names. Found and replaced (f5c717b): real artist names in test fixtures ("AC/DC", "Mötley Crüe", a song title) and a
+names. Found and replaced (0c30c99): real artist names in test fixtures ("AC/DC", "Mötley Crüe", a song title) and a
 Windows-profile-shaped path with a made-up name (`C:\Users\Jörg\Music\...`). Now the only matches are `@pytest`
 decorators; the commit messages have none but the attribution trailer; author and committer are
-`Claude <noreply@anthropic.com>`. **The earlier commits 508698b–415e638 still hold those fixture strings** (no private
+`Claude <noreply@anthropic.com>`. **The earlier commits 8fab293–d2ce128 still hold those fixture strings** (no private
 data: public band names and the made-up "Jörg"); I did not rewrite history (no force-push). A squash merge would keep
 them out of `main`'s history, if wanted.
 
 ### [CI]
 
-- run 41729206724 (a463e70): **failure**: the suite passed, hook 40-ui failed: it read the job's state right after
+- run 41729206724 (55d9d5d): **failure**: the suite passed, hook 40-ui failed: it read the job's state right after
   the stream closed at `error` and got `running` (the race of decision 8).
-- run 41732876363 (fa55ced): **success**, both jobs. Linux: test_ci 78 passed; suite `628 passed, 1 skipped`; hooks
+- run 41732876363 (39df8d1): **success**, both jobs. Linux: test_ci 78 passed; suite `628 passed, 1 skipped`; hooks
   `all 3 Linux hooks passed: 10-lanes.sh 15s 20-device.sh 6s 40-ui.sh 15s`. 40-ui's lines:
   ```
   46 passed in 9.79s
@@ -219,8 +219,8 @@ them out of `main`'s history, if wanted.
   ```
   The job on the clip starts (202) and, with no autochart engine on the runner, ends `failed` at the component check;
   the hook checks it reached a final state with a closing event. The real cancel at the first `take` is M4-05's.
-- run 41739453686 (415e638): **success**; suite `629 passed, 1 skipped`; `all 3 Linux hooks passed`.
-- run 41749744269 (f5c717b, head): **success**; suite `629 passed, 1 skipped in 219.68s`; `all 3 Linux hooks passed:
+- run 41739453686 (d2ce128): **success**; suite `629 passed, 1 skipped`; `all 3 Linux hooks passed`.
+- run 41749744269 (0c30c99, head): **success**; suite `629 passed, 1 skipped in 219.68s`; `all 3 Linux hooks passed:
   10-lanes.sh 14s 20-device.sh 5s 40-ui.sh 14s`.
 
 ## Not done, or uncertain
@@ -239,7 +239,7 @@ them out of `main`'s history, if wanted.
 - **For M4-05's ui_guards.py**: on a warm cache the default seed's take is cached and sends no `take` event (only takes
   that run do); on a fresh install it runs. The stream now closes only once the job's state is final.
 - **Not run here**: anything on WSL or Windows; a GPU (CUDA fallback banners are tested with stand-ins only).
-- My first golden run overlapped my fa55ced suite run for about 13 minutes (another session's job paused, and my
+- My first golden run overlapped my 39df8d1 suite run for about 13 minutes (another session's job paused, and my
   wait gate let it start before the suite grew); both passed. Its old side finished (exit 0, 6252 s, every gate OK);
   its new side was killed by the machine's restart at 01:29 UTC, 4 songs in (all 4 gate OK). The new run after the
   restart went through `tools/heavy.sh` (main's lock), against the saved old summary.
@@ -247,9 +247,9 @@ them out of `main`'s history, if wanted.
   outputs) is deleted at the end, the clip's cache went with the restart.
 - Scripts used: `S/m4-04/{clip_events.sh, ui_manual.sh, page_drive.mjs, mutate.py, golden.sh, golden_new.sh}`.
 
-## Review fixes (1c94e60)
+## Review fixes (0e7a522)
 
-Review: `S/briefs/m4-04.review.md` (six findings). One commit, 1c94e60, pushed.
+Review: `S/briefs/m4-04.review.md` (six findings). One commit, 0e7a522, pushed.
 
 | finding | fix | test (fails on the old code or under the reviewer's break) |
 |---|---|---|
@@ -280,7 +280,7 @@ branch: `if False:`.
 `pytest tests/test_ui_server.py tests/test_ui_jobs.py tests/test_proc.py tests/test_pipeline.py tests/test_engines_autochart.py`
 → `98 passed in 393.20s`; `tests/test_proc.py` again after a line wrap → `5 passed`. ruff (F, E, W, B): clean.
 
-**CI** run 41764268082 on 1c94e60: success, both jobs; suite `639 passed, 1 skipped`; `all 3 Linux hooks passed:
+**CI** run 41764268082 on 0e7a522: success, both jobs; suite `639 passed, 1 skipped`; `all 3 Linux hooks passed:
 10-lanes.sh 12s 20-device.sh 5s 40-ui.sh 17s`, 40-ui's lines as before (403, 403, 403, 415, 200, 202, the job ends
 `failed` at the missing engine, 409, ok). No golden run: nothing on the chart path changed (only `ui/` and tests).
 
@@ -307,7 +307,7 @@ and advertise an address another machine could reach.
   (`wsl.wslconfig()` already reads it), or only addresses in WSL's NAT range (172.16.0.0/12), else localhost only
   with the message.
 
-**Follow-up, 608c45b (the coordinator's rule: never listen where another machine can reach).** The fallback happens
+**Follow-up, 98fe145 (the coordinator's rule: never listen where another machine can reach).** The fallback happens
 only under NAT: `fallback_address` refuses any `networkingMode` but NAT (mirrored, bridged, virtioproxy; read from
 `wsl.wslconfig()`), takes the default route's source (`ip route get 1.1.1.1`'s `src`, else the kernel's choice for a
 UDP socket to 1.1.1.1), not `hostname -I`'s first (Docker's bridge), and requires 172.16.0.0/12. Otherwise
@@ -316,4 +316,4 @@ the log's path. Tests: the modes refused, ten addresses in and out of range, the
 first, and the whole command (mirrored, an outside address, no address): exit 2, only 127.0.0.1 ever bound, nothing
 left listening, the message. Six breaks (`S/m4-04/fallback_mutate.txt`: the mirrored rule, hostname -I, the range,
 exit 0, the message without what to try, a refused fallback serving anyway): all caught. UI tests `74 passed`; CI
-run 41765465113 on 608c45b: success, suite `657 passed, 1 skipped`, `40-ui: ok`, `all 3 Linux hooks passed`.
+run 41765465113 on 98fe145: success, suite `657 passed, 1 skipped`, `40-ui: ok`, `all 3 Linux hooks passed`.
