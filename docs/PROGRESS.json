@@ -68,7 +68,17 @@
     "baseline": "main at 656991d (--rerun guitar): eval/baseline/summary.json, committed (hashes and F1s, no audio); the first, at 11615e2, in <scratchpad>/golden/base. The kept work folders are in <scratchpad>/golden/work, made at 11615e2, so the guitar is rerun on both sides since M4-02 changed engines/autochart.py. Environment in the dev container: EVAL_DATA=<scratchpad>/eval SONGCHARTER_GOLDEN=<scratchpad>/golden, plus SONGCHARTER_SCAN_CHART, SONGCHARTER_AUTOCHART=<scratchpad>/eval/tools/autochart and SONGCHARTER_ALLIN1_PYTHON=<scratchpad>/research/timing/venv2/bin/python. <scratchpad> is /tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad. Rebuilding it elsewhere: eval/README.md, 'Rebuilding the dev machine'.",
     "cost": "cold (a kept folder made, stems hard-linked): 474-1081 s a song, 80 min for the set, the guitar take most of it; warm: 44-76 s a song, 6.5 min for the set (CPU, 2 threads)"
   },
-  "in_flight": [],
+  "in_flight": [
+    {
+      "order": "M4-07 release",
+      "brief": "docs/work-orders/M4-07-release.md",
+      "branch": "m4-07-release",
+      "worktree": "<scratchpad>/wt/m4-07",
+      "stage": "building (from main at 5e9be04); publishes nothing",
+      "report": "<scratchpad>/briefs/m4-07.report.md",
+      "then": "sc-reviewer; then the full review over v0.1"
+    }
+  ],
   "next": [
     "M4: review and merge M4-04 and M4-10; then M4-05 (CI end to end) and M4-06 (UI results, with M4-10's paste box); M4-07 (release); a dry run of .claude/workflows/full-review.js on a small diff, then the full review over v0.1; the advisor on the release candidate; M4-08 on the owner's 5070 in a fresh Ubuntu-26.04 distro with the friend's 16 GB .wslconfig, then the friend's PC (also M1a's Windows spike).",
     "From M5: the plan by the most capable model, as a fresh agent that reads only the repository, reviewed by a different model (docs/PIPELINE.md, Gates).",
