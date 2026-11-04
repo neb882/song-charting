@@ -11,10 +11,14 @@ one chart runs at a time as a child process group (jobs.py). In WSL the Windows 
   3. **The Windows self-check** (WSL with interop): wsl.windows_curl("http://localhost:<port>/api/hello") must return
      this instance's token. That proves Windows' localhost reaches this server (WSL forwards "ports bound to wildcard
      or localhost" by default [doc: wsl-config.md]). An answer that is not this token (another program on that port
-     on Windows, or none) moves to the next port. When no port of the range passes, the **fallback**: the first free
-     port again, and also WSL's own address (the first of `hostname -I`) on that port, allowed as a host and an origin
-     too, logged as such. That address is on WSL's host-only NAT network, so it is no wider than localhost
-     [inference].
+     on Windows, or none) moves to the next port. When no port of the range passes, the **fallback**, only under NAT
+     (`fallback_address`): the first free port again, and also WSL's own address on that port, allowed as a host and
+     an origin too, logged as such. That address is the source of WSL's default route, not a bridge's such as
+     Docker's (`wsl_address`), and it must lie in WSL's NAT range 172.16.0.0/12: on WSL's host-only NAT network it
+     is no wider than localhost [inference]. **The server never listens on an address another machine can reach:**
+     under mirrored networking (or any networkingMode but NAT) the Linux side carries the PC's own LAN addresses, and
+     the guards stop browsers, not a program on the LAN. So with mirrored networking, no address, or one outside that
+     range, it stops instead (exit 2) with what to try and where the log is (`unreachable`).
   4. **The browser**, unless --no-browser: in WSL wsl.open_url (explorer.exe), elsewhere webbrowser.open. The URL is
      printed in every case: http://localhost:<port>/ in WSL (what the self-check proved), http://127.0.0.1:<port>/
      elsewhere, or the fallback address.
@@ -53,11 +57,14 @@ one chart runs at a time as a child process group (jobs.py). In WSL the Windows 
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import secrets
+import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -536,15 +543,61 @@ def find_running(ports: Iterable[int]) -> tuple[int, dict] | None:
     return None
 
 
+WSL_NAT = ipaddress.ip_network("172.16.0.0/12")   # WSL's NAT network [decision; that WSL picks a 172.x: inference]
+
+
 def wsl_address() -> str | None:
-    """WSL's own address: the first of `hostname -I`, else None."""
+    """WSL's own address: the source of its default route, `ip route get 1.1.1.1`'s `src`, else the source the
+    kernel picks for a UDP socket connected to 1.1.1.1 (nothing is sent); None without a default route. Not
+    `hostname -I`'s first, which can be a bridge's (Docker's 172.17.0.1), unreachable from Windows."""
+    exe = shutil.which("ip")
+    if exe:
+        try:
+            out = subprocess.run([exe, "route", "get", "1.1.1.1"], capture_output=True, text=True, timeout=5,
+                                 stdin=subprocess.DEVNULL).stdout
+        except (OSError, subprocess.SubprocessError):
+            out = ""
+        m = re.search(r"\bsrc\s+(\d+\.\d+\.\d+\.\d+)\b", out)
+        if m:
+            return m.group(1)
     try:
-        out = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=5,
-                             stdin=subprocess.DEVNULL).stdout
-    except (OSError, subprocess.SubprocessError):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("1.1.1.1", 53))
+            return s.getsockname()[0]
+    except OSError:
         return None
-    words = out.split()
-    return words[0] if words else None
+
+
+def fallback_address(networking_mode: str | None, address: Callable[[], str | None] | None = None
+                     ) -> tuple[str | None, str]:
+    """The address the fallback may listen on, or (None, why not): only under NAT (.wslconfig's networkingMode unset
+    or nat), and only WSL's own NAT address (`address()`, default wsl_address, in 172.16.0.0/12), which no other
+    machine reaches."""
+    mode = (networking_mode or "nat").strip().lower()
+    if mode != "nat":
+        return None, (f"networkingMode={networking_mode} in .wslconfig: an address beside localhost would be the PC's "
+                      "own, which other machines can reach")
+    ip = (address or wsl_address)()
+    if ip is None:
+        return None, "WSL has no address of its own (no default route)"
+    try:
+        inside = ipaddress.ip_address(ip) in WSL_NAT
+    except ValueError:
+        inside = False
+    if not inside:
+        return None, (f"WSL's address {ip} is not on WSL's own NAT network ({WSL_NAT}), so it may be reachable "
+                      "from other machines")
+    return ip, ""
+
+
+def unreachable(ports: list[int], why: str, log_path: Path | None) -> str:
+    """The message when the page cannot be offered to Windows: why, what to try, where the details are."""
+    span = f"port {ports[0]}" if len(ports) == 1 else f"ports {ports[0]}-{ports[-1]}"
+    return (f"songcharter: error: Windows cannot reach this page: Windows' localhost did not answer on {span}, and "
+            f"songcharter will not listen on another address ({why}). Try: close a program that uses those ports on "
+            "Windows, or start songcharter with another port (songcharter ui --port 8800); or restart WSL "
+            "(wsl --shutdown in PowerShell, then open Ubuntu again)."
+            + (f" Details: {log_path}" if log_path is not None else ""))
 
 
 def windows_check(app: App, curl: Callable[[str], str | None] = wsl.windows_curl) -> Callable[[int], bool]:
@@ -567,6 +620,10 @@ class NoPort(Exception):
     pass
 
 
+class Unreachable(Exception):
+    """No port passed the self-check, and no fallback address may be used (why: its message)."""
+
+
 def _serve(server: Server) -> threading.Thread:
     t = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.2},
                          name=f"songcharter-ui-{server.server_address[1]}", daemon=True)
@@ -575,11 +632,13 @@ def _serve(server: Server) -> threading.Thread:
 
 
 def bind(app: App, ports: Iterable[int], check: Callable[[int], bool] | None = None,
-         address: Callable[[], str | None] = wsl_address, local: str = "127.0.0.1") -> list[Server]:
+         fallback: Callable[[], tuple[str | None, str]] = lambda: fallback_address(None),
+         local: str = "127.0.0.1") -> list[Server]:
     """The servers, serving: on the first free port of `ports` that passes `check` (None: no check, the first free
-    port), with app.url set; else (every free port failed the check) the first free port again, also on
-    `address()`'s address when it gives one, which the guards then allow. NoPort when no port is free. A port 0 is
-    one the system picks (tests)."""
+    port), with app.url set; else (every free port failed the check) the first free port again, also on the address
+    `fallback()` allows (fallback_address), which the guards then allow too. NoPort when no port is free; Unreachable
+    (no server left listening) when the fallback gives no address, or its address cannot be bound. A port 0 is one
+    the system picks (tests)."""
     ports = list(ports)
     first = None
     for port in ports:
@@ -601,30 +660,26 @@ def bind(app: App, ports: Iterable[int], check: Callable[[int], bool] | None = N
         first = port if first is None else first
     if first is None:
         raise NoPort(f"no free port in {', '.join(map(str, ports))}")
+    ip, why = fallback()
+    if ip is None:
+        raise Unreachable(why)
+    try:
+        extra = Server((ip, first), app)
+    except OSError as e:
+        raise Unreachable(f"WSL's address {ip} cannot be bound: {e}") from None
     try:
         server = Server((local, first), app)
     except OSError as e:
+        extra.server_close()
         raise NoPort(f"port {first} was taken meanwhile ({e})") from None
-    app.allow("127.0.0.1", first)
-    app.allow("localhost", first)
-    servers = [server]
+    for host in ("127.0.0.1", "localhost", ip):
+        app.allow(host, first)
     _serve(server)
-    ip = address()
-    app.url = f"http://127.0.0.1:{first}/"
-    if ip:
-        try:
-            extra = Server((ip, first), app)
-        except OSError as e:
-            app.log(f"Windows' localhost does not reach WSL here, and WSL's address {ip} cannot be bound ({e}): "
-                    f"the page is at {app.url} inside WSL only")
-            return servers
-        app.allow(ip, first)
-        _serve(extra)
-        servers.append(extra)
-        app.url = f"http://{ip}:{first}/"
+    _serve(extra)
+    app.url = f"http://{ip}:{first}/"
     app.log(f"Windows' localhost does not reach WSL here (localhostForwarding off, or the port is taken); using "
             f"{app.url}")
-    return servers
+    return [server, extra]
 
 
 def open_browser(url: str, in_wsl: bool) -> bool:
@@ -675,10 +730,17 @@ def _main(port: int | None, browser: bool, from_shortcut: bool, home: Path | Non
     app = App(root, log=log)
     threading.Thread(target=app.doctor, name="songcharter-doctor", daemon=True).start()   # the header, in advance
     check = windows_check(app) if in_wsl and wsl.interop_ok() else None
+
+    def fallback() -> tuple[str | None, str]:
+        return fallback_address(wsl.wslconfig().get("networking_mode"))
+
     try:
-        servers = bind(app, ports, check)
+        servers = bind(app, ports, check, fallback)
     except NoPort as e:
         log(f"songcharter: error: {e}: close the program that uses them, or pass --port")
+        return 2
+    except Unreachable as e:
+        log(unreachable(ports, str(e), log.path))
         return 2
     stop = threading.Event()
 

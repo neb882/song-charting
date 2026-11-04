@@ -409,10 +409,12 @@ def test_the_self_check_moves_to_the_next_port(tmp_path):
 
 
 def test_when_every_port_fails_the_fallback_address_is_allowed(tmp_path):
+    """Under NAT, as before: the first free port on localhost and on the address the fallback allows (127.0.0.2 here
+    stands in for WSL's NAT address, which fallback_address checks: the tests below)."""
     lines = []
     app = S.App(tmp_path, log=S.Log(None, console=lines.append))
     ports = free_ports(3)
-    servers = S.bind(app, ports, S.windows_check(app, lambda url: None), address=lambda: "127.0.0.2")
+    servers = S.bind(app, ports, S.windows_check(app, lambda url: None), lambda: ("127.0.0.2", ""))
     try:
         first = ports[0]
         assert [s.server_address for s in servers] == [("127.0.0.1", first), ("127.0.0.2", first)]
@@ -431,15 +433,97 @@ def test_when_every_port_fails_the_fallback_address_is_allowed(tmp_path):
         for s in servers:
             s.shutdown()
             s.server_close()
-    # no address to fall back on: localhost only
-    app = S.App(tmp_path, log=S.Log(None, console=lambda t: None))
-    servers = S.bind(app, free_ports(1), lambda port: False, address=lambda: None)
-    try:
-        assert len(servers) == 1 and app.url.startswith("http://127.0.0.1:")
-    finally:
-        for s in servers:
-            s.shutdown()
-            s.server_close()
+    # no address the fallback may use, or one that cannot be bound: Unreachable, and nothing left listening
+    for fallback, why in ((lambda: (None, "networkingMode=mirrored ..."), "networkingMode=mirrored"),
+                          (lambda: ("192.0.2.7", ""), "WSL's address 192.0.2.7 cannot be bound")):
+        app = S.App(tmp_path, log=S.Log(None, console=lambda t: None))
+        port = free_ports(1)[0]
+        with pytest.raises(S.Unreachable, match=why):
+            S.bind(app, [port], lambda port: False, fallback)
+        with pytest.raises(OSError):
+            socket.create_connection(("127.0.0.1", port), timeout=2).close()
+        assert app.url is None and not app.host_ok(f"127.0.0.1:{port}")
+
+
+@pytest.mark.parametrize("mode", ["mirrored", "Mirrored", "bridged", "virtioproxy"])
+def test_no_fallback_but_under_nat(mode):
+    """Under mirrored networking (or any mode but NAT) the Linux side carries the PC's own addresses: none is used,
+    whatever WSL's address looks like."""
+    asked = []
+    ip, why = S.fallback_address(mode, lambda: asked.append(1) or "172.24.5.6")
+    assert ip is None and f"networkingMode={mode}" in why and "other machines can reach" in why and asked == []
+
+
+@pytest.mark.parametrize("address, ok", [("172.24.5.6", True), ("172.16.0.1", True), ("172.31.255.254", True),
+                                         ("172.32.0.1", False), ("172.15.255.1", False), ("192.168.1.20", False),
+                                         ("10.0.0.5", False), ("127.0.0.2", False), ("x", False), (None, False)])
+def test_under_nat_only_an_address_in_wsls_nat_range(address, ok):
+    for mode in (None, "", "nat", "NAT"):
+        ip, why = S.fallback_address(mode, lambda: address)
+        assert (ip == address and why == "") if ok else ip is None, (mode, address, why)
+    if address is None:
+        assert "no default route" in why
+    elif not ok:
+        assert f"WSL's address {address} is not on WSL's own NAT network (172.16.0.0/12)" in why
+
+
+def test_wsl_address_is_the_default_routes_source_not_a_bridge(tmp_path, monkeypatch):
+    """hostname -I lists Docker's bridge first here; the address is the default route's source all the same."""
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    for name, text in (("hostname", "172.17.0.1 172.24.5.6 "),
+                       ("ip", "1.1.1.1 via 172.24.0.1 dev eth0 src 172.24.5.6 uid 1000 \n    cache ")):
+        (bin_ / name).write_text(f"#!/bin/sh\necho '{text}'\n")
+        (bin_ / name).chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_))
+    assert S.wsl_address() == "172.24.5.6"
+    # without `ip`: the kernel's own choice for a UDP socket to 1.1.1.1 (whatever it is here), never hostname's first
+    (bin_ / "ip").unlink()
+    assert S.wsl_address() != "172.17.0.1"
+
+
+@pytest.mark.parametrize("mode, address, why", [
+    ("mirrored", "172.24.5.6", "networkingMode=mirrored in .wslconfig"),
+    (None, "192.168.1.20", "WSL's address 192.168.1.20 is not on WSL's own NAT network"),
+    (None, None, "WSL has no address of its own (no default route)"),
+])
+def test_songcharter_ui_stops_rather_than_listen_where_others_reach(tmp_path, monkeypatch, mode, address, why):
+    """In WSL, with Windows' localhost failing the self-check: no fallback address may be used, so the server
+    listens nowhere, says why and what to try, and exits 2 (the environment)."""
+    from songcharter import wsl
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "doctor.json").write_text(json.dumps(DOCTOR), encoding="utf-8")
+    monkeypatch.setattr(wsl, "is_wsl", lambda: True)
+    monkeypatch.setattr(wsl, "interop_ok", lambda: True)
+    monkeypatch.setattr(wsl, "windows_curl", lambda url: None)
+    monkeypatch.setattr(wsl, "wslconfig", lambda: {"path": "C:\\X\\.wslconfig", "exists": True, "memory_bytes": None,
+                                                   "swap_bytes": None, "localhost_forwarding": None,
+                                                   "networking_mode": mode})
+    monkeypatch.setattr(S, "wsl_address", lambda: address)
+    bound = []
+    real = S.Server
+
+    class Recording(real):
+        def __init__(self, where, app):
+            bound.append(where[0])
+            super().__init__(where, app)
+
+    monkeypatch.setattr(S, "Server", Recording)
+    printed = []
+    monkeypatch.setattr(S, "console_line", printed.append)
+    port = free_ports(1)[0]
+    assert S.main(port=port, browser=False, home=home) == 2
+    assert set(bound) == {"127.0.0.1"}   # never another address
+    with pytest.raises(OSError):
+        socket.create_connection(("127.0.0.1", port), timeout=2).close()
+    log = next((home / "logs").glob("ui-*.log"))
+    message = printed[-1]
+    assert message.startswith(f"songcharter: error: Windows cannot reach this page: Windows' localhost did not answer "
+                              f"on port {port}, and songcharter will not listen on another address ({why}")
+    for text in ("songcharter ui --port", "wsl --shutdown", f"Details: {log}"):
+        assert text in message, text
+    assert message in log.read_text(encoding="utf-8")
 
 
 def test_no_free_port(tmp_path):
