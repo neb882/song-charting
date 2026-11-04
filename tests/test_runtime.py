@@ -458,3 +458,26 @@ def test_check_says_each_step_and_the_failure_line(tmp_path, app, capsys):
     line = ("songcharter: setup failed: no torch lane is chosen (''): it is one of cpu, cu126, cu132. Run the same "
             "command again to continue.\n")
     assert capsys.readouterr().err == line and failure.read_text(encoding="utf-8") == line
+
+
+def test_npm_ci_keeps_its_cache_inside_the_install_and_deletes_it(tmp_path, app):
+    """npm's default cache, ~/.npm, is outside what uninstall removes (M4-05's review): npm ci gets a cache in
+    runtime/state, which is gone once it has run, whether it succeeded or not."""
+    seen = []
+    def run(cmd, **kw):
+        cache = Path(kw["env"]["npm_config_cache"])
+        cache.mkdir(parents=True)
+        (cache / "tarball").write_bytes(b"x")
+        seen.append(cache)
+        nm = Path(kw["cwd"]) / "node_modules" / "scan-chart"
+        nm.mkdir(parents=True, exist_ok=True)
+        (nm / "package.json").write_text("{}", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, len(seen) - 1, "", "")   # the second run fails
+
+    s = R.Setup(tmp_path / "home", app, "cpu", "test", download=True, say=lambda s: None, run=run)
+    R.step_scan_chart(s)
+    assert seen[0] == s.runtime / "state" / "npm-cache" and not seen[0].exists()
+    (s.runtime / "scan-chart" / R.STAMP).unlink()
+    with pytest.raises(R.StepFailed, match="exited 1"):
+        R.step_scan_chart(s)
+    assert not seen[1].exists()

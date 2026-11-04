@@ -356,9 +356,14 @@ def _npm_ci(s: Setup, folder: Path, ready: Path, what: str, *flags: str) -> None
     s.need(what)
     stamp.unlink(missing_ok=True)
     npm = s.runtime / "node" / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js"
+    # npm's tarball cache in runtime/state, deleted after: the default, ~/.npm, is outside what uninstall removes (M4-05)
+    cache = s.runtime / "state" / "npm-cache"
     env = {**os.environ, "PATH": f"{s.node.parent}{os.pathsep}{os.environ.get('PATH', '')}",
-           "npm_config_update_notifier": "false"}
-    proc = s.run([str(s.node), str(npm), "ci", "--omit=dev", "--ignore-scripts", *flags], cwd=str(folder), env=env)
+           "npm_config_update_notifier": "false", "npm_config_cache": str(cache)}
+    try:
+        proc = s.run([str(s.node), str(npm), "ci", "--omit=dev", "--ignore-scripts", *flags], cwd=str(folder), env=env)
+    finally:
+        _rmtree(cache)
     if proc.returncode != 0:
         raise StepFailed(f"npm ci in {folder} exited {proc.returncode} (its output is above)")
     if not ready.exists():
