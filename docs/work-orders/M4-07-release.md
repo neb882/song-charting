@@ -109,16 +109,23 @@ The release itself ships only songcharter's code and this file. Check each licen
 - `install.sh`'s "Continue?" prompt names it: "Licences: <app>/NOTICE.txt". This is the one-time "model licences"
   notice of DESIGN 4.2, in text.
 
-### The pre-release (done at M4-08, after part A passes; listed here so it is written down)
+### The pre-release (done at M4-08, before its part A; listed here so it is written down)
+
+Since the advisor's review of the release candidate, the pre-release comes first: M4-08's part A installs from it
+with the guide's line, as the friend will, and if part A fails the pre-release and the tag are deleted, the fix is
+made, and it is published again (M4-08, R1-R4). One version string, `0.1.0`: the pre-release flag marks it a
+candidate.
 
 ```
 git tag v0.1.0 <main's commit> && git push origin v0.1.0
+git checkout v0.1.0 && bash packaging/release/build.sh 0.1.0 dist     # build.sh archives HEAD: the tagged tree
 gh release create v0.1.0 --prerelease --title "songcharter 0.1.0 (WSL)" --notes-file dist/GUIDE.md \
   dist/install.sh dist/songcharter-0.1.0.tar.gz dist/SHA256SUMS
 ```
 
-The owner runs it, or a session if the proxy allows release writes (it refused other write paths in the planning
-job). Otherwise it is done by hand on GitHub's release page with the same files and notes.
+Publishing needs the owner's yes: the owner runs it, or a session the owner has told to, if the proxy allows release writes
+(it refused other write paths in the planning job). Otherwise it is done by hand on GitHub's release page with the
+same files and notes.
 
 ### Hook `70-release.sh`
 
@@ -134,8 +141,8 @@ job). Otherwise it is done by hand on GitHub's release page with the same files 
 1. [dev] `build.sh 0.1.0-dev /dev/shm/m4-07/dist` renders `GUIDE.md`. The guide reads well: a person reads it and
    says so in the report, with its word count.
 2. [CI] `70-release.sh` passes after the push.
-3. [Hardware] M4-08: the owner follows the guide on the 5070's fresh distro and notes every step that was unclear;
-   the friend follows it on his PC.
+3. [Hardware] M4-08: the owner publishes the pre-release, follows the guide on the 5070's fresh distro with the line
+   from the release page, and notes every step that was unclear; the friend follows it on his PC.
 
 ## Depends on
 

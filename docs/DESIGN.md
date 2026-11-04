@@ -188,6 +188,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 - **Determinism.** Seeds are fixed and nothing depends on the wall clock. Two CPU runs must give a byte-identical `notes.chart`.
   - Demucs's default `shifts=1` draws a random time shift from Python's global `random` (demucs 4.1.0: `apply.py` line 245, `api.py` line 59); the ADTOF test called `apply_model(..., shifts=1)` [here]. So two fresh separations differ unless `random` (and torch) is seeded right before each separation, or `shifts=0` is used. Record the choice in `doctor.json`. M1 is safe only because it reuses cached stems.
   - The chosen guitar take's tokens and seed are cached with the stems and in the polish workspace, and re-runs reuse them unless the user asks to regenerate. Determinism is promised only on the same machine and device: one flipped token changes the whole rest of a take (critique G6).
+  - Not yet shown on CUDA: the golden charts run 1 CPU take, and the GPU smoke test's rerun reused its cached takes, so two cold charts of 4 CUDA takes have never been compared. M4-08's A18 charts the test song twice from cold on the 5070 and compares the two `notes.chart` files; this line then says what it found (the advisor on the release candidate, finding 5).
 - **GPU memory.** Free GPU memory between stages. Log peak VRAM per stage in `doctor.json` and in the UI. Tell the user about any CPU fallback (critique G15).
 - **Silence.** A part loses its onsets before its stem first plays and after it last plays (`assemble.active_span`,
   §2.8) [code]. Onsets in a silence inside the song are only reported: the critique's "no notes inside silences longer
@@ -722,7 +723,9 @@ sections, scored with `score.py` against the six human charts [here, takes exper
 - **Cost on the owner's GPU** (RTX 5070): 4 takes are **3.41×** the guitar stage (1001 s for one take over seven
   songs, 3414 s for four; 2.3–4.4× per song), **+5.75 min a song** on average (1.6–11.4). CPU times were not
   measured in the experiment; on the dev container one more take is one more transcription, 217 s for the test song
-  (§5, M3), so three more would add about 11 min there [inference].
+  (§5, M3), so three more would add about 11 min there [inference]. The GPU smoke test (2026-11-04, the real install
+  on the 5070) measured **3.9×** for the 6:52 test song: 854 s for 4 takes against about 219 s for one, +10.7 min
+  [here, GPU smoke test]. The default stayed 4 at the release gate; M4-08 judges the takes rule on the friend's 4070.
 - **Decision** (`pipeline.guitar_takes`) [decision, on this evidence]: **4 takes when the guitar stage runs on CUDA,
   1 on the CPU, never 2 or 3 by default; `--takes N` (1, or 3 or more) overrides on any device.** The first CUDA take
   runs alone first: when its summary shows the transcriber off CUDA (autochart fell back by itself), the run warns
