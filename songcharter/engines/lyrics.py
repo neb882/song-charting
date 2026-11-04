@@ -79,10 +79,7 @@ METHODS = {
                            "https://download.pytorch.org/torchaudio/models/wav2vec2_fairseq_base_ls960_asr_ls960.pth",
                            "488fd4f16de84438ffc945334278c1b9fb9b7159a806c1080b16111a958c945d",
                            "wav2vec2_fairseq_base_ls960_asr_ls960.pth", 377664473, True, "|", "MIT (fairseq)"),
-    "multilingual": Method("MMS_FA", "https://dl.fbaipublicfiles.com/mms/torchaudio/ctc_alignment_mling_uroman/model.pt",
-                           "20ef12963ab4924bef49ac4fc7f58ad5da2ee43b2c11bc8c853c9b90ecdbc680", "model.pt", 1262047414,
-                           False, None, "CC BY-NC 4.0"),
-}
+}   # the base bundle: 378 MB of weights for 0.046 fewer words within 250 ms (DESIGN.md 2.15)
 DEFAULT_METHOD = "english"
 
 
@@ -208,7 +205,7 @@ def load_model(method: Method, device: str):
         raise Unavailable(f"torchaudio {torchaudio.__version__} has no {method.bundle} bundle")
     kwargs = {"dl_kwargs": {"model_dir": str(path.parent), "file_name": path.name, "progress": False,
                             "weights_only": True}}
-    model = bundle.get_model(with_star=False, **kwargs) if method.separator is None else bundle.get_model(**kwargs)
+    model = bundle.get_model(**kwargs)
     return bundle, model.to(device).eval()
 
 
@@ -365,7 +362,7 @@ class Torchaudio:
         del model
         if settings.device == "cuda":
             torch.cuda.empty_cache()
-        labels = tuple(bundle.get_labels(star=None) if method.separator is None else bundle.get_labels())
+        labels = tuple(bundle.get_labels())
         if em.shape[1] != len(labels):
             raise RuntimeError(f"the network gives {em.shape[1]} classes for {len(labels)} labels")
         em = np.concatenate([em, np.zeros((em.shape[0], 1), np.float32)], axis=1)   # the star: log-probability 0
