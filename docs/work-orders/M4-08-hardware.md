@@ -93,9 +93,12 @@ Run as written; note each answer (A1–A24). About four hours; steps 15 and 19 m
      app open, as the friend's PC will: the free VRAM before and the peak during it, and whether any take failed or
      fell back to the CPU.
    - **A22, what CUDA buys the guitar:** chart the test song once more with **Device: CPU** and Guitar takes: 1 (the
-     guitar's take runs again on the CPU). Record its guitar stage's time beside A6's CUDA take. DESIGN's C2 row
-     says a GPU barely helps the transcription: the GPU smoke test's CUDA takes took 177-217 s, against 217 s for a
-     take on the dev container's CPU.
+     guitar's take runs again on the CPU). Compare its guitar stage's time with A7 divided by 3: both are the
+     transcription alone, autochart's separation and beat map being cached from the charts before (A6's take ran
+     those too). The take's `guitar/seed_20260609/autochart_run/summary.json`, in the work folder, shows `demucs`
+     null when that cache answered: if it did not, compare with A6 instead. DESIGN's C2 row says a GPU barely helps
+     the transcription: the GPU smoke test's CUDA takes took 177-217 s, against 217 s for a take on the dev
+     container's CPU.
 9. Chart Take Me Out (`input.wav`) with the defaults. The director scores it on Linux with `eval/scorer/score.py`.
 10. **Cancel:** start any song, and press Cancel once the guitar row shows "take 1".
     - **A8:** cancelled within 30 s?
@@ -109,10 +112,13 @@ Run as written; note each answer (A1–A24). About four hours; steps 15 and 19 m
     job.)
     - **A20, memory after a chart:** after a chart that finished, close the songcharter window (and every Ubuntu
       window) and watch *Vmmem* (or *VmmemWSL*) in Task Manager: how long until its memory is back? The guide says
-      it can take a minute.
+      it can take a minute. If it is not back after 5 minutes, record that and whether `wsl --shutdown` in Terminal
+      frees it; the guide's section 5 then tells him to run it.
     - **A21, sleep mid-chart:** once, let the PC sleep during a chart's guitar stage (Start > Power > Sleep), and
       wake it a few minutes later. Does the job finish? Is WSL's clock right afterwards (`date` in Ubuntu against
-      Windows' clock: the guide's section 6 case)?
+      Windows' clock: the guide's section 6 case)? If the job does not finish, record what the page shows and
+      whether the same chart run again finishes; it goes to PROGRESS's deferred list, and the guide's "keep the PC
+      awake" stays.
 12. **A non-ASCII name:** drag a song file named, for example, `Déjà Vü – Test.mp3` from Windows Explorer onto the
     page, and chart it with 1 take. **A10:** uploaded, charted, and its folder name readable?
 13. **Clone Hero:** "Install into Clone Hero" for the test song.
@@ -133,16 +139,18 @@ Run as written; note each answer (A1–A24). About four hours; steps 15 and 19 m
 17. The page's "Diagnostics" link. Send the zip with the answers.
     - **A24:** from the tag's checkout, `python3 packaging/ci/check_no_audio.py <the zip>` passes. After the lyrics
       chart ("Added at M4-10's merge"), the zip holds none of the pasted text: the script below reads the text (in
-      a file of your own, `lyrics.txt`, never committed) and the zip, and prints only `yes` (three pasted words in a
-      row found in a member) or `no`, never a word. Three in a row, because a single word cannot tell a leak from a
-      log's own words.
+      a file of your own, `lyrics.txt`, never committed), the zip, and the song's title and file name, and prints
+      only `yes` (three pasted words in a row found in a member) or `no`, never a word. Three in a row, because a
+      single word cannot tell a leak from a log's own words. The title and file name are left out of the comparison,
+      because the zip names the song (the logs, the tags) and a title is often a line of the song.
 
       ```
-      python3 - lyrics.txt diagnostics.zip <<'EOF'
+      python3 - lyrics.txt diagnostics.zip "<the song's title>" "<its file name>" <<'EOF'
       import re, sys, zipfile
       words = lambda text: re.findall(r"[^\W_]+", text.lower())
       runs = lambda ws: {tuple(ws[i:i + 3]) for i in range(len(ws) - 2)}
       pasted = set().union(*[runs(words(line)) for line in open(sys.argv[1], encoding="utf-8")])
+      pasted -= set().union(set(), *[runs(words(name)) for name in sys.argv[3:]])   # the song's own name
       z = zipfile.ZipFile(sys.argv[2])
       print("yes" if any(runs(words(z.read(n).decode("utf-8", "replace"))) & pasted for n in z.namelist()) else "no")
       EOF
@@ -169,9 +177,9 @@ Run as written; note each answer (A1–A24). About four hours; steps 15 and 19 m
 - every take's transcriber ran on `cuda` (`pipeline.json`, in the zip);
 - `doctor`'s `autochart_cuda` is ok;
 - the test song with 1 take in **8 min or less**: the 4070's target, so the 5070 should beat it. A7 is recorded
-  (3 takes: see step 8), and so is A22 beside A6.
+  (3 takes: see step 8), and so is A22 beside A7 / 3.
   - Rule [decision], judged on the friend's 4070 (part B's times), not on the 5070, where the 3 extra takes added
-    10.7 min in the GPU smoke test: if 4 takes add more than 12 min to the guitar stage there, the default on CUDA
+    10.6 min in the GPU smoke test: if 4 takes add more than 12 min to the guitar stage there, the default on CUDA
     under WSL goes to 1 take, a one-line change in `guitar_takes`, for v0.1.1.
 - **Determinism (A18):** the two cold charts' notes.chart compared, and DESIGN and PROGRESS say what was found,
   whichever way it falls [decision]: identical, the rule holds for 4 CUDA takes on one machine; different, DESIGN
