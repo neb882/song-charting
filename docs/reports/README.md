@@ -19,6 +19,7 @@ built; a merge commit on main names the result.
 | `M4-05-ci.md` | CI end to end in Ubuntu 26.04: the install killed and resumed, doctor, a chart, the page and a cancel, offline, both uninstalls; the review's fixes and the figures |
 | `M4-05a-ci-skeleton.md` | the CI workflow and its hook runners |
 | `M4-06-ui-results.md` | the Done screen, the install into Clone Hero's Songs folder, diagnostics and the lyrics box; the review's fixes |
+| `M4-07-release.md` | the friend's guide, NOTICE.txt with each licence checked at its source, the release build and its CI check; the review's fixes |
 | `M4-10-lyrics.md` | lyrics from pasted text: five aligners measured on the references (timings only), the build, and the review's fixes |
 | `pipeline-review.md` | an advisor's review of how work is run (2026-11-04), finding by finding, with what was done |
 | `takes-experiment.md`, `takes-experiment-verifier.md` | spliced guitar takes against one take, and the verifier's corrections (which win where they differ) |

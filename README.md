@@ -19,10 +19,14 @@ The first song charted with it is "Beast Monster Thing (Love Isn't Love Enough)"
   - our own rules for bass;
   - allin1 for sections;
   - our grid, reductions, star power and solos.
-- **Next:** a Windows release for the player it is built for (M4). `docs/PROGRESS.json` has the current state;
-  `docs/DESIGN.md` has the design and the evidence behind each choice.
+- **v0.1 for Windows** runs in WSL2 (M4): the friend's guide is `docs/guide/windows-wsl.md`, which
+  `packaging/release/build.sh` renders into each release's notes (`GUIDE.md`). `docs/PROGRESS.json` has the
+  current state; `docs/DESIGN.md` has the design and the evidence behind each choice.
 
 ## Using it
+
+**On Windows:** follow the release's guide: set up WSL once, then paste its one line, which downloads
+`install.sh`, checks its SHA-256 and runs it. On Linux, from a checkout:
 
 ```sh
 pip install -e ".[separate,drums,bass,sections,preview]"
@@ -56,6 +60,12 @@ songcharter chart song.mp3 --out "Songs/Artist - Title"
 - **The song audio** is the artist's copyrighted recording, so it is never committed (see `.gitignore`). To play
   or rebuild a chart, put your own copy of the song in the song folder.
 - **No stems, reference charts or model weights** are committed either.
+
+## Licence
+
+songcharter's own code is MIT (`LICENSE`), except `songcharter/engines/adtof.py`, treated as CC BY-NC-SA 4.0.
+What it downloads has its own licences, some of them non-commercial (Fretformer 2, the ADTOF weights,
+htdemucs_6s): `packaging/NOTICE.txt`, also at the root of each release's tarball.
 
 ## Development
 

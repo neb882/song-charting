@@ -39,7 +39,7 @@
     },
     {
       "id": "M4",
-      "status": "building: waves 1-3 and M4-10 merged (M4-01, -02, -03, -04, -05, -05a, -06, -10; each reviewed, CI green end to end in Ubuntu 26.04); M4-00b's CUDA 13 spike passed on the 5070; next M4-07 (the release), then the full review, M4-08",
+      "status": "built: every order merged (M4-01 to M4-07, M4-05a, M4-10; each reviewed, CI green end to end in Ubuntu 26.04, the release's own check included); M4-00b's CUDA 13 spike passed on the 5070; next the release gate (the full review, the golden charts, the test song end to end, the advisor), then M4-08 on the owner's 5070, then the pre-release",
       "what": "a release the friend can use on his Windows PC, running in WSL2: a guided WSL setup, a one-line install, a Start-menu shortcut, a local UI, tested on his PC",
       "plan": "docs/work-orders/M4-00-plan.md: v0.1 is a guide to set up WSL, install.sh fetched from the pre-release and checked by hash (uv lanes cu132/cu126/cpu, allin1's own Python, Node, autochart with its models and its CUDA 13 provider, doctor.json, a .wslconfig with Windows' RAM minus 4 GB, a Start-menu shortcut), device checks with the CPU fallback shown, the local UI in WSL opened in the Windows browser (drop, options, progress with cancel, the static preview, zip and install into the Windows Songs folder), diagnostics, and CI end to end in ubuntu:26.04. Native Windows and the rest are M4-99; the native plan is commit f9f9377 and M4-00's appendix.",
       "risks": [
@@ -68,19 +68,9 @@
     "baseline": "main at 656991d (--rerun guitar): eval/baseline/summary.json, committed (hashes and F1s, no audio); the first, at 11615e2, in <scratchpad>/golden/base. The kept work folders are in <scratchpad>/golden/work, made at 11615e2, so the guitar is rerun on both sides since M4-02 changed engines/autochart.py. Environment in the dev container: EVAL_DATA=<scratchpad>/eval SONGCHARTER_GOLDEN=<scratchpad>/golden, plus SONGCHARTER_SCAN_CHART, SONGCHARTER_AUTOCHART=<scratchpad>/eval/tools/autochart and SONGCHARTER_ALLIN1_PYTHON=<scratchpad>/research/timing/venv2/bin/python. <scratchpad> is /tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad. Rebuilding it elsewhere: eval/README.md, 'Rebuilding the dev machine'.",
     "cost": "cold (a kept folder made, stems hard-linked): 474-1081 s a song, 80 min for the set, the guitar take most of it; warm: 44-76 s a song, 6.5 min for the set (CPU, 2 threads)"
   },
-  "in_flight": [
-    {
-      "order": "M4-07 release",
-      "brief": "docs/work-orders/M4-07-release.md",
-      "branch": "m4-07-release",
-      "worktree": "<scratchpad>/wt/m4-07",
-      "stage": "building (from main at 5e9be04); publishes nothing",
-      "report": "<scratchpad>/briefs/m4-07.report.md",
-      "then": "sc-reviewer; then the full review over v0.1"
-    }
-  ],
+  "in_flight": [],
   "next": [
-    "M4: review and merge M4-04 and M4-10; then M4-05 (CI end to end) and M4-06 (UI results, with M4-10's paste box); M4-07 (release); the full review over v0.1 (.claude/workflows/full-review.js; its dry run passed on 2026-11-04); the advisor on the release candidate; M4-08 on the owner's 5070 in a fresh Ubuntu-26.04 distro with the friend's 16 GB .wslconfig, then the friend's PC (also M1a's Windows spike).",
+    "M4: the release gate on main: the full review over v0.1 (.claude/workflows/full-review.js), the golden charts on the whole set against the baseline, the test song end to end with its preview looked at, the advisor on the release candidate; then M4-08 on the owner's 5070 in a fresh Ubuntu-26.04 distro (the guide followed as written), then the pre-release (the owner approves), then the friend's PC.",
     "From M5: the plan by the most capable model, as a fresh agent that reads only the repository, reviewed by a different model (docs/PIPELINE.md, Gates).",
     "Owner: delete the merged remote branches ci-test-gaps, m4-01-lanes, m4-02-device, m4-03-install and m4-05a-ci-skeleton (a session can't).",
     "Before the next quality decision: grow the reference set to 20 or more human charts, with human-charted solos among them."
@@ -139,7 +129,11 @@
     "M4-06: a copy into Songs that stopped before song.ini and report.json lacks our marks, so its .tmp folder is left; whether Clone Hero lists dot-folders is unknown until M4-08.",
     "M4-06 decision (the builder's, kept at review): a chart that failed its gate is never installed or exported; its Done screen still shows the preview.",
     "M4-05: an offline reinstall rebuilds songcharter's wheel from uv's cache; it passed minutes after the install, untested days later when uv's cached index has gone stale (nothing promises an offline reinstall).",
-    "M4-05: piped into `songcharter uninstall`, the answer's next line follows the [y/N] prompt on the same line (a terminal is unaffected)."
+    "M4-05: piped into `songcharter uninstall`, the answer's next line follows the [y/N] prompt on the same line (a terminal is unaffected).",
+    "M4-07: the guide's GPU-lane figures (about 4 GB to download, about 3 GB to switch to the GPU build, about 20 GB free on C:) are estimates: M4-08 measures the cu132 lane.",
+    "M4-07: the guide's Windows steps (nvidia-smi, wsl --update and --install, the first Ubuntu window, the Start-menu search, wsl --shutdown, wsl --unregister) run on hardware only: M4-08 and the friend's PC.",
+    "M4-07: the guide's NOTICE.txt link points at the tag v<version>, which works once M4-08 pushes it.",
+    "M4-07: NOTICE.txt is hand-written from the locks of 2026-11-04; a lock or pin change can make it stale. A CI check that every locked package with a non-permissive licence is named in it would catch that."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
   "how_work_is_run": "docs/PIPELINE.md. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices, /prompt-caching, /sub-agents, /settings",

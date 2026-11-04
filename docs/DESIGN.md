@@ -1584,7 +1584,7 @@ v1's absolute targets, kept as information only:
 |---|---|---|---|
 | songcharter | MIT (intended) | — | MIT, with a BY-NC-SA carve-out for the ADTOF port if it counts as adapted material (below); becomes AGPL only if the owner chooses option D |
 | htdemucs_6s | MIT | "not clear", "likely" CC BY-NC (the Demucs README, lines 321–325) vs MIT (autochart's third-party notices) [doc] | Treat as non-commercial. Download at first run, pinned and hash-checked; never bundle. |
-| Beat This! final0 | MIT | MIT | may be bundled or mirrored |
+| Beat This! final0 | MIT | MIT | may be bundled or mirrored; in v0.1, only as autochart's ONNX export, in its model pack |
 | Fretformer 2 (+ Lite) | autochart's engine is AGPL. B2 uses no AGPL code; B1 ships the AGPL engine with its source obligations (plus FFmpeg's LGPL); D makes songcharter AGPL. | CC BY-NC-SA 4.0 | Download separately. Keep the written record that our driver follows only `manifest.json` (critique G13). Any mirror stays BY-NC-SA with attribution. If B1 ships, extend the provenance record to `eval/tools/autochart/ac_headless.cjs`. |
 | ADTOF Frame_RNN | our 73-line PyTorch port, written from reading `xavriley/ADTOF-pytorch`, which states no licence anywhere (README, pyproject) [doc]; upstream ADTOF's whole repository, code included, is CC BY-NC-SA 4.0 (its LICENSE and README lines 7–8) [doc]. So the port's code licence is uncertain: it derives from reading an unlicensed port of BY-NC-SA code. | the `.pth`: BY-NC-SA by inheritance from ADTOF [doc]; its host states none. Trained on custom charts. | Download the weights separately. Keep the port as a separate module treated as BY-NC-SA, or write a provenance record as for G13. Ask xavriley to add a licence (§9 Q15). |
 | STRUM | "MIT" only in its README, pyproject and HF tag; no LICENSE file in its git history | "MIT" tag; 91 % of its guitar training songs come from commercial games | Goal 1 uses only the chart STRUM already produced. Goal 2 uses STRUM only as a benchmark; nothing of STRUM is vendored or shipped (§2.8; §9 Q14). |
@@ -1593,6 +1593,13 @@ v1's absolute targets, kept as information only:
 | chartgen's separator | — | "license: unknown" | never |
 | lyrics aligner (§2.15) | torchaudio 2.11.1, BSD-2-Clause | wav2vec 2.0 large (Libri-Light 60k h, LibriSpeech 960 h), "published by the authors of wav2vec 2.0 under MIT License and redistributed with the same license" (torchaudio's bundle documentation) [doc] | download on first `--lyrics` use, pinned and hash-checked; never bundled |
 | Node, scan-chart, node_modules | various | — | write a NOTICE / attribution file (critique G13) |
+
+**As built (M4-07):** `packaging/NOTICE.txt` lists every component with its licence as its package states it, and how
+it arrives; it sits at the release tarball's root, and install.sh's Continue prompt names `<app>/NOTICE.txt`: v0.1's
+one-time model-licences notice, in text. Checked on 2026-11-04: the Linux ffmpeg in imageio-ffmpeg 0.8.1 is configured
+`--enable-gpl --enable-version3` (GPL-3.0-or-later); torch's wheels carry Apache-2.0, BSL-1.0, ISC, MIT and Zlib code
+beside its own BSD-3-Clause; lameenc (LGPL-3.0-or-later), soxr (LGPL-2.1-or-later), certifi and tqdm (MPL-2.0) and
+soundfile's bundled libsndfile (LGPL) are the only non-permissive Python packages.
 
 **Consequences:**
 - No fully open route exists. Even a rules-only route (Engine B, or a Basic Pitch route) needs stems, and no separator with an unambiguous permissive weight licence was found.
@@ -1603,7 +1610,7 @@ v1's absolute targets, kept as information only:
 - Cache: `%LOCALAPPDATA%\songcharter\models\<model>\<file>`. As built, the ADTOF weights live in `models_dir()/adtof/`: `$SONGCHARTER_MODELS`, else `%LOCALAPPDATA%\songcharter\models`, else `~/.cache/songcharter/models` [code]. The htdemucs_6s and allin1 files go through the Hugging Face hub's own cache, pinned to a revision and hash-checked [code].
 - `models.json` pins each URL to a commit, with size and SHA-256.
 - The downloader uses a `.part` file, HTTP Range resume, retries, a SHA-256 check and an atomic rename, and honours `SONGCHARTER_OFFLINE=1` (resume and offline loading were tested [here, v1]). Built for ADTOF: the `.part` download, retries, the SHA-256 check, the atomic rename and `SONGCHARTER_OFFLINE=1`; Range resume is not built [code].
-- A one-time "Model licences" screen lists every licence and attribution.
+- A one-time "Model licences" screen lists every licence and attribution (v0.1: NOTICE.txt, named at install.sh's Continue prompt).
 - The default first-song download is about 0.7 GB plus allin1 [est., v1].
 
 | model | use | host (pin) | size |
@@ -1725,7 +1732,12 @@ mid-file in a model download, which resumes from its `.part`); `doctor`, also wi
 a clip made by code; the page (`ui_guards.py`: the guards, an upload, a cancel at the first guitar take with Node
 running, and no process left); an offline chart and an offline reinstall with the network cut from outside; and both
 uninstalls (after No, the downloads unchanged; after Yes, nothing new left in `~`). 24.04 must install, 22.04 is
-reported. The cpu lane installs 2.8 GB. What follows is the plan for the native route, kept for M4-99.
+reported. The cpu lane installs 2.8 GB. M4-07's `70-release.sh` builds the release (`build.sh`, from HEAD: the tarball
+with NOTICE.txt and LICENSE at its root, install.sh, SHA256SUMS, GUIDE.md), checks the guide's one fetching line
+against install.sh's SHA-256, then runs that line as written, as a plain user in `ubuntu:26.04`, against a local
+server at the release's path: a changed install.sh is stopped by `sha256sum -c`, No fetches nothing, Enter installs;
+then `songcharter`, `songcharter diagnostics --out` and `songcharter uninstall` as the guide has them. What follows
+is the plan for the native route, kept for M4-99.
 - **Linux:** pytest; `uv lock --check`; an end-to-end CPU chart of a self-made 20 s clip (never copyrighted audio) followed by scan-chart; the evaluation selftest on synthetic charts.
 - **`windows-latest`:** a dry run of every lane; ISCC build and portable zip; silent per-user install; first run on the CPU lane under PowerShell 5.1; `Test-Bootstrap.ps1` with a fake `nvidia-smi`; the clip chart and scan-chart check; the Host/Origin guard check; a clean silent uninstall.
 - **Weekly:** install the real cu132 lane on the GPU-less runner and prove it imports and falls back to the CPU (v1).

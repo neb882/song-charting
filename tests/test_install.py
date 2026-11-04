@@ -162,9 +162,13 @@ def test_build_writes_the_three_assets(tmp_path):
                        timeout=300)
     assert p.returncode == 0, p.stderr
     tarball = out / "songcharter-0.1.0-test.tar.gz"
-    assert sorted(x.name for x in out.iterdir()) == ["SHA256SUMS", "install.sh", tarball.name]
+    assert sorted(x.name for x in out.iterdir()) == ["GUIDE.md", "SHA256SUMS", "install.sh", tarball.name]
     digest = hashlib.sha256(tarball.read_bytes()).hexdigest()
     script = (out / "install.sh").read_text(encoding="utf-8")
+    guide = (out / "GUIDE.md").read_text(encoding="utf-8")   # M4-07: the guide, its line with install.sh's hash
+    line = (f'/v0.1.0-test/install.sh && echo "{sha((out / "install.sh").read_bytes())}  install.sh" | sha256sum -c - '
+            "&& bash install.sh\n")
+    assert "{{" not in guide and line in guide
     assert 'VERSION="0.1.0-test"' in script and f'APP_SHA256="{digest}"' in script
     assert ('RELEASE_URL="${SONGCHARTER_RELEASE_URL:-https://github.com/neb882/song-charting/releases/download/'
             'v0.1.0-test}"') in script
@@ -179,6 +183,7 @@ def test_build_writes_the_three_assets(tmp_path):
         names = t.getnames()
     assert all(n == "songcharter-0.1.0-test" or n.startswith("songcharter-0.1.0-test/") for n in names)
     assert "songcharter-0.1.0-test/pyproject.toml" in names and "songcharter-0.1.0-test/uv.lock" in names
+    assert "songcharter-0.1.0-test/NOTICE.txt" in names and "songcharter-0.1.0-test/LICENSE" in names
     stand_in(fake, "id", "echo 0")
     p = subprocess.run(["bash", str(out / "install.sh"), "--yes"], capture_output=True, text=True, env=env, timeout=60)
     assert p.returncode == 2 and p.stderr.splitlines()[-1] == (
@@ -188,6 +193,32 @@ def test_build_writes_the_three_assets(tmp_path):
     p = subprocess.run(["bash", str(BUILD), "0.1.0-test", str(out)], capture_output=True, text=True, env=env,
                        timeout=300)
     assert p.returncode == 1 and "published SHA-256 is '0000'" in p.stderr
+
+
+
+def test_build_ships_install_sh_and_the_guide_as_head_has_them(tmp_path):
+    """A release is HEAD's, like its tarball: an uncommitted edit to install.sh or the guide stays out of dist/ and is
+    named on stderr (M4-07's review: the published install.sh and guide once came from the working copy)."""
+    import sys
+    clone = tmp_path / "clone"
+    head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True,
+                          check=True).stdout.strip()
+    subprocess.run(["git", "clone", "-q", "--no-hardlinks", "--no-checkout", str(ROOT), str(clone)], check=True)
+    subprocess.run(["git", "-C", str(clone), "checkout", "-q", "--detach", head], check=True)   # this checkout's HEAD
+    for rel in ("packaging/linux/install.sh", "docs/guide/windows-wsl.md"):
+        with open(clone / rel, "a", encoding="utf-8") as f:
+            f.write("\nzorp uncommitted\n")
+    fake = tmp_path / "fake"
+    stand_in(fake, "curl", f'echo "{UV_SHA256}  uv-x86_64-unknown-linux-gnu.tar.gz"')
+    env = {"PATH": f"{fake}:/usr/bin:/bin", "HOME": str(tmp_path), "PYTHON": sys.executable}
+    out = tmp_path / "dist"
+    p = subprocess.run(["bash", str(clone / "packaging" / "release" / "build.sh"), "0.1.0-test", str(out)],
+                       capture_output=True, text=True, env=env, timeout=300)
+    assert p.returncode == 0, p.stderr
+    assert "zorp" not in (out / "install.sh").read_text(encoding="utf-8")
+    assert "zorp" not in (out / "GUIDE.md").read_text(encoding="utf-8")
+    assert "uncommitted changes are not in the release" in p.stderr
+    assert "packaging/linux/install.sh" in p.stderr and "docs/guide/windows-wsl.md" in p.stderr
 
 
 # ------------------------------------------------------------------------------------------------ the whole install
@@ -328,6 +359,25 @@ def test_a_release_installs_with_stand_ins(tmp_path):
     (i.share / "bin" / "uv").unlink()
     (i.share / "runtime" / "state" / "downloads" / "uv.tar.gz.part").write_bytes(i.uv)   # a download that finished
     assert i.run("--from", str(i.dist)).returncode == 0 and len(i.log("curl.log")) == 1
+
+
+def test_the_prompt_names_the_licences_and_enter_goes_on(tmp_path):
+    """Without --yes, step 5 names the licences (NOTICE.txt, at the root of the app the tarball unpacks to) before
+    "Continue? [Y/n]". No stops the install, exit 1, before any download; Enter, as the guide says, goes on."""
+    i = Install(tmp_path)
+
+    def answer(text: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["bash", str(i.dist / "install.sh"), "--lane", "cpu", "--from", str(i.dist)],
+                              input=text, capture_output=True, text=True, env=i.env, timeout=120)
+
+    prompt = (f"Licences: {i.share}/app/{VERSION}/NOTICE.txt (some of the models are for non-commercial use only)\n"
+              "Continue? [Y/n] ")
+    p = answer("n\n")
+    assert p.returncode == 1 and p.stdout.endswith(prompt + "songcharter: stopped; nothing was downloaded.\n"), p.stdout
+    assert i.log("curl.log") == [] and list((i.share / "app").iterdir()) == [] and not i.launcher.exists()
+    p = answer("\n")
+    assert p.returncode == 0 and prompt in p.stdout, p.stdout + p.stderr
+    assert i.launcher.is_file() and (i.share / "app" / VERSION / "pyproject.toml").is_file()
 
 
 @pytest.mark.parametrize("served", ["wrong", "truncated"])
