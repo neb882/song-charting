@@ -734,7 +734,8 @@ def results(job) -> dict:
     where = Path(result["preview"]) if result.get("preview") else None
     if where is not None and (where / "overview.png").is_file():
         try:
-            pages = sorted(p.name for p in where.iterdir() if PREVIEW_PAGE.match(p.name))
+            pages = sorted((p.name for p in where.iterdir() if PREVIEW_PAGE.match(p.name)),
+                           key=lambda name: int(name[5:-4]))   # page_100 after page_99
         except OSError:
             pages = []
         base = "/api/jobs/current/preview/"

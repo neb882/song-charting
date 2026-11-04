@@ -772,6 +772,10 @@ def test_the_results_and_the_preview_by_exact_name_only(finished):
         status, headers, body = get(ctx, base + name + "?job=1")
         assert status == 200 and headers["Content-Type"] == "image/png" and secure(headers)
         assert body == b"\x89PNG\r\n\x1a\n" + name.encode()
+    for name in ("page_100.png", "page_11.png"):   # a song over 99 minutes: in page order, not by name
+        (ctx.work / "preview" / name).write_bytes(b"\x89PNG")
+    pages = json.loads(get(ctx, "/api/jobs/current/results")[2])["preview"]["pages"]
+    assert [p[len(base):] for p in pages] == ["page_01.png", "page_02.png", "page_11.png", "page_100.png"]
     for name in ("flags.txt", "page_1.png", "page_03.png", "overview.PNG", "overview.png.exe", "../pipeline.json",
                  "..%2Fpipeline.json", "%2e%2e%2fpipeline.json", "", "preview/overview.png", "..\\overview.png",
                  "overview.png%00", "/etc/passwd"):
