@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# fake-nvidia-smi (M4-05): a stand-in nvidia-smi for the friend's GPU, for CI runners that have none. e2e.sh's
+# doctor-gpu phase puts it first on PATH as `nvidia-smi`, so doctor sees a GPU while the cpu lane's torch has no CUDA.
+#
+#   nvidia-smi --query-gpu=FIELD,... --format=csv,noheader,nounits
+#
+# Prints one GPU line, the fields asked for in their order, joined by ", ": doctor's query
+# (name,driver_version,memory.total,compute_cap) gives `NVIDIA GeForce RTX 4070, 581.57, 12282, 8.9`, the friend's card
+# with a 580-series driver. A field it does not know prints [N/A], as nvidia-smi does. Without --query-gpu it prints the
+# name alone, like `nvidia-smi -L`'s first line. Always exit 0.
+set -euo pipefail
+
+value() {
+  case $1 in
+    name) echo "NVIDIA GeForce RTX 4070" ;;
+    driver_version) echo "581.57" ;;
+    memory.total) echo "12282" ;;
+    memory.used) echo "0" ;;
+    compute_cap) echo "8.9" ;;
+    *) echo "[N/A]" ;;
+  esac
+}
+
+fields=""
+for arg in "$@"; do
+  case $arg in --query-gpu=*) fields=${arg#--query-gpu=} ;; esac
+done
+if [ -z "$fields" ]; then
+  echo "GPU 0: NVIDIA GeForce RTX 4070 (UUID: GPU-00000000-0000-0000-0000-000000000000)"
+  exit 0
+fi
+line=""
+IFS=, read -r -a names <<<"$fields"
+for f in "${names[@]}"; do
+  line+="${line:+, }$(value "$f")"
+done
+echo "$line"
