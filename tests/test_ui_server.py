@@ -270,6 +270,43 @@ def test_the_header_measures_wsls_memory_again(tmp_path, monkeypatch):
     assert after["notes"] == ["CPU mode: no NVIDIA GPU found", "the guitar runs on the CPU: no GPU"]
 
 
+def test_a_running_page_reads_a_rewritten_doctor_json_and_survives_a_failing_refresh(served, monkeypatch):
+    """The review's F-2: the header's refresh is kept per version of doctor.json (its mtime and size), so a running
+    page shows the file a rerun of the install writes (a lane change after a driver update), and measures each version
+    once; a refresh that raises shows the file as written, and /api/status still answers."""
+    made = []
+    monkeypatch.setattr(device, "refresh", lambda r: made.append(r["device"]["chosen"]) or
+                        {**r, "notes": [*r["notes"], "measured again"]})
+
+    def status():
+        code, _, body = call(served.port, "GET", "/api/status")
+        assert code == 200, body
+        return json.loads(body)
+
+    def rewrite(report):
+        path = served.home / "doctor.json"
+        before = path.stat().st_mtime_ns
+        path.write_text(json.dumps(report), encoding="utf-8")
+        os.utime(path, ns=(before + 10 ** 9, before + 10 ** 9))   # a later version, whatever the clock's grain
+
+    first = status()
+    assert first["notes"] == [*DOCTOR["notes"], "measured again"] and status() == {**first, "job": None}
+    assert made == ["cpu"]   # once for this version
+    rerun = {**DOCTOR, "device": {"chosen": "cuda", "reason": None}, "guitar_device": "cuda", "notes": []}
+    rewrite(rerun)
+    st = status()
+    assert st["device"] == {"chosen": "cuda", "reason": None} and st["notes"] == ["measured again"]
+    assert made == ["cpu", "cuda"] and served.app.auto_device() == "cuda"
+
+    def broken(r):
+        raise ZeroDivisionError("division by zero")
+
+    monkeypatch.setattr(device, "refresh", broken)
+    rewrite({**rerun, "notes": ["as written"]})
+    st = status()
+    assert st["notes"] == ["as written"] and st["source"] == "doctor.json" and st["device"]["chosen"] == "cuda"
+
+
 def test_uploads(served, monkeypatch):
     ctx, port = served, served.port
     for name in ("notes.txt", "song", "song.mp3.exe", ""):

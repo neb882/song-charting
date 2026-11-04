@@ -514,6 +514,22 @@ def test_a_first_install_with_the_gpu_out_of_reach_ends_with_what_to_do(tmp_path
         "255): Failed to initialize NVML: GPU access blocked).") + 1] == f"warning: {OUT_OF_REACH}"
 
 
+def test_what_runtime_holds_counts_as_here_already(tmp_path):
+    """A rerun or a lane change counts what songcharter's runtime/ holds, uv's cache in it included, toward the space
+    it needs (the review's F-1): with 4 GB in runtime/uv-cache, 6 GB free is enough for the cpu lane's 8 GB; without
+    that credit it would be refused for space it already has."""
+    i = Install(tmp_path)
+    cache = i.share / "runtime" / "uv-cache"
+    cache.mkdir(parents=True)
+    with open(cache / "a-wheel.whl", "wb") as f:
+        f.truncate(4 * 10 ** 9)   # sparse: its apparent size is what du -b counts
+    (i.fake / "bin" / "df").write_text(f"#!/bin/sh\nprintf 'Avail\\n{6 * 10 ** 9}\\n'\n", encoding="utf-8")
+    p = i.run("--from", str(i.dist))
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "lane cpu needs about 8 GB (the downloads unpacked, and 5 GB of work folders); 4.0 GB of it is here " \
+        "already" in p.stdout
+
+
 @pytest.mark.parametrize("free_gb, ok", [(7, False), (9, True)])
 def test_the_cpu_lane_needs_8_gb_free(tmp_path, free_gb, ok):
     """2.8 GB installed (M4-05's CI) and 5 GB of work folders: 7 GB free is refused, 9 GB installs. What is
