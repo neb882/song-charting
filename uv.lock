@@ -14,6 +14,9 @@ conflicts = [[
     { package = "songcharter", extra = "cu132" },
 ]]
 
+[manifest]
+build-constraints = [{ name = "setuptools", specifier = "==84.2.1" }]
+
 [[package]]
 name = "anyio"
 version = "4.16.0"
