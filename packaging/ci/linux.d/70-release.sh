@@ -6,7 +6,7 @@
 #   3. the tarball: NOTICE.txt (packaging/NOTICE.txt as it is) and LICENSE at its root, and check_no_audio.py passes
 #      on it;
 #   4. a local HTTP server serving the three assets at the release's path (/neb882/song-charting/releases/download/
-#      v<version>/), and `docker run --network host ubuntu:26.04` with `apt-get install -y curl ca-certificates
+#      v<version>/), and `docker run --network host ubuntu:26.04` with `apt-get install -y curl ca-certificates git
 #      xz-utils` (the WSL image's tools) and `useradd -m friend`. As friend, the guide's line exactly as GUIDE.md has
 #      it, but for https://github.com/ becoming the local server's address (the one change, checked), and with
 #      $SONGCHARTER_RELEASE_URL, install.sh's override for this check, naming the same server for the tarball:
@@ -82,7 +82,7 @@ echo "70-release: serving $root at $url"
 
 docker run -d --name "$name" --network host -v "$PWD/packaging/ci:/ci:ro" ubuntu:26.04 sleep infinity >/dev/null
 docker exec -e DEBIAN_FRONTEND=noninteractive "$name" bash -euo pipefail -c \
-  'apt-get update -qq && apt-get install -y -qq curl ca-certificates xz-utils >/dev/null && useradd -m friend'
+  'apt-get update -qq && apt-get install -y -qq curl ca-certificates git xz-utils >/dev/null && useradd -m friend'
 
 friend() {   # NAME SCRIPT: SCRIPT as friend, in a login shell (a new Ubuntu window's PATH), timed
   local start=$SECONDS
@@ -166,7 +166,7 @@ keep /tmp/diagnostics.log /home/friend/diagnostics.zip
 
 friend "songcharter uninstall, answered with Enter (No)" '
 printf "\n" | songcharter uninstall | tee /tmp/uninstall.log
-grep -q "^kept .*: a reinstall downloads nothing$" /tmp/uninstall.log
+grep -q "\[y/N\] kept .*: a reinstall downloads nothing$" /tmp/uninstall.log   # piped, it follows the prompt
 [ ! -e ~/.local/bin/songcharter ] && [ ! -e ~/.local/share/songcharter/app ] && [ -d ~/.local/share/songcharter/runtime/env ]'
 keep /tmp/uninstall.log
 "$CI_PY" packaging/ci/check_no_audio.py "$art"
