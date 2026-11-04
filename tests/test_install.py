@@ -203,7 +203,7 @@ def test_build_ships_install_sh_and_the_guide_as_head_has_them(tmp_path):
     clone = tmp_path / "clone"
     head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True,
                           check=True).stdout.strip()
-    subprocess.run(["git", "clone", "-q", "--local", "--no-checkout", str(ROOT), str(clone)], check=True)
+    subprocess.run(["git", "clone", "-q", "--no-hardlinks", "--no-checkout", str(ROOT), str(clone)], check=True)
     subprocess.run(["git", "-C", str(clone), "checkout", "-q", "--detach", head], check=True)   # this checkout's HEAD
     for rel in ("packaging/linux/install.sh", "docs/guide/windows-wsl.md"):
         with open(clone / rel, "a", encoding="utf-8") as f:
