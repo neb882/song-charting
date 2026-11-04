@@ -76,6 +76,15 @@
       "stage": "build done; golden check rerunning after the machine restart",
       "report": "<scratchpad>/briefs/m4-10.report.md",
       "then": "sc-reviewer; M4-06 gets the paste-lyrics box"
+    },
+    {
+      "order": "M4-05 ci",
+      "brief": "docs/work-orders/M4-05-ci.md",
+      "branch": "m4-05-ci",
+      "worktree": "<scratchpad>/wt/m4-05",
+      "stage": "building (from main at 5b9d4f0)",
+      "report": "<scratchpad>/briefs/m4-05.report.md",
+      "then": "sc-reviewer; CI is the inspection"
     }
   ],
   "next": [
