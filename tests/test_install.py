@@ -162,9 +162,13 @@ def test_build_writes_the_three_assets(tmp_path):
                        timeout=300)
     assert p.returncode == 0, p.stderr
     tarball = out / "songcharter-0.1.0-test.tar.gz"
-    assert sorted(x.name for x in out.iterdir()) == ["SHA256SUMS", "install.sh", tarball.name]
+    assert sorted(x.name for x in out.iterdir()) == ["GUIDE.md", "SHA256SUMS", "install.sh", tarball.name]
     digest = hashlib.sha256(tarball.read_bytes()).hexdigest()
     script = (out / "install.sh").read_text(encoding="utf-8")
+    guide = (out / "GUIDE.md").read_text(encoding="utf-8")   # M4-07: the guide, its line with install.sh's hash
+    line = (f'/v0.1.0-test/install.sh && echo "{sha((out / "install.sh").read_bytes())}  install.sh" | sha256sum -c - '
+            "&& bash install.sh\n")
+    assert "{{" not in guide and line in guide
     assert 'VERSION="0.1.0-test"' in script and f'APP_SHA256="{digest}"' in script
     assert ('RELEASE_URL="${SONGCHARTER_RELEASE_URL:-https://github.com/neb882/song-charting/releases/download/'
             'v0.1.0-test}"') in script
@@ -179,6 +183,7 @@ def test_build_writes_the_three_assets(tmp_path):
         names = t.getnames()
     assert all(n == "songcharter-0.1.0-test" or n.startswith("songcharter-0.1.0-test/") for n in names)
     assert "songcharter-0.1.0-test/pyproject.toml" in names and "songcharter-0.1.0-test/uv.lock" in names
+    assert "songcharter-0.1.0-test/NOTICE.txt" in names and "songcharter-0.1.0-test/LICENSE" in names
     stand_in(fake, "id", "echo 0")
     p = subprocess.run(["bash", str(out / "install.sh"), "--yes"], capture_output=True, text=True, env=env, timeout=60)
     assert p.returncode == 2 and p.stderr.splitlines()[-1] == (
