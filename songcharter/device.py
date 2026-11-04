@@ -534,6 +534,10 @@ def findings(r: dict, allin1_python: str | None = None) -> tuple[list[str], list
     dev = r.get("device") or {}
     if dev.get("chosen") == "cpu":
         notes.append(f"CPU mode: {dev.get('reason')}")
+    if dev.get("reason") == CPU_LANE and r.get("gpu"):   # installed with no GPU in reach (a Windows update), say
+        notes.append(f"{r['gpu'].get('name') or 'an NVIDIA GPU'} answers now, but this install has the CPU build: "
+                     "paste the install line again, which picks the lane again (the GPU build needs NVIDIA driver "
+                     "528 or newer, the guitar on the GPU 580)")
     if r.get("guitar_device") == "cpu":
         notes.append(f"the guitar runs on the CPU: {r.get('guitar_reason')}")
     a = comps.get("allin1")

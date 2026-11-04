@@ -324,6 +324,21 @@ def wsl_part(memory_gb=12, total_mb=11776, **over):
     return w
 
 
+def test_a_gpu_that_answers_on_a_cpu_lane_install_says_to_rerun_the_install():
+    """A first install while nvidia-smi failed (GPU access blocked after a Windows update) took the cpu lane; once the
+    GPU answers, doctor says so and what to do (the release gate's finding: it said only "no GPU")."""
+    r = base_report(device={"chosen": "cpu", "reason": D.CPU_LANE}, guitar_device="cpu", guitar_reason="no GPU",
+                    gpu=RTX)
+    _, notes = D.findings(r)
+    assert notes[:2] == ["CPU mode: this install's torch has no CUDA (the cpu lane)",
+                         "NVIDIA GeForce RTX 4070 answers now, but this install has the CPU build: paste the install "
+                         "line again, which picks the lane again (the GPU build needs NVIDIA driver 528 or newer, the "
+                         "guitar on the GPU 580)"]
+    for reason, gpu in ((D.CPU_LANE, None), (D.ASKED_CPU, RTX), (D.NO_GPU, None)):
+        _, notes = D.findings(base_report(device={"chosen": "cpu", "reason": reason}, gpu=gpu))
+        assert not any("answers now" in n for n in notes), (reason, notes)
+
+
 def test_wsl_memory_against_wslconfig():
     """11.5 GB in WSL with .wslconfig at 12 GB: the setting is in force, nothing to say. 7.8 GB with 12 GB asked
     for: WSL was not restarted since (a restart note), and under 11 GB, so allin1 stays out."""

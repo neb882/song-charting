@@ -79,17 +79,22 @@ def test_the_lane_from_nvidia_smi(tmp_path, driver, cap, want):
     assert lane(tmp_path, GPU.format(driver, cap)) == want
 
 
+OUT_OF_REACH = ("the GPU is out of reach, not missing, so this is the CPU build: restart Windows (or update the NVIDIA "
+                "driver), then paste the install line again: it switches to the GPU build (about 3 GB)")
+
+
 def test_no_gpu_and_a_gpu_out_of_reach(tmp_path):
     """No nvidia-smi, or one that lists nothing, is no GPU. One that fails (WSL's after a Windows update) is a GPU out
-    of reach: a fresh install takes the cpu lane and says why; an existing GPU install is never moved to the cpu lane
-    without --lane cpu."""
+    of reach: a fresh install takes the cpu lane, says why, and warns what to do once the GPU is back (the release
+    gate's finding: nothing ever said to rerun); an existing GPU install is never moved to the cpu lane without
+    --lane cpu."""
     assert lane(tmp_path) == ("cpu", "no NVIDIA GPU found", "")
     assert lane(tmp_path / "empty", "exit 0") == ("cpu", "no NVIDIA GPU found", "")
     blocked = 'echo "Failed to initialize NVML: GPU access blocked by the operating system"; exit 255'
     assert lane(tmp_path / "fresh", blocked) == (
         "cpu", "nvidia-smi failed, so CUDA cannot run: nvidia-smi failed (exit 255): Failed to initialize NVML: GPU "
-               "access blocked by the operating system", "")
-    assert lane(tmp_path / "was-cpu", blocked, previous="cpu")[0] == "cpu"
+               "access blocked by the operating system", OUT_OF_REACH)
+    assert lane(tmp_path / "was-cpu", blocked, previous="cpu")[::2] == ("cpu", OUT_OF_REACH)
     p = sourced(tmp_path / "was-gpu", "choose_lane auto; echo chose $lane", blocked, previous="cu132")
     assert p.returncode == 2 and "chose" not in p.stdout
     assert p.stderr.splitlines()[-1] == (
@@ -495,6 +500,18 @@ def test_doctors_problems_still_install_and_a_changed_wslconfig_restarts_wsl(tmp
         "WSL restarts now so the new memory setting takes effect. Then start songcharter from the Start menu.")
     assert i.log("cmd.log")[-1] == "/d /c wsl.exe --shutdown"
     assert not (i.share / "runtime" / "state" / "restart-wsl").exists()
+
+
+def test_a_first_install_with_the_gpu_out_of_reach_ends_with_what_to_do(tmp_path):
+    """The lane's warning is said at step 2 and again after the install's last line, where the person reads."""
+    i = Install(tmp_path)
+    stand_in(i.fake / "bin", "nvidia-smi", 'echo "Failed to initialize NVML: GPU access blocked"; exit 255')
+    p = i.run("--from", str(i.dist), "--lane", "auto")
+    assert p.returncode == 0, p.stderr
+    lines = p.stdout.splitlines()
+    assert lines.count(f"warning: {OUT_OF_REACH}") == 2 and lines[lines.index(
+        f"songcharter {VERSION} is installed (lane cpu: nvidia-smi failed, so CUDA cannot run: nvidia-smi failed (exit "
+        "255): Failed to initialize NVML: GPU access blocked).") + 1] == f"warning: {OUT_OF_REACH}"
 
 
 @pytest.mark.parametrize("free_gb, ok", [(7, False), (9, True)])

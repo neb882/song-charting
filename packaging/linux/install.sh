@@ -143,6 +143,8 @@ choose_lane() {   # ASKED (auto or a lane): sets lane, lane_reason and lane_warn
         fail "$out: the GPU is out of reach, not missing, so this $before install is not moved to the CPU build. Restart Windows (or update the NVIDIA driver) and run the same line again; or add --lane cpu to move to the CPU build"
       fi
       lane=cpu lane_reason="nvidia-smi failed, so CUDA cannot run: $out"
+      # a first install (or a cpu one): said at step 2 and at the end, as nothing later would say it
+      lane_warning="the GPU is out of reach, not missing, so this is the CPU build: restart Windows (or update the NVIDIA driver), then paste the install line again: it switches to the GPU build (about 3 GB)"
       ;;
     ok)
       if [ "$major" -lt 528 ]; then
@@ -377,6 +379,7 @@ PY
   echo
   if [ -n "$before" ] && [ "$before" != "$lane" ]; then echo "lane changed: $before → $lane"; fi
   echo "songcharter $VERSION is installed (lane $lane: $lane_reason)."
+  if [ -n "$lane_warning" ]; then echo "warning: $lane_warning"; fi
   if [ $in_wsl -eq 1 ]; then echo "Start it from the Start menu (songcharter), or type songcharter in Ubuntu."
   else echo "Start it by typing songcharter."; fi
   case ":$PATH:" in
