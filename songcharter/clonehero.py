@@ -28,7 +28,12 @@ the programs that hold a new folder for a moment (OneDrive's sync, antivirus).
       - **Every rename under songs is retried** for about 5 s (RENAME_TRIES 10, RENAME_WAIT_S 0.5 apart) on a
         PermissionError or an OSError with errno EACCES, EBUSY or EPERM: OneDrive's sync and antivirus can hold a
         new folder briefly, and through WSL that shows as one of these. Still failing, or failing otherwise (the
-        copy too): **Blocked**, the temporary folder removed. The server then makes the zip and offers it.
+        copy too): **Blocked**, the temporary folder removed. The server then makes the zip and offers it. When the
+        older chart cannot be put back either, Blocked names its .old folder (`old`).
+      - **Our own leftovers** for this name (`leftovers`: .<name>.songcharter-<8 hex>.tmp or .old, each a real
+        folder that is_ours), from a blocked replace, a temporary folder Windows would not let go, or a run that
+        stopped halfway, are dealt with on the next install of that name that goes ahead: a .old goes to
+        $SONGCHARTER_HOME/replaced/ as a replaced chart would, a .tmp is deleted. Anything else is never touched.
   * **Under OneDrive** (`under_onedrive`): whether a path lies under one of wsl.onedrive_roots() (compared without
     case, as drvfs and Windows do). The page says so when a write is blocked; the diagnostics record it.
   * **Windows' name for a path** (`windows_path`, in WSL): X:\\... for /mnt/x/..., \\\\wsl.localhost\\<distro>\\...
@@ -61,6 +66,7 @@ EXPORTS = "exports"                  # $SONGCHARTER_HOME/exports/<name>.zip
 CHARTER = "songcharter"              # song.ini's charter in a folder songcharter built
 _WINDOWS = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")   # C:\..., C:/..., \\server\share or \\wsl.localhost\...
 _CHARTER_LINE = re.compile(r"^\s*charter\s*=\s*(.*?)\s*$", re.MULTILINE | re.IGNORECASE)
+_LEFTOVER = re.compile(r"^\.(?P<name>.+)\.songcharter-(?P<tag>[0-9a-f]{8})\.(?P<kind>tmp|old)$")
 
 
 class Exists(Exception):
@@ -72,11 +78,12 @@ class Exists(Exception):
 
 
 class Blocked(Exception):
-    """Windows did not let the copy or a rename finish (the module docstring): the server offers the zip (403)."""
+    """Windows did not let the copy or a rename finish (the module docstring): the server offers the zip (403).
+    `old`: the .old folder the older chart stays in when it could not be put back, else None."""
 
-    def __init__(self, why: str, target: Path):
+    def __init__(self, why: str, target: Path, old: Path | None = None):
         super().__init__(why)
-        self.why, self.target = why, target
+        self.why, self.target, self.old = why, target, old
 
 
 @dataclass(frozen=True)
@@ -264,12 +271,59 @@ def _remove(folder: Path, sleep: Callable[[float], None]) -> None:
         pass
 
 
+def leftovers(songs: Path, name: str) -> list[tuple[str, Path]]:
+    """Our own leftovers for the song folder `name` in `songs`: ("tmp" | "old", path) for each
+    .<name>.songcharter-<8 hex>.tmp or .old that is a real folder (not a link) and is_ours, by name."""
+    try:
+        entries = sorted(Path(songs).iterdir())
+    except OSError:
+        return []
+    found = []
+    for p in entries:
+        m = _LEFTOVER.match(p.name)
+        if m and m["name"] == name and p.is_dir() and not p.is_symlink() and is_ours(p):
+            found.append((m["kind"], p))
+    return found
+
+
+def _to_replaced(old: Path, home: Path | str, name: str, stamp: str) -> Path:
+    """Move an older chart (a .old folder in Songs) to $SONGCHARTER_HOME/replaced/<stamp>/<name> (<stamp>-<its 8
+    hex> when that is taken); where it went. shutil.move: from /mnt/c to ext4, a copy and a delete."""
+    dest = Path(home) / REPLACED / stamp / name
+    if dest.exists():
+        m = _LEFTOVER.match(old.name)
+        dest = Path(home) / REPLACED / f"{stamp}-{m['tag'] if m else secrets.token_hex(4)}" / name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(old), str(dest))
+    return dest
+
+
+def _tidy(songs: Path, name: str, home: Path | str, stamp: str, sleep: Callable[[float], None]
+          ) -> tuple[list[Path], list[str]]:
+    """Deal with our leftovers for `name` (the module docstring): where each .old went, and a note for each that
+    stays."""
+    moved, notes = [], []
+    for kind, p in leftovers(songs, name):
+        if kind == "tmp":
+            _remove(p, sleep)
+            if p.exists():
+                notes.append(f"songcharter's temporary folder {p} could not be deleted")
+            continue
+        try:
+            moved.append(_to_replaced(p, home, name, stamp))
+        except OSError as e:
+            notes.append(f"an older chart stays in {p}: moving it into {Path(home) / REPLACED} failed "
+                         f"({e.strerror or type(e).__name__})")
+    return moved, notes
+
+
 def install(song_folder: Path | str, songs: Path | str, home: Path | str, replace: bool = False, *,
             rename: Callable[[Path, Path], None] = os.rename, sleep: Callable[[float], None] = time.sleep,
             now: float | None = None) -> Installed:
     """Put the song folder into the Songs folder (the module docstring). InputError when either is not a folder;
     Exists (409) when songs/<name> exists and is not ours, or `replace` is false; Blocked (403) when Windows does not
-    let it finish. `rename` and `sleep` are os.rename's and time.sleep's stand-ins for tests."""
+    let it finish. `rename` and `sleep` are os.rename's and time.sleep's stand-ins for tests. Our leftovers for the
+    name go first (_tidy); `note` says what of them stays, or where an older chart went."""
     src, songs = Path(song_folder), Path(songs)
     if not src.is_dir():
         raise InputError(f"the song folder {src} does not exist")
@@ -282,6 +336,9 @@ def install(song_folder: Path | str, songs: Path | str, home: Path | str, replac
         ours = target.is_dir() and not target.is_symlink() and is_ours(target)
         if not (replace and ours):
             raise Exists(target, ours)
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(time.time() if now is None else now))
+    moved, notes = _tidy(songs, name, home, stamp, sleep)
+    notes = [f"an older chart left in Songs went to {p}" for p in moved] + notes
     tag = secrets.token_hex(4)
     tmp = songs / f".{name}.songcharter-{tag}.tmp"
     try:
@@ -295,27 +352,28 @@ def install(song_folder: Path | str, songs: Path | str, home: Path | str, replac
             retry(lambda: rename(target, old), "moving the older chart aside", target, sleep)
         try:
             retry(lambda: rename(tmp, target), "the rename into place", target, sleep)
-        except Blocked:
+        except Blocked as e:
             if old is not None:
                 try:
                     retry(lambda: rename(old, target), "putting the older chart back", target, sleep)
                 except Blocked:
-                    pass
+                    raise Blocked(f"{e.why}; putting the older chart back was refused too, so it is in {old} for "
+                                  "now: the next install of this song moves it to songcharter's replaced folder",
+                                  target, old) from None
             raise
     except Blocked:
         _remove(tmp, sleep)
         raise
+    note = "; ".join(notes) or None
     if old is None:
-        return Installed(target)
-    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(time.time() if now is None else now))
-    dest = Path(home) / REPLACED / stamp / name
+        return Installed(target, moved[0] if moved else None, note)
     try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(old), str(dest))
+        dest = _to_replaced(old, home, name, stamp)
     except OSError as e:
-        return Installed(target, None, f"the older chart stays in {old}: moving it to {dest} failed "
-                                       f"({e.strerror or type(e).__name__})")
-    return Installed(target, dest)
+        notes.append(f"the older chart stays in {old}: moving it into {Path(home) / REPLACED} failed "
+                     f"({e.strerror or type(e).__name__}); the next install of this song tries again")
+        return Installed(target, moved[0] if moved else None, "; ".join(notes))
+    return Installed(target, dest, note)
 
 
 def export_zip(song_folder: Path | str, home: Path | str) -> Path:

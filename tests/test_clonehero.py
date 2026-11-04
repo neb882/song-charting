@@ -227,13 +227,20 @@ def test_the_copy_has_no_copystat(tmp_path, monkeypatch):
     assert (done.target / "song.ogg").read_bytes() == b"OggSv1" and (done.target / "extra" / "album.png").read_bytes() == b"png"
 
 
-def failing_rename(failures: int, err: int = errno.EBUSY, kind=OSError):
-    """os.rename that fails `failures` times (into the target only) with `err`, then renames."""
+def failing_rename(failures: int = 0, err: int = errno.EBUSY, kind=OSError, aside: int = 0, back: int = 0):
+    """os.rename that refuses, with `err`, the rename into place (a .tmp to the target) `failures` times, the rename
+    of the older chart aside (the target to a .old) `aside` times, and its put-back (a .old to the target) `back`
+    times; then renames."""
     calls = []
+    refusals = {"into place": failures, "aside": aside, "back": back}
+    seen = dict.fromkeys(refusals, 0)
 
     def rename(src, dst):
-        calls.append((Path(src).name, Path(dst).name))
-        if Path(src).name.endswith(".tmp") and len([c for c in calls if c[0].endswith(".tmp")]) <= failures:
+        s, d = Path(src).name, Path(dst).name
+        calls.append((s, d))
+        which = "into place" if s.endswith(".tmp") else "aside" if d.endswith(".old") else "back"
+        seen[which] += 1
+        if seen[which] <= refusals[which]:
             raise kind(err, os.strerror(err))
         os.rename(src, dst)
 
@@ -331,3 +338,107 @@ def test_under_onedrive(tmp_path):
     assert not C.under_onedrive(tmp_path / "c" / "Users" / "Jorg" / "OneDriveX" / "Songs", roots)
     assert not C.under_onedrive(tmp_path / "c" / "Users" / "Jorg" / "Documents", roots)
     assert not C.under_onedrive(root / "Songs", [])
+
+
+def dot_folders(songs: Path) -> list[str]:
+    return sorted(p.name for p in songs.iterdir() if p.name.startswith("."))
+
+
+def test_the_rename_aside_refused_three_times_then_succeeding(tmp_path):
+    home, songs = tmp_path / "home", tmp_path / "Songs"
+    songs.mkdir()
+    v1 = contents(C.install(built(tmp_path / "library1"), songs, home).target)
+    rename, calls = failing_rename(aside=3)
+    slept = []
+    done = C.install(built(tmp_path / "library2", body="v2"), songs, home, replace=True, rename=rename,
+                     sleep=slept.append)
+    assert [d.endswith(".old") for _, d in calls] == [True] * 4 + [False] and slept == [C.RENAME_WAIT_S] * 3
+    assert contents(done.target)["song.ogg"] == b"OggSv2" and contents(done.replaced) == v1
+    assert dot_folders(songs) == [] and done.note is None
+
+
+def test_the_put_back_refused_three_times_then_succeeding(tmp_path):
+    home, songs = tmp_path / "home", tmp_path / "Songs"
+    songs.mkdir()
+    v1 = contents(C.install(built(tmp_path / "library1"), songs, home).target)
+    rename, calls = failing_rename(10 ** 6, back=3)
+    slept = []
+    with pytest.raises(C.Blocked) as e:
+        C.install(built(tmp_path / "library2", body="v2"), songs, home, replace=True, rename=rename,
+                  sleep=slept.append)
+    assert e.value.old is None and "putting the older chart back" not in e.value.why
+    assert [c[0].endswith(".old") for c in calls].count(True) == 4 and len(slept) == 9 + 3
+    assert sorted(p.name for p in songs.iterdir()) == [NAME] and contents(songs / NAME) == v1
+
+
+def test_a_move_to_replaced_that_fails_still_installs_with_a_note(tmp_path, monkeypatch):
+    home, songs = tmp_path / "home", tmp_path / "Songs"
+    songs.mkdir()
+    v1 = contents(C.install(built(tmp_path / "library1"), songs, home).target)
+
+    def refused(src, dst):
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(shutil, "move", refused)
+    done = C.install(built(tmp_path / "library2", body="v2"), songs, home, replace=True, now=1_700_000_000)
+    [old] = dot_folders(songs)
+    assert old.endswith(".old") and contents(songs / old) == v1 and contents(done.target)["song.ogg"] == b"OggSv2"
+    assert done.replaced is None and done.note.startswith(f"the older chart stays in {songs / old}: moving it into "
+                                                          f"{home / 'replaced'} failed (Input/output error)")
+    # the next install of that name moves it to replaced/, as the replace would have
+    monkeypatch.undo()
+    v2 = contents(done.target)
+    done = C.install(built(tmp_path / "library3", body="v3"), songs, home, replace=True, now=1_700_000_000)
+    assert dot_folders(songs) == [] and contents(done.target)["song.ogg"] == b"OggSv3"
+    went = sorted(p for p in (home / "replaced").rglob(NAME))
+    assert sorted(contents(p)["song.ogg"] for p in went) == [b"OggSv1", b"OggSv2"]
+    assert contents(done.replaced) == v2 and f"an older chart left in Songs went to " in done.note
+
+
+def test_a_blocked_replace_that_cannot_put_back_names_the_old_folder(tmp_path):
+    """The rename into place and the put-back both refused: the older chart stays whole in its .old folder, which
+    Blocked names; the next install (a retry) puts the new chart in place and moves the .old to replaced/."""
+    home, songs = tmp_path / "home", tmp_path / "Songs"
+    songs.mkdir()
+    v1 = contents(C.install(built(tmp_path / "library1"), songs, home).target)
+    rename, _ = failing_rename(10 ** 6, back=10 ** 6)
+    v2 = built(tmp_path / "library2", body="v2")
+    with pytest.raises(C.Blocked) as e:
+        C.install(v2, songs, home, replace=True, rename=rename, sleep=lambda s: None)
+    [old] = dot_folders(songs)   # the .tmp went
+    assert e.value.old == songs / old and old.endswith(".old") and contents(songs / old) == v1
+    assert "the rename into place was refused 10 times" in e.value.why and str(songs / old) in e.value.why
+    assert "putting the older chart back was refused too" in e.value.why and not (songs / NAME).exists()
+    done = C.install(v2, songs, home, now=1_700_000_000)   # "try again"
+    assert sorted(p.name for p in songs.iterdir()) == [NAME] and contents(done.target)["song.ogg"] == b"OggSv2"
+    assert contents(done.replaced) == v1 and done.replaced.parent.parent == home / "replaced"
+    assert done.note == f"an older chart left in Songs went to {done.replaced}"
+
+
+def test_our_own_leftovers_go_and_nothing_else_is_touched(tmp_path):
+    """A run that stopped halfway leaves our .old and .tmp: the next install of that name moves the .old to
+    replaced/ and deletes the .tmp. Another charter's, a partial copy, another song's, a name that is not ours and a
+    link are left as they are."""
+    home, songs = tmp_path / "home", tmp_path / "Songs"
+    songs.mkdir()
+    ours_old = built(songs, name=f".{NAME}.songcharter-0123abcd.old", body="v0")
+    built(songs, name=f".{NAME}.songcharter-4567cdef.tmp", body="v1")
+    keep = [built(songs, name=f".{NAME}.songcharter-89abcdef.old", charter="Harmonix"),
+            built(songs, name=f".Other Song.songcharter-0123abcd.tmp"),
+            built(songs, name=f".{NAME}.songcharter-xyz.tmp"),
+            built(songs, name=f".{NAME}.songcharter-0123abcd.bak"),
+            built(songs, name=f"{NAME}.songcharter-0123abcd.old")]
+    partial = songs / f".{NAME}.songcharter-00000000.tmp"
+    partial.mkdir()
+    (partial / "notes.chart").write_text("x")
+    link = songs / f".{NAME}.songcharter-11111111.old"
+    link.symlink_to(built(tmp_path / "elsewhere", body="linked"))
+    keep += [partial, link]
+    before = {p: sorted(x.name for x in p.iterdir()) for p in keep}
+    v0 = contents(ours_old)
+    done = C.install(built(tmp_path / "library", body="v2"), songs, home, now=1_700_000_000)
+    assert contents(done.target)["song.ogg"] == b"OggSv2" and contents(done.replaced) == v0
+    assert sorted(p.name for p in songs.iterdir()) == sorted([NAME, *(p.name for p in keep)])
+    assert {p: sorted(x.name for x in p.iterdir()) for p in keep} == before
+    assert (tmp_path / "elsewhere" / NAME / "song.ogg").read_bytes() == b"OggSlinked"
+    assert C.leftovers(songs, NAME) == []

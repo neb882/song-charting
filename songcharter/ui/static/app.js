@@ -526,7 +526,9 @@ async function install(replace) {
     } else if (r.status === 403 && d.blocked) {
       installMessage("Windows did not let songcharter finish writing into that folder. Security software, or OneDrive syncing it, can do that.\n" +
                      "Try again in a moment, or save the zip and extract it there yourself." +
-                     (d.under_onedrive ? "\nYour Songs folder is inside OneDrive." : ""), { error: true, zip: d.zip_url });
+                     (d.under_onedrive ? "\nYour Songs folder is inside OneDrive." : "") +
+                     (d.older ? `\nYour older chart is kept in ${d.older} for now: the next install moves it out of the Songs folder.` : ""),
+                     { error: true, zip: d.zip_url });
     } else {
       installMessage(d.error || `It could not be installed (${r.status}).`, { error: true });
     }

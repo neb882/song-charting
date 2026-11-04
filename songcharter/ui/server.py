@@ -71,8 +71,9 @@ install need one that passed its gate (else 400): a .failed folder is for a look
   * POST /api/jobs/current/install {"replace"}: clonehero.install of the chart into the Songs folder (no path comes
     from the page): 200 {"installed", "windows_path", "replaced", "note"}; 400 with no chart or no Songs folder;
     409 {"exists", "ours", "folder", "windows_path"} when that folder is there (a replace of one songcharter did not
-    make is refused the same way); 403 {"blocked", "why", "zip_url", "under_onedrive"}, after making the zip, when
-    Windows did not let it finish. One install at a time.
+    make is refused the same way); 403 {"blocked", "why", "zip_url", "under_onedrive", "older"}, after making the
+    zip, when Windows did not let it finish (`older`: where the older chart stays when it could not be put back,
+    also named in `why`). One install at a time.
   * POST /api/open {"what": "song" | "exports"}: explorer.exe on the last installed song's folder or the exports
     folder (wsl.open_url with its Windows path), only those two; {"opened", "path", "windows_path"}.
   * GET /api/diagnostics: the diagnostics bundle (diagnostics.py) as a download, songcharter-diagnostics-<stamp>.zip.
@@ -568,8 +569,9 @@ class Handler(BaseHTTPRequestHandler):
             except clonehero.Blocked as e:
                 out = clonehero.export_zip(song, app.home)
                 app.log(f"install into {songs} blocked ({e.why}); the zip is {out}")
+                older = None if e.old is None else clonehero.windows_path(e.old) or str(e.old)
                 return self._json(403, {"error": e.why, "blocked": True, "why": e.why, "zip_url": export_url(out.name),
-                                        "under_onedrive": clonehero.under_onedrive(songs)})
+                                        "under_onedrive": clonehero.under_onedrive(songs), "older": older})
             except InputError as e:
                 raise Refused(400, str(e)) from None
             app.installed = done.target

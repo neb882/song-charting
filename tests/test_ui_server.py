@@ -1002,3 +1002,31 @@ def test_pasted_lyrics_go_only_into_the_chart(finished):
                        ({"zorp": 1}, "lyrics is text, not a dict")):
         answer = ctx.run({"lyrics": value}, code=400)
         assert answer["error"] == why and not any(w in answer["error"] for w in LYRIC_WORDS)
+
+
+def test_a_blocked_replace_names_where_the_older_chart_is(finished, tmp_path, monkeypatch):
+    """The rename into place and the put-back both refused: the 403 names the .old folder the older chart stays in,
+    and the next install moves it to replaced/."""
+    from songcharter import clonehero
+    ctx = finished
+    job = ctx.run()
+    songs = tmp_path / "Songs"
+    songs.mkdir()
+    assert post(ctx, "/api/clonehero", {"folder": str(songs)})[0] == 200
+    assert post(ctx, "/api/jobs/current/install", {})[0] == 200
+
+    def refused(src, dst):
+        if not Path(dst).name.endswith(".old"):   # the rename aside goes through; into place and back do not
+            raise PermissionError(13, "Permission denied")
+        os.rename(src, dst)
+
+    real = clonehero.install
+    monkeypatch.setattr(clonehero, "install", lambda *a, **k: real(*a, rename=refused, sleep=lambda s: None, **k))
+    status, answer = post(ctx, "/api/jobs/current/install", {"replace": True})
+    [old] = [p for p in songs.iterdir()]
+    assert status == 403 and answer["blocked"] is True and old.name.endswith(".old")
+    assert answer["older"] == str(old) and str(old) in answer["why"] and answer["error"] == answer["why"]
+    monkeypatch.setattr(clonehero, "install", real)
+    status, answer = post(ctx, "/api/jobs/current/install", {})   # "try again"
+    assert status == 200 and Path(answer["replaced"]).parent.parent == ctx.home / "replaced"
+    assert [p.name for p in songs.iterdir()] == [job.out.name] and "went to" in answer["note"]
