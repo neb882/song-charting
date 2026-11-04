@@ -4,17 +4,19 @@ shortcut. install.sh runs it after the downloads, once Python can read Windows' 
     python -m songcharter.wslsetup apply [--yes] [--windows-ram-gb N] [--home H] [--launcher PATH]
                                          [--restart-flag FILE]
 
-  * **The memory rule** (`plan`): the target is Windows' RAM, rounded to the nearest whole GB (a "16 GB" PC reports
-    about 15.9 GiB), less 4 GB for Windows: memory=12GB on 16 GB.
+  * **The memory rule** (`plan`): the target is Windows' RAM rounded up to a whole GB (`pc_gb`: the RAM a PC
+    reports is always a little under what is installed, so a "16 GB" PC that reports 15.4 or 15.9 GiB is a 16 GB
+    one; the owner's decision at the release gate), less 4 GB for Windows: memory=12GB on 16 GB.
       - no .wslconfig, or no memory in its [wsl2]: memory=<target>GB and swap=8GB are written there;
       - memory at 12 GB or more: kept;
       - memory under 12 GB: "Raise it to <target> GB? [Y/n]" (yes with --yes), and only memory is changed;
       - Windows' RAM unknown: nothing is written, and the person is told how to set it by hand;
-      - a target under 8 GB (a PC under 12 GB), or WSL's memory left under 8 GB, is refused (exit 2);
+      - a target under 8 GB (a PC of 11 GiB or less, which rounds up to 11 GB: memory=7GB), or WSL's memory left
+        under 8 GB, is refused (exit 2);
       - WSL's resulting memory under 11 GB (10^9 bytes): runtime.json's allin1_python is set to null, so the
-        sections use the librosa fallback, which holds no 7.8 GB model run. With the rounding, that is a PC whose
-        RAM rounds to 14 GB or less (memory=10GB, 10.7 * 10^9 bytes): one that rounds to 15 GB gets memory=11GB,
-        11.8 * 10^9 bytes, and keeps allin1.
+        sections use the librosa fallback, which holds no 7.8 GB model run. With the rounding, that is a PC of 14 GiB
+        or less (memory=10GB, 10.7 * 10^9 bytes): one over 14 GiB rounds up to 15 GB, gets memory=11GB, 11.8 * 10^9
+        bytes, and keeps allin1.
     Sizes in .wslconfig are binary (12GB is 12 GiB, as WSL reads them); the 8 and 11 GB limits are device.py's, in
     10^9 bytes. `--windows-ram-gb N` ($SONGCHARTER_WINDOWS_RAM_GB) replaces the measured RAM (M4-08 writes a 16 GB
     PC's file on a larger PC; the tests).
@@ -31,6 +33,7 @@ shortcut. install.sh runs it after the downloads, once Python can read Windows' 
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import re
 import shutil
@@ -69,9 +72,14 @@ class Plan:
     target_gb: int | None     # memory=<target_gb>GB
 
 
+def pc_gb(ram_bytes: int) -> int:
+    """Windows' RAM as the PC is sold: rounded up to a whole GB (the module docstring), as every message names it."""
+    return math.ceil(ram_bytes / GIB)
+
+
 def target_gb(ram_bytes: int) -> int:
-    """Windows' RAM rounded to the nearest whole GB, less 4."""
-    return round(ram_bytes / GIB) - WINDOWS_KEEPS_GB
+    """Windows' RAM rounded up to a whole GB (pc_gb), less 4."""
+    return pc_gb(ram_bytes) - WINDOWS_KEEPS_GB
 
 
 def memory_bytes(text: str | None) -> int | None:
@@ -211,10 +219,10 @@ def apply(home: Path, launcher: Path, yes: bool = False, ram: int | None = None,
                f"swap={SWAP}, then run wsl --shutdown in Windows' Terminal")
     resulting = p.current
     if p.action == "refuse":
-        raise Refused(f"{REFUSE_PC} (this one has {round(p.ram / GIB)} GB)")
+        raise Refused(f"{REFUSE_PC} (this one has {pc_gb(p.ram)} GB)")
     if p.action == "keep":
         say(f".wslconfig: memory={_gb(p.current)}GB kept" + (" (12 GB or more is enough)" if p.target_gb is None else
-                                                            f" (a {round(p.ram / GIB)} GB PC gives no more)"))
+                                                            f" (a {pc_gb(p.ram)} GB PC gives no more)"))
     elif p.action == "unknown":
         why = "Windows interop is off" if not win["interop"] else "Windows' RAM could not be read"
         say(f".wslconfig: not changed ({why}). songcharter needs about 12 GB for WSL: {by_hand}.")
@@ -239,7 +247,7 @@ def apply(home: Path, launcher: Path, yes: bool = False, ram: int | None = None,
             os.replace(part, path)
             out["changed"], resulting = True, p.target_gb * GIB
             said = " and ".join(f"{k}={v}" for k, v in values.items())
-            say(f".wslconfig: wrote {said} in {shown} (Windows has {round(p.ram / GIB)} GB of RAM)"
+            say(f".wslconfig: wrote {said} in {shown} (Windows has {pc_gb(p.ram)} GB of RAM)"
                 + (f"; the old file is kept as {backup.name}" if backup else ""))
     out["memory_bytes"] = resulting
     out["allin1"] = resulting is None or resulting >= ALLIN1_MEMORY
