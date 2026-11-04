@@ -377,7 +377,8 @@ def test_wsl_memory_against_wslconfig():
     # WSL's memory=8GB shows about 7.8 GB, which is not under the 8 GB limit (units of 10^9 bytes); 7 GB is
     problems, _ = D.findings(base_report(wsl=wsl_part(None, 6900), ram={"total_mb": 6900}))
     assert problems == ["WSL has 6.7 GB of memory, under 8 GB: set memory in %UserProfile%\\.wslconfig (the install "
-                        "writes it), then restart WSL (wsl --shutdown)"]
+                        "writes it), then restart WSL: in Terminal (right-click Start), type wsl --shutdown, then "
+                        "open Ubuntu again"]
 
 
 def test_problems_and_notes():

@@ -531,7 +531,8 @@ def findings(r: dict, allin1_python: str | None = None) -> tuple[list[str], list
     total = (r.get("ram") or {}).get("total_mb")
     if w and total is not None and total * MB < MIN_WSL_MEMORY:
         problems.append(f"WSL has {_gb(total)} GB of memory, under {MIN_WSL_MEMORY // GB} GB: set memory in "
-                        "%UserProfile%\\.wslconfig (the install writes it), then restart WSL (wsl --shutdown)")
+                        "%UserProfile%\\.wslconfig (the install writes it), then restart WSL: in Terminal "
+                        "(right-click Start), type wsl --shutdown, then open Ubuntu again")
 
     dev = r.get("device") or {}
     if dev.get("chosen") == "cpu":
