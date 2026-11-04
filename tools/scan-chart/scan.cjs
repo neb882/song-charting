@@ -14,6 +14,7 @@ const out = {
   instruments: nd && nd.instruments, drumType: nd && nd.drumType,
   chartIssues: nd && nd.chartIssues, noteCounts: nd && nd.noteCounts,
   tempoMarkerCount: nd && nd.tempoMarkerCount, effectiveLength: nd && nd.effectiveLength,
+  hasLyrics: nd && nd.hasLyrics,
 };
 if (process.argv.includes('--notes')) {
   const chartFile = files.find(f => f.fileName === 'notes.chart' || f.fileName === 'notes.mid');

@@ -1298,6 +1298,9 @@ app = [
     { name = "torch", version = "2.15.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-11-songcharter-cpu' and extra == 'extra-11-songcharter-cu126') or (extra == 'extra-11-songcharter-cpu' and extra == 'extra-11-songcharter-cu132') or (extra == 'extra-11-songcharter-cu126' and extra == 'extra-11-songcharter-cu132') or (extra != 'extra-11-songcharter-cpu' and extra != 'extra-11-songcharter-cu126' and extra != 'extra-11-songcharter-cu132')" },
     { name = "torch", version = "2.15.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "extra == 'extra-11-songcharter-cpu' or (extra == 'extra-11-songcharter-cu126' and extra == 'extra-11-songcharter-cu132')" },
     { name = "torch", version = "2.15.0+cu132", source = { registry = "https://download.pytorch.org/whl/cu132" }, marker = "extra == 'extra-11-songcharter-cu132' or (extra == 'extra-11-songcharter-cpu' and extra == 'extra-11-songcharter-cu126')" },
+    { name = "torchaudio", version = "2.11.1", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-11-songcharter-cpu' and extra == 'extra-11-songcharter-cu126') or (extra == 'extra-11-songcharter-cpu' and extra == 'extra-11-songcharter-cu132') or (extra == 'extra-11-songcharter-cu126' and extra == 'extra-11-songcharter-cu132') or (extra != 'extra-11-songcharter-cpu' and extra != 'extra-11-songcharter-cu126' and extra != 'extra-11-songcharter-cu132')" },
+    { name = "torchaudio", version = "2.11.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "extra == 'extra-11-songcharter-cpu' or extra == 'extra-11-songcharter-cu126'" },
+    { name = "torchaudio", version = "2.11.1+cu132", source = { registry = "https://download.pytorch.org/whl/cu132" }, marker = "extra == 'extra-11-songcharter-cu132' or (extra == 'extra-11-songcharter-cpu' and extra == 'extra-11-songcharter-cu126')" },
 ]
 bass = [
     { name = "librosa", version = "0.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -1305,13 +1308,16 @@ bass = [
 ]
 cpu = [
     { name = "torch", version = "2.15.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" } },
+    { name = "torchaudio", version = "2.11.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" } },
 ]
 cu126 = [
     { name = "torch", version = "2.14.1+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" } },
+    { name = "torchaudio", version = "2.11.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" } },
 ]
 cu132 = [
     { name = "nvidia-curand" },
     { name = "torch", version = "2.15.0+cu132", source = { registry = "https://download.pytorch.org/whl/cu132" } },
+    { name = "torchaudio", version = "2.11.1+cu132", source = { registry = "https://download.pytorch.org/whl/cu132" } },
 ]
 dev = [
     { name = "mido" },
@@ -1326,6 +1332,11 @@ drums = [
 ]
 ffmpeg = [
     { name = "imageio-ffmpeg" },
+]
+lyrics = [
+    { name = "torchaudio", version = "2.11.1", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-11-songcharter-cpu' and extra == 'extra-11-songcharter-cu126') or (extra == 'extra-11-songcharter-cpu' and extra == 'extra-11-songcharter-cu132') or (extra == 'extra-11-songcharter-cu126' and extra == 'extra-11-songcharter-cu132') or (extra != 'extra-11-songcharter-cpu' and extra != 'extra-11-songcharter-cu126' and extra != 'extra-11-songcharter-cu132')" },
+    { name = "torchaudio", version = "2.11.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "extra == 'extra-11-songcharter-cpu' or extra == 'extra-11-songcharter-cu126'" },
+    { name = "torchaudio", version = "2.11.1+cu132", source = { registry = "https://download.pytorch.org/whl/cu132" }, marker = "extra == 'extra-11-songcharter-cu132' or (extra == 'extra-11-songcharter-cpu' and extra == 'extra-11-songcharter-cu126')" },
 ]
 preview = [
     { name = "librosa", version = "0.11.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -1353,14 +1364,18 @@ requires-dist = [
     { name = "nvidia-curand", marker = "sys_platform == 'linux' and extra == 'cu132'", specifier = "==10.4.4.72" },
     { name = "packaging", marker = "extra == 'dev'", specifier = ">=24" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "songcharter", extras = ["separate", "drums", "bass", "sections", "preview", "ffmpeg"], marker = "extra == 'app'" },
+    { name = "songcharter", extras = ["separate", "drums", "bass", "sections", "preview", "ffmpeg", "lyrics"], marker = "extra == 'app'" },
     { name = "soundfile", specifier = ">=0.12" },
     { name = "torch", marker = "extra == 'cpu'", specifier = "==2.15.0", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "songcharter", extra = "cpu" } },
     { name = "torch", marker = "extra == 'cu126'", specifier = "==2.14.1", index = "https://download.pytorch.org/whl/cu126", conflict = { package = "songcharter", extra = "cu126" } },
     { name = "torch", marker = "extra == 'cu132'", specifier = "==2.15.0", index = "https://download.pytorch.org/whl/cu132", conflict = { package = "songcharter", extra = "cu132" } },
     { name = "torch", marker = "extra == 'drums'", specifier = ">=2.0" },
+    { name = "torchaudio", marker = "extra == 'cpu'", specifier = "==2.11.1", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "songcharter", extra = "cpu" } },
+    { name = "torchaudio", marker = "extra == 'cu126'", specifier = "==2.11.1", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "songcharter", extra = "cu126" } },
+    { name = "torchaudio", marker = "extra == 'cu132'", specifier = "==2.11.1", index = "https://download.pytorch.org/whl/cu132", conflict = { package = "songcharter", extra = "cu132" } },
+    { name = "torchaudio", marker = "extra == 'lyrics'", specifier = "==2.11.1" },
 ]
-provides-extras = ["dev", "separate", "drums", "bass", "sections", "preview", "ffmpeg", "app", "cpu", "cu126", "cu132"]
+provides-extras = ["dev", "separate", "drums", "bass", "sections", "preview", "ffmpeg", "lyrics", "app", "cpu", "cu126", "cu132"]
 
 [[package]]
 name = "soundfile"
@@ -1540,6 +1555,52 @@ wheels = [
     { url = "https://download-r2.pytorch.org/whl/cu132/torch-2.15.0%2Bcu132-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:eae9eece6dafe688bbc7afd689781b77778038c9043baae21c084261abe4f5ad", upload-time = "2026-10-28T13:21:12Z" },
     { url = "https://download-r2.pytorch.org/whl/cu132/torch-2.15.0%2Bcu132-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:84936484ed0a2e55fc89f29c7e580be2eff4fb4c9c2c46c88849cf8062281f96", upload-time = "2026-10-28T13:23:20Z" },
     { url = "https://download-r2.pytorch.org/whl/cu132/torch-2.15.0%2Bcu132-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:7e88f63f67b25eb889eda48fe86c3b614f67f22feecdb5841f21799aa6076d4e", upload-time = "2026-10-28T13:25:33Z" },
+]
+
+[[package]]
+name = "torchaudio"
+version = "2.11.1"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version < '3.12' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+]
+dependencies = [
+    { name = "torch", version = "2.15.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-11-songcharter-cpu' and extra == 'extra-11-songcharter-cu126') or (extra == 'extra-11-songcharter-cpu' and extra == 'extra-11-songcharter-cu132') or (extra == 'extra-11-songcharter-cu126' and extra == 'extra-11-songcharter-cu132') or (extra != 'extra-11-songcharter-cpu' and extra != 'extra-11-songcharter-cu126' and extra != 'extra-11-songcharter-cu132')" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e6/ad/b0bf9bfa9db80acf0ce660e01a67b3b735343ab51ce1410b18d2aaed254c/torchaudio-2.11.1-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:0173b5b51e1368aa88de3cbe4e98508b5e9df4d8d59356c4e1fbc830c96191ef", size = 1816417, upload-time = "2026-10-28T15:21:45.007Z" },
+]
+
+[[package]]
+name = "torchaudio"
+version = "2.11.1+cpu"
+source = { registry = "https://download.pytorch.org/whl/cpu" }
+resolution-markers = [
+    "python_full_version >= '3.12' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version < '3.12' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+]
+dependencies = [
+    { name = "torch", version = "2.14.1+cu126", source = { registry = "https://download.pytorch.org/whl/cu126" }, marker = "extra == 'extra-11-songcharter-cu126' or (extra == 'extra-11-songcharter-cpu' and extra == 'extra-11-songcharter-cu132')" },
+    { name = "torch", version = "2.15.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "extra == 'extra-11-songcharter-cpu' or (extra == 'extra-11-songcharter-cu126' and extra == 'extra-11-songcharter-cu132')" },
+]
+wheels = [
+    { url = "https://download-r2.pytorch.org/whl/cpu/torchaudio-2.11.1%2Bcpu-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:fc050a1aeb556f8a7f5ee01531e6ae9f130aed81452da6d9052d3429e3a68d9e", upload-time = "2026-10-28T14:19:39Z" },
+]
+
+[[package]]
+name = "torchaudio"
+version = "2.11.1+cu132"
+source = { registry = "https://download.pytorch.org/whl/cu132" }
+resolution-markers = [
+    "python_full_version >= '3.12' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+    "python_full_version < '3.12' and platform_machine == 'x86_64' and sys_platform == 'linux'",
+]
+dependencies = [
+    { name = "torch", version = "2.15.0+cu132", source = { registry = "https://download.pytorch.org/whl/cu132" }, marker = "extra == 'extra-11-songcharter-cu132' or (extra == 'extra-11-songcharter-cpu' and extra == 'extra-11-songcharter-cu126')" },
+]
+wheels = [
+    { url = "https://download-r2.pytorch.org/whl/cu132/torchaudio-2.11.1%2Bcu132-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:0fe03185cf2f6e0492c622bcce6222b2492646c8e651f98ff3c1b3e8544b1aee", upload-time = "2026-10-28T14:19:51Z" },
 ]
 
 [[package]]

@@ -178,3 +178,10 @@ M4-07, the full review workflow, and the owner's and the friend's time.
   172.16.0.0/12 and stops otherwise. Under `networkingMode=mirrored`, the server must stop rather than listen on
   the PC's LAN address; check that it does, and that nothing listens on a non-loopback address (`ss -ltn`).
 - `explorer.exe` and the shortcut's `ui --from-shortcut` are likewise tested only with stand-ins.
+
+## Added at M4-10's merge
+
+- Chart one song with `--lyrics` (the owner's own text for the test song, never committed or shown) and check that
+  Clone Hero shows the lyrics in time; scan-chart's `hasLyrics` is the only check so far.
+- The aligner on CUDA: its time, its VRAM peak, and that its times match the CPU's (determinism is checked on the
+  CPU only).

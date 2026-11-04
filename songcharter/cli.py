@@ -2,8 +2,8 @@
 
     songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums]
                       [--levels expert|all|expert,hard,...] [--solos labels|stems|off|"NAME,NAME"] [--takes N]
-                      [--device auto|cpu|cuda] [--threads N] [--no-preview] [--title ...] [--artist ...]
-                      [--album ...] [--year ...] [--genre ...] [--events]
+                      [--device auto|cpu|cuda] [--threads N] [--no-preview] [--lyrics FILE] [--title ...]
+                      [--artist ...] [--album ...] [--year ...] [--genre ...] [--events]
     songcharter assemble <config.json> [--out DIR]
     songcharter doctor [--json PATH] [--quick]
     songcharter ui [--port N] [--no-browser] [--from-shortcut]
@@ -23,6 +23,10 @@ components), then the problems and notes, and `doctor: OK` or `doctor: N problem
 or, before exit 2, 3 or 130, `error` {"kind", "message"}: kind "input" for an errors.InputError or an OSError,
 "tool" for an errors.ToolError (or another errors.SongcharterError), "bug" (exit 3), "interrupted" (130). Without
 --events nothing of this is written.
+
+--lyrics FILE: the song's lyrics as a text file (UTF-8, or Windows' ANSI code page 1252), a line per phrase and a
+blank line between sections; they are timed to the vocal stem and written into the chart (pipeline.py, 3b). Without
+the aligner (pip install songcharter[lyrics]) the chart is made without them, with a warning.
 
 --solos takes a mode (labels, the default: every section named Solo; pipeline.py says why) or the names of the
 sections to make solos, as one argument with the names separated by
@@ -145,6 +149,26 @@ def _solos(text: str) -> str | tuple[str, ...]:
     return tuple(" ".join(x.split()) for x in text.split(",") if x.strip())
 
 
+def read_lyrics(path: Path) -> str:
+    """The text of a lyrics file: UTF-8 (a byte-order mark allowed, UTF-16 too), else code page 1252. Errors name the
+    file, never its contents."""
+    try:
+        data = Path(path).expanduser().read_bytes()
+    except OSError as e:
+        raise InputError(f"cannot read the lyrics file {path} ({e.strerror or type(e).__name__})") from None
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        try:
+            return data.decode("utf-16")
+        except UnicodeDecodeError:
+            raise InputError(f"the lyrics file {path} is not UTF-16 text") from None
+    for encoding in ("utf-8-sig", "cp1252"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise InputError(f"the lyrics file {path} is not UTF-8 or Windows-1252 text")
+
+
 def _levels(text: str) -> tuple[str, ...]:
     """--levels: "all", or a comma-separated list of difficulties (checked by pipeline.Options)."""
     words = _instruments(text)
@@ -221,6 +245,9 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto",
                    help="where the models run (default: auto, CUDA when available)")
     c.add_argument("--threads", type=int, metavar="N", help="CPU threads for the models (default: theirs)")
+    c.add_argument("--lyrics", type=Path, metavar="FILE",
+                   help="the song's lyrics as a text file, a line per phrase: timed to the vocal stem and written into "
+                        "the chart (needs songcharter[lyrics]; without it the chart is made without them)")
     c.add_argument("--no-preview", action="store_true",
                    help="no preview (by default the overview and pages of the built folder go into the work "
                         "folder's preview/ when matplotlib and librosa are installed)")
@@ -276,9 +303,10 @@ def main(argv: list[str] | None = None) -> int:
             from . import pipeline  # numpy and the pipeline load only when needed
             meta = {k[5:]: v for k, v in vars(args).items() if k.startswith("meta_") and v is not None}
             instruments = pipeline.INSTRUMENTS if args.instruments is None else args.instruments
+            lyrics = read_lyrics(args.lyrics) if args.lyrics is not None else None
             options = pipeline.Options(instruments=instruments, takes=args.takes, device=args.device,
                                        threads=args.threads, work=args.work, metadata=meta, levels=args.levels,
-                                       solos=args.solos, preview=not args.no_preview)
+                                       solos=args.solos, preview=not args.no_preview, lyrics=lyrics)
             done = pipeline.chart(args.song, args.out, options, events=_event if events else None)
             result, extra = done.assembled, pipeline.summary(done)
         else:
