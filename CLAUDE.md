@@ -22,6 +22,10 @@ SONGCHARTER_SCAN_CHART=$PWD/tools/scan-chart/scan.cjs python -m pytest -q -p no:
 - Never look up, quote or reproduce song lyrics.
 - Never commit audio, stems, reference charts or model weights.
 - No model names or model identifiers in code, docs or commit messages.
+- No personal details: the repository is public, so its history keeps everything. That means no names, emails,
+  usernames, machine names, home or Windows-profile paths, or lists of what is installed on the owner's or the
+  friend's PC. Hardware facts a check needs (GPU model, driver version, RAM, VRAM) are fine. Test fixtures use made-up
+  names.
 - Deterministic: the same input gives a byte-identical chart (seeded separation, seeded takes).
 - User-facing errors are `errors.InputError` or `errors.ToolError`. Exit codes: 0 ok, 1 the gate failed, 2 bad input
   or environment, 3 a bug, with its traceback.
