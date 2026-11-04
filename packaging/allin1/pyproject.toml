@@ -20,6 +20,8 @@ package = false
 required-version = "==0.13.5"   # the installer's uv, as in the root project
 conflicts = [[{ extra = "cpu" }, { extra = "cu126" }, { extra = "cu132" }]]
 environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+# the build backend pinned, so a frozen sync builds songcharter and any sdist with the same setuptools every day
+build-constraint-dependencies = ["setuptools==84.2.1"]
 
 [tool.uv.sources]
 torch = [
