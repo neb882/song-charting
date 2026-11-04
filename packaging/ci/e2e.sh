@@ -22,7 +22,7 @@
 #                    launcher are gone
 #
 # Each check is printed and timed ("-- <check>", then "-- <check>: ok in N s"); a failing one prints its log's last
-# lines and exits 1. Everything the hook collects goes to ~/e2e/, outside the install, so it outlives the uninstall:
+# lines, then "-- <check>: FAILED (exit N)", and the phase exits non-zero. Everything the hook collects goes to ~/e2e/, outside the install, so it outlives the uninstall:
 # logs/, doctor*.json, runtime.json, clip/ (report.json, pipeline.json, the preview's overview), ui-guards.json, and
 # figures.txt (one `name=value` line per figure: the times and sizes the work order asks for). Never audio: the clips
 # stay in ~/clips/. /dist holds the release assets (build.sh's), /ci packaging/ci.
@@ -153,8 +153,7 @@ install_killed() {
   pid=$!
   for _ in $(seq 1 4800); do   # 20 min
     if awk '/^== \[7\/10\]/ { s = 1 } s && /Downloading/ { f = 1 } END { exit !f }' "$log"; then
-      kill -TERM -- "-$pid"
-      killed=1
+      kill -TERM -- "-$pid" 2>/dev/null && killed=1   # not when it has just ended by itself: then it was not killed
       break
     fi
     kill -0 "$pid" 2>/dev/null || break
@@ -176,14 +175,16 @@ install_again() {
   tail -n 4 "$logs/install-2.log"
   cp "$home/runtime/runtime.json" "$e2e/runtime.json"
   json_check "$home/runtime/runtime.json" 'r["lane"] == "cpu"' '"no NVIDIA GPU found" in r["lane_reason"]'
-  local p size
-  for p in "$home" "$HOME/.cache/uv" "$HOME/.cache/songcharter"; do
+  local p size name
+  for p in "$home:du_home" "$HOME/.cache/uv:du_uv_cache" "$HOME/.cache/songcharter:du_songcharter_cache"; do
+    name=${p##*:}
+    p=${p%:*}
     size=$(du -sh -- "$p" | cut -f1)
     echo "du -sh $p: $size"
-    figure "du_${p#"$HOME/"}" "$size"
+    figure "$name" "$size"   # each on its own: what the environments hardlink from uv's cache counts in both
   done
   size=$(du -shc -- "$home" "$HOME/.cache/uv" "$HOME/.cache/songcharter" | tail -n 1 | cut -f1)
-  figure du_all_three_hardlinks_once "$size"
+  figure du_all_three "$size"   # one du: a file hardlinked between them counts once
 }
 
 phase_install() {
