@@ -68,7 +68,13 @@
     "baseline": "main at 656991d (--rerun guitar): eval/baseline/summary.json, committed (hashes and F1s, no audio); the first, at 11615e2, in <scratchpad>/golden/base. The kept work folders are in <scratchpad>/golden/work, made at 11615e2, so the guitar is rerun on both sides since M4-02 changed engines/autochart.py. Environment in the dev container: EVAL_DATA=<scratchpad>/eval SONGCHARTER_GOLDEN=<scratchpad>/golden, plus SONGCHARTER_SCAN_CHART, SONGCHARTER_AUTOCHART=<scratchpad>/eval/tools/autochart and SONGCHARTER_ALLIN1_PYTHON=<scratchpad>/research/timing/venv2/bin/python. <scratchpad> is /tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad. Rebuilding it elsewhere: eval/README.md, 'Rebuilding the dev machine'.",
     "cost": "cold (a kept folder made, stems hard-linked): 474-1081 s a song, 80 min for the set, the guitar take most of it; warm: 44-76 s a song, 6.5 min for the set (CPU, 2 threads)"
   },
-  "in_flight": [],
+  "in_flight": [
+    {
+      "order": "the release gate",
+      "stage": "running on main at ceaf1dc: the full review (workflow run wf_be907e55-8b2, base 8a00e3f); the golden charts (656991d against ceaf1dc, --rerun drums,bass,guitar) and the test song end to end, in <scratchpad>/gate (run.sh, status)",
+      "then": "fix confirmed findings; look at the test song's preview; the advisor on the release candidate; then M4-08"
+    }
+  ],
   "next": [
     "M4: the release gate on main: the full review over v0.1 (.claude/workflows/full-review.js), the golden charts on the whole set against the baseline, the test song end to end with its preview looked at, the advisor on the release candidate; then M4-08 on the owner's 5070 in a fresh Ubuntu-26.04 distro (the guide followed as written), then the pre-release (the owner approves), then the friend's PC.",
     "From M5: the plan by the most capable model, as a fresh agent that reads only the repository, reviewed by a different model (docs/PIPELINE.md, Gates).",
