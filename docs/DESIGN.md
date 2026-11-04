@@ -1346,7 +1346,9 @@ None crashed or collapsed on any probe; the large English bundle stays ahead on 
 "english"): the best pooled accuracy, the most robust on four of the five probes, and MIT weights. Its install is the other torchaudio candidates'
 (torchaudio alone, a 1.8 MB wheel that allin1's Python already carries); its weights are 1.26 GB, where the base
 bundle's are 378 MB for 0.046 less within 250 ms. Its limits: it spells English letters only (accents are dropped, numerals spelled
-out, other scripts not romanized: such a word is spread between its neighbours), and a vocal stem as poor as a full
+out, other scripts not romanized: such a word is spread between its neighbours, and a text with no letter it spells
+at all, a song pasted in its own script, gets no lyrics and a warning saying so, as no syllable has a time to spread
+the others from), and a vocal stem as poor as a full
 mix makes it collapse. The confidence shows that: each word's mean character probability on the path; the stems'
 song medians were 0.31 to 0.89, the full mixes' 0.09 to 0.18, so a median under 0.25 is warned about. A word under
 0.05 is off by more than 250 ms in 0.19 of cases, the others in 0.08.
