@@ -1069,6 +1069,24 @@ def test_chart_events_when_the_first_take_moved_and_without_a_preview(charted, t
     assert not any(D.NO_GPU in e["text"] for e in events if e["event"] == "warning")
 
 
+def test_chart_events_when_the_gate_fails(charted, tmp_path, monkeypatch, capsys):
+    """A build the gate fails: the result says so (ok false, exit 1, the folder <out>.failed), and the command
+    exits 1; the UI's job is `done` either way, so the page's verdict comes from this event alone."""
+    root, result, _, _ = charted
+    monkeypatch.setattr(P, "Engines", standins())
+    real = assemble_module.verify_folder
+    monkeypatch.setattr(assemble_module, "verify_folder", lambda *a, **k: real(*a, **k) + [
+        assemble_module.GateIssue(None, None, "fake", "a gate error")])
+    out = tmp_path / "Gate"
+    assert main(["chart", str(root / "song.flac"), "--out", str(out), "--work", str(result.work), "--takes", "3",
+                 "--genre", "Test", "--events"]) == 1
+    printed, err = capsys.readouterr()
+    last = events_in(err)[-1]
+    assert {k: last[k] for k in ("event", "ok", "exit", "folder")} == {
+        "event": "result", "ok": False, "exit": 1, "folder": str(tmp_path / "Gate.failed")}
+    assert "gate: FAILED" in last["summary"] and last["summary"] == printed.rstrip("\n")
+
+
 def test_chart_events_on_errors(charted, tmp_path, monkeypatch, capsys):
     """Before exit 2, 3 or 130, `error` with its kind and message, as the last event; never a result."""
     root, result, _, _ = charted

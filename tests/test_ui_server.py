@@ -6,6 +6,8 @@ import hashlib
 import http.client
 import json
 import os
+import pty
+import shutil
 import signal
 import socket
 import subprocess
@@ -483,3 +485,88 @@ def test_songcharter_ui_starts_answers_and_stops_on_sigterm(tmp_path):
     log = next((home / "logs").glob("ui-*.log")).read_text(encoding="utf-8")
     assert "GET /api/status" in log and "SIGTERM: stopping" in log
     assert S.main(port=0) == 2   # a port out of range
+
+
+# `songcharter ui`'s main with the job's command replaced by the stand-in chart (STANDIN, mode "hang": a take that
+# never ends, and a grandchild)
+DRIVER = r'''
+import sys
+from pathlib import Path
+from songcharter.ui import jobs as J, server as S
+standin, home, port = sys.argv[1], Path(sys.argv[2]), int(sys.argv[3])
+
+
+def command(song, out, options, threads):
+    return [sys.executable, standin, "hang", str(out)]
+
+
+defaults = list(J.Jobs.__init__.__defaults__)
+defaults[0] = command
+J.Jobs.__init__.__defaults__ = tuple(defaults)
+sys.exit(S.main(port=port, browser=False, home=home))
+'''
+
+
+@pytest.mark.skipif(shutil.which("setsid") is None, reason="needs util-linux setsid for the console's pty")
+@pytest.mark.parametrize("how", ["SIGTERM", "SIGHUP", "the window closes"])
+def test_stopping_the_server_kills_the_running_charts_whole_tree(tmp_path, how):
+    """The chart runs in a session of its own, so a hangup or a Ctrl+C never reaches it: only the server's stop
+    path kills it. Stopped by SIGTERM, by SIGHUP, or by its console window closing (its controlling terminal is a pty
+    whose other end closes: the kernel hangs it up, and every console write then fails with EIO), the server kills
+    the chart and its grandchild, closes, logs "stopped" and exits 0."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "doctor.json").write_text(json.dumps(DOCTOR), encoding="utf-8")
+    (tmp_path / "standin.py").write_text(STANDIN, encoding="utf-8")
+    (tmp_path / "driver.py").write_text(DRIVER, encoding="utf-8")
+    port = free_ports(1)[0]
+    root = Path(songcharter.__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": str(root)}
+    env.pop("WSL_DISTRO_NAME", None)
+    argv = [sys.executable, str(tmp_path / "driver.py"), str(tmp_path / "standin.py"), str(home), str(port)]
+    errors = open(tmp_path / "stderr.txt", "w")
+    master = None
+    if how == "the window closes":   # a new session whose controlling terminal is the pty, as a console window's
+        master, slave = pty.openpty()
+        server = subprocess.Popen(["setsid", "-c", *argv], env=env, cwd=tmp_path, stdin=slave, stdout=slave,
+                                  stderr=errors)
+        os.close(slave)
+    else:
+        server = subprocess.Popen(argv, env=env, cwd=tmp_path, stdout=subprocess.DEVNULL, stderr=errors,
+                                  start_new_session=True)
+    pids = []
+    try:
+        deadline = time.monotonic() + 30
+        while S.hello(port) is None:
+            assert server.poll() is None and time.monotonic() < deadline, (tmp_path / "stderr.txt").read_text()
+            time.sleep(0.1)
+        ctx = SimpleNamespace(port=port)
+        status, up = upload(ctx, song(tmp_path / "s.wav"), "Song.wav")
+        assert status == 200
+        assert call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))[0] == 202
+        deadline = time.monotonic() + 30
+        while not pids:
+            assert time.monotonic() < deadline
+            events = json.loads(call(port, "GET", "/api/jobs/current")[2])["events"]
+            pids = next((e["pids"] for e in events if e["event"] == "take"), [])
+            time.sleep(0.05)
+        assert all(proc.alive(p) for p in pids)
+        if master is not None:
+            os.close(master)
+            master = None
+        else:
+            server.send_signal(getattr(signal, how))
+        code = server.wait(15)
+        assert code == 0, (tmp_path / "stderr.txt").read_text()
+        assert not any(proc.alive(p) for p in pids)   # the chart and its grandchild, by pid
+        log = next((home / "logs").glob("ui-*.log")).read_text(encoding="utf-8")
+        assert "stopping" in log and "cancelled (exit -15)" in log and log.rstrip().endswith("stopped")
+    finally:
+        if master is not None:
+            os.close(master)
+        if server.poll() is None:
+            server.kill()
+        for p in pids:
+            if proc.alive(p):
+                os.kill(p, signal.SIGKILL)
+        errors.close()

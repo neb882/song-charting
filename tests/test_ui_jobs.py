@@ -48,6 +48,9 @@ if mode == "crash":   # exit 3 with no error event: the job writes its own
     sys.exit(3)
 if mode == "silent":   # exit 0 with no result: not a verdict
     sys.exit(0)
+if mode == "result_then_dies":   # the result out (the build in place), then a crash on the way out
+    ev(event="result", ok=True, exit=0, folder=out, work="/w", preview=None, summary="gate: OK")
+    os._exit(3)
 if mode == "killed":   # the kernel's OOM killer, say: SIGKILL from elsewhere
     os.kill(os.getpid(), 9)
 # "hang": assemble's staging beside the output, a grandchild (autochart's node, say), then a take that never ends
@@ -254,6 +257,24 @@ def test_a_new_job_waits_for_one_whose_result_is_out(tmp_path, standin):
     assert wait_state(second) == "done"
 
 
+def test_a_cancel_after_the_result_keeps_the_chart_done(tmp_path, standin):
+    """The second after the result, while the chart's process is still exiting: a cancel then (a click, or the
+    server stopping) cuts the exit short but leaves the outcome: done, no `cancelled`, one closing event."""
+    jobs = J.Jobs(tmp_path, command=standin("linger"))
+    job = jobs.start(upload(tmp_path), {})
+    wait_event(job, "result")
+    assert job.state == "running"
+    assert jobs.cancel() is job
+    assert job.state == "done" and job.returncode == -15
+    assert [e["event"] for e in job.events][-1] == "result" and sum(e["event"] in J.CLOSING for e in job.events) == 1
+    new, ended = job.wait_events(len(job.events), 0.1)
+    assert new == [] and ended
+    # a chart whose process fails after its result is done too: the result comes once the build is in place
+    jobs = J.Jobs(tmp_path, command=standin("result_then_dies"))
+    job = jobs.start(upload(tmp_path), {})
+    assert wait_state(job) == "done" and job.returncode == 3 and job.events[-1]["event"] == "result"
+
+
 def test_one_job_at_a_time(tmp_path, standin):
     jobs = J.Jobs(tmp_path, command=standin("hang"))
     job = jobs.start(upload(tmp_path), {})
@@ -288,6 +309,12 @@ def test_cancel_kills_the_tree_and_deletes_the_staging(tmp_path, standin):
     assert [e["event"] for e in job.events][-2:] == ["take", "cancelled"]
     new, ended = job.wait_events(len(job.events), 0.1)
     assert new == [] and ended
+    # a song whose name holds [ or ] (a glob's character class): its staging goes too
+    job4 = jobs.start(upload(tmp_path), {"title": "Song [Live] *?"})
+    wait_event(job4, "take")
+    staging4 = job4.out.parent / f".{job4.out.name}.x1y2.partial"
+    assert job4.out.name == "Ann_Bo - Song [Live] __" and staging4.is_dir()
+    assert jobs.cancel().state == "cancelled" and not staging4.exists()
     # two cancels at once (a click, and the server stopping): one kill, one "cancelled", the other NotRunning
     import threading
     job3 = jobs.start(upload(tmp_path), {})
@@ -337,6 +364,16 @@ def test_a_log_that_cannot_be_written_still_ends_the_job(tmp_path, standin, monk
     monkeypatch.setattr("builtins.open", full_open)
     job = jobs.start(upload(tmp_path), {})
     assert wait_state(job) == "done" and job.events[-1]["event"] == "result"
+
+
+@pytest.mark.parametrize("name", ["Band - Song", "Band - Song [Live]", "[2011 Remaster] x", "a]b[c"])
+def test_partial_folders_finds_assembles_staging_whatever_the_name(tmp_path, name):
+    import tempfile
+    out = tmp_path / name
+    staging = Path(tempfile.mkdtemp(prefix=f".{out.name}.", suffix=".partial", dir=tmp_path))   # as assemble names it
+    (tmp_path / f".{name}x.y.partial").mkdir()        # another song's
+    (tmp_path / f".{name}.y.partial.zip").touch()     # not a staging folder
+    assert J.partial_folders(out) == [staging]
 
 
 def test_the_child_gets_the_environment_and_pythonutf8(tmp_path):

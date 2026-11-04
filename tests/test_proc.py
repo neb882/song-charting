@@ -63,6 +63,37 @@ def test_a_child_that_ignores_sigterm_gets_sigkill_after_the_timeout():
         tree.popen.stdout.close()
 
 
+# a leader that dies of SIGTERM, with a grandchild that ignores it (set before it says so, so no race)
+TOUGH = r'''
+import os, subprocess, sys, time
+code = ("import signal, sys, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready', flush=True); "
+        "time.sleep(60)")
+grandchild = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE)
+grandchild.stdout.readline()
+print(os.getpid(), grandchild.pid, flush=True)
+time.sleep(60)
+'''
+
+
+def test_sigkill_reaches_a_member_that_outlives_sigterm_while_the_leader_dies():
+    """The leader (the chart) dies at SIGTERM; a member that ignores it is still running, so after the timeout the
+    group gets SIGKILL: none of it survives a cancel."""
+    tree = proc.start([sys.executable, "-c", TOUGH], dict(os.environ), None, subprocess.PIPE, None)
+    child = grandchild = None
+    try:
+        child, grandchild = map(int, tree.stdout.readline().split())
+        t0 = time.monotonic()
+        code = tree.kill(timeout=1.0)
+        took = time.monotonic() - t0
+        assert code == -15 and 0.9 < took < 4, (code, took)   # the leader went at SIGTERM; the group was waited for
+        assert not proc.alive(child) and not proc.alive(grandchild) and not proc.group_alive(tree.pgid)
+    finally:
+        for pid in (child, grandchild):
+            if pid is not None and proc.alive(pid):
+                os.kill(pid, 9)
+        tree.popen.stdout.close()
+
+
 def test_kill_after_the_leader_exited_by_itself_still_stops_what_it_left():
     # the leader exits at once, leaving its grandchild running in the group
     script = "import subprocess; p = subprocess.Popen(['sleep', '60']); print(p.pid, flush=True)"

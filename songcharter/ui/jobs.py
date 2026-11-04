@@ -28,6 +28,7 @@
 """
 from __future__ import annotations
 
+import glob
 import json
 import os
 import shutil
@@ -168,9 +169,10 @@ def output_folder(home: Path, upload: Mapping[str, Any], options: ChartOptions) 
 
 
 def partial_folders(out: Path) -> list[Path]:
-    """assemble's staging folders for the output `out`: .<name>.*.partial beside it."""
+    """assemble's staging folders for the output `out`: .<name>.*.partial beside it (the name escaped: a song's
+    name keeps [ and ], which a glob reads as a character class)."""
     try:
-        return sorted(p for p in out.parent.glob(f".{out.name}.*.partial") if p.is_dir())
+        return sorted(p for p in out.parent.glob(f".{glob.escape(out.name)}.*.partial") if p.is_dir())
     except OSError:
         return []
 
@@ -229,6 +231,9 @@ class Job:
 
     def _closed(self) -> bool:
         return any(e["event"] in CLOSING for e in self.events)
+
+    def _has(self, kind: str) -> bool:
+        return any(e["event"] == kind for e in self.events)
 
 
 class Jobs:
@@ -320,12 +325,13 @@ class Jobs:
             self._finish(job, job.tree.wait())
 
     def _finish(self, job: Job, code: int) -> None:
-        """The end state from the exit code (a cancel's is set by cancel())."""
+        """The end state from the exit code (a cancel's is set by cancel()). A chart that has sent its result is done,
+        whatever its exit: the result comes after the build is in place."""
         with job.cond:
             job.returncode = code
             if job.cancelling or job.state != "running":
                 return
-            if code in (0, 1) and any(e["event"] == "result" for e in job.events):
+            if job._has("result"):
                 job.state = "done"
             else:
                 job.state = "failed"
@@ -349,7 +355,8 @@ class Jobs:
 
     def cancel(self) -> Job:
         """Kill the running job's whole tree, mark it cancelled, delete assemble's staging beside its output. A job
-        that ended by itself meanwhile keeps its own state (done, or failed with its error). NotRunning when none
+        whose result or error is out keeps that outcome (done, or failed), with no `cancelled`: its chart had ended,
+        and its process was only exiting (about a second after the result) when the kill came. NotRunning when none
         runs, also for a second cancel while the first is at work (the lock is held throughout, so one cancel, one
         `cancelled` event, and no job starts until the staging is gone)."""
         with self._lock:
@@ -365,9 +372,9 @@ class Jobs:
                 shutil.rmtree(folder, ignore_errors=True)
             with job.cond:
                 job.returncode = code
-                if code in (0, 1) and any(e["event"] == "result" for e in job.events):
-                    job.state = "done"      # it finished before the kill reached it
-                elif code in (2, 3) and job._closed():
+                if job._has("result"):
+                    job.state = "done"      # it finished before the kill reached it (or while it was exiting)
+                elif job._has("error"):
                     job.state = "failed"    # so did this one, with its error
                 else:
                     job.state = "cancelled"

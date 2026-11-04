@@ -97,13 +97,20 @@ STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; ch
                 ".css": "text/css; charset=utf-8"}
 
 
+def console_line(text: str) -> None:
+    """A line on the console (stdout), unbuffered: once the window has closed, a write raises at once (EIO) and
+    nothing stays in a buffer for the interpreter's exit to fail on."""
+    os.write(1, (text + "\n").encode(sys.stdout.encoding or "utf-8", "replace"))
+
+
 class Log:
     """The UI's log: each line with its time into the log file (when there is one) and, unless `console` is false,
-    the console window."""
+    the console window. Neither failing stops anything: a console the friend has closed (every write then raises
+    EIO) is given up, and the rest of the stop (the job's tree, the servers) goes on."""
 
     def __init__(self, path: Path | None = None, console: Callable[[str], None] | None = None):
         self.path = path
-        self.console = console if console is not None else (lambda text: print(text, flush=True))
+        self.console: Callable[[str], None] | None = console if console is not None else console_line
         self._lock = threading.Lock()
 
     def __call__(self, text: str, console: bool = True) -> None:
@@ -114,8 +121,11 @@ class Log:
                         f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {text}\n")
                 except OSError:
                     pass
-            if console:
-                self.console(text)
+            if console and self.console is not None:
+                try:
+                    self.console(text)
+                except (OSError, ValueError):   # the window is gone (EIO), or stdout closed
+                    self.console = None
 
 
 def static_files() -> dict[str, bytes]:
@@ -688,9 +698,11 @@ def _main(port: int | None, browser: bool, from_shortcut: bool, home: Path | Non
     except KeyboardInterrupt:
         log("Ctrl+C: stopping")
     finally:
-        app.jobs.shutdown()
-        for server in servers:
-            server.shutdown()
-            server.server_close()
-        log("stopped")
+        try:
+            app.jobs.shutdown()
+        finally:
+            for server in servers:
+                server.shutdown()
+                server.server_close()
+            log("stopped")
     return 0
