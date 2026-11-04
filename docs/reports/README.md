@@ -16,5 +16,6 @@ built; a merge commit on main names the result.
 | `M4-02-device.md` | `doctor`, the device checks and the memory sampler; the golden run that moved no chart |
 | `M4-03-install.md` | the WSL install line, the shortcut and the uninstall, and the review fixes |
 | `M4-05a-ci-skeleton.md` | the CI workflow and its hook runners |
+| `pipeline-review.md` | an advisor's review of how work is run (2026-11-04), finding by finding, with what was done |
 | `takes-experiment.md`, `takes-experiment-verifier.md` | spliced guitar takes against one take, and the verifier's corrections (which win where they differ) |
 | `strumming-research.json` | the pick-noise detector for sparse guitar stretches, and why no fill was built |

@@ -1,0 +1,2041 @@
+{
+ "golden": 1,
+ "about": "python -m eval.golden run (eval/golden.py). Everything but `run` is the same for two runs of one commit.",
+ "code": {
+  "commit": "656991d57b66b958a6adb1d570b4bbf39590f4b5",
+  "dirty": []
+ },
+ "options": {
+  "levels": "all",
+  "takes": 1,
+  "device": "cpu",
+  "preview": false,
+  "rerun": [
+   "guitar"
+  ],
+  "songs": [
+   "kimochi_warui",
+   "drunk_drivers",
+   "take_me_out",
+   "all_the_small_things",
+   "lucretia",
+   "creep",
+   "test_song"
+  ]
+ },
+ "tools": {
+  "scan_chart": "8.0.1",
+  "scan_notes_sha256": "d74e0c006dc20a1873fa1c99c3c7ccaf485866446f6298325c8ac7f20093b207",
+  "score_sha256": "168400ea05723f84eaf33e968a9af4e12fc2fb83cb5b2d93827e7e3b8caceeba"
+ },
+ "songs": {
+  "kimochi_warui": {
+   "has_ref": true,
+   "exit": 0,
+   "gate_ok": true,
+   "folder": "kimochi_warui",
+   "delay": 0,
+   "chart_offset": 0,
+   "playable": true,
+   "chart_issues": 0,
+   "parse_error": null,
+   "parts": {
+    "guitar": {
+     "expert": {
+      "onsets": 1004,
+      "notes": 1393,
+      "hash": "jiO69Gccllwo4hNileHKLRLfAlcU-dYrGnd8F2PyQhg="
+     },
+     "hard": {
+      "onsets": 771,
+      "notes": 1101,
+      "hash": "IeKHp11iilVOAD81YsKvVvq_G3ln5tMa2amLXC1krdQ="
+     },
+     "medium": {
+      "onsets": 441,
+      "notes": 631,
+      "hash": "ev0gcTDPAuXq2FRLHpjY9_B8tq2MtuXsZjkEqs3VI6I="
+     },
+     "easy": {
+      "onsets": 336,
+      "notes": 336,
+      "hash": "oMwWj2hilWPZoqY-MwseFFsWxafkYamdDmyN8NWAjYg="
+     }
+    },
+    "bass": {
+     "expert": {
+      "onsets": 184,
+      "notes": 185,
+      "hash": "lJVaDdM4Jpfy_6ltPe2FX0PL-ipt4bdVYfVo36qmP0g="
+     },
+     "hard": {
+      "onsets": 157,
+      "notes": 158,
+      "hash": "hLgH7JW1AYECR4xVnLAncgTXMc0UaeRk-ZhniEQxF0w="
+     },
+     "medium": {
+      "onsets": 121,
+      "notes": 122,
+      "hash": "eqI0uSmVIRxDwQAR8TWP0NM116j8AEKwSpyMcwX-3Tk="
+     },
+     "easy": {
+      "onsets": 110,
+      "notes": 110,
+      "hash": "KUvr7v2soBtgmSugSjch_LgaQJnGLn_5hsRQ9ljOWMI="
+     }
+    },
+    "drums": {
+     "expert": {
+      "onsets": 782,
+      "notes": 1315,
+      "hash": "eJRf-LVQFEAajjBqHEdTDtsVhp1_GbCRRnmKOe0__eA="
+     },
+     "hard": {
+      "onsets": 689,
+      "notes": 1175,
+      "hash": "UNSFxnxM1JoUKLpU4Y3hK0dI6TLw6B1P6f5jXRmX_0E="
+     },
+     "medium": {
+      "onsets": 448,
+      "notes": 823,
+      "hash": "2khsXzXxloSHLEth6xB2ZeyeP0cleKVAhksJt5-hjI4="
+     },
+     "easy": {
+      "onsets": 380,
+      "notes": 476,
+      "hash": "TX24m-DAzMUxv5FDG7ty8faIFvHl5HZJMJLQWnEU_3U="
+     }
+    }
+   },
+   "scores": {
+    "bass": {
+     "expert": {
+      "f1_50": {
+       "f1": 0.7582,
+       "precision": 0.6902,
+       "recall": 0.8411,
+       "matched": 127,
+       "n_ref": 151,
+       "n_cand": 184
+      },
+      "f1_100": {
+       "f1": 0.7582,
+       "precision": 0.6902,
+       "recall": 0.8411,
+       "matched": 127,
+       "n_ref": 151,
+       "n_cand": 184
+      }
+     }
+    },
+    "drums": {
+     "expert": {
+      "f1_50": {
+       "f1": 0.9766,
+       "precision": 0.9885,
+       "recall": 0.965,
+       "matched": 773,
+       "n_ref": 801,
+       "n_cand": 782
+      },
+      "f1_100": {
+       "f1": 0.9766,
+       "precision": 0.9885,
+       "recall": 0.965,
+       "matched": 773,
+       "n_ref": 801,
+       "n_cand": 782
+      }
+     }
+    },
+    "guitar": {
+     "expert": {
+      "f1_50": {
+       "f1": 0.8267,
+       "precision": 0.7291,
+       "recall": 0.9544,
+       "matched": 732,
+       "n_ref": 767,
+       "n_cand": 1004
+      },
+      "f1_100": {
+       "f1": 0.8267,
+       "precision": 0.7291,
+       "recall": 0.9544,
+       "matched": 732,
+       "n_ref": 767,
+       "n_cand": 1004
+      }
+     }
+    }
+   },
+   "beat_f1": {
+    "f1": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "matched": 504,
+    "n_ref": 504,
+    "n_cand": 504
+   },
+   "lag_ms": 3290.249
+  },
+  "drunk_drivers": {
+   "has_ref": true,
+   "exit": 0,
+   "gate_ok": true,
+   "folder": "drunk_drivers",
+   "delay": 0,
+   "chart_offset": 0,
+   "playable": true,
+   "chart_issues": 0,
+   "parse_error": null,
+   "parts": {
+    "guitar": {
+     "expert": {
+      "onsets": 598,
+      "notes": 877,
+      "hash": "WH7nRCMaN4vD2r2HwRDxcpmn5-kGiObzZRIvT9-Dd4c="
+     },
+     "hard": {
+      "onsets": 475,
+      "notes": 735,
+      "hash": "aKhP4jVD5jnylTA7P_5AQC-98gWvXK2vJyGCI5TpGS0="
+     },
+     "medium": {
+      "onsets": 321,
+      "notes": 502,
+      "hash": "lqgBCXBTD0JpM_-dUok-qjVBm-qPtWv3WYdHiriucT0="
+     },
+     "easy": {
+      "onsets": 196,
+      "notes": 196,
+      "hash": "cO_6SVe-kdO5COsBMbYwRAtp4ODn27OL_js7tvKOpzM="
+     }
+    },
+    "bass": {
+     "expert": {
+      "onsets": 574,
+      "notes": 591,
+      "hash": "Yu3C1ygqloefcrmAlBcujKmImbiAFzb9NXW0iU1XGYw="
+     },
+     "hard": {
+      "onsets": 476,
+      "notes": 488,
+      "hash": "emiQ0wdS3lCYQBDNrSF1EU9wbPTV60nM9IZs9QpXPe8="
+     },
+     "medium": {
+      "onsets": 288,
+      "notes": 298,
+      "hash": "O0S2pmgddZKPZ0LYkh4HNcab8jhctqf66d_EyzUersQ="
+     },
+     "easy": {
+      "onsets": 231,
+      "notes": 231,
+      "hash": "N4JXRYZFKtDp74OZN2RNWjVIVkdmIRRCbVWSq5T0EXQ="
+     }
+    },
+    "drums": {
+     "expert": {
+      "onsets": 707,
+      "notes": 1110,
+      "hash": "zItnmXAMdKFIUfYjZAb9j1uzxoxrZq9zVpsc6JeDHIU="
+     },
+     "hard": {
+      "onsets": 609,
+      "notes": 937,
+      "hash": "OTJ6hG46otbDXafzSr02MlG5NK07nI9pZ8Yd-SkHpBw="
+     },
+     "medium": {
+      "onsets": 377,
+      "notes": 610,
+      "hash": "5GzX9SvxLeD99MGx7MagAIjkFTxen4_wsuugI2TLsWc="
+     },
+     "easy": {
+      "onsets": 332,
+      "notes": 411,
+      "hash": "QXMRbiIvYiDT_TLSe58r2Xq0-q36deMiasq9SM3T9I8="
+     }
+    }
+   },
+   "scores": {
+    "guitar": {
+     "expert": {
+      "f1_50": {
+       "f1": 0.7846,
+       "precision": 0.7826,
+       "recall": 0.7866,
+       "matched": 468,
+       "n_ref": 595,
+       "n_cand": 598
+      },
+      "f1_100": {
+       "f1": 0.7913,
+       "precision": 0.7893,
+       "recall": 0.7933,
+       "matched": 472,
+       "n_ref": 595,
+       "n_cand": 598
+      }
+     }
+    }
+   },
+   "beat_f1": {
+    "f1": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "matched": 424,
+    "n_ref": 424,
+    "n_cand": 424
+   },
+   "lag_ms": 4039.161
+  },
+  "take_me_out": {
+   "has_ref": true,
+   "exit": 0,
+   "gate_ok": true,
+   "folder": "take_me_out",
+   "delay": 0,
+   "chart_offset": 0,
+   "playable": true,
+   "chart_issues": 0,
+   "parse_error": null,
+   "parts": {
+    "guitar": {
+     "expert": {
+      "onsets": 868,
+      "notes": 1557,
+      "hash": "tc0ZEd2WFzveIBidHQVDx882Ro8msxt4kTc255HwDv0="
+     },
+     "hard": {
+      "onsets": 614,
+      "notes": 950,
+      "hash": "wWf1_xbytE73bA-XTDKIka1AYAnIt852A4ppuYx0n-Y="
+     },
+     "medium": {
+      "onsets": 352,
+      "notes": 567,
+      "hash": "yD5mxzI7pqu7YiT4lIw5j-rbwVapr4rIPWQcIgNeG18="
+     },
+     "easy": {
+      "onsets": 302,
+      "notes": 302,
+      "hash": "JoTG25D8A86TVJlp4YnvHuLOei_VzUxh4r0D2IfI0Rc="
+     }
+    },
+    "bass": {
+     "expert": {
+      "onsets": 645,
+      "notes": 645,
+      "hash": "UDgkNA2992aAzDJIVNrM-F6SntINtrufwKJP7hmxuvo="
+     },
+     "hard": {
+      "onsets": 540,
+      "notes": 540,
+      "hash": "78y2NtUH29Kqbz4QOPc_rwU6F70PzLPjK-xQeJA4JwI="
+     },
+     "medium": {
+      "onsets": 398,
+      "notes": 398,
+      "hash": "zYk0XHyNrChExaDAb8gz2nWYnCS7Mkwq4C1rEvISarc="
+     },
+     "easy": {
+      "onsets": 278,
+      "notes": 278,
+      "hash": "C-FfcpW3C3ZqORqG254qmoQkNY5YZN4tXBz1z7IiQNo="
+     }
+    },
+    "drums": {
+     "expert": {
+      "onsets": 943,
+      "notes": 1472,
+      "hash": "rDvOcg8EwWB7pFnYpPiaAkNye0qMll7D271vvBVZ4ng="
+     },
+     "hard": {
+      "onsets": 773,
+      "notes": 1138,
+      "hash": "a0WPHxmwV7fOlM521pjHTpr9Z377dU4D_eRzhOIabCk="
+     },
+     "medium": {
+      "onsets": 636,
+      "notes": 832,
+      "hash": "1PnEr2l9phBh0_TsxeY4x1GJUAfewjegZJ_21fjPIsI="
+     },
+     "easy": {
+      "onsets": 459,
+      "notes": 476,
+      "hash": "cU-cnOvR9DGt-v6bhqsspporVgBTsHHQXwNPxQE_BfM="
+     }
+    }
+   },
+   "scores": {
+    "bass": {
+     "easy": {
+      "f1_50": {
+       "f1": 0.7636,
+       "precision": 0.7554,
+       "recall": 0.7721,
+       "matched": 210,
+       "n_ref": 272,
+       "n_cand": 278
+      },
+      "f1_100": {
+       "f1": 0.7673,
+       "precision": 0.759,
+       "recall": 0.7757,
+       "matched": 211,
+       "n_ref": 272,
+       "n_cand": 278
+      }
+     },
+     "expert": {
+      "f1_50": {
+       "f1": 0.9123,
+       "precision": 0.9271,
+       "recall": 0.8979,
+       "matched": 598,
+       "n_ref": 666,
+       "n_cand": 645
+      },
+      "f1_100": {
+       "f1": 0.9321,
+       "precision": 0.9473,
+       "recall": 0.9174,
+       "matched": 611,
+       "n_ref": 666,
+       "n_cand": 645
+      }
+     },
+     "hard": {
+      "f1_50": {
+       "f1": 0.8607,
+       "precision": 0.8926,
+       "recall": 0.831,
+       "matched": 482,
+       "n_ref": 580,
+       "n_cand": 540
+      },
+      "f1_100": {
+       "f1": 0.8679,
+       "precision": 0.9,
+       "recall": 0.8379,
+       "matched": 486,
+       "n_ref": 580,
+       "n_cand": 540
+      }
+     },
+     "medium": {
+      "f1_50": {
+       "f1": 0.8252,
+       "precision": 0.8543,
+       "recall": 0.7981,
+       "matched": 340,
+       "n_ref": 426,
+       "n_cand": 398
+      },
+      "f1_100": {
+       "f1": 0.8301,
+       "precision": 0.8593,
+       "recall": 0.8028,
+       "matched": 342,
+       "n_ref": 426,
+       "n_cand": 398
+      }
+     }
+    },
+    "drums": {
+     "easy": {
+      "f1_50": {
+       "f1": 0.6803,
+       "precision": 0.6885,
+       "recall": 0.6723,
+       "matched": 316,
+       "n_ref": 470,
+       "n_cand": 459
+      },
+      "f1_100": {
+       "f1": 0.6825,
+       "precision": 0.6906,
+       "recall": 0.6745,
+       "matched": 317,
+       "n_ref": 470,
+       "n_cand": 459
+      }
+     },
+     "expert": {
+      "f1_50": {
+       "f1": 0.9436,
+       "precision": 0.9819,
+       "recall": 0.9082,
+       "matched": 920,
+       "n_ref": 1013,
+       "n_cand": 937
+      },
+      "f1_100": {
+       "f1": 0.9487,
+       "precision": 0.9872,
+       "recall": 0.9131,
+       "matched": 925,
+       "n_ref": 1013,
+       "n_cand": 937
+      }
+     },
+     "hard": {
+      "f1_50": {
+       "f1": 0.9679,
+       "precision": 0.9831,
+       "recall": 0.9532,
+       "matched": 754,
+       "n_ref": 791,
+       "n_cand": 767
+      },
+      "f1_100": {
+       "f1": 0.9756,
+       "precision": 0.9909,
+       "recall": 0.9608,
+       "matched": 760,
+       "n_ref": 791,
+       "n_cand": 767
+      }
+     },
+     "medium": {
+      "f1_50": {
+       "f1": 0.8581,
+       "precision": 0.8254,
+       "recall": 0.8935,
+       "matched": 520,
+       "n_ref": 582,
+       "n_cand": 630
+      },
+      "f1_100": {
+       "f1": 0.8614,
+       "precision": 0.8286,
+       "recall": 0.8969,
+       "matched": 522,
+       "n_ref": 582,
+       "n_cand": 630
+      }
+     }
+    },
+    "guitar": {
+     "easy": {
+      "f1_50": {
+       "f1": 0.523,
+       "precision": 0.5265,
+       "recall": 0.5196,
+       "matched": 159,
+       "n_ref": 306,
+       "n_cand": 302
+      },
+      "f1_100": {
+       "f1": 0.5296,
+       "precision": 0.5331,
+       "recall": 0.5261,
+       "matched": 161,
+       "n_ref": 306,
+       "n_cand": 302
+      }
+     },
+     "expert": {
+      "f1_50": {
+       "f1": 0.9093,
+       "precision": 0.924,
+       "recall": 0.8951,
+       "matched": 802,
+       "n_ref": 896,
+       "n_cand": 868
+      },
+      "f1_100": {
+       "f1": 0.9161,
+       "precision": 0.9309,
+       "recall": 0.9018,
+       "matched": 808,
+       "n_ref": 896,
+       "n_cand": 868
+      }
+     },
+     "hard": {
+      "f1_50": {
+       "f1": 0.818,
+       "precision": 0.8599,
+       "recall": 0.7799,
+       "matched": 528,
+       "n_ref": 677,
+       "n_cand": 614
+      },
+      "f1_100": {
+       "f1": 0.8257,
+       "precision": 0.8681,
+       "recall": 0.7873,
+       "matched": 533,
+       "n_ref": 677,
+       "n_cand": 614
+      }
+     },
+     "medium": {
+      "f1_50": {
+       "f1": 0.7222,
+       "precision": 0.8381,
+       "recall": 0.6344,
+       "matched": 295,
+       "n_ref": 465,
+       "n_cand": 352
+      },
+      "f1_100": {
+       "f1": 0.7271,
+       "precision": 0.8438,
+       "recall": 0.6387,
+       "matched": 297,
+       "n_ref": 465,
+       "n_cand": 352
+      }
+     }
+    }
+   },
+   "beat_f1": {
+    "f1": 0.9615,
+    "precision": 0.9615,
+    "recall": 0.9615,
+    "matched": 425,
+    "n_ref": 442,
+    "n_cand": 442
+   },
+   "lag_ms": 3738.844
+  },
+  "all_the_small_things": {
+   "has_ref": true,
+   "exit": 0,
+   "gate_ok": true,
+   "folder": "all_the_small_things",
+   "delay": 0,
+   "chart_offset": 0,
+   "playable": true,
+   "chart_issues": 0,
+   "parse_error": null,
+   "parts": {
+    "guitar": {
+     "expert": {
+      "onsets": 720,
+      "notes": 1287,
+      "hash": "R3XC92AONpPdOmT9C87NX4Iiqf9g-KJk7y6prM4LNVM="
+     },
+     "hard": {
+      "onsets": 600,
+      "notes": 1131,
+      "hash": "r6NAnCzmDOtLJVGoyeTLOBcHZT46rEoB3ZtxhWPpatY="
+     },
+     "medium": {
+      "onsets": 347,
+      "notes": 656,
+      "hash": "nLesXg_9T2ygKQE3k2aRboo37npM59j0nXER93t2W50="
+     },
+     "easy": {
+      "onsets": 176,
+      "notes": 176,
+      "hash": "v4F0vq6-nAEjhcCJ79rUeV7Ae72yBxWpe0-zUTX71_0="
+     }
+    },
+    "bass": {
+     "expert": {
+      "onsets": 1068,
+      "notes": 1075,
+      "hash": "QKhkShI-4w8mVdjUFNqbyY41xIo-cIUyXjelkDA102c="
+     },
+     "hard": {
+      "onsets": 720,
+      "notes": 725,
+      "hash": "P1T0I8f3xity8OkmgAwb0ikew3th7xNg1B2Munjv9v8="
+     },
+     "medium": {
+      "onsets": 364,
+      "notes": 367,
+      "hash": "vCLmAOP4DbJlvEXV0hCCz3HOwI_nuy7p_WFs6jAFQ8c="
+     },
+     "easy": {
+      "onsets": 182,
+      "notes": 182,
+      "hash": "ENzK9SvH6z31EpVhoHQ-ceYUaESSKDyb1A3SUrEPW3U="
+     }
+    },
+    "drums": {
+     "expert": {
+      "onsets": 722,
+      "notes": 1160,
+      "hash": "RynTTZTv8rgCK8Znsiy6R-qPbfVTrrUlO61nxCb__Q4="
+     },
+     "hard": {
+      "onsets": 614,
+      "notes": 994,
+      "hash": "VUXYTpDCm1at1tnNMq6vIA5N-N6We7GJZrRlpmukKDs="
+     },
+     "medium": {
+      "onsets": 442,
+      "notes": 731,
+      "hash": "7J1swtWqOX6twfZHcaI4IGmBt-DRsH-b9oFcnf78Mvk="
+     },
+     "easy": {
+      "onsets": 372,
+      "notes": 470,
+      "hash": "IKRLW1uj_WIZwhZXYrxzzsDEjcb8lPt7goCXP0cuJlU="
+     }
+    }
+   },
+   "scores": {
+    "bass": {
+     "easy": {
+      "f1_50": {
+       "f1": 0.6423,
+       "precision": 0.9176,
+       "recall": 0.4941,
+       "matched": 167,
+       "n_ref": 338,
+       "n_cand": 182
+      },
+      "f1_100": {
+       "f1": 0.6423,
+       "precision": 0.9176,
+       "recall": 0.4941,
+       "matched": 167,
+       "n_ref": 338,
+       "n_cand": 182
+      }
+     },
+     "expert": {
+      "f1_50": {
+       "f1": 0.7353,
+       "precision": 0.5983,
+       "recall": 0.9537,
+       "matched": 639,
+       "n_ref": 670,
+       "n_cand": 1068
+      },
+      "f1_100": {
+       "f1": 0.7491,
+       "precision": 0.6096,
+       "recall": 0.9716,
+       "matched": 651,
+       "n_ref": 670,
+       "n_cand": 1068
+      }
+     },
+     "hard": {
+      "f1_50": {
+       "f1": 0.8953,
+       "precision": 0.8431,
+       "recall": 0.9544,
+       "matched": 607,
+       "n_ref": 636,
+       "n_cand": 720
+      },
+      "f1_100": {
+       "f1": 0.8968,
+       "precision": 0.8444,
+       "recall": 0.956,
+       "matched": 608,
+       "n_ref": 636,
+       "n_cand": 720
+      }
+     },
+     "medium": {
+      "f1_50": {
+       "f1": 0.9316,
+       "precision": 0.8984,
+       "recall": 0.9675,
+       "matched": 327,
+       "n_ref": 338,
+       "n_cand": 364
+      },
+      "f1_100": {
+       "f1": 0.9316,
+       "precision": 0.8984,
+       "recall": 0.9675,
+       "matched": 327,
+       "n_ref": 338,
+       "n_cand": 364
+      }
+     }
+    },
+    "drums": {
+     "easy": {
+      "f1_50": {
+       "f1": 0.9261,
+       "precision": 0.9597,
+       "recall": 0.8947,
+       "matched": 357,
+       "n_ref": 399,
+       "n_cand": 372
+      },
+      "f1_100": {
+       "f1": 0.9261,
+       "precision": 0.9597,
+       "recall": 0.8947,
+       "matched": 357,
+       "n_ref": 399,
+       "n_cand": 372
+      }
+     },
+     "expert": {
+      "f1_50": {
+       "f1": 0.962,
+       "precision": 0.9888,
+       "recall": 0.9366,
+       "matched": 709,
+       "n_ref": 757,
+       "n_cand": 717
+      },
+      "f1_100": {
+       "f1": 0.962,
+       "precision": 0.9888,
+       "recall": 0.9366,
+       "matched": 709,
+       "n_ref": 757,
+       "n_cand": 717
+      }
+     },
+     "hard": {
+      "f1_50": {
+       "f1": 0.939,
+       "precision": 0.9852,
+       "recall": 0.8969,
+       "matched": 600,
+       "n_ref": 669,
+       "n_cand": 609
+      },
+      "f1_100": {
+       "f1": 0.939,
+       "precision": 0.9852,
+       "recall": 0.8969,
+       "matched": 600,
+       "n_ref": 669,
+       "n_cand": 609
+      }
+     },
+     "medium": {
+      "f1_50": {
+       "f1": 0.9276,
+       "precision": 0.8947,
+       "recall": 0.9631,
+       "matched": 391,
+       "n_ref": 406,
+       "n_cand": 437
+      },
+      "f1_100": {
+       "f1": 0.9276,
+       "precision": 0.8947,
+       "recall": 0.9631,
+       "matched": 391,
+       "n_ref": 406,
+       "n_cand": 437
+      }
+     }
+    },
+    "guitar": {
+     "easy": {
+      "f1_50": {
+       "f1": 0.6469,
+       "precision": 0.9318,
+       "recall": 0.4955,
+       "matched": 164,
+       "n_ref": 331,
+       "n_cand": 176
+      },
+      "f1_100": {
+       "f1": 0.6469,
+       "precision": 0.9318,
+       "recall": 0.4955,
+       "matched": 164,
+       "n_ref": 331,
+       "n_cand": 176
+      }
+     },
+     "expert": {
+      "f1_50": {
+       "f1": 0.9714,
+       "precision": 0.9444,
+       "recall": 1.0,
+       "matched": 680,
+       "n_ref": 680,
+       "n_cand": 720
+      },
+      "f1_100": {
+       "f1": 0.9714,
+       "precision": 0.9444,
+       "recall": 1.0,
+       "matched": 680,
+       "n_ref": 680,
+       "n_cand": 720
+      }
+     },
+     "hard": {
+      "f1_50": {
+       "f1": 0.9344,
+       "precision": 0.9967,
+       "recall": 0.8794,
+       "matched": 598,
+       "n_ref": 680,
+       "n_cand": 600
+      },
+      "f1_100": {
+       "f1": 0.9344,
+       "precision": 0.9967,
+       "recall": 0.8794,
+       "matched": 598,
+       "n_ref": 680,
+       "n_cand": 600
+      }
+     },
+     "medium": {
+      "f1_50": {
+       "f1": 0.9708,
+       "precision": 0.9568,
+       "recall": 0.9852,
+       "matched": 332,
+       "n_ref": 337,
+       "n_cand": 347
+      },
+      "f1_100": {
+       "f1": 0.9708,
+       "precision": 0.9568,
+       "recall": 0.9852,
+       "matched": 332,
+       "n_ref": 337,
+       "n_cand": 347
+      }
+     }
+    }
+   },
+   "beat_f1": {
+    "f1": 0.9827,
+    "precision": 0.9827,
+    "recall": 0.9827,
+    "matched": 397,
+    "n_ref": 404,
+    "n_cand": 404
+   },
+   "lag_ms": 3220.68
+  },
+  "lucretia": {
+   "has_ref": true,
+   "exit": 0,
+   "gate_ok": true,
+   "folder": "lucretia",
+   "delay": 0,
+   "chart_offset": 0,
+   "playable": true,
+   "chart_issues": 0,
+   "parse_error": null,
+   "parts": {
+    "guitar": {
+     "expert": {
+      "onsets": 1284,
+      "notes": 1526,
+      "hash": "66Xfzppi9cSyBSSsH0GoYXg-qdM08-_9Nc3GSd6rtGs="
+     },
+     "hard": {
+      "onsets": 669,
+      "notes": 797,
+      "hash": "FSNSWjjAZSXlXEuMT5v8MRbZTVhBqnb5gjD1M-pC8mg="
+     },
+     "medium": {
+      "onsets": 584,
+      "notes": 692,
+      "hash": "C9MGO23VbVGrH9YOauOuezguLtOjNmEwRY6QXzWod30="
+     },
+     "easy": {
+      "onsets": 341,
+      "notes": 341,
+      "hash": "GEQJt35yFKKPxDrqHSS1iRyCvSaEhvQrXNAKP0AlNO0="
+     }
+    },
+    "bass": {
+     "expert": {
+      "onsets": 1161,
+      "notes": 1213,
+      "hash": "o7RSa2AbvDLsHWvzXVRf8mJyRgYldguYkeaty85aWbs="
+     },
+     "hard": {
+      "onsets": 603,
+      "notes": 630,
+      "hash": "G4zWqilpRfiMCtyX3wfdEv82E6LBw-MIkmib4LnkWAs="
+     },
+     "medium": {
+      "onsets": 601,
+      "notes": 628,
+      "hash": "j1pjd-cFZqwXa6lKtV9UPblYy39pVhk5R4kKCnkWilY="
+     },
+     "easy": {
+      "onsets": 305,
+      "notes": 305,
+      "hash": "g9SKFsCB4ntQKNXH8dI2yIOpkyPL_qYvZVtpcUjaPuI="
+     }
+    },
+    "drums": {
+     "expert": {
+      "onsets": 1051,
+      "notes": 1491,
+      "hash": "XATFiiHL5l4QXBWhxzmMF-h9fLrwim0CXaKGFQEuYaw="
+     },
+     "hard": {
+      "onsets": 815,
+      "notes": 1139,
+      "hash": "80joha8UABmcuRLduNIpoTJgR1l-9RqclIjhDoyA5OM="
+     },
+     "medium": {
+      "onsets": 645,
+      "notes": 905,
+      "hash": "7ujtFr9WYr0wNRXxp1AJqw4UsIVG-lAYBX5i3YGH71w="
+     },
+     "easy": {
+      "onsets": 446,
+      "notes": 512,
+      "hash": "_kDOXILgpHgp6TCkwqJdb7TxEeacAlzqDAdTKSGw74M="
+     }
+    }
+   },
+   "scores": {
+    "bass": {
+     "easy": {
+      "f1_50": {
+       "f1": 0.7264,
+       "precision": 0.7336,
+       "recall": 0.7194,
+       "matched": 223,
+       "n_ref": 310,
+       "n_cand": 304
+      },
+      "f1_100": {
+       "f1": 0.7317,
+       "precision": 0.7377,
+       "recall": 0.7258,
+       "matched": 225,
+       "n_ref": 310,
+       "n_cand": 305
+      }
+     },
+     "expert": {
+      "f1_50": {
+       "f1": 0.9124,
+       "precision": 0.9155,
+       "recall": 0.9092,
+       "matched": 1062,
+       "n_ref": 1168,
+       "n_cand": 1160
+      },
+      "f1_100": {
+       "f1": 0.9317,
+       "precision": 0.9345,
+       "recall": 0.9289,
+       "matched": 1085,
+       "n_ref": 1168,
+       "n_cand": 1161
+      }
+     },
+     "hard": {
+      "f1_50": {
+       "f1": 0.694,
+       "precision": 0.8588,
+       "recall": 0.5822,
+       "matched": 517,
+       "n_ref": 888,
+       "n_cand": 602
+      },
+      "f1_100": {
+       "f1": 0.7123,
+       "precision": 0.8806,
+       "recall": 0.598,
+       "matched": 531,
+       "n_ref": 888,
+       "n_cand": 603
+      }
+     },
+     "medium": {
+      "f1_50": {
+       "f1": 0.761,
+       "precision": 0.7483,
+       "recall": 0.7741,
+       "matched": 449,
+       "n_ref": 580,
+       "n_cand": 600
+      },
+      "f1_100": {
+       "f1": 0.7773,
+       "precision": 0.7637,
+       "recall": 0.7914,
+       "matched": 459,
+       "n_ref": 580,
+       "n_cand": 601
+      }
+     }
+    },
+    "drums": {
+     "easy": {
+      "f1_50": {
+       "f1": 0.7317,
+       "precision": 0.7843,
+       "recall": 0.6857,
+       "matched": 349,
+       "n_ref": 509,
+       "n_cand": 445
+      },
+      "f1_100": {
+       "f1": 0.7435,
+       "precision": 0.796,
+       "recall": 0.6974,
+       "matched": 355,
+       "n_ref": 509,
+       "n_cand": 446
+      }
+     },
+     "expert": {
+      "f1_50": {
+       "f1": 0.9683,
+       "precision": 0.9808,
+       "recall": 0.9561,
+       "matched": 1024,
+       "n_ref": 1071,
+       "n_cand": 1044
+      },
+      "f1_100": {
+       "f1": 0.9858,
+       "precision": 0.9981,
+       "recall": 0.9739,
+       "matched": 1043,
+       "n_ref": 1071,
+       "n_cand": 1045
+      }
+     },
+     "hard": {
+      "f1_50": {
+       "f1": 0.8735,
+       "precision": 0.927,
+       "recall": 0.8258,
+       "matched": 749,
+       "n_ref": 907,
+       "n_cand": 808
+      },
+      "f1_100": {
+       "f1": 0.8858,
+       "precision": 0.9394,
+       "recall": 0.8379,
+       "matched": 760,
+       "n_ref": 907,
+       "n_cand": 809
+      }
+     },
+     "medium": {
+      "f1_50": {
+       "f1": 0.9145,
+       "precision": 0.9216,
+       "recall": 0.9074,
+       "matched": 588,
+       "n_ref": 648,
+       "n_cand": 638
+      },
+      "f1_100": {
+       "f1": 0.9277,
+       "precision": 0.9343,
+       "recall": 0.9213,
+       "matched": 597,
+       "n_ref": 648,
+       "n_cand": 639
+      }
+     }
+    },
+    "guitar": {
+     "easy": {
+      "f1_50": {
+       "f1": 0.6128,
+       "precision": 0.5894,
+       "recall": 0.6381,
+       "matched": 201,
+       "n_ref": 315,
+       "n_cand": 341
+      },
+      "f1_100": {
+       "f1": 0.6463,
+       "precision": 0.6217,
+       "recall": 0.673,
+       "matched": 212,
+       "n_ref": 315,
+       "n_cand": 341
+      }
+     },
+     "expert": {
+      "f1_50": {
+       "f1": 0.847,
+       "precision": 0.8777,
+       "recall": 0.8184,
+       "matched": 1127,
+       "n_ref": 1377,
+       "n_cand": 1284
+      },
+      "f1_100": {
+       "f1": 0.9079,
+       "precision": 0.9408,
+       "recall": 0.8773,
+       "matched": 1208,
+       "n_ref": 1377,
+       "n_cand": 1284
+      }
+     },
+     "hard": {
+      "f1_50": {
+       "f1": 0.6515,
+       "precision": 0.7489,
+       "recall": 0.5765,
+       "matched": 501,
+       "n_ref": 869,
+       "n_cand": 669
+      },
+      "f1_100": {
+       "f1": 0.7204,
+       "precision": 0.8281,
+       "recall": 0.6375,
+       "matched": 554,
+       "n_ref": 869,
+       "n_cand": 669
+      }
+     },
+     "medium": {
+      "f1_50": {
+       "f1": 0.5871,
+       "precision": 0.5394,
+       "recall": 0.6442,
+       "matched": 315,
+       "n_ref": 489,
+       "n_cand": 584
+      },
+      "f1_100": {
+       "f1": 0.6375,
+       "precision": 0.5856,
+       "recall": 0.6994,
+       "matched": 342,
+       "n_ref": 489,
+       "n_cand": 584
+      }
+     }
+    }
+   },
+   "beat_f1": {
+    "f1": 0.2606,
+    "precision": 0.2593,
+    "recall": 0.262,
+    "matched": 98,
+    "n_ref": 374,
+    "n_cand": 378
+   },
+   "lag_ms": 2507.8
+  },
+  "creep": {
+   "has_ref": true,
+   "exit": 0,
+   "gate_ok": true,
+   "folder": "creep",
+   "delay": 0,
+   "chart_offset": 0,
+   "playable": true,
+   "chart_issues": 0,
+   "parse_error": null,
+   "parts": {
+    "guitar": {
+     "expert": {
+      "onsets": 690,
+      "notes": 858,
+      "hash": "oG9GrmRBOrBTWJtqZrhwBU3DHY9TvUG4Y2_24fxtcEA="
+     },
+     "hard": {
+      "onsets": 518,
+      "notes": 618,
+      "hash": "YvpNhANsSde1PN3hABaYyX1Ew7zeVxMlpMEuEgswNCM="
+     },
+     "medium": {
+      "onsets": 394,
+      "notes": 477,
+      "hash": "2fGeUGKjAkLUJkJYbG2zJx4kkKzZZuEQCpT6RtkOE1c="
+     },
+     "easy": {
+      "onsets": 209,
+      "notes": 209,
+      "hash": "Jb8dHrLc694pxtmOrRXRi-4D7pRhl1sTJsxsQJkFFnc="
+     }
+    },
+    "bass": {
+     "expert": {
+      "onsets": 659,
+      "notes": 708,
+      "hash": "DwQGGOkweDK8wRfB4GROIelcD3OLuZqbMTltQUflQBM="
+     },
+     "hard": {
+      "onsets": 545,
+      "notes": 590,
+      "hash": "L14NQL-nxqBHG1xGKgUWuY7MB4cSZ3HDk36HsQ50cfI="
+     },
+     "medium": {
+      "onsets": 374,
+      "notes": 404,
+      "hash": "JXwOYIVExxMYvldcht74DslvoEGj_5nJ1ghVviOThGc="
+     },
+     "easy": {
+      "onsets": 250,
+      "notes": 250,
+      "hash": "6E5LfUsB-hAndfE3uotUA0I_mxqVADrygODqsnozfRc="
+     }
+    },
+    "drums": {
+     "expert": {
+      "onsets": 720,
+      "notes": 1150,
+      "hash": "J_uQ6Bc3FHOfU15Fv7vzRe-XMdNwxRArX5YrpUuadJQ="
+     },
+     "hard": {
+      "onsets": 600,
+      "notes": 988,
+      "hash": "_7uD833fYkPekivDKpxAlu4d1cjgzKYjbdGVXHO68tk="
+     },
+     "medium": {
+      "onsets": 484,
+      "notes": 768,
+      "hash": "BxXO0iTRieMwaopWEeQekNs9N0eM35s2apZLjw-ZBBQ="
+     },
+     "easy": {
+      "onsets": 405,
+      "notes": 510,
+      "hash": "EHL4siZ4DjnBusylwlsC9TKXIY0Xlcc2nVHYA_MaluQ="
+     }
+    }
+   },
+   "scores": {
+    "bass": {
+     "easy": {
+      "f1_50": {
+       "f1": 0.641,
+       "precision": 0.632,
+       "recall": 0.6502,
+       "matched": 158,
+       "n_ref": 243,
+       "n_cand": 250
+      },
+      "f1_100": {
+       "f1": 0.645,
+       "precision": 0.636,
+       "recall": 0.6543,
+       "matched": 159,
+       "n_ref": 243,
+       "n_cand": 250
+      }
+     },
+     "expert": {
+      "f1_50": {
+       "f1": 0.6891,
+       "precision": 0.5448,
+       "recall": 0.9373,
+       "matched": 359,
+       "n_ref": 383,
+       "n_cand": 659
+      },
+      "f1_100": {
+       "f1": 0.691,
+       "precision": 0.5463,
+       "recall": 0.9399,
+       "matched": 360,
+       "n_ref": 383,
+       "n_cand": 659
+      }
+     },
+     "hard": {
+      "f1_50": {
+       "f1": 0.6942,
+       "precision": 0.5853,
+       "recall": 0.8529,
+       "matched": 319,
+       "n_ref": 374,
+       "n_cand": 545
+      },
+      "f1_100": {
+       "f1": 0.6964,
+       "precision": 0.5872,
+       "recall": 0.8556,
+       "matched": 320,
+       "n_ref": 374,
+       "n_cand": 545
+      }
+     },
+     "medium": {
+      "f1_50": {
+       "f1": 0.6608,
+       "precision": 0.5989,
+       "recall": 0.7368,
+       "matched": 224,
+       "n_ref": 304,
+       "n_cand": 374
+      },
+      "f1_100": {
+       "f1": 0.6637,
+       "precision": 0.6016,
+       "recall": 0.7401,
+       "matched": 225,
+       "n_ref": 304,
+       "n_cand": 374
+      }
+     }
+    },
+    "drums": {
+     "easy": {
+      "f1_50": {
+       "f1": 0.7679,
+       "precision": 0.8741,
+       "recall": 0.6847,
+       "matched": 354,
+       "n_ref": 517,
+       "n_cand": 405
+      },
+      "f1_100": {
+       "f1": 0.7701,
+       "precision": 0.8765,
+       "recall": 0.6867,
+       "matched": 355,
+       "n_ref": 517,
+       "n_cand": 405
+      }
+     },
+     "expert": {
+      "f1_50": {
+       "f1": 0.9598,
+       "precision": 0.9944,
+       "recall": 0.9275,
+       "matched": 716,
+       "n_ref": 772,
+       "n_cand": 720
+      },
+      "f1_100": {
+       "f1": 0.9625,
+       "precision": 0.9972,
+       "recall": 0.9301,
+       "matched": 718,
+       "n_ref": 772,
+       "n_cand": 720
+      }
+     },
+     "hard": {
+      "f1_50": {
+       "f1": 0.922,
+       "precision": 0.995,
+       "recall": 0.859,
+       "matched": 597,
+       "n_ref": 695,
+       "n_cand": 600
+      },
+      "f1_100": {
+       "f1": 0.9251,
+       "precision": 0.9983,
+       "recall": 0.8619,
+       "matched": 599,
+       "n_ref": 695,
+       "n_cand": 600
+      }
+     },
+     "medium": {
+      "f1_50": {
+       "f1": 0.8252,
+       "precision": 0.9897,
+       "recall": 0.7075,
+       "matched": 479,
+       "n_ref": 677,
+       "n_cand": 484
+      },
+      "f1_100": {
+       "f1": 0.8286,
+       "precision": 0.9938,
+       "recall": 0.7105,
+       "matched": 481,
+       "n_ref": 677,
+       "n_cand": 484
+      }
+     }
+    },
+    "guitar": {
+     "easy": {
+      "f1_50": {
+       "f1": 0.7041,
+       "precision": 0.7799,
+       "recall": 0.6417,
+       "matched": 163,
+       "n_ref": 254,
+       "n_cand": 209
+      },
+      "f1_100": {
+       "f1": 0.7041,
+       "precision": 0.7799,
+       "recall": 0.6417,
+       "matched": 163,
+       "n_ref": 254,
+       "n_cand": 209
+      }
+     },
+     "expert": {
+      "f1_50": {
+       "f1": 0.774,
+       "precision": 0.8812,
+       "recall": 0.6901,
+       "matched": 608,
+       "n_ref": 881,
+       "n_cand": 690
+      },
+      "f1_100": {
+       "f1": 0.8644,
+       "precision": 0.9841,
+       "recall": 0.7707,
+       "matched": 679,
+       "n_ref": 881,
+       "n_cand": 690
+      }
+     },
+     "hard": {
+      "f1_50": {
+       "f1": 0.8312,
+       "precision": 0.9884,
+       "recall": 0.7171,
+       "matched": 512,
+       "n_ref": 714,
+       "n_cand": 518
+      },
+      "f1_100": {
+       "f1": 0.8328,
+       "precision": 0.9903,
+       "recall": 0.7185,
+       "matched": 513,
+       "n_ref": 714,
+       "n_cand": 518
+      }
+     },
+     "medium": {
+      "f1_50": {
+       "f1": 0.7952,
+       "precision": 0.8376,
+       "recall": 0.7569,
+       "matched": 330,
+       "n_ref": 436,
+       "n_cand": 394
+      },
+      "f1_100": {
+       "f1": 0.7976,
+       "precision": 0.8401,
+       "recall": 0.7592,
+       "matched": 331,
+       "n_ref": 436,
+       "n_cand": 394
+      }
+     }
+    }
+   },
+   "beat_f1": {
+    "f1": 0.9709,
+    "precision": 0.9669,
+    "recall": 0.9749,
+    "matched": 350,
+    "n_ref": 359,
+    "n_cand": 362
+   },
+   "lag_ms": 2523.22
+  },
+  "test_song": {
+   "has_ref": false,
+   "exit": 0,
+   "gate_ok": true,
+   "folder": "test_song",
+   "delay": 0,
+   "chart_offset": 0,
+   "playable": true,
+   "chart_issues": 0,
+   "parse_error": null,
+   "parts": {
+    "guitar": {
+     "expert": {
+      "onsets": 1113,
+      "notes": 1832,
+      "hash": "XWu9d9szZo278yEkUX7yhRoaHfPJLYpPatYghQhhHSw="
+     },
+     "hard": {
+      "onsets": 874,
+      "notes": 1314,
+      "hash": "2ueP006jt25aerhQMNJpUwEaz0j-bZZ6xseW6ZafpkM="
+     },
+     "medium": {
+      "onsets": 512,
+      "notes": 788,
+      "hash": "qMvHMtuUoqb7NsCix0BB1Qkv0ckDhSiTxfrgP4GWbI8="
+     },
+     "easy": {
+      "onsets": 346,
+      "notes": 346,
+      "hash": "l12NS8MfBMLRf59JLJIZ4Yi2vH6lysN7ivvOjaoVV-s="
+     }
+    },
+    "bass": {
+     "expert": {
+      "onsets": 789,
+      "notes": 801,
+      "hash": "Re79mWKA3EMkLhrm3aaijuUzkpdv_MX83Sn0xHZ06ec="
+     },
+     "hard": {
+      "onsets": 613,
+      "notes": 621,
+      "hash": "aMr33S1yxCpYQ6e9VJY3iURVpfA3d-Vxnk9QEPis9vo="
+     },
+     "medium": {
+      "onsets": 437,
+      "notes": 443,
+      "hash": "trZm0YxQLeG6LXri7bwf1SBEQV2bQWv2QsLiOXDJY2A="
+     },
+     "easy": {
+      "onsets": 228,
+      "notes": 228,
+      "hash": "cUrooG7mQ5eQy_-PPURNXu1bVezQX6rhhBf5N9e4ta0="
+     }
+    },
+    "drums": {
+     "expert": {
+      "onsets": 1176,
+      "notes": 1590,
+      "hash": "PFXzRfwpoKO3aEZQQCcXeNJKh9RUZ90xjK109epGBRw="
+     },
+     "hard": {
+      "onsets": 961,
+      "notes": 1340,
+      "hash": "dpxwEofmzx05-0ivBfdl6_OLJos0X9GzfpYvlMB0c7Y="
+     },
+     "medium": {
+      "onsets": 715,
+      "notes": 1055,
+      "hash": "c4ZpeH1BpDto8S3HL1o_0TCgMJ6uLeKw6r3Gl9-cePg="
+     },
+     "easy": {
+      "onsets": 601,
+      "notes": 728,
+      "hash": "mOHU1YXnAXFSSwiWYpqDa65bhgt7D2npTaqiCKUBcHs="
+     }
+    }
+   }
+  }
+ },
+ "run": {
+  "code": {
+   "path": "/dev/shm/m4-04/golden-old",
+   "branch": null
+  },
+  "golden": {
+   "path": "/tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad/wt/m4-04",
+   "commit": "fa55ced7b4b20abc5e4d8cd9b42bee547fc9f1d7",
+   "branch": "m4-04-ui-server",
+   "dirty": []
+  },
+  "out": "/dev/shm/m4-04/golden/old",
+  "work": "/tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad/golden/work",
+  "refs": "/tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad/eval/refs",
+  "stems": null,
+  "threads": 2,
+  "python": "/tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad/venv/bin/python",
+  "started": "2026-11-03T22:43:34",
+  "finished": "2026-11-04T00:27:46",
+  "seconds": 6252.1,
+  "songs": {
+   "kimochi_warui": {
+    "cold": null,
+    "build_seconds": 1338.7,
+    "stages": [
+     {
+      "stage": "decode",
+      "seconds": 2.34,
+      "cached": true
+     },
+     {
+      "stage": "separate",
+      "seconds": 6.67,
+      "cached": true
+     },
+     {
+      "stage": "drums",
+      "seconds": 4.56,
+      "cached": true
+     },
+     {
+      "stage": "bass",
+      "seconds": 0.8,
+      "cached": true
+     },
+     {
+      "stage": "sections",
+      "seconds": 6.58,
+      "cached": true,
+      "backend": "allin1"
+     },
+     {
+      "stage": "guitar",
+      "seconds": 1285.17,
+      "cached": false
+     },
+     {
+      "stage": "assemble",
+      "seconds": 28.68,
+      "cached": false
+     }
+    ],
+    "ran": [
+     "guitar"
+    ],
+    "unasked": [],
+    "kept_from": "11615e29fc9e032ca7e7d53a7083f2c79b64769b",
+    "kept_at": "2026-11-03T12:58:32",
+    "stale": {
+     "drums": "unchanged",
+     "bass": "unchanged",
+     "sections": "unchanged"
+    },
+    "sections_backend": "allin1",
+    "scan_seconds": 0.9,
+    "score_seconds": 7.5,
+    "seconds": 1347.2
+   },
+   "drunk_drivers": {
+    "cold": null,
+    "build_seconds": 819.2,
+    "stages": [
+     {
+      "stage": "decode",
+      "seconds": 1.04,
+      "cached": true
+     },
+     {
+      "stage": "separate",
+      "seconds": 4.72,
+      "cached": true
+     },
+     {
+      "stage": "drums",
+      "seconds": 3.51,
+      "cached": true
+     },
+     {
+      "stage": "bass",
+      "seconds": 0.65,
+      "cached": true
+     },
+     {
+      "stage": "sections",
+      "seconds": 7.26,
+      "cached": true,
+      "backend": "allin1"
+     },
+     {
+      "stage": "guitar",
+      "seconds": 777.64,
+      "cached": false
+     },
+     {
+      "stage": "assemble",
+      "seconds": 20.53,
+      "cached": false
+     }
+    ],
+    "ran": [
+     "guitar"
+    ],
+    "unasked": [],
+    "kept_from": "11615e29fc9e032ca7e7d53a7083f2c79b64769b",
+    "kept_at": "2026-11-03T13:07:27",
+    "stale": {
+     "drums": "unchanged",
+     "bass": "unchanged",
+     "sections": "unchanged"
+    },
+    "sections_backend": "allin1",
+    "scan_seconds": 0.5,
+    "score_seconds": 5.7,
+    "seconds": 825.6
+   },
+   "take_me_out": {
+    "cold": null,
+    "build_seconds": 653.2,
+    "stages": [
+     {
+      "stage": "decode",
+      "seconds": 1.11,
+      "cached": true
+     },
+     {
+      "stage": "separate",
+      "seconds": 6.08,
+      "cached": true
+     },
+     {
+      "stage": "drums",
+      "seconds": 4.87,
+      "cached": true
+     },
+     {
+      "stage": "bass",
+      "seconds": 0.63,
+      "cached": true
+     },
+     {
+      "stage": "sections",
+      "seconds": 7.18,
+      "cached": true,
+      "backend": "allin1"
+     },
+     {
+      "stage": "guitar",
+      "seconds": 608.73,
+      "cached": false
+     },
+     {
+      "stage": "assemble",
+      "seconds": 21.85,
+      "cached": false
+     }
+    ],
+    "ran": [
+     "guitar"
+    ],
+    "unasked": [],
+    "kept_from": "11615e29fc9e032ca7e7d53a7083f2c79b64769b",
+    "kept_at": "2026-11-03T13:18:16",
+    "stale": {
+     "drums": "unchanged",
+     "bass": "unchanged",
+     "sections": "unchanged"
+    },
+    "sections_backend": "allin1",
+    "scan_seconds": 0.6,
+    "score_seconds": 7.7,
+    "seconds": 661.5
+   },
+   "all_the_small_things": {
+    "cold": null,
+    "build_seconds": 580.7,
+    "stages": [
+     {
+      "stage": "decode",
+      "seconds": 0.71,
+      "cached": true
+     },
+     {
+      "stage": "separate",
+      "seconds": 4.12,
+      "cached": true
+     },
+     {
+      "stage": "drums",
+      "seconds": 3.42,
+      "cached": true
+     },
+     {
+      "stage": "bass",
+      "seconds": 0.47,
+      "cached": true
+     },
+     {
+      "stage": "sections",
+      "seconds": 7.08,
+      "cached": true,
+      "backend": "allin1"
+     },
+     {
+      "stage": "guitar",
+      "seconds": 546.64,
+      "cached": false
+     },
+     {
+      "stage": "assemble",
+      "seconds": 15.63,
+      "cached": false
+     }
+    ],
+    "ran": [
+     "guitar"
+    ],
+    "unasked": [],
+    "kept_from": "11615e29fc9e032ca7e7d53a7083f2c79b64769b",
+    "kept_at": "2026-11-03T12:43:15",
+    "stale": {
+     "drums": "unchanged",
+     "bass": "unchanged",
+     "sections": "unchanged"
+    },
+    "sections_backend": "allin1",
+    "scan_seconds": 0.8,
+    "score_seconds": 5.6,
+    "seconds": 587.1
+   },
+   "lucretia": {
+    "cold": null,
+    "build_seconds": 1138.1,
+    "stages": [
+     {
+      "stage": "decode",
+      "seconds": 1.26,
+      "cached": true
+     },
+     {
+      "stage": "separate",
+      "seconds": 2.7,
+      "cached": true
+     },
+     {
+      "stage": "drums",
+      "seconds": 4.25,
+      "cached": true
+     },
+     {
+      "stage": "bass",
+      "seconds": 0.66,
+      "cached": true
+     },
+     {
+      "stage": "sections",
+      "seconds": 7.76,
+      "cached": true,
+      "backend": "allin1"
+     },
+     {
+      "stage": "guitar",
+      "seconds": 1096.2,
+      "cached": false
+     },
+     {
+      "stage": "assemble",
+      "seconds": 22.64,
+      "cached": false
+     }
+    ],
+    "ran": [
+     "guitar"
+    ],
+    "unasked": [],
+    "kept_from": "11615e29fc9e032ca7e7d53a7083f2c79b64769b",
+    "kept_at": "2026-11-03T13:33:27",
+    "stale": {
+     "drums": "unchanged",
+     "bass": "unchanged",
+     "sections": "unchanged"
+    },
+    "sections_backend": "allin1",
+    "scan_seconds": 0.7,
+    "score_seconds": 6.0,
+    "seconds": 1144.8
+   },
+   "creep": {
+    "cold": null,
+    "build_seconds": 539.1,
+    "stages": [
+     {
+      "stage": "decode",
+      "seconds": 0.94,
+      "cached": true
+     },
+     {
+      "stage": "separate",
+      "seconds": 5.24,
+      "cached": true
+     },
+     {
+      "stage": "drums",
+      "seconds": 3.01,
+      "cached": true
+     },
+     {
+      "stage": "bass",
+      "seconds": 0.64,
+      "cached": true
+     },
+     {
+      "stage": "sections",
+      "seconds": 5.66,
+      "cached": true,
+      "backend": "allin1"
+     },
+     {
+      "stage": "guitar",
+      "seconds": 497.38,
+      "cached": false
+     },
+     {
+      "stage": "assemble",
+      "seconds": 23.8,
+      "cached": false
+     }
+    ],
+    "ran": [
+     "guitar"
+    ],
+    "unasked": [],
+    "kept_from": "11615e29fc9e032ca7e7d53a7083f2c79b64769b",
+    "kept_at": "2026-11-03T13:42:53",
+    "stale": {
+     "drums": "unchanged",
+     "bass": "unchanged",
+     "sections": "unchanged"
+    },
+    "sections_backend": "allin1",
+    "scan_seconds": 0.5,
+    "score_seconds": 6.3,
+    "seconds": 546.0
+   },
+   "test_song": {
+    "cold": null,
+    "build_seconds": 1139.0,
+    "stages": [
+     {
+      "stage": "decode",
+      "seconds": 3.78,
+      "cached": true
+     },
+     {
+      "stage": "separate",
+      "seconds": 8.75,
+      "cached": true
+     },
+     {
+      "stage": "drums",
+      "seconds": 5.18,
+      "cached": true
+     },
+     {
+      "stage": "bass",
+      "seconds": 0.98,
+      "cached": true
+     },
+     {
+      "stage": "sections",
+      "seconds": 8.42,
+      "cached": true,
+      "backend": "allin1"
+     },
+     {
+      "stage": "guitar",
+      "seconds": 1070.93,
+      "cached": false
+     },
+     {
+      "stage": "assemble",
+      "seconds": 38.59,
+      "cached": false
+     }
+    ],
+    "ran": [
+     "guitar"
+    ],
+    "unasked": [],
+    "kept_from": "11615e29fc9e032ca7e7d53a7083f2c79b64769b",
+    "kept_at": "2026-11-03T14:01:49",
+    "stale": {
+     "drums": "unchanged",
+     "bass": "unchanged",
+     "sections": "unchanged"
+    },
+    "sections_backend": "allin1",
+    "scan_seconds": 0.7,
+    "seconds": 1139.8
+   }
+  }
+ }
+}

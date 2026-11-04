@@ -162,3 +162,203 @@ memory=24GB
 swap=8GB
 EOF
 ```
+
+## Rebuilding the dev machine
+
+The golden charts (`eval/golden.py`) and the engines' development need a set of installs and data that live outside
+the repository (the dev container keeps them in its scratch folder). None of it is committed, and the repo builds
+all of it except the test song. This is the order to run it on a fresh Linux machine or WSL2. Times are from the
+dev container (4 cores, CPU only, 2 threads per job); a step marked "unconfirmed" was not run or recorded there.
+The whole rebuild is about 2 to 3 hours of machine time and about 14 GB of disk (the container's pieces: 6.1 GB
+Python environment, 4.8 GB kept folders, 3.6 GB separation cache, 1.1 GB autochart, 0.5 GB references, 0.5 GB model
+cache; a cpu-lane environment should be smaller, see step 3).
+
+Pick one folder for all of it, on a disk with about 15 GB free (the kept folders hard-link the stems from the
+separation cache, so keep `$DEV/sepcache` and `$DEV/golden` on one filesystem):
+
+```sh
+export DEV=/path/to/dev        # every step below uses it
+```
+
+### 1. System packages
+
+Linux x86_64, or WSL2. Needed: `git`, `curl`, `ffmpeg` (6.x in the container; it decodes the
+reference audio and writes the test song's WAV), Node 20 or newer (22.x in the container), Python 3.13 (the lock
+files are for 3.13 and `requires-python` is below 3.14), and [uv](https://docs.astral.sh/uv/) at exactly 0.13.5,
+which `pyproject.toml` and `packaging/allin1/pyproject.toml` pin with `required-version` (`uv self update 0.13.5`
+or the installer for that version; the container had 0.11.32, which refuses the pin, and never used uv for its
+environments). RAM: the guitar engine (autochart's Node process) peaked at 12.8 GB once, and the whole build tree at 10.1 GB on the CPU;
+give WSL2 at least 16 GB (`memory=` in `.wslconfig`, above).
+
+```sh
+sudo apt-get install -y git curl ffmpeg build-essential      # build-essential: unconfirmed that anything compiles
+uv --version                                                 # must print 0.13.5
+node --version                                               # 20 or newer
+```
+
+### 2. The checkout and scan-chart (a minute, 0.1 GB)
+
+```sh
+git clone <the repository> song-charting && cd song-charting
+(cd tools/scan-chart && npm ci)
+```
+
+`tools/scan-chart` pins scan-chart 8.0.1 in its `package-lock.json`; `SONGCHARTER_SCAN_CHART` defaults to
+`tools/scan-chart/scan.cjs` when unset.
+
+### 3. The Python environment (unconfirmed time, 6.1 GB in the container)
+
+The supported way is CLAUDE.md's command, with the lane for the machine (`cpu` with no NVIDIA GPU, `cu126` for a
+driver under 580, `cu132` for 580 or newer). Never run `uv sync` with no lane: it installs PyPI's CUDA torch.
+
+```sh
+uv sync --frozen --extra cpu --extra app --extra dev     # the venv is ./.venv; say UV_PROJECT_ENVIRONMENT=$DEV/venv for another place
+```
+
+`app` brings demucs (separation), torch (the drums engine), librosa (bass, sections fallback, preview) and
+imageio-ffmpeg; `dev` brings pytest, mido and packaging, which the scorer and the suite use. The container's own
+environment was not made this way: it was `python3.13 -m venv`, then `pip install` of the
+project in editable mode with its extras, which pulled PyPI's CUDA 13 torch 2.15.0 (hence 6.1 GB); a cpu-lane
+environment drops the `nvidia-*` wheels, which should cost about 1.5 to 2 GB (unconfirmed).
+
+Check it: `uv run songcharter doctor` (names the device, the engines found and what is missing).
+
+### 4. allin1's own Python (a few minutes, 0.2 GB for the cpu lane, unconfirmed)
+
+The sections engine runs allin1 in a Python of its own, found through `SONGCHARTER_ALLIN1_PYTHON`. Without it the
+sections fall back to librosa, and `eval.golden run` stops with exit 2. `packaging/allin1/` (M4-01) is now the
+supported way, locked on the same lanes as the root project:
+
+```sh
+UV_PROJECT_ENVIRONMENT=$DEV/allin1 uv sync --frozen --project packaging/allin1 --extra cpu    # same lane as step 3
+export SONGCHARTER_ALLIN1_PYTHON=$DEV/allin1/bin/python
+```
+
+It installs all-in-one-infer 3.1.0 and torchaudio 2.11.1 (63 packages on the cpu lane in M4-01's check). The
+container's golden baseline did not use it. It used `research/timing/venv2` (127 MB), a plain venv made by hand in
+an earlier session, whose recipe was not recorded in the repo or found in the session transcript: it holds
+all-in-one-infer 3.1.0, demucs-infer 4.4.0, madmom-infer 0.2.0 and torchaudio 2.11.1, and a `_base.pth` that points
+at the main environment's `site-packages` for torch, numpy and scipy (so it has no torch of its own). The
+sections cache key hashes the package name and version, the model, its weights and the device, not the Python's
+path or torch's build, so the kept folders answer with either; whether the new environment gives byte-identical
+segments (a different torch build) is unconfirmed, and step 9 shows it: the sections' hashes would move.
+
+The allin1 checkpoint (`taejunkim/allinone` on Hugging Face) downloads on first use into `~/.cache/huggingface`
+and is checked against its pinned SHA-256.
+
+### 5. The reference set (about 10 minutes, 0.5 GB, needs the network)
+
+`eval/build_refs.sh` downloads the six reference charts as `.sng` packages from `https://files.enchor.us/<md5>.sng`
+(Chorus Encore; the md5s are in `eval/refs.json`), unpacks them and builds `$EVAL_DATA/refs/<id>/` (the stems
+summed into `input.wav` and `input.mp3`, the chart with vocals and lyrics stripped, `ref_notes.json`,
+`offset_check.json`), then `refs/songs.json`. It runs the helper scripts with `EVAL_PY` (default
+`eval/.venv/bin/python`); point that at the step 3 environment instead of making a second one. The downloads are
+other people's work: they stay in `$EVAL_DATA` and are never committed.
+
+The test song is the owner's own file, never in the repo: the owner provides it. Pass it as the argument and the
+script makes `refs/test_song/` from it (a gapless 44.1 kHz stereo WAV and a copy of the file).
+
+```sh
+export EVAL_DATA=$DEV/eval
+export EVAL_PY=$PWD/.venv/bin/python
+eval/build_refs.sh /path/to/the-owners-test-song.mp3
+ls $EVAL_DATA/refs     # seven folders: the six ids, test_song, and songs.json
+```
+
+The golden set is these seven songs (`docs/PROGRESS.json`, golden). The test song's separation key
+(`13506d568d...`) is a hash of its decoded samples, so a different encode of the same song gives other keys and
+the kept folders made from the container's will not answer; use the same file.
+
+### 6. autochart (about 15 minutes, 1.1 GB)
+
+```sh
+eval/tools/autochart/setup.sh        # clones dvar0/autochart at b5a41e8e to ./src, npm ci, then fetch_models.sh
+export SONGCHARTER_AUTOCHART=$PWD/eval/tools/autochart
+```
+
+`npm ci` installs onnxruntime-node 1.27.0 (502 MB; its postinstall downloads the Linux x64 binaries, including
+the CUDA execution provider, so nothing extra is needed for CPU runs). `fetch_models.sh` downloads Fretformer 2
+(478 MB) from Hugging Face at revision `8a88855d...` and verifies every file's size and SHA-256 against autochart's
+own catalog. The weights are CC BY-NC-SA 4.0. For the GPU, the provider needs the CUDA 13 libraries including
+`libcurand.so.10`, which the cu132 lane's `nvidia-curand` supplies (see `pyproject.toml`); the golden set runs on
+CPU and needs none of it. Nothing else was done by hand to the container's copy that the repo does not do, except
+that its `ac_headless.cjs` and `run.sh` are older copies of the repo's (they lack `AC_DEVICE` and the `EVAL_LOCK`
+variable). This matters in one way: the guitar take's key hashes the driver file, so kept folders made with the
+older driver do not answer to the repo's, and a fresh machine makes its own kept folders anyway.
+
+### 7. The separation cache (about 20 minutes, 3.6 GB)
+
+`eval.golden run --stems DIR` hard-links the six-stem Demucs output from a separation cache when it first makes a
+kept folder, so the 3 to 4 minutes of separation per song are done once. Without `--stems` golden separates inside
+each kept folder itself (the same result, 18 minutes slower for the set, and 3.6 GB of stems in the kept folders
+only). The cache is `songcharter/separate.py`'s own: `htdemucs_6s`, seed 0, shifts 1, overlap 0.25, on the CPU,
+keyed by the decoded samples. The container filled it with a ten-line script (`sepcache/prep.py`, not in the repo)
+that decodes `refs/<id>/input.wav` with `audio.decode` and calls `separate(mix, cache_dir=...)` for the seven
+songs, 2 torch threads. It first downloads the htdemucs_6s weights (about 0.46 GB, into `~/.cache/huggingface`)
+and checks them against their pinned hashes.
+
+```sh
+mkdir -p $DEV/sepcache/cache
+tools/heavy.sh .venv/bin/python - <<'EOF'
+import os, torch
+torch.set_num_threads(2)
+from songcharter import audio as A
+from songcharter.separate import separate
+for sid in ["test_song", "take_me_out", "all_the_small_things", "lucretia", "creep", "kimochi_warui", "drunk_drivers"]:
+    mix = A.decode(f"{os.environ['EVAL_DATA']}/refs/{sid}/input.wav")
+    stems, info = separate(mix, cache_dir=os.environ["DEV"] + "/sepcache/cache")
+    print(sid, info.key, info.seconds, info.cached, flush=True)
+EOF
+```
+
+Per song on the container: 114 s (all_the_small_things) to 255 s (kimochi_warui), 18 minutes for the six that were
+separated (the test song's was copied from an earlier cache). `tools/heavy.sh` runs it after any other heavy job
+on the machine has finished. The folders are named by key; the key printed for each song must match the one
+`eval.golden` computes, or it separates again and says so (`--stems` then reports "no stems for key").
+
+### 8. The kept golden folders (cold: about 80 minutes for the set)
+
+The first `eval.golden run` makes `$SONGCHARTER_GOLDEN/work/<id>` for each song (decode, hard-linked stems, drums,
+bass, sections, the autochart guitar take, assemble): 474 to 1081 s a song, most of it the guitar take, 4.8 GB in
+all. It is the baseline run as well: run it at the commit you mean to compare against.
+
+```sh
+export SONGCHARTER_GOLDEN=$DEV/golden
+export SONGCHARTER_SCAN_CHART=$PWD/tools/scan-chart/scan.cjs     # or leave it unset
+.venv/bin/python -m eval.golden run --out $DEV/golden/base --threads 2 --stems $DEV/sepcache/cache
+```
+
+Later runs cost about 6.5 minutes for the set (the kept folders are only read). Keep `--stems` out of them.
+
+### 9. The environment variables
+
+| variable | points at |
+|---|---|
+| `EVAL_DATA` | the folder that holds `refs/` (step 5); default `eval/data` |
+| `EVAL_PY` | the Python `build_refs.sh` runs its helpers with; default `eval/.venv/bin/python` |
+| `SONGCHARTER_GOLDEN` | the folder that holds `work/`, the kept folders (step 8); default the user cache's `golden/` |
+| `SONGCHARTER_AUTOCHART` | the autochart install, `eval/tools/autochart` after `setup.sh` (step 6); `run` uses the checkout's when unset |
+| `SONGCHARTER_ALLIN1_PYTHON` | the `python` of allin1's own environment (step 4); unset means the librosa fallback and golden exits 2 |
+| `SONGCHARTER_SCAN_CHART` | `scan.cjs` of `tools/scan-chart` (step 2); unset means the checkout's |
+
+All the container's values pointed into its scratch folder. A rebuilt machine's golden baseline is a new baseline:
+its onsets and hashes need not equal the container's, kept in `eval/baseline/summary.json` (different torch build,
+different library versions), so compare a change against a base made on the same machine; the container's
+summary shows how far a rebuilt machine's charts are from it. After step 8, run the
+suite once as the check:
+
+```sh
+SONGCHARTER_SCAN_CHART=$PWD/tools/scan-chart/scan.cjs uv run pytest -q -p no:cacheprovider --basetemp=/dev/shm/pt
+```
+
+### Not rebuildable from the repo
+
+- The test song: the owner's own file, which the owner provides. Its separation key and every kept golden hash
+  depend on that exact file.
+- The reference charts: downloaded from Chorus Encore by `eval/build_refs.sh`; they need the network and the
+  service staying up (the md5s are pinned, a removed file is not recoverable).
+- The model weights (Demucs, allin1, ADTOF, Fretformer 2): downloaded by the code at pinned revisions and checked by
+  SHA-256, so they need Hugging Face, GitHub and the network.
+- The container's exact charts (step 9: `eval/baseline/summary.json` holds their hashes and F1s), and its
+  `sepcache/prep.py` (the snippet in step 7 stands in for it).
+- The hand-made `research/timing/venv2` (step 4): replaced by `packaging/allin1`, not reproduced.

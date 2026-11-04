@@ -1529,7 +1529,8 @@ v1's absolute targets, kept as information only:
 | Fretformer 2 (+ Lite) | guitar | HF `Dvaro/autochart-models` @8a88855d | ~0.5 GB |
 
 ### 4.3 Windows install (Goal 2, built only after M1's Windows spike)
-Whether the friend's tool is native Windows or WSL2 is the owner's call (§9). If native:
+**Superseded for v0.1:** the owner chose WSL2 (§9 Q4, 2026-11-03), so v0.1's install is
+`docs/work-orders/M4-03-install.md`; this native plan is kept for M4-99, as written before that decision. If native:
 - **Shape:** one per-user Inno Setup `setup.exe` (no admin rights) wrapping a uv bootstrap, also shipped as a portable zip.
   - Contents: app source, a pinned `uv.exe`, `bootstrap.ps1` (PowerShell 5.1, ASCII only), `songcharter.cmd`, and `tools/scan-chart` with its `node_modules`.
 - **First launch** (`bootstrap.ps1`):
@@ -1825,6 +1826,9 @@ ADTOF test]:
   617. Nobody has listened to or played either.
 
 ### M4: A release the friend can use (Windows, or WSL if the owner accepts it)
+**Superseded:** the route is WSL2 (§9 Q4); M4's plan, scope and acceptance are `docs/work-orders/M4-00-plan.md`.
+What follows is the plan for the native route, kept for M4-99.
+
 **Scope:** the local UI (§4.5) and the installer (§4.3).
 
 **Acceptance on the friend's 4070 PC:**
@@ -2057,7 +2061,7 @@ The other critique gaps are designed in this version: G4 (§2.3, code change pen
 | 1 | **Which instrument(s) does the friend play?** **Answered: Guitar, on Expert** (his feedback on v1, which also asked for Expert only unless he asks for more, and for solo trackers; v1.1 and the pipeline's defaults follow it: §2.10, §2.11). | Which of M1a's rows are judged first (the v1 chart holds all three instruments, so whichever he plays can be playtested now; §5), the M2 order, and the priority of bass (§2.8). Blocks the most. |
 | 2 | **Are non-commercial weights acceptable** (Fretformer 2, ADTOF; htdemucs_6s read as NC)? **Decided: yes** (the owner, 2026-11-02): the tool stays free and is never sold. | Whether Goal 2 has a measured-good route at all, and whether M2's engine work is needed. If not, guitar and drums have no measured engine today, and a rules route still needs a permissively licensed separator, which none of the sources found. Blocks the most. |
 | 3 | **Decided: B1** (the owner, 2026-11-02). Which guitar route? **B2** (our own driver; songcharter stays MIT and uses no AGPL code), **B1** (autochart's engine as a separate program; we ship AGPL code with its source obligations, plus FFmpeg's LGPL), or **D** (build on autochart; songcharter becomes AGPL)? | §2.7, §4.2 |
-| 4 | Must the friend's tool be native Windows, or is WSL2 acceptable? **Decided: native Windows** (the owner, 2026-11-02). | §4.3, M4 |
+| 4 | Must the friend's tool be native Windows, or is WSL2 acceptable? **Decided: WSL2** (the owner, 2026-11-03), after native Windows on 2026-11-02: the friend's PC has Smart App Control on, which blocks unsigned DLLs and Python modules. | §4.3, M4 |
 | 5 | Will the friend play from the same MP3 file we chart? | M1a's gate; §2.1; otherwise verify sync against their copy |
 | 6 | Should drum fills be charted (they need a fill detector) or omitted (then `noDrumActivationLanes` needs a gate exemption)? | §2.10, §2.13 |
 | 7 | Should the provenance-unknown BS-RoFormer SW ever be offered as an opt-in download? | §2.2 |
