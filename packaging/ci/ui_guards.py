@@ -19,7 +19,9 @@
      whose program is node, nor ac_headless.cjs, autochart-engine.cjs, allin1_runner.py or `songcharter.cli chart`;
      nor any process of the job's tree (the processes under the server at the cancel, their sessions and process
      groups). A zombie (exited, its parent yet to reap it) counts as gone, and is listed;
-   - no .partial folder is left in the library.
+   - no .partial folder is left in the library. This one cannot fail here: assemble makes its staging folder in the
+     stage after the guitar, so none exists at a cancel during the take. tests/test_ui_jobs.py is what guards the
+     cleanup; this only checks that nothing else left one.
 6. Starts the same job again: it ends `done` with `ok: true`, and every stage before the guitar is cached (the cancel
    kept them).
 7. Stops the server with SIGTERM: it exits within 5 s, with status 0.

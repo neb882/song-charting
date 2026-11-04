@@ -6,8 +6,9 @@
 #   1. packaging/release/build.sh's assets into $CI_TMP/dist;
 #   2. `docker run ubuntu:26.04` (sc-e2e) with /dist and /ci (packaging/ci) read-only, and `e2e.sh prepare` as root;
 #   3. e2e.sh's phases as friend, each a `docker exec`: install, doctor, doctor-gpu, clip, guards; then the network is
-#      cut from outside (docker network disconnect bridge) for `offline`, and given back; then uninstall-keep and
-#      uninstall-all (e2e.sh says what each checks);
+#      cut from outside (docker network disconnect bridge) for `offline` and `uninstall-keep` (whose reinstall must
+#      download nothing: with no network, any download fails it), and given back; then uninstall-all (e2e.sh says what
+#      each checks);
 #   4. the install alone (prepare, install, doctor-quick) on ubuntu:24.04, which must pass, and on ubuntu:22.04, which
 #      is reported and never fails the hook (the guide's `wsl --update` makes a fresh install 26.04; an older WSL can
 #      still give the friend 22.04, M4-00's finding 1);
@@ -92,11 +93,13 @@ for p in install doctor doctor-gpu clip guards; do phase $c $p; done
 docker network disconnect bridge $c
 echo "50-e2e: the network of $c is cut"
 code=0
-phase $c offline || code=$?
+for p in offline uninstall-keep; do   # the reinstall too: with no network, any download fails it
+  phase $c $p || { code=$?; break; }
+done
 docker network connect bridge $c
 echo "50-e2e: the network of $c is back"
 [ $code -eq 0 ] || exit $code
-for p in uninstall-keep uninstall-all; do phase $c $p; done
+phase $c uninstall-all
 disk
 remove $c 26.04
 

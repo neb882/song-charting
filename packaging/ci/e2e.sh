@@ -4,8 +4,11 @@
 #
 #   bash /ci/e2e.sh prepare        as root: the WSL image's tools (curl ca-certificates git xz-utils) and the user friend
 #   bash /ci/e2e.sh PHASE          as friend, with HOME=/home/friend; PHASE, in the hook's order:
-#     install        the install killed once its log shows the uv sync downloading, then run again: exit 0, the cpu
-#                    lane with "no NVIDIA GPU found"; its times and the disk it takes (du -sh)
+#     install        the install killed once its log shows the uv sync downloading; run again and killed in step 8
+#                    in the middle of a download (the first `fetch` progress line with 100 MB or more still to come);
+#                    then run again: it resumes that download (`resuming at`), exits 0, and has the cpu lane with "no
+#                    NVIDIA GPU found"; its times and the disk it takes (du -sh). Before it, the entries of ~ to depth
+#                    3 are listed (home-before.txt, for uninstall-all)
 #     doctor         `songcharter doctor --json`: exit 0, wsl null, guitar_device cpu, components.allin1.ok true
 #     doctor-gpu     the same with fake-nvidia-smi first on PATH as nvidia-smi: gpu.name NVIDIA GeForce RTX 4070, and
 #                    device.reason "this install's torch has no CUDA (the cpu lane)"
@@ -16,16 +19,22 @@
 #                    its cache is cold and the guitar's take sends its `take` event: the clip phase's is cached
 #     offline        (the hook has cut the network) the clip into a new folder, and a clip never charted (34 s) into
 #                    another, so every stage runs offline too: each exits 0 and passes check_gate.py
-#     uninstall-keep `songcharter uninstall` answering No, then the install again: exit 0, nothing downloaded (no fetch
-#                    line, no uv download), under 3 minutes
+#     uninstall-keep (the network still cut) `songcharter uninstall` answering No: the launcher and the app go, and
+#                    runtime/env, the pipeline's models (~/.cache/songcharter/models) and uv's cache stay, each file of
+#                    the last two still there; then the install again, offline, so any download fails it: exit 0, no
+#                    download line either, under 3 minutes
 #     uninstall-all  `songcharter uninstall` answering Yes: ~/.local/share/songcharter, ~/.cache/songcharter and the
-#                    launcher are gone
+#                    launcher are gone, and nothing the install or a chart made stays in ~: no entry to depth 3 that the
+#                    install phase's snapshot did not list, but for e2e's own (~/e2e, ~/clips, the Songs folder,
+#                    ~/fakebin) and the XDG base folders themselves (~/.cache, ~/.config, ~/.local and the three in it),
+#                    which are not songcharter's; what is in them counts
 #
 # Each check is printed and timed ("-- <check>", then "-- <check>: ok in N s"); a failing one prints its log's last
-# lines, then "-- <check>: FAILED (exit N)", and the phase exits non-zero. Everything the hook collects goes to ~/e2e/, outside the install, so it outlives the uninstall:
-# logs/, doctor*.json, runtime.json, clip/ (report.json, pipeline.json, the preview's overview), ui-guards.json, and
-# figures.txt (one `name=value` line per figure: the times and sizes the work order asks for). Never audio: the clips
-# stay in ~/clips/. /dist holds the release assets (build.sh's), /ci packaging/ci.
+# lines, then "-- <check>: FAILED (exit N)", and the phase exits non-zero. Everything the hook collects goes to
+# ~/e2e/, outside the install, so it outlives the uninstall: logs/, doctor*.json, runtime.json, clip/ (report.json,
+# pipeline.json, the preview's overview), ui-guards.json, home-before.txt, and figures.txt (one `name=value` line per
+# figure: the times and sizes the work order asks for). Never audio: the clips stay in ~/clips/. /dist holds the
+# release assets (build.sh's), /ci packaging/ci.
 set -euo pipefail
 
 phase=${1:-}
@@ -147,32 +156,52 @@ prepare() {   # as root
   echo "friend: $(id friend)"
 }
 
-install_killed() {
-  local log=$logs/install-1.log start=$SECONDS pid killed=0 code=0
+interrupted() {   # LOG FIGURE AWK: the install into LOG, its session killed (TERM) as soon as the awk program AWK, run
+  # on LOG every 50 ms, exits 0 (it prints the line it found); then it must end non-zero with its failure line
+  local log=$1 name=$2 trigger=$3 start=$SECONDS pid hit="" killed=0 code=0
   setsid bash /dist/install.sh --from /dist --lane auto --yes >"$log" 2>&1 &
   pid=$!
-  for _ in $(seq 1 4800); do   # 20 min
-    if awk '/^== \[7\/10\]/ { s = 1 } s && /Downloading/ { f = 1 } END { exit !f }' "$log"; then
+  for _ in $(seq 1 24000); do   # 20 min
+    if hit=$(awk "$trigger" "$log"); then
       kill -TERM -- "-$pid" 2>/dev/null && killed=1   # not when it has just ended by itself: then it was not killed
       break
     fi
     kill -0 "$pid" 2>/dev/null || break
-    sleep 0.25
+    sleep 0.05
   done
   wait "$pid" || code=$?
-  tail -n 3 "$log"
-  [ $killed -eq 1 ] || die "the install never showed a download in its uv sync (exit $code)"
+  [ $killed -eq 1 ] || { tail -n 5 "$log"; die "the install was never killed: it ended first (exit $code)"; }
+  echo "killed at: $hit"
+  tail -n 2 "$log"
   [ $code -ne 0 ] || die "the killed install exited 0"
   tail -n 1 "$log" | grep -q "failed: .*Run the same command again to continue.$" ||
     die "the killed install's last line is not the failure line"
-  figure install_killed_after_s $((SECONDS - start))
+  figure "$name" $((SECONDS - start))
+}
+
+killed_in_sync() {   # the first `Downloading` of uv's sync (step 7)
+  interrupted "$logs/install-1.log" install_killed_in_sync_after_s \
+    '/^== \[7\/10\]/ { s = 1 } s && /Downloading/ { print; f = 1; exit } END { exit !f }'
+}
+
+killed_in_fetch() {   # step 8: the first progress line of runtime.py's fetch ("fetch NAME: DONE of TOTAL MB, RATE MB/s")
+  # with 100 MB or more still to come, so the kill lands in the middle of that file even at a runner's 200 MB/s
+  interrupted "$logs/install-2.log" install_killed_in_fetch_after_s \
+    '/^== \[8\/10\]/ { s = 1 }
+     s && /^fetch [^ ]+: [0-9]+ of [0-9]+ MB, / { split($0, w, " "); if (w[5] - w[3] >= 100) { print; f = 1; exit } }
+     END { exit !f }'
+  local parts
+  parts=$(find "$home/runtime" -name "*.part" -printf "%P (%s bytes)\n")
+  [ -n "$parts" ] || die "no .part file is left: the kill came after the download had finished"
+  echo "left to resume: $parts"
 }
 
 install_again() {
   local start=$SECONDS
-  logged "$logs/install-2.log" bash /dist/install.sh --from /dist --lane auto --yes
-  figure install_rerun_s $((SECONDS - start))
-  tail -n 4 "$logs/install-2.log"
+  logged "$logs/install-3.log" bash /dist/install.sh --from /dist --lane auto --yes
+  figure install_resumed_s $((SECONDS - start))
+  grep -n "resuming at" "$logs/install-3.log" || die "the rerun resumed no download (no 'resuming at' line)"
+  tail -n 4 "$logs/install-3.log"
   cp "$home/runtime/runtime.json" "$e2e/runtime.json"
   json_check "$home/runtime/runtime.json" 'r["lane"] == "cpu"' '"no NVIDIA GPU found" in r["lane_reason"]'
   local p size name
@@ -187,12 +216,18 @@ install_again() {
   figure du_all_three "$size"   # one du: a file hardlinked between them counts once
 }
 
+home_entries() {   # the entries of ~ to depth 3, one per line, sorted bytewise
+  find "$HOME" -mindepth 1 -maxdepth 3 | LC_ALL=C sort
+}
+
 phase_install() {
   rm -rf "$e2e"
   mkdir -p "$logs"
+  home_entries >"$e2e/home-before.txt"
   local start=$SECONDS
-  check "the install, killed during its uv sync" install_killed
-  check "the install again" install_again
+  check "the install, killed during its uv sync" killed_in_sync
+  check "the install again, killed in the middle of a step-8 download" killed_in_fetch
+  check "the install again, resuming that download" install_again
   figure install_total_s $((SECONDS - start))
 }
 
@@ -266,21 +301,41 @@ phase_offline() {
   check "its stage times (none cached)" stages "$logs/offline-new.log" "$e2e/offline-new"
 }
 
+files_of() {   # FOLDER: each file under it with its size, sorted (empty when the folder is gone)
+  if [ -d "$1" ]; then find "$1" -type f -printf "%P %s\n" | LC_ALL=C sort; fi
+}
+
 uninstall_keep() {
+  local models=$HOME/.cache/songcharter/models uv_cache=$HOME/.cache/uv
+  files_of "$models" >/tmp/models-before.txt
+  files_of "$uv_cache" >/tmp/uv-before.txt
+  echo "before: $(wc -l </tmp/models-before.txt) files in $models, $(wc -l </tmp/uv-before.txt) in $uv_cache"
+  [ -s /tmp/models-before.txt ] && [ -s /tmp/uv-before.txt ] || die "no models or no uv cache to keep"
   printf 'n\n' | logged "$logs/uninstall-keep.log" songcharter uninstall
   cat "$logs/uninstall-keep.log"
   [ ! -e "$launcher" ] || die "the launcher is still there"
   [ ! -e "$home/app" ] || die "$home/app is still there"
   [ -d "$home/runtime/env" ] || die "No deleted $home/runtime/env"
+  local what before after
+  for what in "models:$models" "uv:$uv_cache"; do
+    before=/tmp/${what%%:*}-before.txt after=/tmp/${what%%:*}-after.txt
+    files_of "${what#*:}" >"$after"
+    if ! cmp -s "$before" "$after"; then
+      echo "e2e: No changed ${what#*:} (- before, + after):"
+      diff "$before" "$after" | head -n 20 || true
+      exit 1
+    fi
+    echo "kept: ${what#*:} ($(wc -l <"$after") files, each as it was)"
+  done
 }
 
-reinstall() {
+reinstall() {   # the network is still cut: any download fails it
   local start=$SECONDS took
-  logged "$logs/install-3.log" bash /dist/install.sh --from /dist --lane auto --yes
+  logged "$logs/reinstall.log" bash /dist/install.sh --from /dist --lane auto --yes
   took=$((SECONDS - start))
-  figure reinstall_s $took
-  tail -n 2 "$logs/install-3.log"
-  no_download "$logs/install-3.log"
+  figure reinstall_offline_s $took
+  tail -n 2 "$logs/reinstall.log"
+  no_download "$logs/reinstall.log"
   [ $took -lt 180 ] || die "the reinstall took $took s, not under 3 minutes"
 }
 
@@ -295,6 +350,25 @@ uninstall_all() {
   [ $left -eq 0 ] || exit 1
 }
 
+nothing_left() {   # no entry of ~ to depth 3 that was not there before the install, but for e2e's own and the XDG
+  # base folders themselves (not songcharter's to delete; what is in them is listed on its own, and counts)
+  local entry left=()
+  while IFS= read -r entry; do
+    case $entry in
+      "$e2e" | "$e2e"/* | "$clips" | "$clips"/* | "$songs" | "$songs"/* | "$HOME/fakebin" | "$HOME/fakebin"/*) ;;
+      "$HOME/.cache" | "$HOME/.config" | "$HOME/.local" | "$HOME/.local/bin" | "$HOME/.local/share" | \
+        "$HOME/.local/state") ;;
+      *) left+=("$entry") ;;
+    esac
+  done < <(LC_ALL=C comm -13 "$e2e/home-before.txt" <(home_entries))
+  if [ ${#left[@]} -ne 0 ]; then
+    echo "e2e: left in ~ after uninstalling everything (not there before the install):"
+    for entry in "${left[@]}"; do echo "  $entry ($(du -sh -- "$entry" | cut -f1))"; done
+    exit 1
+  fi
+  echo "nothing new left in ~ (to depth 3), but e2e's own folders and the XDG base folders"
+}
+
 case $phase in
   prepare) prepare ;;
   install) phase_install ;;
@@ -305,9 +379,13 @@ case $phase in
   guards) phase_guards ;;
   offline) phase_offline ;;
   uninstall-keep)
+    check "the network is still cut" no_network
     check "uninstall, keeping the downloads" uninstall_keep
-    check "the install again, with nothing to download" reinstall
+    check "the install again, offline, with nothing to download" reinstall
     ;;
-  uninstall-all) check "uninstall, deleting everything" uninstall_all ;;
+  uninstall-all)
+    check "uninstall, deleting everything" uninstall_all
+    check "nothing the install or a chart made is left in ~" nothing_left
+    ;;
   *) echo "e2e.sh: unknown phase $phase" >&2; exit 2 ;;
 esac
