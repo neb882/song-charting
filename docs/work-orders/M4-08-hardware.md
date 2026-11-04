@@ -195,3 +195,9 @@ M4-07, the full review workflow, and the owner's and the friend's time.
 - **Open folder:** explorer.exe on a `C:\...` and a `\\wsl.localhost\...` path, and on a song whose name has a comma
   (explorer may read commas as separators).
 - **Save as a zip:** where it lands, with a non-ASCII song name.
+
+## Added at M4-05's merge
+
+- The cpu lane's baseline from CI (ubuntu:26.04, GitHub's runner): install 2.8 GB; a 30 s clip charted in 47-74 s
+  (separate 13 s, bass 8 s, sections 7 s, guitar 15 s on run 1); a reinstall after No in 5-7 s, nothing downloaded.
+  Record the cu132 lane's equivalents on the 5070 against them.

@@ -1718,6 +1718,14 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
 - **Status** [code]: screens 1 to 3 built in M4-04; in M4-06 the Done screen (the preview's overview and pages, "Worth a look" from its flags, the zip, Install into Clone Hero, Another folder, Open folder), the "Paste lyrics" box (the text handed to the chart through a memory file, never written to disk or logged), and the diagnostics bundle (`diagnostics.py`, `songcharter diagnostics --out PATH`, `/api/diagnostics`: logs, `doctor.json`, settings and a MANIFEST.txt, every file checked by name, size and first bytes; no audio, chart, image or pasted text). Quick fixes, Preview in Clone Hero and the polish workspace are not built.
 
 ### 4.6 CI (with the Windows build)
+**As built for v0.1 (WSL2) [code]:** `.github/workflows/ci.yml` (M4-05a) runs the suite and each order's hooks in
+`packaging/ci/linux.d` and `windows.d`. M4-05's `50-e2e.sh` does what the friend will do, in `ubuntu:26.04` from
+nothing, as a plain user: the install from the release assets, killed twice and resumed (at uv's first download, and
+mid-file in a model download, which resumes from its `.part`); `doctor`, also with a stand-in `nvidia-smi`; a chart of
+a clip made by code; the page (`ui_guards.py`: the guards, an upload, a cancel at the first guitar take with Node
+running, and no process left); an offline chart and an offline reinstall with the network cut from outside; and both
+uninstalls (after No, the downloads unchanged; after Yes, nothing new left in `~`). 24.04 must install, 22.04 is
+reported. The cpu lane installs 2.8 GB. What follows is the plan for the native route, kept for M4-99.
 - **Linux:** pytest; `uv lock --check`; an end-to-end CPU chart of a self-made 20 s clip (never copyrighted audio) followed by scan-chart; the evaluation selftest on synthetic charts.
 - **`windows-latest`:** a dry run of every lane; ISCC build and portable zip; silent per-user install; first run on the CPU lane under PowerShell 5.1; `Test-Bootstrap.ps1` with a fake `nvidia-smi`; the clip chart and scan-chart check; the Host/Origin guard check; a clean silent uninstall.
 - **Weekly:** install the real cu132 lane on the GPU-less runner and prove it imports and falls back to the CPU (v1).

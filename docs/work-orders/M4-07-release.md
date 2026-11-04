@@ -148,3 +148,11 @@ job). Otherwise it is done by hand on GitHub's release page with the same files 
 - NOTICE: torchaudio (BSD-2-Clause) and the lyrics aligner's weights (wav2vec 2.0 large, MIT, as torchaudio's
   bundle documentation states), fetched on the first `--lyrics` run.
 - The guide: the first song with lyrics downloads 1.26 GB once.
+
+## Added at M4-05's merge
+
+- The guide's figures, from M4-05's CI (a datacenter network, so no estimate for the friend's): the cpu lane
+  installs 2.8 GB (`~/.local/share/songcharter` 2.7 GB, uv's cache 1.6 GB, hardlinks counted once), and the
+  installer now asks for 8 GB free (with 5 GB of work folders). The cpu lane's "about 1.5 GB" download is
+  unmeasured: M4-08 measures the cu132 lane's download and disk on the 5070.
+- doctor on the cpu lane now says the CUDA provider is "not needed" rather than "does not load".

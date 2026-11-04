@@ -39,7 +39,7 @@
     },
     {
       "id": "M4",
-      "status": "building: wave 1, M4-03, M4-04, M4-10 and M4-06 merged (each reviewed, CI green); M4-00b's CUDA 13 spike passed on the 5070; M4-05 building; then M4-07, the full review, M4-08",
+      "status": "building: waves 1-3 and M4-10 merged (M4-01, -02, -03, -04, -05, -05a, -06, -10; each reviewed, CI green end to end in Ubuntu 26.04); M4-00b's CUDA 13 spike passed on the 5070; next M4-07 (the release), then the full review, M4-08",
       "what": "a release the friend can use on his Windows PC, running in WSL2: a guided WSL setup, a one-line install, a Start-menu shortcut, a local UI, tested on his PC",
       "plan": "docs/work-orders/M4-00-plan.md: v0.1 is a guide to set up WSL, install.sh fetched from the pre-release and checked by hash (uv lanes cu132/cu126/cpu, allin1's own Python, Node, autochart with its models and its CUDA 13 provider, doctor.json, a .wslconfig with Windows' RAM minus 4 GB, a Start-menu shortcut), device checks with the CPU fallback shown, the local UI in WSL opened in the Windows browser (drop, options, progress with cancel, the static preview, zip and install into the Windows Songs folder), diagnostics, and CI end to end in ubuntu:26.04. Native Windows and the rest are M4-99; the native plan is commit f9f9377 and M4-00's appendix.",
       "risks": [
@@ -68,17 +68,7 @@
     "baseline": "main at 656991d (--rerun guitar): eval/baseline/summary.json, committed (hashes and F1s, no audio); the first, at 11615e2, in <scratchpad>/golden/base. The kept work folders are in <scratchpad>/golden/work, made at 11615e2, so the guitar is rerun on both sides since M4-02 changed engines/autochart.py. Environment in the dev container: EVAL_DATA=<scratchpad>/eval SONGCHARTER_GOLDEN=<scratchpad>/golden, plus SONGCHARTER_SCAN_CHART, SONGCHARTER_AUTOCHART=<scratchpad>/eval/tools/autochart and SONGCHARTER_ALLIN1_PYTHON=<scratchpad>/research/timing/venv2/bin/python. <scratchpad> is /tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad. Rebuilding it elsewhere: eval/README.md, 'Rebuilding the dev machine'.",
     "cost": "cold (a kept folder made, stems hard-linked): 474-1081 s a song, 80 min for the set, the guitar take most of it; warm: 44-76 s a song, 6.5 min for the set (CPU, 2 threads)"
   },
-  "in_flight": [
-    {
-      "order": "M4-05 ci",
-      "brief": "docs/work-orders/M4-05-ci.md",
-      "branch": "m4-05-ci",
-      "worktree": "<scratchpad>/wt/m4-05",
-      "stage": "building (from main at 5b9d4f0)",
-      "report": "<scratchpad>/briefs/m4-05.report.md",
-      "then": "sc-reviewer; CI is the inspection"
-    }
-  ],
+  "in_flight": [],
   "next": [
     "M4: review and merge M4-04 and M4-10; then M4-05 (CI end to end) and M4-06 (UI results, with M4-10's paste box); M4-07 (release); a dry run of .claude/workflows/full-review.js on a small diff, then the full review over v0.1; the advisor on the release candidate; M4-08 on the owner's 5070 in a fresh Ubuntu-26.04 distro with the friend's 16 GB .wslconfig, then the friend's PC (also M1a's Windows spike).",
     "From M5: the plan by the most capable model, as a fresh agent that reads only the repository, reviewed by a different model (docs/PIPELINE.md, Gates).",
@@ -137,7 +127,9 @@
     "M4-10: words in a script the aligner can't spell, before the first word it can, collect at that word's start (a text with no spelled word at all gets no lyrics and a warning).",
     "M4-06: the install into Songs on Windows (copy and renames on drvfs, the retries while OneDrive or antivirus holds a folder, a OneDrive-moved Documents, explorer.exe paths, the zip in Downloads) is tested with stand-ins only; M4-08 checks them ('Added at M4-06's merge').",
     "M4-06: a copy into Songs that stopped before song.ini and report.json lacks our marks, so its .tmp folder is left; whether Clone Hero lists dot-folders is unknown until M4-08.",
-    "M4-06 decision (the builder's, kept at review): a chart that failed its gate is never installed or exported; its Done screen still shows the preview."
+    "M4-06 decision (the builder's, kept at review): a chart that failed its gate is never installed or exported; its Done screen still shows the preview.",
+    "M4-05: an offline reinstall rebuilds songcharter's wheel from uv's cache; it passed minutes after the install, untested days later when uv's cached index has gone stale (nothing promises an offline reinstall).",
+    "M4-05: piped into `songcharter uninstall`, the answer's next line follows the [y/N] prompt on the same line (a terminal is unaffected)."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
   "how_work_is_run": "docs/PIPELINE.md. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices, /prompt-caching, /sub-agents, /settings",
