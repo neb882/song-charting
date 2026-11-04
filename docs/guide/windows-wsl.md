@@ -6,7 +6,8 @@ Ubuntu), so you set that up first, once.
 ## 1. Before you start
 
 - **Windows 11**, or Windows 10 version 2004 or later (Settings > System > About shows the version).
-- **About 20 GB free on C:**.
+- **About 20 GB free on C:**, and room for up to 8 GB more: when WSL runs short of memory during a chart, it keeps
+  some of it in a file on C: (its swap file), which can grow to 8 GB.
 - **The NVIDIA driver, 580 or newer**, from nvidia.com or the NVIDIA app. To check: open Command Prompt (Start menu,
   type `cmd`), type `nvidia-smi`, press Enter, and read "Driver Version".
 - **Virtualization on:** Task Manager (Ctrl+Shift+Esc) > Performance > CPU shows "Virtualization: Enabled". If it
@@ -57,7 +58,13 @@ page.
 ## 5. Chart a song
 
 - **Chart first, play after.** While a song charts, songcharter uses most of the PC's memory: on a 16 GB PC, Windows
-  has about 4 GB left for a few minutes. Don't run games then.
+  has about 4 GB left until the chart is done. Don't run games then.
+- **How long it takes:** with the default options, a 4-minute song takes about 10 to 15 minutes. Most of that is the
+  guitar: songcharter charts it 4 times over (4 "takes") and combines them into a better chart, and the page shows
+  which take it is on ("take 2 of 4"). For a quicker chart, type 1 in the "Guitar takes" box (in the options, under
+  Guitar) before you press "Chart it": then a 4-minute song takes about 4 to 6 minutes. These times are estimates.
+- **Keep the PC awake while a song charts:** a chart takes long enough for the PC to go to sleep. For the evening,
+  set its sleep to Never in Windows' power settings.
 - Drop the song file on the page (or use "Choose a file"), then press "Chart it".
 - **Lyrics, if you want them on screen:** before "Chart it", paste the song's words into the "Paste lyrics" box,
   one line for each sung line. songcharter times the words you paste to the singing; it never looks lyrics up. The
@@ -65,6 +72,8 @@ page.
 - When it is done, look at the preview, then press "Install into Clone Hero". The first time, it may ask where your
   Clone Hero Songs folder is.
 - In Clone Hero: Settings > General > Scan Songs.
+- **Before you play, close the songcharter window** (and any Ubuntu window). WSL keeps the memory it took while one
+  is open; once they are closed, WSL stops and Windows gets that memory back. That can take a minute.
 
 ## 6. If something goes wrong
 
