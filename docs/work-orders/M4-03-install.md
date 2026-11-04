@@ -45,6 +45,7 @@ Must not touch: `pipeline.py`, `cli.py`, `engines/*`, `wsl.py`, `device.py`, `ui
   runtime/runtime.json  runtime/state/install.done
   library/  uploads/  exports/  logs/  ui.json  doctor.json   (the UI's, M4-04 and M4-06)
 ~/.cache/uv/                           uv's cache (default; same ext4 volume, so the environments hardlink from it)
+                                       [the release gate moved it to runtime/uv-cache: ~/.cache/uv is the person's]
 ~/.cache/songcharter/                  the pipeline's cache, unchanged: work/, ac/, trash/, models/ (ADTOF, hf/)
 ~/.local/bin/songcharter               the launcher
 ```
@@ -134,7 +135,8 @@ Steps, each printing a header:
   about 15.9 GiB, which must give `memory=12GB`, not `11.9GB`.
 - **Test override:** `--windows-ram-gb N` (or `SONGCHARTER_WINDOWS_RAM_GB=N`) replaces the measured value. M4-08 part A
   uses it to write the friend's 16 GB `.wslconfig` on a larger PC, and the tests use it.
-- **The resulting WSL memory under 11 GB** (a PC under 16 GB): `runtime.json`'s `allin1_python` is null, so the
+- **The resulting WSL memory under 11 GB** (a PC under 16 GB; as built, one whose RAM rounds to 14 GB or less: 15
+  GB gives `memory=11GB`, 11.8 * 10^9 bytes, which keeps allin1): `runtime.json`'s `allin1_python` is null, so the
   sections use the librosa fallback, which holds no 7.8 GB model run. The install says so. Under 8 GB it refuses:
   "songcharter needs a PC with at least 12 GB of RAM".
 - `.wslconfig` is written with CRLF line ends, Windows' convention; WSL reads either [inference].
@@ -230,7 +232,8 @@ Steps:
   - `SONGCHARTER_HOME`, `SONGCHARTER_NODE`, `SONGCHARTER_AUTOCHART`, `SONGCHARTER_ALLIN1_PYTHON` (only when not
     null), `SONGCHARTER_SCAN_CHART`, `FFMPEG`, `HF_HOME`, `HF_HUB_DISABLE_SYMLINKS_WARNING=1`, `PYTHONUTF8=1`;
   - `PATH` with Node's folder first (assemble finds scan-chart's node with `which`);
-  - `HF_HUB_OFFLINE=1` and `SONGCHARTER_OFFLINE=1` when `models_complete` is true;
+  - `HF_HUB_OFFLINE=1` and `SONGCHARTER_OFFLINE=1` when `models_complete` is true [the release gate dropped
+    `SONGCHARTER_OFFLINE`, which kept the lyrics weights from their first-use download];
   - a variable the person already set wins (`setdefault`), except `PATH`.
 - **`launch.main(argv)`:**
   - reads `runtime.json`; when it is missing: exit 2, "songcharter is not installed: run the install line again";
@@ -243,7 +246,8 @@ Steps:
   - then asks once: "Also delete the downloads (Python packages, Node, autochart and its models: about N GB) and your
     song caches and library (M GB)? A reinstall reuses the downloads if you keep them. [y/N]".
     - **No** keeps `runtime/` (except `state/`), `~/.cache/uv` and `~/.cache/songcharter/models`, so a reinstall
-      downloads nothing;
+      downloads nothing [as built after the release gate: uv's cache is `runtime/uv-cache`, and a reinstall on the
+      guide's path downloads install.sh and the app's tarball, about 1 MB];
     - **Yes** deletes those and `~/.cache/songcharter`, `library/`, `uploads/` and `exports/`.
     - N and M are measured with `du` at the time.
   - It offers to restore the newest `.wslconfig.songcharter-*` backup, and never deletes `.wslconfig` itself.

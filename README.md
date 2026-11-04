@@ -42,7 +42,8 @@ songcharter chart song.mp3 --out "Songs/Artist - Title"
 - **Lyrics:** `--lyrics lyrics.txt` times the song's lyrics to its vocal stem and writes them into the chart, for
   Clone Hero's lyrics display. Paste them into a text file yourself, a line per phrase and a blank line between
   sections; songcharter never looks lyrics up. The aligner (`songcharter[lyrics]`, which the app includes) downloads
-  its weights (1.26 GB) on first use; without it the chart is made without lyrics, with a warning. The text goes
+  its weights (1.26 GB) on first use, the installed app's included (`SONGCHARTER_OFFLINE=1` forbids it); without
+  them the chart is made without lyrics, with a warning. The text goes
   into the chart and nowhere else: the reports count the words, they never hold them.
 - **The work files** (the decode, the stems, each engine's output) go to a per-user cache:
   `%LOCALAPPDATA%\songcharter` on Windows, `~/.cache/songcharter` elsewhere. The cache is pruned to 5 GB, and

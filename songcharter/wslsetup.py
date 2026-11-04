@@ -11,8 +11,10 @@ shortcut. install.sh runs it after the downloads, once Python can read Windows' 
       - memory under 12 GB: "Raise it to <target> GB? [Y/n]" (yes with --yes), and only memory is changed;
       - Windows' RAM unknown: nothing is written, and the person is told how to set it by hand;
       - a target under 8 GB (a PC under 12 GB), or WSL's memory left under 8 GB, is refused (exit 2);
-      - WSL's resulting memory under 11 GB (a PC under 16 GB): runtime.json's allin1_python is set to null, so the
-        sections use the librosa fallback, which holds no 7.8 GB model run.
+      - WSL's resulting memory under 11 GB (10^9 bytes): runtime.json's allin1_python is set to null, so the
+        sections use the librosa fallback, which holds no 7.8 GB model run. With the rounding, that is a PC whose
+        RAM rounds to 14 GB or less (memory=10GB, 10.7 * 10^9 bytes): one that rounds to 15 GB gets memory=11GB,
+        11.8 * 10^9 bytes, and keeps allin1.
     Sizes in .wslconfig are binary (12GB is 12 GiB, as WSL reads them); the 8 and 11 GB limits are device.py's, in
     10^9 bytes. `--windows-ram-gb N` ($SONGCHARTER_WINDOWS_RAM_GB) replaces the measured RAM (M4-08 writes a 16 GB
     PC's file on a larger PC; the tests).

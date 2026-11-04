@@ -82,7 +82,8 @@ Run as written; note each answer (A1–A16). About three hours.
 
 18. **Uninstall and reinstall:**
     - in the distro: `songcharter uninstall`, answer **No**, then paste the install line again;
-    - **A16:** time; did it download anything? Is there exactly one "songcharter" in the Start menu, the reinstall
+    - **A16:** time; did it download anything but install.sh and the app's tarball (about 1 MB)? Is there exactly
+      one "songcharter" in the Start menu, the reinstall
       having overwritten the shortcut, and does it start?
     - Then `wsl --unregister Ubuntu-26.04`.
 19. **The older-distro variant, install only:** `wsl --install -d Ubuntu-22.04`, make a user, paste the install
@@ -110,7 +111,8 @@ Run as written; note each answer (A1–A16). About three hours.
 - 409 → replace leaves one folder.
 - The offline run finishes; the fallback address works.
 - The song plays in Clone Hero after a rescan.
-- The reinstall downloads nothing and leaves one shortcut.
+- The reinstall downloads only install.sh and the app's tarball (about 1 MB: no Python package, Node or model) and
+  leaves one shortcut.
 - The 22.04 result is recorded (a failure there is a guide note, since the guide runs `wsl --update` first).
 - Every guide step was clear, or the unclear ones are listed for M4-07.
 
@@ -199,5 +201,22 @@ M4-07, the full review workflow, and the owner's and the friend's time.
 ## Added at M4-05's merge
 
 - The cpu lane's baseline from CI (ubuntu:26.04, GitHub's runner): install 2.8 GB; a 30 s clip charted in 47-74 s
-  (separate 13 s, bass 8 s, sections 7 s, guitar 15 s on run 1); a reinstall after No in 5-7 s, nothing downloaded.
+  (separate 13 s, bass 8 s, sections 7 s, guitar 15 s on run 1); a reinstall after No in 5-7 s, nothing downloaded
+  (from `--from`'s folder; the guide's line fetches install.sh and the app's tarball).
   Record the cu132 lane's equivalents on the 5070 against them.
+
+## Added at the release gate's fixes
+
+Each was tested with stand-ins only; only the real install shows them.
+- **Lyrics on the installed app:** the first song charted from the page with lyrics pasted downloads the aligner's
+  weights once (1.26 GB, no progress line meanwhile): its time, and "Lyrics: N words in M phrases" on the Done screen.
+  A second song with lyrics downloads nothing. CI only shows that the launcher's variables let the download start.
+- **The Done screen after a real chart on the GPU:** "Install into Clone Hero" and the zip are there at once, with no
+  reload (the process's exit, CUDA's teardown included, takes longer than the tests' stand-in).
+- **The header after the install's WSL restart** (step 6, before using the page): no "WSL has 7.8 GB of memory, under
+  11 GB: allin1 is left out" note, and no "restart WSL" note.
+- **The licence prompt** on the first install names the release's NOTICE.txt at its tag: does that link open?
+- **uv's cache** is `~/.local/share/songcharter/runtime/uv-cache`: its `du -sh`, and no `~/.cache/uv` made by the
+  install.
+- **A GPU out of reach** (nvidia-smi failing, as after some Windows updates) cannot be arranged at will: if it happens
+  on a first install, the warning at its end, and `songcharter doctor`'s note once the GPU answers.
