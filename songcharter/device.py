@@ -648,7 +648,9 @@ def summary(r: dict) -> list[str]:
              "autochart_cuda": "autochart's CUDA provider", "allin1": "allin1", "demucs": "demucs",
              "librosa": "librosa", "matplotlib": "matplotlib"}
     for key, c in comps.items():
-        if key == "autochart_cuda":
+        if key == "autochart_cuda" and not c.get("ok") and dev.get("chosen") != "cuda":
+            text = f"not needed: the guitar runs on the CPU ({dev.get('reason')})"   # its load error would read as one
+        elif key == "autochart_cuda":
             text = f"{'loads' if c.get('ok') else 'does not load'}: {c.get('detail')}"
         elif key == "allin1" and c.get("ok"):
             text = (f"ok, {c.get('package')} {c.get('version')}, CUDA {'runs' if c.get('cuda') else 'does not run'} "

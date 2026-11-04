@@ -408,3 +408,14 @@ def test_doctors_problems_still_install_and_a_changed_wslconfig_restarts_wsl(tmp
         "WSL restarts now so the new memory setting takes effect. Then start songcharter from the Start menu.")
     assert i.log("cmd.log")[-1] == "/d /c wsl.exe --shutdown"
     assert not (i.share / "runtime" / "state" / "restart-wsl").exists()
+
+
+@pytest.mark.parametrize("free_gb, ok", [(7, False), (9, True)])
+def test_the_cpu_lane_needs_8_gb_free(tmp_path, free_gb, ok):
+    """2.8 GB installed (M4-05's CI) and 5 GB of work folders: 7 GB free is refused, 9 GB installs."""
+    i = Install(tmp_path)
+    (i.fake / "bin" / "df").write_text(f"#!/bin/sh\nprintf 'Avail\\n{free_gb * 1024 ** 3}\\n'\n", encoding="utf-8")
+    p = i.run("--from", str(i.dist))
+    assert (p.returncode == 0) is ok, p.stdout + p.stderr
+    assert "lane cpu needs about 8 GB" in p.stdout
+    assert ("not enough free disk" in p.stdout + p.stderr) is not ok

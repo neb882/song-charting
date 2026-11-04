@@ -31,7 +31,7 @@ WSL_NVIDIA_SMI=/usr/lib/wsl/lib/nvidia-smi   # WSL's, from the Windows driver [d
 SMI_TIMEOUT_S=15                             # songcharter.device's: a slower nvidia-smi is a GPU out of reach
 GB=1000000000
 # free disk each lane needs, in GB: the downloads unpacked plus the work folders' 5 GB [decision; M4-05, M4-08 measure]
-need_gb() { case $1 in cpu) echo 6 ;; *) echo 15 ;; esac; }
+need_gb() { case $1 in cpu) echo 8 ;; *) echo 15 ;; esac; }   # cpu: 2.8 GB installed (M4-05's CI) and 5 GB of work folders
 # what each lane downloads, in GB: the Python packages, then the rest (Node, autochart and its models, the CUDA
 # provider on a GPU lane, the pipeline's models) [here: the locks' wheel sizes; M4-05 confirms]
 packages_gb() { case $1 in cpu) echo 0.45 ;; cu126) echo 3.9 ;; cu132) echo 3.2 ;; esac; }

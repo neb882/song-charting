@@ -450,3 +450,18 @@ def test_the_doctor_command(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(D, "report", bug)
     assert main(["doctor"]) == 3
     assert "KeyError: 'a bug'" in capsys.readouterr().err
+
+
+def test_doctor_says_the_cuda_provider_is_not_needed_when_the_guitar_runs_on_the_cpu():
+    """On the cpu lane (or with no GPU) the provider's load error is expected: doctor says it is not needed, so the
+    friend reads no error; with the GPU chosen, a provider that does not load is shown as it is."""
+    failed = {"ok": False, "detail": "libcurand.so.10: cannot open shared object file"}
+    r = {"songcharter": "0", "python": {"version": "3.13", "executable": "py"}, "torch": {}, "components":
+         {"autochart_cuda": failed}, "device": {"chosen": "cpu", "reason": "no NVIDIA GPU found"},
+         "guitar_device": "cpu", "guitar_reason": "no GPU"}
+    lines = D.summary(r)
+    assert "autochart's CUDA provider: not needed: the guitar runs on the CPU (no NVIDIA GPU found)" in lines
+    assert not any("does not load" in line for line in lines)
+    r["device"], r["guitar_device"] = {"chosen": "cuda", "reason": "a GPU"}, "cpu"
+    assert ("autochart's CUDA provider: does not load: libcurand.so.10: cannot open shared object file"
+            in D.summary(r))
