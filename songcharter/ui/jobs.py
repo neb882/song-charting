@@ -25,6 +25,10 @@
   * **Cancel:** proc.Tree.kill() (SIGTERM to the group, SIGKILL after 5 s), then the state `cancelled`, then the
     `.<name>.*.partial` folders beside the output (assemble's staging) are deleted. The work folder's caches stay, so
     the same song charts faster next time.
+  * **Lyrics** (M4-06, from M4-10): the page's pasted text (`lyrics`, None when the box is empty or blank) goes only
+    into the chart. The job writes it into a memory file (memfd, Linux), which the child gets as an open file and
+    reads as `--lyrics=/dev/fd/<n>`: nothing on disk, and the command line, the log, the job's options (`lyrics`:
+    whether given) and every event name the file, never a word of it.
 """
 from __future__ import annotations
 
@@ -48,7 +52,7 @@ from ..timed import DIFFICULTIES, INSTRUMENTS
 EVENT_PREFIX = "@@songcharter "   # cli.EVENT_PREFIX (not imported: the cli module is the child's)
 CLOSING = ("result", "error", "cancelled")   # the events after which a job's stream ends
 META_FLAGS = {"title": "--title", "artist": "--artist", "album": "--album", "year": "--year", "genre": "--genre"}
-OPTION_KEYS = (*META_FLAGS, "instruments", "levels", "solos", "takes", "device", "threads", "preview")
+OPTION_KEYS = (*META_FLAGS, "instruments", "levels", "solos", "takes", "device", "threads", "preview", "lyrics")
 TAIL_LINES = 8                     # the log's last lines in an error the job writes itself
 END_WAIT_S = 10.0                  # how long a new job waits for one whose closing event is out to exit
 
@@ -83,11 +87,14 @@ class ChartOptions:
     threads: int | None = None
     preview: bool = True
     metadata: Mapping[str, str] = field(default_factory=dict)   # title, artist, album, year, genre: the non-blank
+    lyrics: str | None = field(default=None, repr=False)       # the pasted text, None without: never shown, never kept
 
     def as_dict(self) -> dict:
+        """The options as the job's records show them: `lyrics` is whether some were given, never the text."""
         return {"instruments": list(self.instruments), "levels": list(self.levels),
                 "solos": self.solos if isinstance(self.solos, str) else list(self.solos), "takes": self.takes,
-                "device": self.device, "threads": self.threads, "preview": self.preview, **self.metadata}
+                "device": self.device, "threads": self.threads, "preview": self.preview,
+                "lyrics": self.lyrics is not None, **self.metadata}
 
 
 def _words(raw: Any, what: str) -> tuple[str, ...]:
@@ -125,12 +132,16 @@ def parse_options(raw: Any) -> ChartOptions:
         if any("," in x for x in solos):
             raise InputError("a solo section's name cannot hold a comma (the command line separates names with them)")
     preview = get.get("preview", True)
+    lyrics = get.get("lyrics")
+    if lyrics is not None and not isinstance(lyrics, str):
+        raise InputError(f"lyrics is text, not a {type(lyrics).__name__}")   # the type alone: never the words
     options = ChartOptions(instruments=instruments, levels=levels, solos=solos, takes=get.get("takes"),
                            device=get.get("device", "auto"), threads=get.get("threads"), preview=preview,
-                           metadata=meta)
+                           metadata=meta, lyrics=lyrics if lyrics and lyrics.strip() else None)
     pipeline_meta = {"name" if k == "title" else k: v for k, v in meta.items()}
     Options(instruments=options.instruments, takes=options.takes, device=options.device, threads=options.threads,
-            metadata=pipeline_meta, solos=options.solos, levels=options.levels, preview=options.preview).check()
+            metadata=pipeline_meta, solos=options.solos, levels=options.levels, preview=options.preview,
+            lyrics=options.lyrics).check()
     return options
 
 
@@ -158,6 +169,21 @@ def chart_command(song: Path, out: Path, options: ChartOptions, threads: int | N
         cmd.append("--no-preview")
     cmd += [f"{flag}={options.metadata[key]}" for key, flag in META_FLAGS.items() if key in options.metadata]
     return cmd
+
+
+def lyrics_file(text: str) -> int:
+    """A memory file (memfd: in memory, never on disk) holding `text` as UTF-8, at its start: its descriptor, which the
+    child reads as /dev/fd/<n>. Close-on-exec, so only a child it is passed to (pass_fds) gets it."""
+    fd = os.memfd_create("songcharter-lyrics", os.MFD_CLOEXEC)
+    try:
+        view = memoryview(text.encode("utf-8"))
+        while view:
+            view = view[os.write(fd, view):]
+        os.lseek(fd, 0, os.SEEK_SET)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
 
 
 def output_folder(home: Path, upload: Mapping[str, Any], options: ChartOptions) -> Path:
@@ -229,6 +255,11 @@ class Job:
                 out["events"] = list(self.events)
             return out
 
+    def result(self) -> dict | None:
+        """The `result` event (chart --events: ok, exit, folder, work, preview, summary), None before or without one."""
+        with self.cond:
+            return next((e for e in reversed(self.events) if e["event"] == "result"), None)
+
     def _closed(self) -> bool:
         return any(e["event"] in CLOSING for e in self.events)
 
@@ -279,13 +310,25 @@ class Jobs:
             song = Path(upload["path"])
             out = output_folder(self.home, upload, opts)
             cmd = [str(c) for c in self.command(song, out, opts, threads_for(opts, auto_device))]
-            job_id, log = self._log_path()
-            job = Job(job_id, dict(upload), opts, cmd, out, log)
-            env = {**(os.environ if self.env is None else self.env), "PYTHONUTF8": "1"}
-            out.parent.mkdir(parents=True, exist_ok=True)
-            with open(log, "w", encoding="utf-8") as f:
-                f.write(f"songcharter ui job {job_id}: {' '.join(cmd)}\n")
-            job.tree = proc.start(cmd, env, None, subprocess.PIPE, subprocess.STDOUT)
+            fd = lyrics_file(opts.lyrics) if opts.lyrics is not None else None
+            try:
+                if fd is not None:
+                    cmd.append(f"--lyrics=/dev/fd/{fd}")
+                job_id, log = self._log_path()
+                job = Job(job_id, dict(upload), opts, cmd, out, log)
+                env = {**(os.environ if self.env is None else self.env), "PYTHONUTF8": "1"}
+                out.parent.mkdir(parents=True, exist_ok=True)
+                with open(log, "w", encoding="utf-8") as f:
+                    f.write(f"songcharter ui job {job_id}: {' '.join(cmd)}\n")
+                if fd is None:
+                    job.tree = proc.start(cmd, env, None, subprocess.PIPE, subprocess.STDOUT)
+                else:   # proc.start's, with the lyrics' memory file passed on
+                    job.tree = proc.Tree(subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL,
+                                                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                                          start_new_session=True, pass_fds=(fd,)))
+            finally:
+                if fd is not None:
+                    os.close(fd)   # the child holds its own copy
             job.reader = threading.Thread(target=self._read, args=(job,), name=f"songcharter-job-{job_id}",
                                           daemon=True)
             self.current = job

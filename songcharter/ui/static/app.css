@@ -123,4 +123,31 @@ pre {
   font-size: 0.85rem;
   white-space: pre-wrap;
 }
+h3 { font-size: 1rem; margin: 1rem 0 0.4rem; }
+textarea {
+  display: block;
+  width: 100%;
+  font: inherit;
+  padding: 0.35rem 0.45rem;
+  margin-top: 0.15rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--page);
+  color: var(--ink);
+  resize: vertical;
+}
+code { font-size: 0.9em; }
+a { color: var(--accent); }
+a.button { color: #fff; text-decoration: none; }
+.overview { display: block; max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
+.pages { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 0.6rem 0; }
+.pages a { display: flex; flex-direction: column; align-items: center; text-decoration: none; }
+.thumb { width: 9.5rem; height: auto; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
+#flags { padding-left: 1.2rem; margin: 0.25rem 0; }
+#remarks { padding-left: 1.2rem; margin: 0.25rem 0; }
+#remarks:empty { display: none; }
+#install-text { white-space: pre-wrap; }
+.warn-text { color: var(--warn); }
+#export-box { border-top: 1px solid var(--line); margin-top: 1rem; }
+footer { max-width: 52rem; margin: 0 auto; padding: 0.5rem 1.25rem 2rem; }
 [hidden] { display: none !important; }

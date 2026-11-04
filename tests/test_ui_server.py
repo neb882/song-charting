@@ -170,7 +170,8 @@ def test_a_post_needs_the_header_and_our_origin(served):
                     {"X-Songcharter": "1", "Origin": "http://evil.example"},
                     {"X-Songcharter": "1", "Origin": f"https://127.0.0.1:{port}"},
                     {"X-Songcharter": "1", "Origin": "null"}):
-        for path in ("/api/upload", "/api/jobs", "/api/jobs/current/cancel"):
+        for path in ("/api/upload", "/api/jobs", "/api/jobs/current/cancel", "/api/jobs/current/export/zip",
+                     "/api/clonehero", "/api/jobs/current/install", "/api/open"):
             status, h, _ = call(port, "POST", path, b"{}", {"X-Filename": "a.mp3", **headers})
             assert status == 403 and secure(h), (path, headers)
     # a CORS preflight is refused, and nothing ever grants CORS
@@ -180,7 +181,9 @@ def test_a_post_needs_the_header_and_our_origin(served):
     assert status == 403 and secure(h)
     assert call(port, "PUT", "/api/jobs", b"{}", guarded(port))[0] == 405
     assert call(port, "POST", "/api/jobs/current/cancel", b"", guarded(port, "localhost"))[0] == 409   # passed
-    assert served.app.jobs.current is None
+    for path in ("/api/jobs/current/export/zip", "/api/jobs/current/install"):   # passed too: no chart yet
+        assert call(port, "POST", path, b"{}", guarded(port))[0] == 400
+    assert served.app.jobs.current is None and not (served.home / "exports").exists()
 
 
 def test_the_csp_is_on_every_response(served):
@@ -654,3 +657,344 @@ def test_stopping_the_server_kills_the_running_charts_whole_tree(tmp_path, how):
             if proc.alive(p):
                 os.kill(p, signal.SIGKILL)
         errors.close()
+
+
+# ------------------------------------------------------------------------------------------------ after the build (M4-06)
+
+# a chart's end as the page sees it: the song folder's four files, a work folder with pipeline.json and the preview's
+# pictures, and the result event; with --lyrics=/dev/fd/<n>, the text read as `songcharter chart` reads it (its
+# SHA-256 and word count reported: proof it came whole, with no word of it)
+BUILT = r'''
+import hashlib, json, sys
+from pathlib import Path
+mode, out, work = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
+given = next((a[len("--lyrics="):] for a in sys.argv if a.startswith("--lyrics=")), None)
+
+def ev(**e):
+    sys.stderr.write("@@songcharter " + json.dumps(e) + "\n")
+    sys.stderr.flush()
+
+ev(event="plan", stages=["decode", "lyrics", "assemble", "preview"])
+sha = None
+if given is not None:
+    from songcharter.cli import read_lyrics
+    text = read_lyrics(Path(given))
+    sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    ev(event="warning", text=f"lyrics: {len(text.split())} words from {given}")
+ok = mode != "fail"
+out.mkdir(parents=True, exist_ok=True)
+(out / "notes.chart").write_text("[Song]\n{\n}\n", encoding="utf-8")
+(out / "song.ini").write_text("[song]\nname = x\ncharter = songcharter\n", encoding="utf-8")
+(out / "song.ogg").write_bytes(b"OggS" + bytes(64))
+(out / "report.json").write_text(json.dumps({"gate": {"ok": ok}}), encoding="utf-8")
+preview = work / "preview"
+preview.mkdir(parents=True, exist_ok=True)
+for name in ("overview.png", "page_01.png", "page_02.png", "flags.txt", "page_1.png"):
+    (preview / name).write_bytes(b"\x89PNG\r\n\x1a\n" + name.encode())
+(work / "pipeline.json").write_text(json.dumps({
+    "preview": {"ok": True, "flags": ["guitar: gap 0:12.0-0:16.0 (2 measures)"], "remarks": ["no Hard level"]},
+    **({"lyrics": {"given": True, "added": True, "words": 5, "chart": {"phrases": 2},
+                   "confidence": {"median": 0.2, "low": True}}} if given else {})}), encoding="utf-8")
+ev(event="result", ok=ok, exit=0 if ok else 1, folder=str(out), work=str(work), preview=str(preview),
+   summary="gate: OK" if ok else "gate: FAILED", lyrics_sha256=sha)
+'''
+LYRICS = "zorp blen-dak\nquiv\n\n[Glorp]\nsmee plin\n"
+LYRIC_WORDS = ("zorp", "blen", "dak", "quiv", "Glorp", "smee", "plin")
+
+
+@pytest.fixture
+def finished(tmp_path, monkeypatch):
+    """A server whose jobs run BUILT (mode "ok" or "fail"), not in WSL, with an uploaded song; `run(options)` charts
+    it and waits for the end."""
+    from songcharter import wsl
+    monkeypatch.setattr(wsl, "is_wsl", lambda: False)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "doctor.json").write_text(json.dumps(DOCTOR), encoding="utf-8")
+    script = tmp_path / "built.py"
+    script.write_text(BUILT, encoding="utf-8")
+    root = Path(songcharter.__file__).resolve().parents[1]
+    ctx = SimpleNamespace(mode="ok", lines=[], home=home, work=tmp_path / "work", commands=[])
+
+    def command(song, out, options, threads):
+        return [sys.executable, str(script), ctx.mode, str(out), str(ctx.work)]
+
+    jobs = J.Jobs(home, command=command, env={**os.environ, "PYTHONPATH": str(root)})
+    app = S.App(home, jobs=jobs, log=S.Log(home / "ui.log", console=ctx.lines.append), report=lambda: DOCTOR)
+    servers = S.bind(app, [0])
+    ctx.app, ctx.port = app, servers[0].server_address[1]
+    status, ctx.upload = upload(ctx, song(tmp_path / "s.wav"), "Song.wav")
+    assert status == 200
+
+    def run(options=None, code=202):
+        status, _, body = call(ctx.port, "POST", "/api/jobs", json.dumps({"upload": ctx.upload["id"],
+                                                                         "options": options or {}}).encode(),
+                               guarded(ctx.port))
+        assert status == code, body
+        if code != 202:
+            return json.loads(body)
+        job = wait_state(ctx, "done")
+        ctx.commands.append(job.command)
+        return job
+
+    ctx.run = run
+    yield ctx
+    app.jobs.shutdown()
+    for s in servers:
+        s.shutdown()
+        s.server_close()
+
+
+def post(ctx, path, value=None):
+    status, headers, body = call(ctx.port, "POST", path, b"" if value is None else json.dumps(value).encode(),
+                                 guarded(ctx.port))
+    return status, json.loads(body) if body else None
+
+
+def get(ctx, path):
+    status, headers, body = call(ctx.port, "GET", path)
+    return status, headers, body
+
+
+def test_the_results_and_the_preview_by_exact_name_only(finished):
+    ctx = finished
+    for path in ("/api/jobs/current/results", "/api/jobs/current/preview/overview.png"):
+        assert get(ctx, path)[0] == 404   # no job yet
+    job = ctx.run()
+    status, _, body = get(ctx, "/api/jobs/current/results")
+    res = json.loads(body)
+    assert status == 200 and res["ok"] is True and res["installable"] is True and res["lyrics"] is None
+    assert res["name"] == job.out.name and res["folder"] == str(job.out)
+    base = "/api/jobs/current/preview/"
+    assert res["preview"] == {"overview": base + "overview.png", "pages": [base + "page_01.png", base + "page_02.png"],
+                              "flags": ["guitar: gap 0:12.0-0:16.0 (2 measures)"], "remarks": ["no Hard level"]}
+    for name in ("overview.png", "page_01.png", "page_02.png"):
+        status, headers, body = get(ctx, base + name + "?job=1")
+        assert status == 200 and headers["Content-Type"] == "image/png" and secure(headers)
+        assert body == b"\x89PNG\r\n\x1a\n" + name.encode()
+    for name in ("flags.txt", "page_1.png", "page_03.png", "overview.PNG", "overview.png.exe", "../pipeline.json",
+                 "..%2Fpipeline.json", "%2e%2e%2fpipeline.json", "", "preview/overview.png", "..\\overview.png",
+                 "overview.png%00", "/etc/passwd"):
+        assert get(ctx, base + name)[0] == 404, name
+
+
+def test_no_preview_says_why(finished, tmp_path):
+    ctx = finished
+    ctx.run({"preview": False})
+    pipeline = ctx.work / "pipeline.json"
+    for record, why in (({"ok": False, "skipped": "turned off"}, "it was turned off in the options"),
+                        ({"ok": False, "skipped": "ModuleNotFoundError: x"}, "it needs matplotlib and librosa"),
+                        ({"ok": False, "error": "ValueError: y"}, "it failed (ValueError: y)")):
+        pipeline.write_text(json.dumps({"preview": record}), encoding="utf-8")
+        (ctx.work / "preview" / "overview.png").unlink(missing_ok=True)
+        res = json.loads(get(ctx, "/api/jobs/current/results")[2])
+        assert res["preview"]["why"].startswith(why), res["preview"]
+
+
+def test_the_zip_export_and_its_download(finished):
+    ctx = finished
+    job = ctx.run({"artist": "Fixture Band", "title": "Wait... What (Live)"})
+    assert job.out.name == "Fixture Band - Wait... What (Live)"
+    status, answer = post(ctx, "/api/jobs/current/export/zip")
+    name = f"{job.out.name}.zip"
+    assert status == 200 and answer == {"url": "/api/exports/" + urllib.parse.quote(name, safe=""), "name": name,
+                                        "windows_path": None}
+    assert sorted(p.name for p in (ctx.home / "exports").iterdir()) == [name]
+    status, headers, body = get(ctx, answer["url"])
+    assert status == 200 and headers["Content-Type"] == "application/zip" and secure(headers)
+    assert headers["Content-Disposition"] == (f'attachment; filename="{name}"; '
+                                              f"filename*=UTF-8''{urllib.parse.quote(name, safe='')}")
+    import io
+    import zipfile
+    with zipfile.ZipFile(io.BytesIO(body)) as z:
+        assert sorted(z.namelist()) == sorted(f"{job.out.name}/{f}" for f in
+                                              ("notes.chart", "song.ini", "song.ogg", "report.json"))
+    (ctx.home / "ui.json").write_text("{}", encoding="utf-8")
+    (ctx.home / "exports" / ".x.zip.part").write_text("x")
+    (ctx.home / "exports" / "sub").mkdir()
+    (ctx.home / "exports" / "sub" / "y.zip").write_text("x")
+    for bad in ("missing.zip", "../ui.json", "..%2Fui.json", "%2e%2e%2fui.json", "..", "sub%2Fy.zip", "sub/y.zip",
+                "sub%5Cy.zip", ".x.zip.part", f"{urllib.parse.quote(name)}%00", urllib.parse.quote(job.out.name),
+                "", "%2Fetc%2Fpasswd.zip"):
+        assert get(ctx, "/api/exports/" + bad)[0] == 404, bad
+
+
+def test_clone_hero_through_the_api(finished, tmp_path, monkeypatch):
+    """No folder known; a missing one refused (400); one saved; install (200), again (409, ours), a replace (200, the
+    older chart in replaced/). The install route takes no path from the page."""
+    ctx = finished
+    job = ctx.run()
+    status, _, body = get(ctx, "/api/clonehero")
+    assert status == 200 and json.loads(body) == {"folder": None, "windows_path": None, "source": "not found",
+                                                  "under_onedrive": None, "guess": None}
+    status, answer = post(ctx, "/api/jobs/current/install", {"replace": False})
+    assert status == 400 and "no Clone Hero Songs folder is known" in answer["error"]
+    songs = tmp_path / "Jörg's Söngs" / "Clone Hero" / "Songs"
+    for value, why in (({"folder": str(songs)}, "does not exist"), ({"folder": 7}, "as text"), ({}, "as text"),
+                       ({"folder": "Songs"}, "not a whole path")):
+        status, answer = post(ctx, "/api/clonehero", value)
+        assert status == 400 and why in answer["error"], value
+    assert not (ctx.home / "ui.json").exists()
+    songs.mkdir(parents=True)
+    status, answer = post(ctx, "/api/clonehero", {"folder": str(songs)})
+    assert status == 200 and answer["folder"] == str(songs) and answer["source"] == "saved"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    status, answer = post(ctx, "/api/jobs/current/install", {"replace": False, "folder": str(elsewhere),
+                                                              "path": str(elsewhere)})
+    target = songs / job.out.name
+    assert status == 200 and answer == {"installed": str(target), "windows_path": None, "replaced": None, "note": None}
+    assert sorted(p.name for p in target.iterdir()) == ["notes.chart", "report.json", "song.ini", "song.ogg"]
+    assert list(elsewhere.iterdir()) == []
+    status, answer = post(ctx, "/api/jobs/current/install", {"replace": False})
+    assert status == 409 and answer["exists"] is True and answer["ours"] is True and answer["folder"] == str(target)
+    status, answer = post(ctx, "/api/jobs/current/install", {"replace": True})
+    assert status == 200 and answer["installed"] == str(target)
+    replaced = Path(answer["replaced"])
+    assert replaced.parent.parent == ctx.home / "replaced" and (replaced / "report.json").is_file()
+    assert sorted(p.name for p in songs.iterdir()) == [job.out.name]
+    # "Open folder": only the installed song's folder and the exports folder; outside WSL nothing opens
+    opened = []
+    from songcharter import wsl
+    monkeypatch.setattr(wsl, "open_url", opened.append)
+    assert post(ctx, "/api/open", {"what": "song"}) == (200, {"opened": False, "path": str(target),
+                                                              "windows_path": None})
+    status, answer = post(ctx, "/api/open", {"what": "exports"})
+    assert status == 200 and answer["path"] == str(ctx.home / "exports") and opened == []
+    for what in ("/etc", str(target), None, "replaced"):
+        assert post(ctx, "/api/open", {"what": what})[0] == 400, what
+
+
+def test_open_folder_in_wsl_runs_explorer_on_the_windows_path(finished, tmp_path, monkeypatch):
+    from songcharter import wsl
+    ctx = finished
+    ctx.run()
+    assert post(ctx, "/api/open", {"what": "song"})[0] == 400   # nothing installed from this page yet
+    songs = tmp_path / "mnt" / "c" / "Songs"
+    songs.mkdir(parents=True)
+    assert post(ctx, "/api/clonehero", {"folder": str(songs)})[0] == 200
+    assert post(ctx, "/api/jobs/current/install", {})[0] == 200
+    monkeypatch.setattr(wsl, "MNT_C", tmp_path / "mnt" / "c")
+    monkeypatch.setattr(wsl, "is_wsl", lambda: True)
+    monkeypatch.setattr(wsl, "distro", lambda: "Ubuntu")
+    opened = []
+    monkeypatch.setattr(wsl, "open_url", lambda target: opened.append(target) or True)
+    status, answer = post(ctx, "/api/open", {"what": "song"})
+    name = ctx.app.installed.name
+    assert status == 200 and answer["opened"] is True and opened == [f"C:\\Songs\\{name}"]
+    status, answer = post(ctx, "/api/open", {"what": "exports"})
+    assert answer["windows_path"] == "\\\\wsl.localhost\\Ubuntu" + str(ctx.home / "exports").replace("/", "\\")
+    assert opened[-1] == answer["windows_path"]
+
+
+def test_a_blocked_install_answers_403_with_the_zip(finished, tmp_path, monkeypatch):
+    from songcharter import clonehero, wsl
+    ctx = finished
+    job = ctx.run()
+    songs = tmp_path / "OneDrive" / "Documents" / "Clone Hero" / "Songs"
+    songs.mkdir(parents=True)
+    assert post(ctx, "/api/clonehero", {"folder": str(songs)})[0] == 200
+
+    def refused(src, dst):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(clonehero, "copy_contents", refused)
+    monkeypatch.setattr(wsl, "onedrive_roots", lambda: [tmp_path / "OneDrive"])
+    status, answer = post(ctx, "/api/jobs/current/install", {"replace": False})
+    name = f"{job.out.name}.zip"
+    assert status == 403 and answer["blocked"] is True and answer["under_onedrive"] is True
+    assert answer["zip_url"] == "/api/exports/" + urllib.parse.quote(name, safe="")
+    assert "Permission denied" in answer["why"] and list(songs.iterdir()) == []
+    assert get(ctx, answer["zip_url"])[0] == 200
+    # a folder of that name that songcharter did not make: 409, and a replace of it too
+    monkeypatch.undo()
+    monkeypatch.setattr(wsl, "is_wsl", lambda: False)
+    other = songs / job.out.name
+    other.mkdir()
+    (other / "song.ini").write_text("[song]\ncharter = Someone\n", encoding="utf-8")
+    for replace in (False, True):
+        status, answer = post(ctx, "/api/jobs/current/install", {"replace": replace})
+        assert status == 409 and answer["ours"] is False, replace
+    assert sorted(p.name for p in other.iterdir()) == ["song.ini"]
+
+
+def test_a_chart_that_failed_its_gate_is_not_exported_or_installed(finished, tmp_path):
+    ctx = finished
+    ctx.mode = "fail"
+    ctx.run()
+    res = json.loads(get(ctx, "/api/jobs/current/results")[2])
+    assert res["ok"] is False and res["installable"] is False and res["preview"]["overview"]
+    songs = tmp_path / "Songs"
+    songs.mkdir()
+    assert post(ctx, "/api/clonehero", {"folder": str(songs)})[0] == 200
+    for path in ("/api/jobs/current/export/zip", "/api/jobs/current/install"):
+        status, answer = post(ctx, path, {})
+        assert status == 400 and "did not pass its check" in answer["error"], path
+    assert list(songs.iterdir()) == [] and not (ctx.home / "exports").exists()
+
+
+def test_the_diagnostics_download(finished):
+    from songcharter import diagnostics
+    ctx = finished
+    ctx.run()
+    status, headers, body = get(ctx, "/api/diagnostics")
+    assert status == 200 and headers["Content-Type"] == "application/zip" and secure(headers)
+    assert headers["Content-Disposition"].startswith('attachment; filename="songcharter-diagnostics-')
+    import io
+    import zipfile
+    with zipfile.ZipFile(io.BytesIO(body)) as z:
+        names = z.namelist()
+        assert {"MANIFEST.txt", "doctor.json", "doctor-now.json", "clonehero.json"} <= set(names)
+        assert json.loads(z.read("doctor-now.json")) == DOCTOR
+        assert any(n.startswith("logs/job-") for n in names)
+        for n in names:
+            assert diagnostics.refused(n, z.read(n)) is None, n
+
+
+def _memfds() -> list[str]:
+    out = []
+    for fd in os.listdir("/proc/self/fd"):
+        try:
+            out.append(os.readlink(f"/proc/self/fd/{fd}"))
+        except OSError:
+            pass
+    return [x for x in out if "songcharter-lyrics" in x]
+
+
+def test_pasted_lyrics_go_only_into_the_chart(finished):
+    """The box's text reaches the chart whole (the child reads it as `songcharter chart --lyrics` does), and no word of
+    it is in the command line, a log, an event, a record, an answer, ui.json or the diagnostics bundle."""
+    import hashlib
+    ctx = finished
+    job = ctx.run({"lyrics": LYRICS})
+    result = job.result()
+    assert result["lyrics_sha256"] == hashlib.sha256(LYRICS.encode("utf-8")).hexdigest()
+    assert job.options.lyrics == LYRICS and "lyrics=" not in repr(job.options) and LYRICS not in repr(job)
+    flag = [a for a in job.command if a.startswith("--lyrics=")]
+    assert len(flag) == 1 and flag[0].startswith("--lyrics=/dev/fd/")
+    assert _memfds() == []   # the server closed its copy of the memory file
+    res = json.loads(get(ctx, "/api/jobs/current/results")[2])
+    assert res["lyrics"] == {"given": True, "added": True, "words": 5, "phrases": 2, "why": None, "low": True}
+    texts = [get(ctx, p)[2] for p in ("/api/jobs/current", "/api/status", "/api/jobs/current/results")]
+    snap = json.loads(texts[0])
+    assert snap["options"]["lyrics"] is True and any(e["event"] == "warning" and "6 words from /dev/fd/" in e["text"]
+                                                     for e in snap["events"])
+    texts.append(get(ctx, "/api/diagnostics")[2])
+    import io
+    import zipfile
+    with zipfile.ZipFile(io.BytesIO(texts[-1])) as z:
+        texts += [z.read(n) for n in z.namelist()]
+    texts += [p.read_bytes() for p in ctx.home.rglob("*") if p.is_file() and p.suffix != ".zip"]
+    texts.append("\n".join(ctx.lines).encode())
+    texts.append(json.dumps(job.events).encode())
+    for data in texts:
+        assert not any(w.encode() in data for w in LYRIC_WORDS), data[:300]
+    assert (ctx.home / "ui.log").is_file() and list((ctx.home / "logs").glob("job-*.log"))
+    # blank is none; a text with no word, or not text, is refused without quoting it
+    job = ctx.run({"lyrics": "  \n\t\n"})
+    assert job.options.lyrics is None and not any(a.startswith("--lyrics") for a in job.command)
+    assert json.loads(get(ctx, "/api/jobs/current")[2])["options"]["lyrics"] is False
+    for value, why in (("[Glorp]\n\n", "the lyrics hold no word to time"), (["zorp blen"], "lyrics is text, not a list"),
+                       ({"zorp": 1}, "lyrics is text, not a dict")):
+        answer = ctx.run({"lyrics": value}, code=400)
+        assert answer["error"] == why and not any(w in answer["error"] for w in LYRIC_WORDS)

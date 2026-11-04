@@ -1,4 +1,5 @@
-// songcharter's page (M4-04): drop a song, choose the options, follow the chart, cancel it. No framework, no build
+// songcharter's page (M4-04, M4-06): drop a song, choose the options (the lyrics too), follow the chart, cancel it;
+// then the preview, the zip, the install into Clone Hero, and the diagnostics in the footer. No framework, no build
 // step. Every request sends X-Songcharter: 1 (the server's guard for anything but a GET). The job's events come over
 // a streamed fetch of /api/jobs/current/events (Server-Sent Events), which can send that header too, and which
 // resumes after the last event it saw when the connection drops; a reload reattaches to the current job.
@@ -8,12 +9,12 @@ const HEADER = { "X-Songcharter": "1" };
 const CLOSING = new Set(["result", "error", "cancelled"]);
 const LABELS = {
   decode: "Read the song", separate: "Separate the instruments", drums: "Drums", bass: "Bass",
-  sections: "Sections", guitar: "Guitar", assemble: "Build and check the chart", preview: "Preview",
+  sections: "Sections", lyrics: "Lyrics", guitar: "Guitar", assemble: "Build and check the chart", preview: "Preview",
 };
 const DISMISSED = "songcharter.dismissed";   // sessionStorage: the finished job "Chart another song" put away
 
 const $ = (id) => document.getElementById(id);
-const state = { status: null, upload: null, job: null, stages: {}, offset: 0, ticker: null, follow: 0 };
+const state = { status: null, upload: null, job: null, stages: {}, offset: 0, ticker: null, follow: 0, ch: null };
 
 function show(screen) {
   for (const id of ["drop-screen", "options-screen", "progress-screen", "done-screen"]) $(id).hidden = id !== screen;
@@ -172,6 +173,8 @@ function readOptions() {
   if (takes) options.takes = Number(takes);
   options.device = f.device.value;
   options.preview = f.preview.checked;
+  const lyrics = f.lyrics.value;   // as pasted; the server keeps it out of every record
+  if (lyrics.trim()) options.lyrics = lyrics;
   return options;
 }
 
@@ -289,6 +292,7 @@ function handle(ev) {
       finish(ev.ok ? "Ready" : "The check failed",
              ev.ok ? `The song folder is in ${ev.folder}` :
                `The build did not pass the check. It is in ${ev.folder} for a look.`, ev.summary);
+      loadResults();
       return true;
     case "error":
       stopRunningRows("stopped");
@@ -305,6 +309,7 @@ function handle(ev) {
 }
 
 function finish(title, message, summary) {
+  $("results").hidden = true;
   clearInterval(state.ticker);
   state.ticker = null;
   $("cancel").hidden = true;
@@ -390,6 +395,190 @@ function again() {
   show("drop-screen");
 }
 
+// ------------------------------------------------------------------------------------------------ the Done screen
+
+async function loadResults() {
+  let r;
+  try { r = await api("GET", "/api/jobs/current/results"); } catch (e) { return; }
+  if (r.status !== 200) return;
+  const res = r.data;
+  renderLyrics(res.lyrics);
+  renderPreview(res.preview, res.job);
+  $("export-box").hidden = !res.installable;
+  text($("export-msg"), "").hidden = true;
+  $("open-exports").hidden = true;
+  $("results").hidden = false;
+  if (res.installable) loadCloneHero();
+}
+
+function renderLyrics(ly) {
+  const line = $("lyrics-line");
+  line.hidden = !ly;
+  $("lyrics-low").hidden = !(ly && ly.added && ly.low);
+  if (!ly) return;
+  text(line, ly.added ? `Lyrics: ${ly.words} words in ${ly.phrases} phrases` : `Lyrics not added: ${ly.why || "no reason given"}`);
+}
+
+function thumb(url, label, cls) {
+  const a = make("a");
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noopener";
+  const img = make("img", cls);
+  img.src = url;
+  img.alt = label;
+  a.append(img, make("span", "small", label));
+  return a;
+}
+
+function renderPreview(pv, job) {
+  const has = !!(pv && pv.overview);
+  $("preview").hidden = !has;
+  $("no-preview").hidden = has;
+  if (!has) {
+    text($("no-preview"), `No preview: ${(pv && pv.why) || "no reason given"}`);
+    return;
+  }
+  const v = `?job=${encodeURIComponent(job)}`;   // a new chart's pictures, not the browser's copy of the last one's
+  $("overview").src = pv.overview + v;
+  $("overview-link").href = pv.overview + v;
+  $("pages").replaceChildren(...pv.pages.map((u, i) => thumb(u + v, `Page ${i + 1}`, "thumb")));
+  const flags = pv.flags.length ? pv.flags : ["Nothing flagged."];
+  $("flags").replaceChildren(...flags.map((f) => make("li", null, f)));
+  $("remarks").replaceChildren(...pv.remarks.map((f) => make("li", null, f)));
+}
+
+function installMessage(message, opts) {
+  opts = opts || {};
+  $("install-msg").hidden = !message;
+  text($("install-text"), message);
+  $("install-text").className = opts.error ? "error" : "";
+  $("replace").hidden = !opts.replace;
+  $("open-song").hidden = !opts.open;
+  text($("open-msg"), "").hidden = true;
+  const zip = $("blocked-zip");
+  zip.hidden = !opts.zip;
+  if (opts.zip) zip.href = opts.zip;
+  else zip.removeAttribute("href");
+}
+
+async function loadCloneHero() {
+  installMessage("");
+  let r;
+  try { r = await api("GET", "/api/clonehero"); } catch (e) { return; }
+  state.ch = r.data;
+  renderCloneHero(false);
+}
+
+function renderCloneHero(editing) {
+  const ch = state.ch || {};
+  const known = !!ch.folder;
+  const form = $("ch-form");
+  form.hidden = known && !editing;
+  $("install").hidden = !known || editing;
+  $("ch-change").hidden = !known || editing;
+  text($("ch-error"), "").hidden = true;
+  if (known) {
+    const where = ch.windows_path || ch.folder;
+    text($("ch-where"), `Into ${where}` + (ch.source === "documents" ? " (found in your Documents)" : ""));
+  } else {
+    text($("ch-where"), "songcharter did not find your Clone Hero Songs folder: give it below.");
+  }
+  if (form.hidden === false) form.elements.folder.value = ch.windows_path || ch.folder || ch.guess || "";
+}
+
+async function saveFolder(e) {
+  e.preventDefault();
+  const err = $("ch-error");
+  err.hidden = true;
+  $("ch-save").disabled = true;
+  try {
+    const r = await api("POST", "/api/clonehero", { folder: $("ch-form").elements.folder.value });
+    if (r.status === 200) {
+      state.ch = r.data;
+      renderCloneHero(false);
+    } else {
+      text(err, r.data.error || `That folder could not be used (${r.status}).`).hidden = false;
+    }
+  } catch (x) {
+    text(err, "songcharter does not answer: is it still running?").hidden = false;
+  } finally {
+    $("ch-save").disabled = false;
+  }
+}
+
+async function install(replace) {
+  installMessage("");
+  $("install").disabled = true;
+  $("replace").disabled = true;
+  try {
+    const r = await api("POST", "/api/jobs/current/install", { replace });
+    const d = r.data;
+    if (r.status === 200) {
+      installMessage("Done. In Clone Hero, open Settings > General and press Scan Songs." + (d.note ? `\n(${d.note})` : ""),
+                     { open: true });
+    } else if (r.status === 409 && d.exists && d.ours) {
+      installMessage(`This song is in Clone Hero already (${d.windows_path || d.folder}), from an earlier chart. Replace the older chart?`,
+                     { replace: true });
+    } else if (r.status === 409 && d.exists) {
+      installMessage(`A folder named like this song is in Clone Hero already (${d.windows_path || d.folder}), and songcharter did not make it, so it stays as it is. Rename or move it in Windows first, or save the zip.`,
+                     { error: true });
+    } else if (r.status === 403 && d.blocked) {
+      installMessage("Windows did not let songcharter finish writing into that folder. Security software, or OneDrive syncing it, can do that.\n" +
+                     "Try again in a moment, or save the zip and extract it there yourself." +
+                     (d.under_onedrive ? "\nYour Songs folder is inside OneDrive." : ""), { error: true, zip: d.zip_url });
+    } else {
+      installMessage(d.error || `It could not be installed (${r.status}).`, { error: true });
+    }
+  } catch (x) {
+    installMessage("songcharter does not answer: is it still running?", { error: true });
+  } finally {
+    $("install").disabled = false;
+    $("replace").disabled = false;
+  }
+}
+
+function download(url, name) {
+  const a = make("a");
+  a.href = url;
+  a.download = name || "";
+  document.body.append(a);
+  a.click();
+  a.remove();
+}
+
+async function exportZip() {
+  const msg = $("export-msg");
+  $("zip").disabled = true;
+  try {
+    const r = await api("POST", "/api/jobs/current/export/zip");
+    if (r.status === 200) {
+      download(r.data.url, r.data.name);
+      text(msg, `The zip is ${r.data.name}: your browser saves it, into Downloads unless you chose another folder.`).hidden = false;
+      $("open-exports").hidden = !r.data.windows_path;
+    } else {
+      text(msg, r.data.error || `The zip could not be made (${r.status}).`).hidden = false;
+    }
+  } catch (x) {
+    text(msg, "songcharter does not answer: is it still running?").hidden = false;
+  } finally {
+    $("zip").disabled = false;
+  }
+}
+
+async function openFolder(what, where) {
+  try {
+    const r = await api("POST", "/api/open", { what });
+    if (r.status === 200 && !r.data.opened) {
+      text(where, `Open it yourself: ${r.data.windows_path || r.data.path}`).hidden = false;
+    } else if (r.status !== 200) {
+      text(where, r.data.error || `It could not be opened (${r.status}).`).hidden = false;
+    }
+  } catch (x) {
+    text(where, "songcharter does not answer: is it still running?").hidden = false;
+  }
+}
+
 // ------------------------------------------------------------------------------------------------ start
 
 async function start() {
@@ -399,6 +588,13 @@ async function start() {
   $("other-song").addEventListener("click", again);
   $("cancel").addEventListener("click", cancel);
   $("again").addEventListener("click", again);
+  $("ch-form").addEventListener("submit", saveFolder);
+  $("ch-change").addEventListener("click", () => renderCloneHero(true));
+  $("install").addEventListener("click", () => install(false));
+  $("replace").addEventListener("click", () => install(true));
+  $("zip").addEventListener("click", exportZip);
+  $("open-song").addEventListener("click", () => openFolder("song", $("open-msg")));
+  $("open-exports").addEventListener("click", () => openFolder("exports", $("export-msg")));
   show("drop-screen");
   let st;
   try {
