@@ -10,4 +10,6 @@ def private_cache(tmp_path_factory):
     with pytest.MonkeyPatch.context() as mp:
         path = tmp_path_factory.mktemp("user-cache")
         mp.setenv("SONGCHARTER_CACHE", str(path))
+        # and a heavy-job lock of the session's own (tools/heavy.sh), so no test waits for a real job on the machine
+        mp.setenv("SONGCHARTER_HEAVY_LOCK", str(tmp_path_factory.mktemp("heavy") / "heavy.lock"))
         yield path

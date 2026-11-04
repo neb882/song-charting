@@ -516,6 +516,32 @@ def test_lyrics_go_into_the_chart_and_nowhere_else(song, tmp_path, monkeypatch):
     assert report2["lyrics"]["cached"] is True and (again.folder / "notes.chart").read_text(encoding="utf-8") == text
 
 
+def test_the_events_stream_holds_no_words(song, tmp_path, monkeypatch, capsys):
+    """The UI's events (chart(events=), `chart --events`): the lyrics stage's start, end and warnings, never a word,
+    whether the lyrics are added or the aligner fails with a word in its message."""
+    monkeypatch.setenv("SONGCHARTER_CACHE", str(tmp_path / "cache"))
+    for k, engines in enumerate((with_lyrics()(), with_lyrics(raises=RuntimeError("zorp blen could not be aligned"))())):
+        seen: list[dict] = []
+        result = chart(song / "song.flac", tmp_path / f"ev{k}", Options(takes=1, lyrics=TEXT, preview=False),
+                       engines=engines, log=lambda line: None, sampler=None, events=seen.append)
+        assert result.ok
+        stages = [e for e in seen if e.get("stage") == "lyrics"]
+        assert [e["event"] for e in stages] == ["stage_start", "stage_end"]
+        assert ("lyrics" in next(e for e in seen if e["event"] == "plan")["stages"])
+        if k == 1:
+            assert {"event": "warning", "text": "lyrics: not added (the aligner failed: RuntimeError)"} in seen
+        raw = json.dumps(seen, ensure_ascii=False)
+        assert not any(w in raw for w in WORDS + ("zorp",)), k
+    # the command line's stream too
+    (tmp_path / "l.txt").write_text(TEXT, encoding="utf-8")
+    monkeypatch.setattr("songcharter.pipeline.Engines", with_lyrics())
+    code = main(["chart", str(song / "song.flac"), "--out", str(tmp_path / "cli-ev"), "--lyrics", str(tmp_path / "l.txt"),
+                 "--no-preview", "--takes", "1", "--events"])
+    out = capsys.readouterr()
+    assert code == 0 and "@@songcharter " in out.err and '"stage": "lyrics"' in out.err
+    assert not any(w in out.err or w in out.out for w in WORDS)
+
+
 def test_pipeline_json_holds_no_words(song, tmp_path, monkeypatch):
     """pipeline.json, whatever happens: added, missing aligner, unreachable weights, an aligner that fails with a
     word in its message."""

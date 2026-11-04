@@ -170,3 +170,11 @@ M4-07, the full review workflow, and the owner's and the friend's time.
 - **Other software with kernel drivers:** anti-cheat drivers and other GPU vendors' utilities are common on gaming PCs.
   If WSL2's virtualization does not install or start, record what `wsl` says; if the PC has a second graphics adapter,
   check that doctor names the NVIDIA GPU and that CUDA uses it.
+
+## Added at M4-04's merge
+
+- **The page from Windows:** check the self-check (`curl.exe` from WSL) and that the page opens in the Windows
+  browser, both tested only with stand-ins. Record WSL's NAT address: the fallback assumes it is inside
+  172.16.0.0/12 and stops otherwise. Under `networkingMode=mirrored`, the server must stop rather than listen on
+  the PC's LAN address; check that it does, and that nothing listens on a non-loopback address (`ss -ltn`).
+- `explorer.exe` and the shortcut's `ui --from-shortcut` are likewise tested only with stand-ins.

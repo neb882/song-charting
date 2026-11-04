@@ -110,8 +110,8 @@ def _run(argv: list[str]) -> int:
         print("songcharter is not installed: run the install line again", file=sys.stderr)
         return 2
     os.environ.update(environment(runtime))
-    if not argv:   # the page; the director makes this ["ui"] when M4-04 merges (M4-00, section 5)
-        argv = ["doctor", "--quick"]
+    if not argv:   # the page (M4-04)
+        argv = ["ui"]
     return _cli(argv)
 
 

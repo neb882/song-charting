@@ -58,7 +58,7 @@ def test_main_runs_the_command_line_with_the_installs_environment(home, monkeypa
     monkeypatch.delenv("PYTHONUTF8", raising=False)
     assert launch.main(["chart", "x.mp3", "--out", "o"]) == 0
     assert calls == [(["chart", "x.mp3", "--out", "o"], str(home))] and os.environ["PYTHONUTF8"] == "1"
-    assert launch.main([]) == 0 and calls[-1][0] == ["doctor", "--quick"]   # ["ui"] once M4-04 merges
+    assert launch.main([]) == 0 and calls[-1][0] == ["ui"]   # no arguments: the page
     (home / "runtime" / "runtime.json").unlink()
     assert launch.main(["doctor"]) == 2
     assert capsys.readouterr().err == "songcharter is not installed: run the install line again\n"

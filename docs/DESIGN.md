@@ -220,6 +220,8 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | `takes.py` | `splice`: a part's Expert from several runs of its source, chosen per section by the takes' agreement (§2.7, Several takes); assemble's part key `takes`. |
 | `assemble.py` | One JSON config to a gated song folder: decode, stem-lag check, grid with a second stem (§2.3), parts imported, offset-corrected and quantized, edges trimmed (§2.8), every taken level clipped 1 ms inside song.ogg's end (`clip_to_audio`, §2.13), sections, phrases, reductions, ratings (§2.12), `build_song_folder` into a staging folder, then the gate with scan-chart 8.0.1 itself (§2.13) and `report.json`. A build the gate fails goes to `<output>.failed`. `check_output` (the output folder and its `.failed` hold only what a build writes) also runs in the pipeline before any audio work. |
 | `cli.py` | `songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums] [--levels expert\|all\|LIST] [--solos labels\|stems\|off\|"NAME,NAME"] [--takes N] [--device auto\|cpu\|cuda] [--threads N] [--no-preview] [--lyrics FILE] [--title\|--artist\|--album\|--year\|--genre TEXT]` (pipeline.py; the work folder defaults to the song's folder in the per-user cache, `cache.py`, and `--work DIR` puts it anywhere, with autochart's scratch inside it as before) and `songcharter assemble <config.json> [--out DIR]`. Both: exit 0: the gate passed; 1: it failed (the build is in `<output>.failed`); 2: a bad config, input, option or tool (a missing component named with its fix), a failing component, or song.ogg out of sync (nothing written): an `errors.SongcharterError` or an `OSError`, one line; 3: any other exception, a bug (traceback printed, and kept in `pipeline.json` for `chart`); 130: interrupted before the build was in place (for `chart`, a Ctrl+C during the preview or the pruning after the build stops only that stage, with a warning, and the exit status is the gate's). `chart` prints a line on stderr when each stage starts and ends, with its wall time, and the build summary and stage times on stdout. |
+| `ui/` (`server.py`, `jobs.py`, `static/`) | `songcharter ui` (M4-04, §4.5): a standard-library server on 127.0.0.1 with its guards (the Hosts 127.0.0.1 and localhost, `X-Songcharter: 1` and a same-origin `Origin` on every POST, uploads by name, size and type), a vanilla-JS page, and one job at a time: `songcharter chart --events` in a process group of its own, its events replayed over SSE, cancel killing the group. Under WSL it checks the page from Windows (`curl.exe`) and falls back only to WSL's NAT address (the default route's source, inside 172.16.0.0/12, never under mirrored or other networking modes); else it stops with exit 2. Stopping the server (SIGTERM, SIGHUP, the window closing) kills a running job. |
+| `proc.py` | `Tree`: a child in a session and process group of its own, killed whole (SIGTERM, then SIGKILL after 1 s for any member left, waiting until the group is empty). |
 | tests | 479 tests on branch `pipeline-defaults` (476 pass and 3 skip in its worktree: the allin1 test without `$SONGCHARTER_ALLIN1_PYTHON`, and test_package's two scan-chart tests, which look for `tools/scan-chart/node_modules` in the checkout itself and pass with it [here]); `tests/conftest.py` points `$SONGCHARTER_CACHE` at a temporary folder for the whole session, so no test writes to the real per-user cache. Before this branch (`main` at 7172d80), 428 tests: tempo 8, chart 5, package 6, beatgrid 26, importers 21, quantize 45, reduce 113, starpower 25, sections 16, separate 7, takes 11, assemble and the CLI 42, preview 22, the four engines (autochart 6, ADTOF 15, bass 14, sections 29) and the pipeline (17, with stand-ins for the heavy stages, which check the exact arrays they get, and the CLI end to end on a synthetic song); 427 pass and 1 skips without `$SONGCHARTER_ALLIN1_PYTHON` (it passes with it set). The branch adds 51: cache 38, pipeline 9, assemble 3, separate 1; the scan-chart tests skip when `tools/scan-chart`'s node_modules are absent [here]. A passing test's temporary folders are deleted at once (`tmp_path_retention_policy = "failed"`): `tests/test_pipeline.py` peaks at about 320 MB of them and leaves none, where it used to leave about 470 MB per run, three runs kept [here]. |
 
 **Design and code, decided once.** Each difference is decided here; code changes are §5.6 tasks.
@@ -1612,7 +1614,8 @@ v1's absolute targets, kept as information only:
 | wav2vec 2.0 large, 960 h (torchaudio's bundle) | lyrics (`--lyrics` only) | download.pytorch.org/torchaudio/models, SHA-256 7a889657…43ac7, in `models_dir()/lyrics/` | 1.26 GB |
 
 ### 4.3 Windows install (Goal 2, built only after M1's Windows spike)
-Whether the friend's tool is native Windows or WSL2 is the owner's call (§9). If native:
+**Superseded for v0.1:** the owner chose WSL2 (§9 Q4, 2026-11-03), so v0.1's install is
+`docs/work-orders/M4-03-install.md`; this native plan is kept for M4-99, as written before that decision. If native:
 - **Shape:** one per-user Inno Setup `setup.exe` (no admin rights) wrapping a uv bootstrap, also shipped as a portable zip.
   - Contents: app source, a pinned `uv.exe`, `bootstrap.ps1` (PowerShell 5.1, ASCII only), `songcharter.cmd`, and `tools/scan-chart` with its `node_modules`.
 - **First launch** (`bootstrap.ps1`):
@@ -1680,6 +1683,7 @@ Whether the friend's tool is native Windows or WSL2 is the owner's call (§9). I
 ### 4.5 UI flow
 A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CSP `default-src 'self'`).
 - **Guards:** only the Hosts 127.0.0.1 and localhost; POSTs need `X-Songcharter: 1` and a same-origin `Origin`; uploads go as a raw body; progress comes over SSE. The guards were tested with curl [here, v1].
+- **Built in M4-04** [code]: the server, the guards and screens 1 to 3 (drop, options, progress with cancel), with `chart --events` as the job's protocol (§2.0, `ui/`). The preview, export and diagnostics are M4-06.
 - **Screens:**
   1. **Drop a file.** Metadata comes from the tags and is editable.
   2. **Options:**
@@ -1908,6 +1912,9 @@ ADTOF test]:
   617. Nobody has listened to or played either.
 
 ### M4: A release the friend can use (Windows, or WSL if the owner accepts it)
+**Superseded:** the route is WSL2 (§9 Q4); M4's plan, scope and acceptance are `docs/work-orders/M4-00-plan.md`.
+What follows is the plan for the native route, kept for M4-99.
+
 **Scope:** the local UI (§4.5) and the installer (§4.3).
 
 **Acceptance on the friend's 4070 PC:**
@@ -2140,7 +2147,7 @@ The other critique gaps are designed in this version: G4 (§2.3, code change pen
 | 1 | **Which instrument(s) does the friend play?** **Answered: Guitar, on Expert** (his feedback on v1, which also asked for Expert only unless he asks for more, and for solo trackers; v1.1 and the pipeline's defaults follow it: §2.10, §2.11). | Which of M1a's rows are judged first (the v1 chart holds all three instruments, so whichever he plays can be playtested now; §5), the M2 order, and the priority of bass (§2.8). Blocks the most. |
 | 2 | **Are non-commercial weights acceptable** (Fretformer 2, ADTOF; htdemucs_6s read as NC)? **Decided: yes** (the owner, 2026-11-02): the tool stays free and is never sold. | Whether Goal 2 has a measured-good route at all, and whether M2's engine work is needed. If not, guitar and drums have no measured engine today, and a rules route still needs a permissively licensed separator, which none of the sources found. Blocks the most. |
 | 3 | **Decided: B1** (the owner, 2026-11-02). Which guitar route? **B2** (our own driver; songcharter stays MIT and uses no AGPL code), **B1** (autochart's engine as a separate program; we ship AGPL code with its source obligations, plus FFmpeg's LGPL), or **D** (build on autochart; songcharter becomes AGPL)? | §2.7, §4.2 |
-| 4 | Must the friend's tool be native Windows, or is WSL2 acceptable? **Decided: native Windows** (the owner, 2026-11-02). | §4.3, M4 |
+| 4 | Must the friend's tool be native Windows, or is WSL2 acceptable? **Decided: WSL2** (the owner, 2026-11-03), after native Windows on 2026-11-02: the friend's PC has Smart App Control on, which blocks unsigned DLLs and Python modules. | §4.3, M4 |
 | 5 | Will the friend play from the same MP3 file we chart? | M1a's gate; §2.1; otherwise verify sync against their copy |
 | 6 | Should drum fills be charted (they need a fill detector) or omitted (then `noDrumActivationLanes` needs a gate exemption)? | §2.10, §2.13 |
 | 7 | Should the provenance-unknown BS-RoFormer SW ever be offered as an opt-in download? | §2.2 |

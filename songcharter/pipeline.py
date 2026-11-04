@@ -74,6 +74,13 @@
     `min_available_ram_mb` and `max_swap_used_mb`, every two seconds `max_gpu_used_mb` when nvidia-smi exists;
     children included), for the peak-memory checks on a 16 GB PC (M4-08).
     Progress goes to `log` (stderr on the command line), a line when a stage starts and one when it ends.
+  * **Events** (`events`, for the UI: `songcharter chart --events`, M4-04): a dict per step, its kind in "event":
+    `plan` {"stages"} once the stages are known; `stage_start` {"stage", "index", "count", "detail"} (index from 1,
+    as the log's [k/n]); `take` {"index", "count", "seed"} before each guitar take that runs (not one its cache
+    answers; index from 1 among the stage's takes, so the CUDA default's first take alone and the three after it
+    count 1 to 4 of 4); `fallback` {"stage", "from", "to", "reason"} for every record in `fallbacks`, also those only
+    recorded; `warning` {"text"} for every warning; `stage_end` {"stage", "seconds", "cached", "detail"}. A stage
+    that stops (an error, or the preview failing) sends no `stage_end`.
 
 The heavy stages are the methods of `Engines`, so tests stand in for them; importing this module loads no model.
 """
@@ -464,12 +471,12 @@ class Engines:
                 "remarks": PV.remarks(pv)}
 
     def guitar(self, audio: Path, out: Path, seeds: Sequence[int], device: str, title: str, artist: str,
-               scratch: Path | None = None) -> list[Run]:
+               scratch: Path | None = None, on_take: Callable[[int, int, int], None] | None = None) -> list[Run]:
         """The takes in out/seed_<seed>/; autochart's scratch folder (its engine cache and jobs) is `scratch`, else
-        out/work."""
+        out/work. `on_take` is autochart.generate's: (index from 1, count, seed) before each take that runs."""
         from .engines import autochart
         takes = autochart.generate(autochart.find_install(), audio, out, seeds, device=device, title=title,
-                                   artist=artist, work=scratch)
+                                   artist=artist, work=scratch, on_take=on_take)
         return [Run(t.chart, t.cached, {**t.summary, "seconds": t.seconds, "devices": t.devices}) for t in takes]
 
 
@@ -537,14 +544,16 @@ def _distinct_takes(runs: list[Run], warn: Callable[[str], None]) -> list[Run]:
 
 def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, engines: Engines | None = None,
           log: Callable[[str], None] | None = None,
-          sampler: Callable[[], D.Sampler] | None = D.Sampler) -> ChartResult:
+          sampler: Callable[[], D.Sampler] | None = D.Sampler,
+          events: Callable[[dict], None] | None = None) -> ChartResult:
     """Chart the song file `audio` into the song folder `out` (the module docstring). Bad inputs and missing
     components raise (errors.InputError, errors.ToolError, OSError) before any audio work; a stage that fails for
     a reason the user can act on raises the same kinds, and any other exception is a bug; a build the gate fails
     does not raise: it is in <out>.failed and `ok` is False. `sampler` makes the memory sampler (device.Sampler;
-    None: no sampling, as in tests)."""
+    None: no sampling, as in tests). `events` gets the run's events (the module docstring)."""
     engines = engines or Engines()
     log = log or (lambda line: print(line, file=sys.stderr, flush=True))
+    emit = events or (lambda event: None)
     options.check()
     audio, out = Path(audio).expanduser().resolve(), Path(out).expanduser().resolve()
     if not audio.is_file():
@@ -572,6 +581,7 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
     order += ["guitar"] * ("guitar" in instruments) + ["assemble"]
     no_preview = engines.preview_missing() if options.preview else None
     order += ["preview"] * (options.preview and no_preview is None)
+    emit({"event": "plan", "stages": list(order)})
     stages: list[Stage] = []
     warnings: list[str] = []
     fallbacks: list[dict] = []
@@ -588,11 +598,13 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
     def warn(text: str) -> None:
         warnings.append(text)
         log(f"songcharter: warning: {text}")
+        emit({"event": "warning", "text": text})
 
     def fallback(stage: str, frm: str, to: str, reason: str, *, warning: str | None = "") -> None:
         """Record a move to the CPU (or off the device asked for) and warn: `warning` is the line ("": "<stage>:
         <reason>"; None: recorded only)."""
         fallbacks.append({"stage": stage, "from": frm, "to": to, "reason": reason})
+        emit({"event": "fallback", **fallbacks[-1]})
         if warning is not None:
             warn(warning or f"{stage}: {reason}")
 
@@ -601,6 +613,8 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
 
     def begin(name: str, what: str) -> float:
         log(f"[{order.index(name) + 1}/{len(order)}] {name}: {what}")
+        emit({"event": "stage_start", "stage": name, "index": order.index(name) + 1, "count": len(order),
+              "detail": what})
         if smp is not None:
             smp.begin(name)
         if name != "guitar":   # a child process of its own: torch's peak here says nothing about it
@@ -617,6 +631,7 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
                                  **s.info, "peak_rss_mb": _peak_rss_mb(), **memory})
         log(f"[{order.index(name) + 1}/{len(order)}] {name}: {detail}{' (cached)' if cached else ''}, "
             f"{s.seconds:.1f} s")
+        emit({"event": "stage_end", "stage": name, "seconds": s.seconds, "cached": cached, "detail": detail})
         return s
 
     work.mkdir(parents=True, exist_ok=True)
@@ -635,7 +650,7 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
             warn(f"lyrics: not added ({no_lyrics})")
             report["lyrics"] = {"given": True, "added": False, "why": no_lyrics}
         parts, sections, stem_files, stem_folder, timed = _engine_stages(audio, work, scratch, options, engines, meta,
-                                                                         begin, end, warn, fallback, report)
+                                                                         begin, end, warn, fallback, report, emit)
         if not parts:
             raise InputError(f"no instrument has notes ({', '.join(instruments)} all came out empty): nothing to "
                              "chart")
@@ -703,12 +718,13 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
 
 
 def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Options, engines: Engines, meta: dict,
-                   begin, end, warn, fallback, record: dict
+                   begin, end, warn, fallback, record: dict, emit: Callable[[dict], None]
                    ) -> tuple[list[dict], str | None, dict[str, str], Path, Timed | None]:
     """Decode, separation and the engines: the assemble parts, the sections file, the stem files assemble reads,
     the folder of every stem (the preview's) and the timed lyrics (None without); `record` (pipeline.json) gets the
     device and why, the guitar takes chosen and why, and the lyrics' counts; `fallback` records each move to the
-    CPU. The audio arrays live only here, so they are freed before assemble reads its own."""
+    CPU; `emit` gets a `take` event before each guitar take that runs. The audio arrays live only here, so they are
+    freed before assemble reads its own."""
     t0 = begin("decode", audio.name)
     mix, wav, same = _decode(audio, work)
     end("decode", t0, same, f"{mix.shape[1] / SAMPLE_RATE:.2f} s of audio in {wav.name}",
@@ -788,8 +804,14 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
         t0 = begin("guitar", f"autochart, {len(seeds)} take{'s' * (len(seeds) > 1)} (seed{'s' * (len(seeds) > 1)} "
                              f"{', '.join(map(str, seeds))}) on {gdev}" + (", the first alone first" if probe else ""))
         del mix, stems   # autochart reads decode.wav; the arrays are not needed again
+
+        def on_take(first: int) -> Callable[[int, int, int], None]:
+            """The take event for a call whose seeds start at seeds[first]: numbered among all the stage's seeds."""
+            return lambda index, count, seed: emit({"event": "take", "index": first + index, "count": len(seeds),
+                                                    "seed": seed})
+
         runs = engines.guitar(wav, work / "guitar", seeds[:1] if probe else seeds, gdev, meta["name"], meta["artist"],
-                              scratch=scratch)
+                              scratch=scratch, on_take=on_take(0))
         moved = None
         if probe:
             used = (runs[0].info.get("devices") or {}).get("transcriber")  # not reported: taken as on CUDA
@@ -801,7 +823,7 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
                 why = f"{why}; but autochart's transcriber ran on {used} for the first take, so that take alone"
             else:
                 runs += engines.guitar(wav, work / "guitar", seeds[1:], gdev, meta["name"], meta["artist"],
-                                       scratch=scratch)
+                                       scratch=scratch, on_take=on_take(1))
         for r in runs[1 if moved else 0:]:
             used = (r.info.get("devices") or {})
             if gdev == "cuda" and used and any(v == "cpu" for v in used.values()):

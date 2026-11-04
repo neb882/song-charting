@@ -3,6 +3,10 @@
     "allow": [
       "Bash(python -m pytest *)",
       "Bash(python3 -m pytest *)",
+      "Bash(uv run pytest *)",
+      "Bash(uv sync --frozen *)",
+      "Bash(uv lock --check *)",
+      "Bash(python -m eval.golden *)",
       "Bash(node tools/scan-chart/scan.cjs *)",
       "Bash(git status *)",
       "Bash(git diff *)",
@@ -13,15 +17,22 @@
       "Bash(git fetch *)",
       "Bash(git merge *)",
       "Bash(git worktree *)",
-      "Bash(git branch *)"
+      "Bash(git branch *)",
+      "Bash(git ls-remote *)",
+      "Bash(git push -u origin *)",
+      "Bash(gh run list *)",
+      "Bash(gh run view *)",
+      "Bash(gh workflow run ci *)"
     ],
     "deny": [
       "Bash(git push --force *)",
       "Bash(git push -f *)",
       "Bash(git push * --force *)",
       "Bash(git push * -f *)",
+      "Bash(git push * --force-with-lease *)",
       "Bash(git push --delete *)",
       "Bash(git push * --delete *)",
+      "Bash(git push * :*)",
       "Bash(git reset --hard origin*)"
     ]
   }

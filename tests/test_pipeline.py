@@ -6,6 +6,8 @@ decode, the tags, the work folder, the assemble config, assemble and the gate ru
 none is downloaded."""
 import hashlib
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -230,16 +232,18 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: BaseExc
                     "stems": {}, "flags": ["guitar: gap 0:10.0-0:12.0 (1 measures)"], "flags_by_kind": {"gap": 1},
                     "remarks": []}
 
-        def guitar(self, audio, out, seeds, device, title, artist, scratch=None):
+        def guitar(self, audio, out, seeds, device, title, artist, scratch=None, on_take=None):
             self._bug("guitar")
             self.calls.append(("guitar", audio, out, tuple(seeds), device, title, artist, scratch))
             if scratch is not None and not (scratch / "engine-cache.bin").is_file():
                 scratch.mkdir(parents=True, exist_ok=True)
                 (scratch / "engine-cache.bin").write_bytes(b"\0" * SCRATCH_BYTES)
             runs = []
-            for seed in seeds:
+            for k, seed in enumerate(seeds, 1):
                 path = out / f"seed_{seed}" / "notes.chart"
                 cached = path.is_file()
+                if not cached and on_take is not None:   # as autochart.generate: before each take that runs
+                    on_take(k, len(seeds), seed)
                 if not cached:  # each take after the first misses one note, in a section of its own
                     miss = 0 if seed == DEFAULT_SEED or repeat and seed == 101 else seed // 101
                     notes = [FretNote(tick(t), (lane,)) for j, (t, lane) in enumerate(guitar_times())
@@ -971,6 +975,148 @@ def test_takes_follow_the_guitar_stages_device(charted, monkeypatch, capsys):
     assert calls == [(DEFAULT_SEED, 101, 202, 303)] and devices == {"cpu"} and part == others and not takes["auto"]
 
 
+EVENT = "@@songcharter "
+
+
+def events_in(err: str) -> list[dict]:
+    """The `@@songcharter <json>` lines of `chart --events`' stderr, in order."""
+    lines = [x for x in err.splitlines() if x.startswith(EVENT)]
+    assert all(x.isascii() for x in lines)   # ensure_ascii: a song's name never breaks a reader's decoding
+    return [json.loads(x[len(EVENT):]) for x in lines]
+
+
+def warm_work(result, tmp_path, name: str = "w") -> Path:
+    """A work folder holding the charted song's decode and stems (hard-linked), and no engine's output."""
+    work = tmp_path / name
+    work.mkdir()
+    for name in ("decode.wav", "decode.json"):
+        os.link(result.work / name, work / name)
+    shutil.copytree(result.work / "stems", work / "stems", copy_function=os.link)
+    return work
+
+
+def test_chart_events(charted, tmp_path, monkeypatch, capsys):
+    """`chart --events` writes the run's events to stderr, a line each, in the order of the log: the plan, each
+    stage's start and end, a take before each guitar take that runs (the CUDA default's first take alone, then the
+    other three: 1 to 4 of 4), every fallback and every warning as recorded, then after the summary the result.
+    Without --events nothing of that is written, and the rest of the output is the same."""
+    root, result, _, _ = charted
+    oom = "CUDA ran out of memory; separated on the CPU"
+    monkeypatch.setattr(P, "Engines", standins(auto="cuda", separation_fallback=oom, allin1_device="cpu"))
+    work = warm_work(result, tmp_path)
+    args = ["chart", str(root / "song.flac"), "--work", str(work), "--genre", "Test"]
+    assert main([*args, "--out", str(tmp_path / "Sóng ♫"), "--events"]) == 0
+    out, err = capsys.readouterr()
+    events = events_in(err)
+    report = json.loads((work / "pipeline.json").read_text(encoding="utf-8"))
+    order = ["decode", "separate", "drums", "bass", "sections", "guitar", "assemble", "preview"]
+    assert events[0] == {"event": "plan", "stages": order}
+    starts = [e for e in events if e["event"] == "stage_start"]
+    ends = [e for e in events if e["event"] == "stage_end"]
+    assert [(e["stage"], e["index"], e["count"]) for e in starts] == [(s, k, 8) for k, s in enumerate(order, 1)]
+    assert [e["stage"] for e in ends] == order
+    for e, s in zip(ends, report["stages"], strict=True):
+        assert e == {"event": "stage_end", "stage": s["stage"], "seconds": s["seconds"], "cached": s["cached"],
+                     "detail": s["detail"]}
+    assert starts[0]["detail"] == "song.flac" and starts[5]["detail"].endswith("on cuda, the first alone first")
+    kinds = [e["event"] if e["event"] not in ("stage_start", "stage_end") else f"{e['event']}:{e['stage']}"
+             for e in events]
+    takes = [e for e in events if e["event"] == "take"]
+    assert [(e["index"], e["count"], e["seed"]) for e in takes] == [(1, 4, DEFAULT_SEED), (2, 4, 101), (3, 4, 202),
+                                                                    (4, 4, 303)]
+    g0, g1 = kinds.index("stage_start:guitar"), kinds.index("stage_end:guitar")
+    assert [k for k in kinds[g0:g1] if k != "warning"] == ["stage_start:guitar"] + ["take"] * 4
+    assert [{k: v for k, v in e.items() if k != "event"} for e in events if e["event"] == "fallback"] == \
+        report["fallbacks"] and len(report["fallbacks"]) == 2
+    assert [e["text"] for e in events if e["event"] == "warning"] == report["warnings"]
+    assert kinds.index("fallback") < kinds.index("stage_end:separate")   # as it happens
+    assert events[-1] == {"event": "result", "ok": True, "exit": 0, "folder": str(tmp_path / "Sóng ♫"),
+                          "work": str(work), "preview": str(work / "preview"), "summary": out.rstrip("\n")}
+    assert EVENT not in out and "Sóng ♫" in out
+    # the same run without --events (in a work folder of its own, as warm): no event line, and the same lines
+    # otherwise, but for the times and the work folder's name
+    monkeypatch.setattr(P, "Engines", standins(auto="cuda", separation_fallback=oom, allin1_device="cpu"))
+    second = warm_work(result, tmp_path, "v")
+    assert main([*args[:3], str(second), *args[4:], "--out", str(tmp_path / "Sóng ♫")]) == 0
+    out2, err2 = capsys.readouterr()
+
+    def untimed(text):
+        return [re.sub(r"\d+\.\d s", "N s", x).replace(str(second), str(work)) for x in text.splitlines()]
+
+    assert EVENT not in err2 and untimed(err2) == untimed("\n".join(x for x in err.splitlines()
+                                                                    if not x.startswith(EVENT)))
+    assert untimed(out2) == untimed(out)
+
+
+def test_chart_events_when_the_first_take_moved_and_without_a_preview(charted, tmp_path, monkeypatch, capsys):
+    root, result, _, _ = charted
+    monkeypatch.setattr(P, "Engines", standins(auto="cuda", moved="cpu"))
+    work = warm_work(result, tmp_path)
+    assert main(["chart", str(root / "song.flac"), "--work", str(work), "--out", str(tmp_path / "S"), "--events",
+                 "--instruments", "guitar", "--no-preview"]) == 0
+    events = events_in(capsys.readouterr().err)
+    assert events[0]["stages"] == ["decode", "separate", "sections", "guitar", "assemble"]
+    assert [(e["index"], e["count"]) for e in events if e["event"] == "take"] == [(1, 4)]
+    assert [e["stage"] for e in events if e["event"] == "fallback"] == ["guitar"]
+    assert events[-1]["event"] == "result" and events[-1]["preview"] is None
+    # "auto" on a machine with no GPU: a fallback only recorded, not warned about, is sent all the same
+    monkeypatch.setattr(P, "Engines", standins())
+    assert main(["chart", str(root / "song.flac"), "--work", str(warm_work(result, tmp_path, "v")), "--out",
+                 str(tmp_path / "T"), "--events", "--instruments", "drums", "--no-preview"]) == 0
+    events = events_in(capsys.readouterr().err)
+    assert [e for e in events if e["event"] == "fallback"] == [
+        {"event": "fallback", "stage": "device", "from": "cuda", "to": "cpu", "reason": D.NO_GPU}]
+    assert not any(D.NO_GPU in e["text"] for e in events if e["event"] == "warning")
+
+
+def test_chart_events_when_the_gate_fails(charted, tmp_path, monkeypatch, capsys):
+    """A build the gate fails: the result says so (ok false, exit 1, the folder <out>.failed), and the command
+    exits 1; the UI's job is `done` either way, so the page's verdict comes from this event alone."""
+    root, result, _, _ = charted
+    monkeypatch.setattr(P, "Engines", standins())
+    real = assemble_module.verify_folder
+    monkeypatch.setattr(assemble_module, "verify_folder", lambda *a, **k: real(*a, **k) + [
+        assemble_module.GateIssue(None, None, "fake", "a gate error")])
+    out = tmp_path / "Gate"
+    assert main(["chart", str(root / "song.flac"), "--out", str(out), "--work", str(result.work), "--takes", "3",
+                 "--genre", "Test", "--events"]) == 1
+    printed, err = capsys.readouterr()
+    last = events_in(err)[-1]
+    assert {k: last[k] for k in ("event", "ok", "exit", "folder")} == {
+        "event": "result", "ok": False, "exit": 1, "folder": str(tmp_path / "Gate.failed")}
+    assert "gate: FAILED" in last["summary"] and last["summary"] == printed.rstrip("\n")
+
+
+def test_chart_events_on_errors(charted, tmp_path, monkeypatch, capsys):
+    """Before exit 2, 3 or 130, `error` with its kind and message, as the last event; never a result."""
+    root, result, _, _ = charted
+    song = str(root / "song.flac")
+    work = ["--work", str(result.work)]
+    cases = [(["--takes", "2"], standins(), 2, "input", "takes is 1, or 3 or more (takes are spliced by agreement, "
+                                                         "and two cannot outvote each other), not 2"),
+             ([], standins(bug="guitar", error=ToolError("autochart seed 1 failed (exit 1)")), 2, "tool",
+              "autochart seed 1 failed (exit 1)"),
+             ([], standins(bug="drums"), 3, "bug", "KeyError: 'a bug in drums'")]
+    for extra, engines, code, kind, message in cases:
+        monkeypatch.setattr(P, "Engines", engines)
+        assert main(["chart", song, "--out", str(tmp_path / "E"), *work, "--events", *extra]) == code
+        events = events_in(capsys.readouterr().err)
+        assert events[-1] == {"event": "error", "kind": kind, "message": message}, events[-1]
+        assert not any(e["event"] == "result" for e in events)
+    assert main(["chart", str(tmp_path / "missing.mp3"), "--out", str(tmp_path / "E"), "--events"]) == 2
+    error = events_in(capsys.readouterr().err)
+    assert error[-1]["kind"] == "input" and "does not exist" in error[-1]["message"] and len(error) == 1
+
+    def interrupted(*a, **k):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(P, "chart", interrupted)
+    assert main(["chart", song, "--out", str(tmp_path / "E"), "--events"]) == 130
+    assert events_in(capsys.readouterr().err) == [{"event": "error", "kind": "interrupted", "message": "interrupted"}]
+    assert main(["chart", song, "--out", str(tmp_path / "E")]) == 130
+    assert EVENT not in capsys.readouterr().err
+
+
 def test_every_fallback_is_recorded_and_warned(charted, tmp_path):
     """Each move to the CPU goes into pipeline.json's fallbacks and ChartResult.fallbacks (stage, from, to, reason)
     and is warned about as before: separation's own fallback, allin1 on the CPU while torch here runs on CUDA (found
@@ -1278,9 +1424,13 @@ def test_the_real_engines_are_called_with_the_pipelines_settings(tmp_path, monke
         "guitar", (inst, audio, out, tuple(seeds), k)) and [take])
     runs = Engines().guitar(tmp_path / "decode.wav", tmp_path / "g", (DEFAULT_SEED, 101), "cpu", "T", "A")
     assert seen["guitar"] == ("the install", tmp_path / "decode.wav", tmp_path / "g", (DEFAULT_SEED, 101),
-                              {"device": "cpu", "title": "T", "artist": "A", "work": None})  # --work: out/work
+                              {"device": "cpu", "title": "T", "artist": "A", "work": None,   # --work: out/work
+                               "on_take": None})
     seen.pop("guitar")
-    Engines().guitar(tmp_path / "decode.wav", tmp_path / "g", (DEFAULT_SEED,), "cuda", "T", "A", scratch=tmp_path / "s")
-    assert seen["guitar"][4] == {"device": "cuda", "title": "T", "artist": "A", "work": tmp_path / "s"}
+    heard = []
+    Engines().guitar(tmp_path / "decode.wav", tmp_path / "g", (DEFAULT_SEED,), "cuda", "T", "A", scratch=tmp_path / "s",
+                     on_take=heard.append)
+    assert seen["guitar"][4] == {"device": "cuda", "title": "T", "artist": "A", "work": tmp_path / "s",
+                                 "on_take": heard.append}
     assert runs == [Run(take.chart, False, {"runs": [{"devices": {"x": "cpu"}}], "seconds": 9.5,
                                             "devices": {"x": "cpu"}})]

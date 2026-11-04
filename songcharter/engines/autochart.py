@@ -7,7 +7,8 @@ per take, behind a process boundary, so no AGPL code is imported.
 
   * **Takes.** One run per seed (the engine's default seed first), Expert only: the build reduces the other levels
     and splices the takes (takes.py). All takes share one work folder, where the engine caches its separation and
-    beat map per audio file, so every take after the first pays only for the transcription.
+    beat map per audio file, so every take after the first pays only for the transcription. `on_take` hears of each
+    take before it runs (the UI's "take k of n").
   * **Input.** The gapless decode written as WAV, not the user's MP3, so the takes' times are seconds of our decode.
   * **Cache.** A take is reused when its folder holds notes.chart, the driver's summary.json of a completed run and
     our take.json, written after the run, with the same key: the input (SHA-256), the seed, the sampling settings
@@ -200,11 +201,14 @@ def _done(folder: Path, key: dict, device: str | None = None) -> dict | None:
 def generate(install: Install, audio: Path | str, out: Path | str, seeds: Sequence[int] = (DEFAULT_SEED,), *,
              device: str = "cpu", work: Path | str | None = None, timeout_s: float = 3600, ffmpeg: str | None = None,
              title: str | None = None, artist: str | None = None,
+             on_take: Callable[[int, int, int], None] | None = None,
              run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> list[Take]:
     """One Expert take per seed of `audio` (a WAV of the gapless decode), in out/seed_<seed>/ (a song folder:
     notes.chart, song.ini, song.ogg, autochart_run/, take.json). Takes already there with the same key (input,
     seed, sampling settings, install) are reused. For "cuda" the driver's environment has cuda_library_path() first
-    on LD_LIBRARY_PATH. A failed run raises errors.ToolError (a RuntimeError) with the driver's last lines."""
+    on LD_LIBRARY_PATH. `on_take(index, count, seed)` is called before each take that runs, not one reused: index
+    from 1 among `seeds`, count len(seeds). A failed run raises errors.ToolError (a RuntimeError) with the driver's
+    last lines."""
     audio, out = Path(audio).resolve(), Path(out).resolve()
     if not audio.is_file():
         raise FileNotFoundError(f"autochart input {audio} does not exist")
@@ -215,12 +219,14 @@ def generate(install: Install, audio: Path | str, out: Path | str, seeds: Sequen
     work = Path(work).resolve() if work else out / "work"
     input_sha, installed = sha256(audio), install_key(install)
     takes = []
-    for seed in seeds:
+    for index, seed in enumerate(seeds, 1):
         folder, key = out / f"seed_{seed}", take_key(input_sha, seed, installed)
         summary = _done(folder, key, device)
         if summary is not None:
             takes.append(Take(seed, folder / "notes.chart", summary, True, 0.0))
             continue
+        if on_take is not None:
+            on_take(index, len(seeds), seed)
         folder.mkdir(parents=True, exist_ok=True)
         (folder / TAKE).unlink(missing_ok=True)  # a run cut off from here on leaves no hit
         work.mkdir(parents=True, exist_ok=True)

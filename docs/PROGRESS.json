@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-03",
+  "updated": "2026-11-04",
   "about": "The short state of the project. Read it first; DESIGN.md has the detail and the evidence. Update it when a milestone, a decision or a dead end lands.",
   "people": {
     "owner": "builds this; RTX 5070 under WSL2 (eval/gpu.sh)",
@@ -39,7 +39,7 @@
     },
     {
       "id": "M4",
-      "status": "building: wave 1 done (M4-01 lanes, M4-02 device, M4-05a CI merged; each reviewed, CI green); M4-00b spike passed on the 5070; wave 2 next (M4-03 install, M4-04 ui-server)",
+      "status": "building: wave 1, M4-03 and M4-04 merged (each reviewed, CI green); M4-00b's CUDA 13 spike passed on the 5070; M4-10 (lyrics) in its golden check; then M4-05 and M4-06, M4-07, the full review, M4-08",
       "what": "a release the friend can use on his Windows PC, running in WSL2: a guided WSL setup, a one-line install, a Start-menu shortcut, a local UI, tested on his PC",
       "plan": "docs/work-orders/M4-00-plan.md: v0.1 is a guide to set up WSL, install.sh fetched from the pre-release and checked by hash (uv lanes cu132/cu126/cpu, allin1's own Python, Node, autochart with its models and its CUDA 13 provider, doctor.json, a .wslconfig with Windows' RAM minus 4 GB, a Start-menu shortcut), device checks with the CPU fallback shown, the local UI in WSL opened in the Windows browser (drop, options, progress with cancel, the static preview, zip and install into the Windows Songs folder), diagnostics, and CI end to end in ubuntu:26.04. Native Windows and the rest are M4-99; the native plan is commit f9f9377 and M4-00's appendix.",
       "risks": [
@@ -64,17 +64,34 @@
   ],
   "golden": {
     "status": "done 2026-11-03 (branch golden), with the review's four fixes: --rerun on both runs (diff fails otherwise, and on an engine whose kept output is another commit's), the output folder cleared before any check, an engine run unasked stops the run (exit 2), exit 2/3 for bad input/bugs",
-    "what": "python -m eval.golden run builds the seven reference songs with songcharter chart (every level, 1 take, CPU) and records per part and difficulty the onsets, scan-chart's track hash and score.py's F1; diff OLD NEW --expect PARTS flags every other change UNEXPECTED (exit 1). DESIGN 3.6, eval/README.md; the commands are in CLAUDE.md's release gate and in sc-inspector.",
-    "baseline": "main at 11615e2: <scratchpad>/golden/base/summary.json, all 7 songs gate OK; the kept work folders in <scratchpad>/golden/work. Environment in the dev container: EVAL_DATA=<scratchpad>/eval SONGCHARTER_GOLDEN=<scratchpad>/golden, plus SONGCHARTER_SCAN_CHART, SONGCHARTER_AUTOCHART=<scratchpad>/eval/tools/autochart and SONGCHARTER_ALLIN1_PYTHON=<scratchpad>/research/timing/venv2/bin/python. <scratchpad> is /tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad.",
+    "what": "python -m eval.golden run builds the seven reference songs with songcharter chart (every level, 1 take, CPU) and records per part and difficulty the onsets, scan-chart's track hash and score.py's F1; diff OLD NEW --expect PARTS flags every other change UNEXPECTED (exit 1). DESIGN 3.6, eval/README.md; the commands are in eval/README.md (Golden charts), which docs/PIPELINE.md's release gate and sc-inspector use; a run takes the heavy-job lock (tools/heavy.sh).",
+    "baseline": "main at 656991d (--rerun guitar): eval/baseline/summary.json, committed (hashes and F1s, no audio); the first, at 11615e2, in <scratchpad>/golden/base. The kept work folders are in <scratchpad>/golden/work, made at 11615e2, so the guitar is rerun on both sides since M4-02 changed engines/autochart.py. Environment in the dev container: EVAL_DATA=<scratchpad>/eval SONGCHARTER_GOLDEN=<scratchpad>/golden, plus SONGCHARTER_SCAN_CHART, SONGCHARTER_AUTOCHART=<scratchpad>/eval/tools/autochart and SONGCHARTER_ALLIN1_PYTHON=<scratchpad>/research/timing/venv2/bin/python. <scratchpad> is /tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad. Rebuilding it elsewhere: eval/README.md, 'Rebuilding the dev machine'.",
     "cost": "cold (a kept folder made, stems hard-linked): 474-1081 s a song, 80 min for the set, the guitar take most of it; warm: 44-76 s a song, 6.5 min for the set (CPU, 2 threads)"
   },
   "in_flight": [
-    "M4-10 (lyrics): built on branch m4-10-lyrics, awaiting sc-reviewer and sc-inspector, then the merge (its uv.lock change: torchaudio 2.11.1 by lane, nothing else; see the builder's report)"
+    {
+      "order": "M4-10 lyrics",
+      "brief": "docs/work-orders/M4-10-lyrics.md",
+      "branch": "m4-10-lyrics",
+      "worktree": "<scratchpad>/wt/m4-10",
+      "stage": "build and golden check done; review fixes F1-F5 done (F6 no change), main merged",
+      "report": "<scratchpad>/briefs/m4-10.report.md",
+      "then": "sc-reviewer; M4-06 gets the paste-lyrics box"
+    },
+    {
+      "order": "M4-05 ci",
+      "brief": "docs/work-orders/M4-05-ci.md",
+      "branch": "m4-05-ci",
+      "worktree": "<scratchpad>/wt/m4-05",
+      "stage": "building (from main at 5b9d4f0)",
+      "report": "<scratchpad>/briefs/m4-05.report.md",
+      "then": "sc-reviewer; CI is the inspection"
+    }
   ],
   "next": [
-    "M4 wave 2: M4-03 (install) and M4-04 (ui-server) in parallel; then M4-05 and M4-06; M4-07; the full review; M4-08 on the owner's 5070 in a fresh Ubuntu-26.04 distro, then the friend's PC.",
-    "M4: the owner runs M4-00b (packaging/spike/cuda13-provider.sh in the existing WSL on the 5070, about 20 min) while wave 1 builds (M4-01, M4-02, M4-05a); it must pass before wave 1 ends. Then M4-03 and M4-04; M4-05 and M4-06; M4-07; the full review workflow; M4-08: the owner's 5070 in a fresh Ubuntu-26.04 distro with the friend's 16 GB .wslconfig written by the install, then the friend's PC (also M1a's Windows spike).",
-    "Owner: run M4-00b and send cuda13-result.json; answer M4-00's question (Smart App Control on for the test, only if its switch is not greyed out).",
+    "M4: review and merge M4-04 and M4-10; then M4-05 (CI end to end) and M4-06 (UI results, with M4-10's paste box); M4-07 (release); a dry run of .claude/workflows/full-review.js on a small diff, then the full review over v0.1; the advisor on the release candidate; M4-08 on the owner's 5070 in a fresh Ubuntu-26.04 distro with the friend's 16 GB .wslconfig, then the friend's PC (also M1a's Windows spike).",
+    "From M5: the plan by the most capable model, as a fresh agent that reads only the repository, reviewed by a different model (docs/PIPELINE.md, Gates).",
+    "Owner: delete the merged remote branches ci-test-gaps, m4-01-lanes, m4-02-device, m4-03-install and m4-05a-ci-skeleton (a session can't).",
     "Before the next quality decision: grow the reference set to 20 or more human charts, with human-charted solos among them."
   ],
   "dead_ends": [
@@ -119,11 +136,24 @@
     "Pin the build backend in both locks (process-quality review, supply-1): add `build-constraint-dependencies = [\"setuptools==<the version in use>\"]` under [tool.uv] in pyproject.toml and packaging/allin1/pyproject.toml, then `uv lock` both, so a frozen sync no longer builds songcharter and the antlr4 sdist with whatever setuptools PyPI has that day. Do it after wave 2 merges (M4-03 may relock).",
     "M4-10: the install (runtime.step_pipeline_models) does not fetch the lyrics weights (1.26 GB): the first --lyrics run downloads them. Fetching them at install is the director's call (install size and time).",
     "M4-10: lyrics in a script other than Latin get no romanization: such words are spread between their neighbours. The English bundle collapses on a vocal stem as poor as a full mix (warned: median word score under 0.25). Not run on CUDA, nor checked in Clone Hero itself (M4-08 should look at the lyrics display).",
-    "M4-10: doctor (device.py) does not list torchaudio among the components, and NOTICE (M4-07) needs torchaudio (BSD-2-Clause) and the wav2vec 2.0 weights (MIT)."
+    "M4-10: doctor (device.py) does not list torchaudio among the components, and NOTICE (M4-07) needs torchaudio (BSD-2-Clause) and the wav2vec 2.0 weights (MIT).",
+    "A personal-details check in CI (packaging/ci, like check_no_audio.py): emails and home or profile paths in the diff and docs/reports/. The names it should look for can't be written in the public repository: keep them in a CI secret or a file outside it. (pipeline review 2026-11-04, finding 6)",
+    "Stall detection by log: builders tee long commands to a progress log with a DONE marker, watched by a Monitor; the heavy-job lock's .who file covers part of it. (pipeline review, finding 9)",
+    "Builder effort: try one fully specified order with sc-builder at high instead of xhigh, and compare the review's findings. (pipeline review, finding 4)",
+    "DESIGN.md: split by area into docs/design/ (stages, evaluation, packaging, milestones), each headed 'as of <commit>'; move the changelog preamble and §11 to history and §9 to a dated decisions log. With task 41's fold-in of waves 1-2 and M4-10, at M4-07's doc pass at the latest. (pipeline review, finding 11)",
+    "The dev machine's allin1 Python (research/timing/venv2) was made by hand and reads torch from the main environment; packaging/allin1 is the supported way, untested as the golden charts' sections backend (its torch build may move the sections' hashes). eval/README.md, 'Rebuilding the dev machine', step 4.",
+    "The separation cache was filled by a script never committed (eval/README.md's step 7 stands in for it): a `--stems` maker in eval/golden.py or a small eval script would make it reproducible.",
+    "Remove the scratch leftovers g2 (old review folders, 0.9 GB) and m4probe (M4's probes, 1.8 GB) once nothing cites them; research/timing/venv2 inside research/ is the golden runs' allin1 Python and must stay.",
+    "M4-04: song.ogg is not byte-identical between runs of one song (each Ogg page's serial number and checksum; the audio is identical). Pre-existing; the chart and song.ini are byte-identical.",
+    "M4-04: the page's WSL paths (the self-check with curl.exe, the NAT fallback, explorer.exe, the shortcut's ui --from-shortcut) are tested with stand-ins only; M4-08 checks them (its 'Added at M4-04's merge')."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
-  "how_work_is_run": "CLAUDE.md, section 'How work is run'. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices",
+  "how_work_is_run": "docs/PIPELINE.md. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices, /prompt-caching, /sub-agents, /settings",
   "process_notes": [
-    "2026-11-03: a four-lens re-review of merged wave 1 (10 agents) found 3 real findings, all minor, none of them major, after the single-reviewer process; 2 of the 3 were checks whose tests could be gutted. Decision: keep one reviewer per order, with a mutation pass on new checks (.claude/agents/sc-reviewer.md step 3), and the full workflow once over the integrated v0.1."
+    "2026-11-03: a four-lens re-review of merged wave 1 (10 agents) found 3 real findings, all minor, none of them major, after the single-reviewer process; 2 of the 3 were checks whose tests could be gutted. Decision: keep one reviewer per order, with a mutation pass on new checks (.claude/agents/sc-reviewer.md step 3), and the full workflow once over the integrated v0.1.",
+    "2026-11-04: an advisor on a different, more capable model reviewed the process (docs/reports/pipeline-review.md): 12 findings. Done: the heavy-job lock in code (tools/heavy.sh, eval/golden.py), M4-10's brief committed as a work order with the lyrics exception, in_flight kept from an order's start, the dev machine's rebuild recipe and the golden baseline committed, a one-hour cache for the roles, the review workflow routing only majors to a skeptic, a disk note at each merge, DESIGN's superseded native plan marked. Deferred: the CI personal-details check, stall logs, a builder-effort trial, DESIGN's split, the planner change (from M5). Declined: model aliases in the agent files, since model identifiers stay out of the repository; the orchestrator names the model at each start.",
+    "2026-11-04: in a cloud session with several repositories, .claude/settings.json's permission rules and hooks don't load (only its plugin keys), so rules that must hold live in code or CI.",
+    "2026-11-04: the machine restarted mid-run (about 01:29 UTC): /dev/shm and every process went, including two golden checks and their old checkouts; the worktrees, commits and scratch survived. Keep anything a later step needs out of /dev/shm.",
+    "On a smaller plan (the owner usually has one; about a tenth of the current plan's weekly use, a 5-hour window, the most capable model on usage credits only): the orchestrator builds small changes itself; one reviewer on a smaller model, for the charting path and the installer only; CI as the inspection; no workflows; a fresh session per order, with PROGRESS as the handoff. Not needed while the current plan lasts (the owner, 2026-11-04)."
   ]
 }
