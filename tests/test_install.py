@@ -195,6 +195,32 @@ def test_build_writes_the_three_assets(tmp_path):
     assert p.returncode == 1 and "published SHA-256 is '0000'" in p.stderr
 
 
+
+def test_build_ships_install_sh_and_the_guide_as_head_has_them(tmp_path):
+    """A release is HEAD's, like its tarball: an uncommitted edit to install.sh or the guide stays out of dist/ and is
+    named on stderr (M4-07's review: the published install.sh and guide once came from the working copy)."""
+    import sys
+    clone = tmp_path / "clone"
+    head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True,
+                          check=True).stdout.strip()
+    subprocess.run(["git", "clone", "-q", "--local", "--no-checkout", str(ROOT), str(clone)], check=True)
+    subprocess.run(["git", "-C", str(clone), "checkout", "-q", "--detach", head], check=True)   # this checkout's HEAD
+    for rel in ("packaging/linux/install.sh", "docs/guide/windows-wsl.md"):
+        with open(clone / rel, "a", encoding="utf-8") as f:
+            f.write("\nzorp uncommitted\n")
+    fake = tmp_path / "fake"
+    stand_in(fake, "curl", f'echo "{UV_SHA256}  uv-x86_64-unknown-linux-gnu.tar.gz"')
+    env = {"PATH": f"{fake}:/usr/bin:/bin", "HOME": str(tmp_path), "PYTHON": sys.executable}
+    out = tmp_path / "dist"
+    p = subprocess.run(["bash", str(clone / "packaging" / "release" / "build.sh"), "0.1.0-test", str(out)],
+                       capture_output=True, text=True, env=env, timeout=300)
+    assert p.returncode == 0, p.stderr
+    assert "zorp" not in (out / "install.sh").read_text(encoding="utf-8")
+    assert "zorp" not in (out / "GUIDE.md").read_text(encoding="utf-8")
+    assert "uncommitted changes are not in the release" in p.stderr
+    assert "packaging/linux/install.sh" in p.stderr and "docs/guide/windows-wsl.md" in p.stderr
+
+
 # ------------------------------------------------------------------------------------------------ the whole install
 
 VERSION = "0.0.0-test"

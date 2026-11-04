@@ -39,9 +39,10 @@ cp "$dist/GUIDE.md" "$dist/SHA256SUMS" "$art/"
 if grep -n '{{\|}}' "$dist/GUIDE.md"; then fail "GUIDE.md still has a value to fill in (above)"; fi
 install_sha=$(sha256sum "$dist/install.sh" | cut -d' ' -f1)
 grep -qx "$install_sha  install.sh" "$dist/SHA256SUMS" || fail "SHA256SUMS has no line $install_sha  install.sh"
-lines=$(grep -c 'sha256sum -c' "$dist/GUIDE.md" || true)
-[ "$lines" -eq 1 ] || fail "GUIDE.md has $lines lines with sha256sum -c, not 1"
-line=$(grep 'sha256sum -c' "$dist/GUIDE.md")
+# the one line that fetches anything is the checked one: no other curl, wget or pipe into a shell (M4-07's review)
+lines=$(grep -cE 'curl|wget|\| *(ba)?sh' "$dist/GUIDE.md" || true)
+[ "$lines" -eq 1 ] || fail "GUIDE.md has $lines lines with curl, wget or a pipe into a shell, not 1: $(grep -nE 'curl|wget|\| *(ba)?sh' "$dist/GUIDE.md")"
+line=$(grep -E 'curl|wget' "$dist/GUIDE.md")
 want="curl -fsSLO https://github.com/$release_path/install.sh && echo \"$install_sha  install.sh\" | sha256sum -c - && bash install.sh"
 if [ "$line" != "$want" ]; then
   printf 'GUIDE.md: %s\nexpected: %s\n' "$line" "$want"
@@ -98,7 +99,7 @@ keep() {   # FILE...: copied from the container into $art
 served() { grep -c "\"GET /$release_path/$1 HTTP/1.[01]\" 200" "$server_log" || true; }
 
 cp "$dist/install.sh" "$CI_TMP/install.sh.changed"
-echo 'touch /tmp/changed-install-ran' >>"$CI_TMP/install.sh.changed"
+sed -i '1a touch /tmp/changed-install-ran' "$CI_TMP/install.sh.changed"   # first, so it would run if the script ran
 cp "$CI_TMP/install.sh.changed" "$root/$release_path/install.sh"
 friend "the line, with a changed install.sh served" '
 code=0

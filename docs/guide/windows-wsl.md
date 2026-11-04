@@ -70,14 +70,15 @@ page.
 - **If downloads keep failing with certificate errors**, usually after the PC slept and WSL's clock went wrong: in
   Terminal (right-click Start), type `wsl --shutdown`, then open Ubuntu and paste the install line again.
 - The "Diagnostics" link at the bottom of songcharter's page saves a zip to your Downloads folder (logs and settings,
-  no audio). Send it. Or, in Ubuntu, type `songcharter diagnostics --out diagnostics.zip`: the line after "in
-  Windows:" says where the zip is.
+  no audio). Send it. Or, in Ubuntu, type `songcharter diagnostics --out diagnostics.zip`: the line that
+  starts "in Windows:" says where the zip is.
 
 ## 7. Remove it
 
-- In Ubuntu, type `songcharter uninstall`. When it asks about the downloads, answer No (press Enter) to keep them
-  for a later reinstall.
-- To remove everything: in Terminal (Admin), type `wsl --unregister Ubuntu`. (`songcharter uninstall` prints this
+- In Ubuntu, type `songcharter uninstall`. It removes songcharter and its Start-menu shortcut. When it asks about the
+  downloads, answer No (press Enter) to keep them for a later reinstall. If it asks to restore `.wslconfig`, answer
+  Yes (y) to give WSL back the memory setting it had before songcharter.
+- To remove everything, after `songcharter uninstall`: in Terminal (Admin), type `wsl --unregister Ubuntu`. (`songcharter uninstall` prints this
   line at its end, with your Ubuntu's name.)
 
   **Warning: this deletes everything in that Ubuntu, not only songcharter. Use it only if you keep nothing else
@@ -85,6 +86,7 @@ page.
 
 ## 8. Licences
 
-songcharter is MIT. Some of the models it downloads are for non-commercial use only (see
+songcharter's code is MIT, apart from its port of the ADTOF drums model, which is for non-commercial use only. So
+are some of the models it downloads (see
 [NOTICE.txt](https://github.com/neb882/song-charting/blob/v{{VERSION}}/packaging/NOTICE.txt)). Charts you make are
 yours; song.ogg is made from your recording, and sharing it is sharing the song.
