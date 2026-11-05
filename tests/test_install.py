@@ -4,6 +4,7 @@ and the usage and template refusals. Then packaging/release/build.sh's three ass
 published SHA-256. The whole install runs in CI (packaging/ci/linux.d/30-install.sh)."""
 import hashlib
 import io
+import json
 import subprocess
 import tarfile
 from pathlib import Path
@@ -256,9 +257,13 @@ VERSION = "0.0.0-test"
 UV_URL = "https://uv.invalid/0.13.5/uv-x86_64-unknown-linux-gnu.tar.gz"
 NOTICE_URL = "https://rel.invalid/blob/v0.0.0-test/packaging/NOTICE.txt"
 PYTHON = r'''#!/bin/bash
-# the environments' stand-in python: what each helper does is in mode-<module> (ok by default)
+# the environments' stand-in python: what each helper does is in mode-<module> (ok by default); the closing summary
+# (python -P - doctor.json ...) is a stand-in line, or the real one when summary-python names a Python
 fake=@FAKE@
-if [ "$2" = - ]; then cat >/dev/null; echo "doctor's summary"; exit 0; fi
+if [ "$2" = - ]; then
+  if [ -f "$fake/summary-python" ]; then exec "$(cat "$fake/summary-python")" "$@"; fi
+  cat >/dev/null; echo "doctor's summary"; exit 0
+fi
 module=$3
 shift 3
 mode=$(cat "$fake/mode-$module" 2>/dev/null || echo ok)
@@ -269,8 +274,9 @@ done
 echo "$module $mode" >>"$fake/python.log"
 case $mode in
   ok | problems)
-    if [ "$module" = songcharter.runtime ]; then
+    if [ "$module" = songcharter.runtime ]; then   # doctor.json: $fake/doctor.json when there is one
       mkdir -p "$home/runtime" && echo '{"lane": "cpu"}' >"$home/runtime/runtime.json" && echo '{}' >"$home/doctor.json"
+      if [ -f "$fake/doctor.json" ]; then cp "$fake/doctor.json" "$home/doctor.json"; fi
     fi
     [ "$mode" = ok ] || exit 1 ;;
   early1) exit 1 ;;
@@ -318,8 +324,9 @@ def tar_gz(members: dict[str, tuple[bytes, int]]) -> bytes:
 
 class Install:
     """A filled install.sh with a stand-in for everything it runs: curl (serving `served`), uv (inside its own
-    release tarball), the environments' python (each helper's behaviour set by `mode`), id (a user, not root), df
-    (100 GB free) and, on `wsl`, cmd.exe (it logs its arguments)."""
+    release tarball), the environments' python (each helper's behaviour set by `mode`; `real_summary` gives the
+    closing summary this Python and songcharter), id (a user, not root), df (100 GB free), sleep (no wait before WSL's
+    restart) and, on `wsl`, cmd.exe (it logs its arguments)."""
 
     def __init__(self, tmp: Path, wsl: bool = False):
         self.fake, self.home, self.dist = tmp / "fake", tmp / "home", tmp / "dist"
@@ -327,7 +334,7 @@ class Install:
             d.mkdir(parents=True)
         (self.fake / "python").write_text(PYTHON.replace("@FAKE@", str(self.fake)), encoding="utf-8")
         (self.fake / "python").chmod(0o755)
-        for name, body in (("curl", CURL), ("id", "#!/bin/sh\necho 1000\n"),
+        for name, body in (("curl", CURL), ("id", "#!/bin/sh\necho 1000\n"), ("sleep", "#!/bin/sh\nexit 0\n"),
                            ("df", "#!/bin/sh\nprintf 'Avail\\n100000000000\\n'\n"),
                            ("cmd.exe", f'#!/bin/sh\necho "$*" >>{self.fake}/cmd.log\n')):
             if name != "cmd.exe" or wsl:
@@ -352,6 +359,13 @@ class Install:
 
     def mode(self, module: str, mode: str) -> None:
         (self.fake / f"mode-songcharter.{module}").write_text(mode, encoding="utf-8")
+
+    def real_summary(self, doctor: dict) -> None:
+        """The closing summary from this Python's songcharter.device, of `doctor` as step 8's doctor.json."""
+        import sys
+        (self.fake / "summary-python").write_text(sys.executable, encoding="utf-8")
+        (self.fake / "doctor.json").write_text(json.dumps(doctor), encoding="utf-8")
+        self.env["PYTHONPATH"] = str(ROOT)
 
     def log(self, name: str) -> list[str]:
         path = self.fake / name
@@ -546,3 +560,125 @@ def test_the_cpu_lane_needs_8_gb_free(tmp_path, free_gb, ok):
     assert (p.returncode == 0) is ok, p.stdout + p.stderr
     assert "lane cpu needs about 8 GB" in p.stdout
     assert ("not enough free disk" in p.stdout + p.stderr) is not ok
+
+
+# ------------------------------------------------------------------------------------------------ the closing summary
+
+UNDER_8 = 7618   # WSL's MemTotal in MB (2^20 bytes): 7.99e9 bytes, just under device.MIN_WSL_MEMORY's 8e9 (the skeptic's)
+MEMORY_PROBLEM = "problem: WSL has 7.4 GB of memory, under 8 GB"
+CLOSING = "WSL's memory is measured again after the restart."
+
+
+def doctor(home: Path, monkeypatch, total_mb: int = UNDER_8, free_mb: int = 50_000, wsl: bool = True,
+           wslconfig_gb: int | None = None) -> dict:
+    """doctor.json as step 8 writes it, with its problems and notes from device.findings: no GPU, the cpu lane, WSL
+    (with interop, Windows' RAM 15.4 GiB, .wslconfig none or `wslconfig_gb`) or plain Linux, WSL's MemTotal and the
+    free disk as given."""
+    from songcharter import device
+    monkeypatch.setenv("HOME", str(home))   # the disk problem names the home folder, as on the install's own
+    asked = None if wslconfig_gb is None else wslconfig_gb * 2 ** 30
+    r = {"songcharter": "0.0.0-test", "written": "2026-11-05T12:00:00+0000", "platform": "Linux-test",
+         "python": {"version": "3.13.17", "executable": "/opt/test/python"},
+         "wsl": {"distro": "Ubuntu-26.04", "windows_build": "10.0.26100.1000", "interop": True, "windows_ram_mb": 15770,
+                 "wslconfig": {"path": "C:\\Users\\someone\\.wslconfig", "exists": asked is not None,
+                               "memory_bytes": asked, "swap_bytes": None, "localhost_forwarding": None,
+                               "networking_mode": None},
+                 "memory_matches_config": device.memory_matches(total_mb, asked),
+                 "documents": {"registry": None, "windows": None, "linux": None}} if wsl else None,
+         "gpu": None, "gpu_error": "nvidia-smi not found", "torch": {"installed": True, "version": "2.15.0+cpu",
+                                                                    "cuda": None},
+         "device": {"chosen": "cpu", "reason": "no NVIDIA GPU found"}, "guitar_device": "cpu", "guitar_reason": "no GPU",
+         "cpu": {"logical": 4, "threads_default": 3},
+         "ram": {"total_mb": total_mb, "available_mb": total_mb - 800, "swap_total_mb": 2048, "swap_free_mb": 2048},
+         "disk": {"home_free_mb": free_mb, "windows_c_free_mb": 90_000 if wsl else None},
+         "components": {"ffmpeg": {"ok": True, "version": "n9"}, "allin1": {"ok": True, "package": "all-in-one-infer",
+                                                                            "version": "3.1.0", "cuda": False,
+                                                                            "python": "/opt/test/allin1"}},
+         "install": {"lane": "cpu", "lane_reason": "asked for with --lane cpu"}}
+    r["problems"], r["notes"] = device.findings(r)
+    r["ok"] = not r["problems"]
+    return r
+
+
+def summary(p: subprocess.CompletedProcess) -> list[str]:
+    """The closing summary's lines: after "launcher:", to the verdict, and the closing line when it follows."""
+    lines = p.stdout.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("launcher: "))
+    end = next(i for i, line in enumerate(lines) if line.startswith("doctor: ") and i > start)
+    return lines[start + 1:end + (2 if lines[end + 1:end + 2] == [CLOSING] else 1)]
+
+
+def test_a_restart_leaves_the_memory_doctor_measured_before_it_out_of_the_summary(tmp_path, monkeypatch):
+    """The advisor's finding 7 on the release candidate and its skeptic: step 8's doctor measured WSL's memory before
+    step 9 wrote .wslconfig, which applies at the restart that follows, so on a PC whose WSL has just under 8 GB the
+    summary said "WSL has 7.4 GB of memory, under 8 GB" and "doctor: 1 problem", and install.sh exited 1, five
+    seconds before the restart that cures it. With step 9's flag: no memory problem, no memory note ("under 11 GB:
+    allin1 is left out"), not "no .wslconfig", the closing line, exit 0; the other notes stay. With no flag (here a
+    rerun after an interrupted restart: .wslconfig kept at 12 GB, not yet in force), all of it, and exit 1."""
+    i = Install(tmp_path, wsl=True)
+    r = doctor(i.home, monkeypatch)
+    assert any(p.startswith(MEMORY_PROBLEM[9:]) for p in r["problems"]) and len(r["problems"]) == 1
+    assert any("under 11 GB: allin1 is left out" in n for n in r["notes"])
+    i.real_summary(r)
+    i.mode("runtime", "problems")   # setup's exit 1: doctor found the problem
+    i.mode("wslsetup", "changed")   # step 9 wrote .wslconfig: its flag
+    p = i.run("--from", str(i.dist))
+    assert p.returncode == 0, p.stdout + p.stderr
+    lines = summary(p)
+    assert lines[-2:] == ["doctor: OK", CLOSING], lines
+    assert not any(line.startswith("problem:") or "11 GB" in line or "no .wslconfig" in line for line in lines), lines
+    assert lines[1] == "WSL: Ubuntu-26.04 on Windows 10.0.26100.1000, interop on; Windows RAM 15.4 GB; .wslconfig: " \
+                       "just written"
+    assert "note: CPU mode: no NVIDIA GPU found" in lines and "note: the guitar runs on the CPU: no GPU" in lines
+    assert "RAM: 7.4 GB, 6.7 GB available; swap 0.0 of 2.0 GB used" in lines   # what was measured, as it was
+    assert p.stdout.rstrip().endswith("WSL restarts now so the new memory setting takes effect. Then start songcharter "
+                                      "from the Start menu.")
+    assert i.log("cmd.log")[-1] == "/d /c wsl.exe --shutdown"
+
+    j = Install(tmp_path / "kept", wsl=True)
+    r = doctor(j.home, monkeypatch, wslconfig_gb=12)   # .wslconfig asks for 12 GB, WSL has 7.4: not restarted yet
+    j.real_summary(r)
+    j.mode("runtime", "problems")
+    p = j.run("--from", str(j.dist))   # step 9 keeps .wslconfig: no flag, no restart
+    assert p.returncode == 1, p.stdout + p.stderr
+    lines = summary(p)
+    assert lines[-1] == "doctor: 1 problem" and CLOSING not in p.stdout and "WSL restarts now" not in p.stdout
+    assert [line for line in lines if line.startswith("problem:")] == [f"problem: {r['problems'][0]}"]
+    assert lines[-1 - len(r["notes"]):-1] == [f"note: {n}" for n in r["notes"]]   # the note under 11 GB among them
+    assert any("but .wslconfig asks for 12.0 GB: restart WSL" in n for n in r["notes"])
+    assert lines[1].endswith("; .wslconfig memory 12.0 GB: not in force")
+    assert not any("--shutdown" in c for c in j.log("cmd.log"))
+
+
+def test_a_restart_keeps_the_disk_problem_in_the_summary(tmp_path, monkeypatch):
+    """With the flag, only what doctor said of WSL's memory goes: a disk problem is printed, and install.sh exits 1
+    for it, with the closing line."""
+    i = Install(tmp_path, wsl=True)
+    r = doctor(i.home, monkeypatch, free_mb=4000)
+    assert len(r["problems"]) == 2
+    i.real_summary(r)
+    i.mode("runtime", "problems")
+    i.mode("wslsetup", "changed")
+    p = i.run("--from", str(i.dist))
+    assert p.returncode == 1, p.stdout + p.stderr
+    lines = summary(p)
+    assert [line for line in lines if line.startswith("problem:")] == [
+        f"problem: only 3.9 GB free in WSL ({i.home}): a chart needs 6 GB"]
+    assert lines[-2:] == ["doctor: 1 problem", CLOSING] and i.log("cmd.log")[-1] == "/d /c wsl.exe --shutdown"
+
+
+@pytest.mark.parametrize("free_mb", [4000, 50_000])
+def test_plain_linux_has_the_summary_as_it_was(tmp_path, monkeypatch, free_mb):
+    """No WSL, so no flag: the summary is doctor.json's as it is, with no closing line, and the exit status is
+    setup's (1 with a problem)."""
+    i = Install(tmp_path)
+    r = doctor(i.home, monkeypatch, free_mb=free_mb, wsl=False)
+    i.real_summary(r)
+    i.mode("runtime", "problems" if r["problems"] else "ok")
+    p = i.run("--from", str(i.dist))
+    assert p.returncode == (1 if r["problems"] else 0), p.stdout + p.stderr
+    lines = summary(p)
+    assert lines[1] == "WSL: no" and CLOSING not in p.stdout
+    assert [line for line in lines if line.startswith(("problem:", "note:"))] == (
+        [f"problem: {x}" for x in r["problems"]] + [f"note: {x}" for x in r["notes"]])
+    assert lines[-1] == ("doctor: 1 problem" if r["problems"] else "doctor: OK")
