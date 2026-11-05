@@ -43,7 +43,7 @@ What it does
   4. Writes JSON to --out and prints a one-line summary (and the windows' line).
 No lyrics, vocals or section names are read into the output.
 """
-import argparse, json, os, subprocess, sys
+import argparse, json, os, shutil, subprocess, sys
 from collections import Counter
 import numpy as np
 
@@ -105,8 +105,20 @@ def audio_files(folder):
     return out
 
 
+def ffmpeg_exe():
+    """ffmpeg from $FFMPEG, then PATH, then the imageio-ffmpeg wheel (songcharter.audio.ffmpeg_exe's order)."""
+    exe = os.environ.get('FFMPEG') or shutil.which('ffmpeg')
+    if exe:
+        return exe
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        return 'ffmpeg'
+
+
 def decode(path, sr=SR):
-    raw = subprocess.run(['ffmpeg', '-v', 'error', '-nostdin', '-i', path, '-vn', '-ac', '1', '-ar', str(sr),
+    raw = subprocess.run([ffmpeg_exe(), '-v', 'error', '-nostdin', '-i', path, '-vn', '-ac', '1', '-ar', str(sr),
                           '-f', 'f32le', '-'], capture_output=True, check=True).stdout
     return np.frombuffer(raw, dtype=np.float32).astype(np.float64)
 
