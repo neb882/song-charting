@@ -1394,8 +1394,8 @@ def test_metadata_rules():
     meta, origin = song_metadata(Path("x/My Song.mp3"), {"title": " Real  Title ", "album_artist": "Group",
                                                          "date": "Released 1987", "track": "B2"},
                                  {"name": None, "year": "  ", "genre": "Rock"})
-    assert meta == {"name": "Real Title", "artist": "Group", "album": "Unknown", "genre": "Rock", "year": "1987",
-                    "charter": "songcharter"}
+    assert meta == {"name": "Real Title", "artist": "Group", "album": "Real Title - (Single)", "genre": "Rock",
+                    "year": "1987", "charter": "songcharter"}
     assert origin["artist"] == "tag album_artist" and origin["year"] == "tag date" and origin["album"] == "default"
     meta, origin = song_metadata(Path("x/My Song.mp3"), {}, {})
     assert meta["name"] == "My Song" and origin["name"] == "file name"
@@ -1403,6 +1403,55 @@ def test_metadata_rules():
     scan_defaults = {"name": "Unknown Name", "artist": "Unknown Artist", "album": "Unknown Album",
                      "genre": "Unknown Genre", "year": "Unknown Year", "charter": "Unknown Charter"}
     assert all(meta[k] != v and meta[k] for k, v in scan_defaults.items())
+
+
+@pytest.mark.parametrize("stem,artist,name", [
+    ("Made-Up Band - Some Song", "Made-Up Band", "Some Song"),     # a hyphen inside a word is no separator
+    ("01 - Made-Up Band - Some Song", "Made-Up Band", "Some Song"),   # a track number, then a separator
+    ("01. Made-Up Band – Some Song", "Made-Up Band", "Some Song"),   # a track number and a dot; an en dash
+    ("7 Made-Up Band — Some Song", "Made-Up Band", "Some Song"),     # a track number and a space; an em dash
+    ("Made-Up Band - Some Album - Some Song", "Made-Up Band", "Some Song"),   # the artist first, the title last
+    ("  Made-Up   Band  -  Some  Song ", "Made-Up Band", "Some Song"),       # white space as one space, trimmed
+    ("311 - Some Song", "311", "Some Song"),     # a number before the only separator is the artist
+    ("1984 Band - Some Song", "1984 Band", "Some Song"),   # four digits are no track number
+    ("Some Song", None, "Some Song"),            # no separator: the stem is the title, as before
+    ("Made-Up Band-Some Song", None, "Made-Up Band-Some Song"),   # no space around the hyphen: no separator
+    ("- Some Song", None, "- Some Song"),        # no artist
+    ("01. - Some Song", None, "Some Song"),      # the artist's part blank once the track number goes: no artist
+])
+def test_the_file_name_gives_the_artist_and_the_title(stem, artist, name):
+    """With no tags, "[<track number><sep>]<artist><sep><title>" (a hyphen, en dash or em dash with a space on
+    each side) gives the artist and the title, from the file name; the album's placeholder is the title's single."""
+    meta, origin = song_metadata(Path(f"x/{stem}.mp3"), {}, {})
+    assert (meta["name"], origin["name"]) == (name, "file name"), stem
+    assert (meta["artist"], origin["artist"]) == ((artist, "file name") if artist else ("Unknown", "default")), stem
+    assert (meta["album"], origin["album"]) == (f"{name} - (Single)", "default"), stem
+    assert (meta["genre"], meta["year"]) == ("Unknown", "Unknown")
+
+
+def test_the_tags_and_the_caller_win_over_the_file_name():
+    path = Path("x/01 - Made-Up Band - Some Song.flac")
+    # a tagged artist: the file's name is not read for "Artist - Title", and its stem is the title, as before
+    for tag in ("artist", "album_artist", "albumartist"):
+        meta, origin = song_metadata(path, {tag: "Tagged Band"}, {})
+        assert (meta["artist"], origin["artist"]) == ("Tagged Band", f"tag {tag}"), tag
+        assert (meta["name"], origin["name"]) == ("01 - Made-Up Band - Some Song", "file name"), tag
+    # a tagged title with the file name's artist
+    meta, origin = song_metadata(path, {"title": "Tagged Song", "artist": "  "}, {})
+    assert (meta["name"], origin["name"], meta["artist"], origin["artist"]) == (
+        "Tagged Song", "tag title", "Made-Up Band", "file name")
+    assert (meta["album"], origin["album"]) == ("Tagged Song - (Single)", "default")
+    # the caller's values win over the file name's, and the album's placeholder follows the title given
+    meta, origin = song_metadata(path, {}, {"artist": "Given Band", "name": " "})
+    assert (meta["artist"], origin["artist"], meta["name"], origin["name"]) == (
+        "Given Band", "given", "Some Song", "file name")
+    meta, origin = song_metadata(path, {}, {"name": "Given Song"})
+    assert (meta["name"], origin["name"], meta["artist"], origin["artist"]) == (
+        "Given Song", "given", "Made-Up Band", "file name")
+    assert meta["album"] == "Given Song - (Single)"
+    # a tagged or given album: no placeholder
+    assert song_metadata(path, {"album": "Tagged Album"}, {})[0]["album"] == "Tagged Album"
+    assert song_metadata(path, {}, {"album": "Given Album"})[1]["album"] == "given"
 
 
 def test_options_and_seeds():
