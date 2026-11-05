@@ -1130,7 +1130,7 @@ def test_notes_past_the_end_of_the_audio_are_clipped(built, monkeypatch):
 
 # ------------------------------------------------------------------------------------------------ the grid's octave
 
-def snare_features(beats, on, fps=200.0, duration=None):
+def snare_features(beats, on, fps=200.0, duration=None, mid_level=1.0):
     """OnsetFeatures with a clear drum peak at every beat (so every beat has confident evidence) and the snare band's
     power at `on`: "lines" (the beats), "mids" (their midpoints) or "both"; beats as a grid gives them (the band
     powers sit at the onset times, ONSET_TO_BEAT_MS after the beats)."""
@@ -1142,7 +1142,7 @@ def snare_features(beats, on, fps=200.0, duration=None):
     if on in ("lines", "both"):
         snare[np.round(u * fps).astype(int)] = 1.0
     if on in ("mids", "both"):
-        snare[np.round(0.5 * (u[:-1] + u[1:]) * fps).astype(int)] = 1.0
+        snare[np.round(0.5 * (u[:-1] + u[1:]) * fps).astype(int)] = mid_level
     return OnsetFeatures(fps, env, np.zeros(n), np.zeros(n), snare)
 
 
@@ -1203,12 +1203,17 @@ def test_the_backbeat_vetoes_or_lets_it_double():
     notes = {"guitar": sixteenths()}
     octave, stats = grid_octave(notes, SLOW_GRID, snare_features(SLOW_GRID, "lines"))
     assert octave == 1 and stats["backbeat_ratio"] < BACKBEAT_MIN
-    assert stats["reason"].startswith("the snare is on the beat lines (backbeat 0.01, under 0.8)")
+    assert stats["reason"].startswith(f"the snare is on the beat lines (backbeat 0.01, under {BACKBEAT_MIN})")
     assert grid_octave(notes, SLOW_GRID, snare_features(SLOW_GRID, "mids"))[0] == 2
     octave, stats = grid_octave(notes, SLOW_GRID, None)
     assert octave == 2 and stats["backbeat_ratio"] is None and stats["reason"].endswith(", no drums")
     ratio, used = backbeat_ratio(snare_features(SLOW_GRID, "both"), SLOW_GRID)
     assert ratio == pytest.approx(1.0) and used == len(SLOW_GRID) - 1
+    # the power-metal song's case: a first grid half a beat off, the snare on neither (ratio 0.68 there); the
+    # measured BACKBEAT_MIN (0.34, the right grids reaching 0.17) lets it double, the plan's 0.8 did not
+    half_on = snare_features(SLOW_GRID, "both", mid_level=0.5)
+    assert backbeat_ratio(half_on, SLOW_GRID)[0] == pytest.approx(0.5) and grid_octave(notes, SLOW_GRID, half_on)[0] == 2
+    assert grid_octave(notes, SLOW_GRID, snare_features(SLOW_GRID, "both", mid_level=0.2))[0] == 1
     # too few confident beats: indeterminate
     assert backbeat_ratio(snare_features(SLOW_GRID[:10], "lines"), SLOW_GRID[:10]) == (None, 9)
 
@@ -1299,6 +1304,8 @@ def test_a_grid_too_slow_for_its_notes_is_doubled(fast_song, monkeypatch):
     first, second = seen["grids"]
     assert second["bpm"] == pytest.approx(2 * stats["first"]["click_bpm"]) and second["bpm_range"] == (170.0, 370.0)
     assert second.get("first_beat") is None and second["mode"] == first["mode"] is None
+    assert second["half_beat"] is True and not first.get("half_beat")  # the half-beat test, on the second pass only
+    assert stats["second"]["half_beat"]["shifted"] is False  # the kicks are on its lines already
     q = result.report["parts"]["guitar"]["quantize"]["expert"]
     assert q["notes_out"] == FAST_NOTES and q["merged"] == q["dropped_distinct"] == q["dropped"] == 0
 

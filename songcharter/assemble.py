@@ -665,7 +665,8 @@ OCTAVE_SHORT = 0.75        # an interval between onsets is short under this shar
                            # the quantizer would merge, move or drop (its `separate` is 0.75 slot)
 OCTAVE_SHARE = 0.35        # the grid doubles when this share of the intervals, pooled over the parts, is short
                            # (the geometric midpoint of 0.199, the most on a right grid, and 0.623 at half tempo) ...
-BACKBEAT_MIN = 0.8         # ... and the snare is not clearly on the beat lines (midpoints / lines at least this) ...
+BACKBEAT_MIN = 0.34        # ... and the snare is not clearly on the beat lines (midpoints / lines at least this:
+                           # the geometric midpoint of 0.172, the most on a right grid, and 0.682 at half tempo) ...
 OCTAVE_MAX_BPM = 300.0     # ... and the doubled tempo is at most Magma's 300 BPM ...
 OCTAVE_MIN_ONSETS = 200    # ... and the parts have this many distinct onsets in all
 BACKBEAT_WINDOW_S = 0.035  # the snare band's peak within this of a beat line or a beat's midpoint
@@ -1384,15 +1385,16 @@ def _remove_build(folder: Path) -> None:
 def _grid_record(g: BeatGrid) -> dict:
     ev = g.stats["evidence"]
     return {"bpm_median": round(g.bpm, 4), "click_bpm": g.stats["click"]["bpm"], "mode": g.mode,
-            "confident_share": ev["confident_share"], "n_confident": ev["n_confident"], "n_beats": ev["n_beats"]}
+            "confident_share": ev["confident_share"], "n_confident": ev["n_confident"], "n_beats": ev["n_beats"],
+            **({"half_beat": g.stats["half_beat"]} if "half_beat" in g.stats else {})}
 
 
 def _octave_pass(cfg: AssembleConfig, first: BeatGrid, onsets: dict[str, list[float]],
                  drum_features: OnsetFeatures | None, second_pass) -> tuple[BeatGrid, int, dict, str, list[str]]:
     """The grid's octave (DESIGN.md 2.3, doubling only): (grid, octave, stats, reason, warnings). grid_octave
     decides on the first grid unless the config forces it; a 2 builds the grid again at twice the first grid's
-    click tempo, with the fold range doubled and no first-beat hint (`second_pass(bpm, bpm_range)`). The doubled
-    grid is kept when its confident share is at least OCTAVE_RULES.evidence_min times the first's (a doubled grid
+    click tempo, with the fold range doubled, no first-beat hint and the half-beat phase test
+    (`second_pass(bpm, bpm_range)`; beatgrid.half_beat_phase). The doubled grid is kept when its confident share is at least OCTAVE_RULES.evidence_min times the first's (a doubled grid
     has fewer drum hits per beat by nature), or when the config forces 2; otherwise the first stays, with a
     warning."""
     rules = OCTAVE_RULES
@@ -1486,7 +1488,8 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
     grid, octave, octave_stats, octave_reason, warn = _octave_pass(
         cfg, grid, onsets, features if src == "drums" else None,
         lambda bpm, bpm_range: beat_grid(grid_audio, sr, duration=duration, bpm=bpm, mode=cfg.grid_mode,
-                                         secondary=second_stem, features=features, bpm_range=bpm_range))
+                                         secondary=second_stem, features=features, bpm_range=bpm_range,
+                                         half_beat=True))
     warnings += warn
     lead = plan_lead_in(grid.beats, grid.downbeats, sr, min_lead=cfg.lead_in, duration=duration)
     tm = TempoMap.from_beats(lead.beats, bars=lead.bars, tolerance=cfg.tempo_tolerance)

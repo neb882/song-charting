@@ -700,13 +700,52 @@ def bar_phase(features: OnsetFeatures, beats: np.ndarray, use: np.ndarray, beats
     return int(order[0]), float(scores[order[0]] - scores[order[1]]), [round(float(s), 4) for s in scores]
 
 
+def half_beat_phase(features: OnsetFeatures, beats: np.ndarray, use: np.ndarray,
+                    half_window: float = 0.035) -> tuple[bool, dict]:
+    """(shift, stats): whether the beat lines belong half a beat later, on the midpoints between these beats.
+
+    The kick band's (KICK_BAND) peak within +-half_window of each beat and of each beat's midpoint, as medians over
+    the beats in `use`: the lines that carry more kick are the beat, as bar_phase puts beat 1 on the kick. A grid at
+    twice the tempo can lock onto the 8ths the drums hit hardest, a snare on every "and" over a kick on every beat
+    (a fast power-metal beat), which puts its lines on the off-beats; this finds that. stats: the two medians, their
+    ratio (midpoints / lines; over 1: shift) and the beats used."""
+    fps, kick = features.fps, features.kick
+    hw = int(round(half_window * fps))
+
+    def peak(t: np.ndarray) -> np.ndarray:
+        c = np.round(t * fps).astype(int)
+        return np.array([kick[max(0, i - hw):max(0, min(len(kick), i + hw + 1))].max(initial=0.0) for i in c])
+
+    b = np.asarray(beats, dtype=np.float64)
+    if len(b) < 2 or not use[:-1].any():
+        return False, {"lines": None, "midpoints": None, "ratio": None, "beats": 0, "shifted": False}
+    u = use[:-1]
+    lines, mids = float(np.median(peak(b[:-1][u]))), float(np.median(peak(0.5 * (b[:-1] + b[1:])[u])))
+    ratio = mids / lines if lines > 0 else (np.inf if mids > 0 else 1.0)
+    shift = bool(ratio > 1.0)
+    return shift, {"lines": round(lines, 6), "midpoints": round(mids, 6),
+                   "ratio": round(float(ratio), 4) if np.isfinite(ratio) else None, "beats": int(u.sum()),
+                   "shifted": shift}
+
+
+def shift_half_beat(beats: np.ndarray, duration: float) -> np.ndarray:
+    """The beats moved half a beat later: each beat's midpoint with the next, and one more half a beat before the
+    first where it stays at or after 0 s (the last beat's next midpoint is past it, and falls when it passes the
+    duration)."""
+    b = np.asarray(beats, dtype=np.float64)
+    mids = 0.5 * (b[:-1] + b[1:])
+    after = b[-1] + 0.5 * (b[-1] - b[-2])
+    before = b[0] - 0.5 * (b[1] - b[0])
+    return np.concatenate([[before] if before >= 0 else [], mids, [after] if after <= duration else []])
+
+
 # ---------------------------------------------------------------------------------------------------- the grid
 
 def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None = None, bpm: float | None = None,
               first_beat: float | None = None, mode: str | None = None, onset_to_beat_ms: float = ONSET_TO_BEAT_MS,
               start: np.ndarray | None = None, features: OnsetFeatures | None = None,
               secondary: np.ndarray | None = None, secondary_features: OnsetFeatures | None = None,
-              bpm_range: tuple[float, float] = BPM_RANGE) -> BeatGrid:
+              bpm_range: tuple[float, float] = BPM_RANGE, half_beat: bool = False) -> BeatGrid:
     """The beat grid of a song from its drum stem (or its mix when it has no drums).
 
     audio:      shape (channels, samples) or (samples,), at sample_rate. May be None when `features` is given.
@@ -723,6 +762,9 @@ def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None
                 the tracker's local windows and the tempo check. The default is one metrical level, BPM_RANGE;
                 assemble's second pass (a grid at twice the tempo, DESIGN.md 2.3) gives (2 lo, 2 hi), so a 198 BPM
                 hint is not folded back to 99 by the windows.
+    half_beat:  test the beat phase (half_beat_phase): when the midpoints between the beats carry more kick than
+                the beats, the beats move half a beat later, before the downbeats are found. assemble's second pass
+                turns it on (stats["half_beat"]); evidence, click and drift stats stay those of the grid found.
 
     The start grid is the straight line unless a tracker's beats find clearly more evidence (TRACKER_MARGIN more
     of the beats confident): then no straight line fits the song, the fill for beats without evidence follows the
@@ -820,6 +862,11 @@ def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None
     follow = (ev.times - onset_beats)[confident]
     stats["evidence"]["local_minus_grid_ms"] = {"median_abs": round(float(np.median(np.abs(follow))) * 1000, 2),
                                                 "p95_abs": round(float(np.percentile(np.abs(follow), 95)) * 1000, 2)}
+    if half_beat:
+        shift, stats["half_beat"] = half_beat_phase(f, onset_beats, confident)
+        if shift:
+            onset_beats = shift_half_beat(onset_beats, dur - onset_to_beat_ms / 1000.0)
+            confident = local_beats(f, onset_beats).confident
 
     # downbeats on the onset-time beats (also per 16 bars, to show where the bar phase disagrees), then the
     # convention shift, then trim to the audio

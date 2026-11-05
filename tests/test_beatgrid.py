@@ -3,9 +3,10 @@ import numpy as np
 import pytest
 
 import songcharter.beatgrid as B
-from songcharter.beatgrid import (BPM_RANGE, BeatGrid, OnsetFeatures, beat_grid, estimate_tempo, local_beats,
-                                  local_periods, loess, mel_filterbank, missed_tempo_changes, onset_features,
-                                  onset_phase, onset_times, robust_line, track_beats, window_tempi)
+from songcharter.beatgrid import (BPM_RANGE, BeatGrid, OnsetFeatures, beat_grid, estimate_tempo, half_beat_phase,
+                                  local_beats, local_periods, loess, mel_filterbank, missed_tempo_changes,
+                                  onset_features, onset_phase, onset_times, robust_line, shift_half_beat,
+                                  track_beats, window_tempi)
 from songcharter.errors import InputError
 from songcharter.tempo import TempoMap, plan_lead_in
 
@@ -446,3 +447,48 @@ def test_the_default_range_changes_nothing(steady):
     a, b = beat_grid(y, SR, features=f), beat_grid(y, SR, features=f, bpm_range=BPM_RANGE)
     assert np.array_equal(a.beats, b.beats) and np.array_equal(a.downbeats, b.downbeats) and a.stats == b.stats
     assert a.bpm == pytest.approx(120.0, abs=0.05) and BPM_RANGE == (85.0, 185.0)
+
+
+def skank(seed=0):
+    """198 BPM: a kick on every beat, a loud snare on every "and" (a fast power-metal beat). The snares are the
+    loudest 8ths, so a grid at 198 BPM puts its lines on them."""
+    rng = np.random.default_rng(seed)
+    truth = 0.4 + np.arange(int(58 / FAST)) * FAST
+    y = np.zeros(int(60.0 * SR))
+    t = np.arange(int(0.12 * SR)) / SR
+    kick = np.sin(2 * np.pi * 55 * t) * np.exp(-t / 0.05)
+    snare = (0.5 * np.sin(2 * np.pi * 190 * t) + 0.8 * rng.standard_normal(len(t))) * np.exp(-t / 0.04)
+    for b in truth:
+        for at, hit in ((b, kick), (b + FAST / 2, snare)):
+            i = int(round(at * SR))
+            y[i:i + len(t)] += hit
+    y += rng.standard_normal(len(y)) * 1e-3
+    return truth, (0.4 * y).astype(np.float32)
+
+
+def test_the_half_beat_test_puts_the_lines_on_the_kick(steady):
+    """On the fast beat the grid's lines fall on the snares; half_beat moves them half a beat later, onto the
+    kicks, and says so. On a rock beat (kick and snare on the beats, hats between) nothing moves."""
+    truth, y = skank()
+    f = onset_features(y, SR)
+    plain = beat_grid(y, SR, bpm=198.0, bpm_range=DOUBLED, features=f)
+    moved = beat_grid(y, SR, bpm=198.0, bpm_range=DOUBLED, features=f, half_beat=True)
+    assert abs(spread_ms(plain.beats, truth)[0]) > 100  # on the "and"s
+    assert abs(spread_ms(moved.beats, truth)[0]) < 30 and spread_ms(moved.beats, truth)[1] < 5
+    hb = moved.stats["half_beat"]
+    assert hb["shifted"] and hb["ratio"] > 1 and "half_beat" not in plain.stats
+    assert moved.bpm == pytest.approx(198.0, abs=0.1) and len(moved.downbeats)
+    _, rock = steady
+    g = beat_grid(rock, SR, half_beat=True)
+    assert not g.stats["half_beat"]["shifted"] and np.array_equal(g.beats, beat_grid(rock, SR).beats)
+    # the test itself, and the shift's geometry
+    beats = np.arange(1.0, 20.0, 0.5)
+    k = np.zeros(4000)
+    k[np.round((beats[:-1] + 0.25) * 100).astype(int)] = 1.0
+    feats = OnsetFeatures(100.0, np.zeros(4000), np.zeros(4000), k, np.zeros(4000))
+    assert half_beat_phase(feats, beats, np.ones(len(beats), bool))[0]
+    assert not half_beat_phase(OnsetFeatures(100.0, *(np.zeros(4000),) * 2, np.roll(k, -25), np.zeros(4000)),
+                               beats, np.ones(len(beats), bool))[0]
+    assert np.allclose(shift_half_beat(np.array([0.1, 0.6, 1.1]), 1.3), [0.35, 0.85])
+    assert np.allclose(shift_half_beat(np.array([0.3, 0.8, 1.3]), 2.0), [0.05, 0.55, 1.05, 1.55])
+
