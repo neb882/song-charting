@@ -15,6 +15,21 @@ the user when the guitar ended early, retries a GPU failure, adds album art and 
 `m4-11-art`), tells him when a new version is out, and clears the polish the owner saw. Everything that moves a
 chart is judged on the golden charts and on a new repeatable check against human charts of the two hard songs.
 
+**The conventions.** The owner asked that this version rest on how charts are supposed to be made. A research brief
+on the community's charting conventions and songcharter's gaps against them was written for this plan
+(`<scratchpad>/briefs/charting-conventions.md`, 2026-11-05; the orchestrator commits it as
+`docs/reports/charting-conventions.md` in wave 0, after PIPELINE's scan for personal details and lyrics, since a
+report left in the scratch folder vanishes with the container). Where an order's choice follows a convention, the
+order states the rule it assumes and marks it **[conventions]**, so the advisor can check it against the report. Its
+ranked gaps map onto the orders as follows: 1 (the tempo octave is the musical pulse, 40-300 BPM), 2 (no chord of
+notes distinct in time) and 3 (the spacing floors) are M5-01; 5 (the lost ending) is M5-02; 6 (solos on featured
+lead breaks) is M5-03; 9 is partly M5-04 (the 50 ms share re-measured on the right grid) and 10 partly M5-06 (the
+album placeholder) and M4-11 (`background.jpg` and the Clone Hero setting the guide must name: the reviewer checks
+M4-11 against the report's section 8); 4 (HOPO states independent of the octave; M5-01 measures it), 7 (fret-quality
+metrics and repeat consistency), 8 (the engine's density) and the rest of 9 and 10 are in M5-99 with their reasons.
+The report's section 11 lists ten places where DESIGN contradicts the conventions; the orders above resolve five
+(2.3's fold, 2.6's spacing and merging, 2.10's solos) and the doc pass after this version folds the rest in.
+
 **The version number: 0.2.0** [decision, the owner can overrule]. The charting path changes in four places (the
 grid's tempo octave, the chord guard, the guitar continuation, the solo caps), charts of the same song change on
 purpose, and the user sees new features (art, the update notice, the CPU retry). A 0.1.1 would read as a patch;
@@ -25,7 +40,7 @@ the friend's install path does not care (`app/<version>`).
 | order | name | one line | size |
 |---|---|---|---|
 | M5-09 | [stress-eval](M5-09-stress-eval.md) | the two hard songs as a repeatable check outside the repository (their human charts from Chorus Encore, a golden-style run, scores against every human chart, per-30-s-window F1, a timing-only lyrics check), with the baseline numbers committed | 1 day |
-| M5-01 | [fast-grid](M5-01-fast-grid.md) | the grid's tempo octave chosen from note density (a second `beat_grid` pass at twice the tempo, with the fold range as a parameter), and no chord made of notes distinct in time | 1.5 days |
+| M5-01 | [fast-grid](M5-01-fast-grid.md) | the grid's tempo octave as the musical pulse, judged by note density and the backbeat (a second `beat_grid` pass at twice the tempo, with the fold range as a parameter); no chord made of notes distinct in time; the spacing floors set from the human charts' gaps; HOPO states measured [conventions] | 2 days |
 | M5-02 | [long-songs](M5-02-long-songs.md) | a guitar take the engine cut short (8,192 tokens or 1,280 beats) is continued from where it stopped and stitched; the user is told | 2 days |
 | M5-03 | [solos](M5-03-solos.md) | a solo's longest length and the solos' largest share of a song, from the human charts; the densest parts of a long "Solo" run win; the preview draws the solos | 1 day |
 | M5-04 | [lyrics-warning](M5-04-lyrics-warning.md) | the "alignment is unsure" warning calibrated on the references' stems and mixes and the power-metal song, with a statistic chosen by margin | 1 day |
@@ -51,7 +66,7 @@ the friend's install path does not care (`app/<version>`).
 
 | wave | orders | why together, and what they must not touch |
 |---|---|---|
-| 0 | **M4-11** reviewed and merged into `main` [owner: it was held until a v0.1.1 was approved; now the next version is approved] | every later order touches its files (pipeline.py, assemble.py, server.py, app.js, jobs.py, cli.py) |
+| 0 | **M4-11** reviewed (against the conventions report's section 8 too) and merged into `main` [owner: it was held until a v0.1.1 was approved; now the next version is approved]; the conventions report committed to `docs/reports/` | every later order touches M4-11's files (pipeline.py, assemble.py, server.py, app.js, jobs.py, cli.py); every order cites the report |
 | 1 | **M5-09** ∥ **M5-01** | `eval/` and its tests ∥ `beatgrid.py`, `quantize.py`, `assemble.py`. M5-09 merges first; M5-01's final numbers use it (until then the scratch folders) |
 | 2 | **M5-02** ∥ **M5-03** | `engines/autochart.py`, `engines/stitch.py`, pipeline.py's guitar-stage warnings, one line of `eval/golden.py` ∥ `starpower.py`, `preview.py` |
 | 3 | **M5-04** ∥ **M5-05** | `engines/lyrics.py` and one warning line of pipeline.py ∥ pipeline.py's guitar stage, cli.py, app.js's take line. M5-04 merges first (both touch pipeline.py, in different functions) |
@@ -75,7 +90,7 @@ reach; the numbers are in the orders. In short:
 
 | order | golden (`eval/README.md`'s commands, from the order's checkout against `main`) | the stress set (M5-09; 1 CPU take, against M5-09's baseline run of `main`) |
 |---|---|---|
-| M5-01 | `--rerun drums` both sides (beatgrid.py is in `ENGINE_FILES["drums"]`), `--expect none`; the chord guard may move a few notes, then named parts, no F1 lower | the power-metal song: grid 190-206 BPM, chord share < 0.10, merged < 5 %, guitar F1@50 ≥ 0.70 against each of three charts (0.58-0.59 at 4 takes today), bass and drums not lower, timing error < 25 ms, beat F1 ≥ 0.80; the shred instrumental not lower |
+| M5-01 | `--rerun drums` both sides (beatgrid.py is in `ENGINE_FILES["drums"]`); every reference grid bit-identical (octave 1); the chord rule and the lower floors move some notes on the references: named parts, no F1@50 down by more than 0.005 | the power-metal song: grid 190-206 BPM, chord share < 0.10, merged < 5 %, dropped < 2 %, guitar F1@50 ≥ 0.70 against each of three charts (0.58-0.59 at 4 takes today), bass and drums not lower, timing error < 25 ms, plain beat F1 ≥ 0.80 [conventions: scored without octave tolerance]; the shred instrumental not lower |
 | M5-02 | `--rerun guitar` both sides, `--expect none`: byte-identical takes (no reference reaches the budget) | the shred instrumental: last note ≥ 530 s, the last 60 s F1@100 ≥ 0.60 (0 today), whole-song F1 not lower, no doubled or missing note at the seam; every other song one engine run |
 | M5-03 | `--expect guitar` on the named songs; onsets identical everywhere (solos only) | solos ≤ 3, each ≤ the cap, together ≤ the share; an overlap with a human solo |
 | M5-04 | `--expect none` (no lyrics in golden) | the lyrics check: ≥ 90 % within 250 ms and no warning on the power-metal song and two references; the full-mix runs warn |
@@ -145,6 +160,8 @@ Part B's results, if they have arrived, are read before step 8: anything they as
    Encore md5; recommended: the two hard songs now, more in M6 when you pick them). [owner]
 6. **The lyrics weights at install** (1.26 GB more to download, deferred since M4-10): still first use (recommended,
    unchanged) or at install. [owner]
+7. **The album placeholder** "<the song's name> - (Single)" instead of "Unknown" when the file has no album tag
+   (M5-06, Encore's convention; recommended: yes). [owner]
 
 ## 8. Done for this version
 

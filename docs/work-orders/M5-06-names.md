@@ -35,7 +35,13 @@ in the options, filled from the tags and left empty with an "Unknown" placeholde
    (`Documents\Clone Hero\Songs\<name>\notes.chart` under a profile) stays well under 260. The preview's title follows
    the folder's name and needs no change.
 3. **The autochart job's metadata** (`AC_TITLE`, `AC_ARTIST`) follows `meta`, as today: nothing to do but check.
-4. **A song too short or silent is refused cleanly** (PROGRESS deferred: a 1 s, 4 s or silent song exits 3 when the
+4. **The album placeholder** [conventions: Encore's song.ini rule gives a single the album "<Name> - (Single)";
+   `docs/reports/charting-conventions.md` section 8] [owner: a default the friend sees; recommended]: when no tag
+   gives the album, song.ini's `album` is `"<the song's name> - (Single)"` with origin `"default"`, instead of
+   "Unknown"; the page's Album field shows it as its placeholder, as it shows the other defaults. Genre and year keep
+   "Unknown" (no convention names a better placeholder). `song_length`, `diff_band` and report.json in the folder
+   are M5-99's.
+5. **A song too short or silent is refused cleanly** (PROGRESS deferred: a 1 s, 4 s or silent song exits 3 when the
    librosa sections fallback raises): after the decode, a song under `MIN_SONG_S` = 10 s, or whose peak is under
    -60 dBFS, raises an InputError naming the length or the silence (exit 2) before the separation. One test each
    through `chart()` with standins and one through the CLI's exit code.

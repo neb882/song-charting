@@ -52,9 +52,12 @@ good song. The warning is the friend's only sign that his lyrics may be off; a f
    pipeline's warning prints `why`. pipeline.json keeps `confidence` with every field (numbers only). The cache key
    is unchanged (the statistics are computed from the cached times and scores; if a new one needs data the cache
    lacks, bump the cache version and say so).
-5. **The 50 ms share**, for the record: the references' and the power-metal song's share within 50 ms from step 1
-   go into DESIGN 2.15 (M4-10 measured 0.453-0.457 pooled on the references at 50 ms; the humans agree 94 % with
-   each other at 50 ms on the power-metal song). Improving it is M5-99's.
+5. **The 50 ms share**, re-measured after M5-01 [conventions: `docs/reports/charting-conventions.md` section 7 reads
+   part of the 50 ms imprecision as the half-tempo grid's 1/16 snap, about 150 ms at a 99 BPM map, which can move a
+   syllable 75 ms; M5-01 fixes the octave before this order runs]: the references' and the power-metal song's share
+   within 50 ms from step 1, on the new grid, go into DESIGN 2.15 beside M4-10's (0.453-0.457 pooled on the
+   references at 50 ms; the humans agree 94 % with each other at 50 ms on the power-metal song). Syllables from the
+   aligner's character timings and Harmonix's punctuation conventions are M5-99's.
 
 ## Tests
 

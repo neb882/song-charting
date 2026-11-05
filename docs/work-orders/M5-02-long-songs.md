@@ -7,6 +7,11 @@ change in `eval/`), `songcharter/pipeline.py` (the guitar stage's warnings and l
 only if the writer lacks something, their tests, `docs/DESIGN.md` 2.7, the guide's section 5 (one sentence).
 **Time budget:** 2 days, the golden run with `--rerun guitar` on both sides included (about 2 hours of machine time).
 
+**Conventions** (`docs/reports/charting-conventions.md`, section 2a, ranked gap 5): **[conventions]** Expert is a
+literal transcription of the part; a chart whose notes stop while the guitar plays is an underchart and a lost
+ending, a fault any player sees. So a take the engine cut short is completed to the end of the song, and when it
+cannot be, the user is told where the guitar ends.
+
 ## Why
 
 The owner's 9-minute shred instrumental (`<S>/sooth/`, 2026-11-05, 4 CUDA takes): all four takes stop at 498.6 s of

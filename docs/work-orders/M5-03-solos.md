@@ -5,6 +5,14 @@
 `docs/DESIGN.md` 2.10. Not `assemble.py` (M5-01 touched it in wave 1; nothing here needs it), not `engines/sections.py`
 or `sections.py` (the labels and names stay). **Time budget:** 1 day.
 
+**Conventions** (`docs/reports/charting-conventions.md`, section 5, ranked gap 6). The rules this order assumes,
+marked **[conventions]** for the advisor: solo markers go on a featured lead break, not on every instrumental
+passage ("not all songs have Solo sections", Clone Hero's wiki; "solo sections when appropriate", Encore); the
+repository's human data has a median of 1 solo a song and a 90th percentile of 2-3 (`starpower.py`); on an
+instrumental, the spans where the lead stands out (density, register) are the solos; a solo counter running for
+most of a song looks wrong and makes the bonus meaningless. Rock Band names the section "Guitar Solo"; the name
+stays "Solo" in this order (M5-99: it would change the names people pass to `--solos`).
+
 ## Why
 
 On the owner's 9-minute shred instrumental (2026-11-05, `<S>/sooth/ours/report.json`) allin1 labelled most of the
@@ -24,19 +32,20 @@ instrumental: the fix is in what songcharter makes of them.
    the chart's own map, and per chart the solos' share of the span between its first and last Expert onset. Report
    the table. Do not open any chart's [Events] or vocal track with Read, cat or grep (the stress charts have
    vocals).
-2. **The rules** (`SoloRules`, with the measured defaults):
+2. **The rules** (`SoloRules`, with the measured defaults) [conventions: a solo is a featured lead break of a
+   length human charters write, and solos are a minority of the song]:
    - `max_measures`: a solo span longer than this is split. Default 32; set it to the 95th percentile of the human
      solos' lengths in measures rounded up to a multiple of 8, never under 16 nor over 64.
    - `max_share`: the solos of a song together cover at most this share of the span between the first and last
      Expert onset. Default 0.25; set it to the largest human share rounded up to the next 0.05, never under 0.15.
-   - `min_measures` 4, `min_onsets` 16 and `max_solos` 3 stay.
+   - `min_measures` 4, `min_onsets` 16 and `max_solos` 3 stay (the human median is 1, the 90th percentile 2-3).
 3. **Splitting** (`solo_sections` and `place_solos`): a run of consecutive Solo sections longer than `max_measures` is
    split at the run's inner section starts (the lettered parts the sections engine made: "Solo 2A", "Solo 2B", ...)
    into parts, which are grouped from the run's start into candidate spans of at most `max_measures` each (a part
    longer than the cap on its own is cut at the measure line `max_measures` after its start; the remainder is its
    own candidate). A run within the cap is one candidate, as now.
-4. **Choosing:** candidates that pass `min_onsets` and `min_measures` are ranked by onset density (Expert onsets per
-   measure), ties by the earlier start; they are taken in that order, at most `max_solos`, skipping any that would
+4. **Choosing** [conventions: on an instrumental, the spans where the lead stands out]: candidates that pass
+   `min_onsets` and `min_measures` are ranked by onset density (Expert onsets per measure), ties by the earlier start; they are taken in that order, at most `max_solos`, skipping any that would
    take the solos' total past `max_share` of the charted span. The result is sorted by start, as now. With `names`
    (a person's section names) nothing is split or capped: the person's choice stands, as the docstring promises.
 5. **The report:** `report.json`'s `phrases.<part>.solos` stays; add `solo_rules` (the values used) and, per solo,
