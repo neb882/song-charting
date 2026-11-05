@@ -101,13 +101,6 @@
       "then": "wave 0 is done (M4-11 merged, the reports committed); wave 1 is running (below), in the new session (docs/handoff.md)"
     },
     {
-      "order": "M5-01 fast grid (wave 2, started early in the free slot: stress-base exists)",
-      "branch": "m5-01-fast-grid-rebased (rebased on e24b1b7; the stale m5-01-fast-grid is for the owner to delete)",
-      "worktree": "wt/m5-01 beside the checkout (dev machine)",
-      "stage": "built (2026-11-05): every pass line met on the power-metal song (grid 200 BPM, guitar F1@50 0.78-0.81, beat F1 1.000), golden no UNEXPECTED, CI green on efd2d8d; in review",
-      "report": "<scratchpad>/briefs/m5-01.report.md, then docs/reports/M5-01-fast-grid.md"
-    },
-    {
       "order": "M5-02 long songs (wave 2)",
       "branch": "m5-02-long-songs",
       "worktree": "wt/m5-02 beside the checkout (dev machine)",
@@ -207,7 +200,11 @@
     "[CLAUDE.md] The suite's command `uv run pytest ...` fails collecting tests/test_golden.py (it cannot import `eval`); `uv run python -m pytest ...`, as CI runs it, works. Fix the command (asked the owner).",
     "[M5-09] Repeat consistency (the feel note's measure 4) was not built: M5-99 (M6) with its fix.",
     "[M5-02] On the dev machine's 1-take CPU baseline the shred instrumental's guitar runs to 532 s of 545 (last two 30-s windows F1@100 0.78 and 0.65), unlike the owner's 4-take CUDA run (all takes stop at 498.6 s): M5-02's pass lines are restated against stress-base in its brief.",
-    "[M5-05] Release gate: the provoked GPU failure under memory=12GB on the owner's PC (M4-08's A23): the chart must finish with the take on the CPU and the banner, with the guitar stage's memory samples; swap past 4 GB during the retry turns cpu_retry off for WSL (the owner's decision)."
+    "[M5-05] Release gate: the provoked GPU failure under memory=12GB on the owner's PC (M4-08's A23): the chart must finish with the take on the CPU and the banner, with the guitar stage's memory samples; swap past 4 GB during the retry turns cpu_retry off for WSL (the owner's decision).",
+    "[M5-01, for the gate] Chord shares on two references move away from the humans' (Lucretia guitar E/H/M 0.18 -> 0.08 against 0.14-0.20; All the Small Things bass E/H 0.007 -> 0 against 0.41): the dropped onsets are 50-101 ms from the kept one, distinct notes the old quantizer merged into chords the engine never heard; F1 unchanged. The order's 'toward the humans' or stay' line read by its intent (DESIGN 2.6): the owner confirms at the gate.",
+    "[M5-01, for the gate] Star power on a doubled grid: 5.04 phrases a minute on the power-metal song (base 2.42, the humans 3.03-4.44); the phrase rule is unchanged (M5-99). Bass dropped_distinct 15-17 % (the bass engine's double onsets 60-100 ms apart, merged into chords before; Creep's bass 19 %): whether the order's '+2 points' line applies to the bass is the gate's call.",
+    "[M5-01] The octave thresholds rest on one positive song (OCTAVE_SHARE 0.35, BACKBEAT_MIN 0.34, the guard 0.7 provisional, the power-metal song at 0.828): revisit with the 20-song set. The downbeat on a doubled grid with a kick on every beat is a guess (bar_phase margin 0.013, downbeat F1 0.000): M5-99.",
+    "[owner] The remote branch m5-01-fast-grid is stale (its rebase was pushed as m5-01-fast-grid-rebased and merged): the owner deletes it."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
   "how_work_is_run": "docs/PIPELINE.md. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices, /prompt-caching, /sub-agents, /settings",
