@@ -339,7 +339,9 @@ function handle(ev) {
       break;
     }
     case "take":
-      text(stageRow("guitar").takes, `take ${ev.index} of ${ev.count}`);
+      // a take run again on the CPU after its GPU run failed says so (the banner above gives why)
+      text(stageRow("guitar").takes,
+           `take ${ev.index} of ${ev.count}${ev.device === "cpu" ? " (on the CPU)" : ""}`);
       break;
     case "warning":
       $("warnings").append(make("li", null, ev.text));
