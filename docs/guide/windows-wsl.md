@@ -48,6 +48,9 @@ page.
 - If it says the GPU is out of reach (this can happen after a Windows update): restart Windows, then paste the line
   again. It switches to the GPU build too.
 - At the end, it sets how much memory WSL may use and restarts WSL, and the window closes.
+- **To update to a new version later:** close the songcharter window, open the new version's page, and paste its
+  install line in Ubuntu, as above. Your charts, your Clone Hero folder and the big downloads are kept, so it fetches
+  only what changed: usually a minute or two.
 
 ## 4. Start songcharter
 
