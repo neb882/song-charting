@@ -16,8 +16,12 @@ friend, who plays Guitar on Expert on a Windows PC with an RTX 4070; v0.1 runs t
 ```sh
 uv sync --frozen --extra cpu --extra app --extra dev   # or cu126 / cu132 for a GPU; uv 0.13.5 (pyproject pins it)
 (cd tools/scan-chart && npm ci)
-SONGCHARTER_SCAN_CHART=$PWD/tools/scan-chart/scan.cjs uv run pytest -q -p no:cacheprovider --basetemp=/dev/shm/pt
+SONGCHARTER_SCAN_CHART=$PWD/tools/scan-chart/scan.cjs uv run python -m pytest -q -p no:cacheprovider --basetemp=/dev/shm/pt
 ```
+
+`python -m pytest`, not `pytest`: the tests import `eval`, which only the module form puts on the path (CI runs it so).
+If `uv --version` is not 0.13.5 and `uv self update` refuses (uv not installed by its own installer), use the
+installer for that version: `curl -LsSf https://astral.sh/uv/0.13.5/install.sh | sh`.
 
 Without uv: `pip install -e ".[dev,separate,drums,bass,sections,preview]"`, with torch from PyTorch's cpu index first.
 The friend's install is `packaging/linux/install.sh` (M4-03), and `songcharter doctor` checks a machine.
