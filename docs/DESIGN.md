@@ -1372,6 +1372,14 @@ snapping helps within 50 ms, and costs on Kimochi Warui, whose words the aligner
 human ones). One phrase was split at a rest (Drunk Drivers). The network took 105 to 134 s a song on 2 threads of
 the busy CPU (load 5–6), the alignment 0.1 s, the weights' load and hash check 9 s.
 
+**On the power-metal stress song** [here, M5-09: `eval/stress.py lyrics troop --run` on the stress baseline's kept
+folder, the package's audio; the words from its human chart's lyric events, read in memory]: 320 of 320 words
+paired by index; median error 7.0 ms (signed +0.1); 0.681 / 0.756 / **0.953** within 50 / 100 / 250 ms; 8 of 51
+phrase starts over 500 ms off; the gate OK; the median confidence 0.18, so the pipeline warned that the alignment
+is unsure, which the timings do not bear out. Its counterpart, the owner's 2026-11-05 run on his own file with a
+pasted text (PROGRESS, M5-04): 0.68 / 0.77 / 0.96, median 9 ms, no phrase start over 500 ms, the same warning
+(median 0.214). 207 s on 2 threads, the weights' first download (1.26 GB) included.
+
 **Not measured:** Clone Hero itself showing them (M4-08 looks); the aligner on CUDA (it runs there when the chart's
 device is CUDA); songs not in English; duets and harmonies (one line of text, timed to whoever sings it loudest).
 
