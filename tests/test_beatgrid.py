@@ -410,6 +410,9 @@ def test_bpm_range_reaches_every_fold(fast):
     assert spread_ms(g.beats, truth)[1] < 2.0  # on every beat of the 198, not every other one
     folded = beat_grid(y, SR, bpm=198.0, features=f)  # the hint with the default range
     assert folded.bpm == pytest.approx(99.0, abs=0.1) and folded.stats["start"]["grid"] == "tracker"
+    kept = beat_grid(y, SR, bpm=198.0, features=f, keep_line=True)  # keep_line: the tracker never replaces the line
+    assert kept.bpm == pytest.approx(198.0, abs=0.1) and kept.stats["start"]["grid"] == "line"
+    assert kept.stats["start"]["tracker_confident_share"] == folded.stats["start"]["tracker_confident_share"]
     assert len(folded.stats["start"]["tracker_tempo_changes"]) == 9  # every window at 99
     assert beat_grid(y, SR, features=f).bpm == pytest.approx(99.0, abs=0.1)  # the defaults: 99
     assert beat_grid(y, SR, bpm_range=DOUBLED, features=f).bpm == pytest.approx(198.0, abs=0.1)  # no hint

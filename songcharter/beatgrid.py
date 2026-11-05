@@ -745,7 +745,8 @@ def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None
               first_beat: float | None = None, mode: str | None = None, onset_to_beat_ms: float = ONSET_TO_BEAT_MS,
               start: np.ndarray | None = None, features: OnsetFeatures | None = None,
               secondary: np.ndarray | None = None, secondary_features: OnsetFeatures | None = None,
-              bpm_range: tuple[float, float] = BPM_RANGE, half_beat: bool = False) -> BeatGrid:
+              bpm_range: tuple[float, float] = BPM_RANGE, half_beat: bool = False, keep_line: bool = False
+              ) -> BeatGrid:
     """The beat grid of a song from its drum stem (or its mix when it has no drums).
 
     audio:      shape (channels, samples) or (samples,), at sample_rate. May be None when `features` is given.
@@ -765,6 +766,9 @@ def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None
     half_beat:  test the beat phase (half_beat_phase): when the midpoints between the beats carry more kick than
                 the beats, the beats move half a beat later, before the downbeats are found. assemble's second pass
                 turns it on (stats["half_beat"]); evidence, click and drift stats stay those of the grid found.
+    keep_line:  the straight start line is never replaced by the tracker's beats (it still runs, for its stats).
+                assemble's second pass sets it: its hint is the first grid's tempo doubled, and on a fast drum stem
+                the tracker flips between the beats and their "and"s over parts of the song (DESIGN.md 2.3 step 7).
 
     The start grid is the straight line unless a tracker's beats find clearly more evidence (TRACKER_MARGIN more
     of the beats confident): then no straight line fits the song, the fill for beats without evidence follows the
@@ -795,7 +799,8 @@ def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None
                           "line_confident_share": round(float(line_ev.confident.mean()), 4),
                           "tracker_tempo_changes": changes}
     trk_ev = local_beats(f, tracker)
-    use_tracker = line_ev is None or trk_ev.confident.mean() >= line_ev.confident.mean() + TRACKER_MARGIN
+    use_tracker = line_ev is None or (not keep_line and
+                                      trk_ev.confident.mean() >= line_ev.confident.mean() + TRACKER_MARGIN)
     stats["start"]["tracker_confident_share"] = round(float(trk_ev.confident.mean()), 4)
     stats["start"]["grid"] = "tracker" if use_tracker else "line"
 

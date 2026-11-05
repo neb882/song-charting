@@ -1257,6 +1257,12 @@ def fast_song(tmp_path_factory):
     (root / "tool").mkdir()
     (root / "tool" / "notes.chart").write_text(write_chart(Chart(SongInfo("tool", "tool"), tm, [], [
         Track("Expert", "Single", notes)])), encoding="utf-8", newline="")
+    # a bass at the song's 8ths, 45 ms late: past half the doubled grid's 1/16 (38 ms), and no beat line aligned,
+    # so no run reads as triplets
+    bass = [FretNote(round(tm.sec_to_tick(FAST_FIRST + q * FAST_BEAT / 2 + 0.045)), (q % 3,))
+            for q in range(FAST_NOTES // 2)]
+    (root / "tool" / "bass.chart").write_text(write_chart(Chart(SongInfo("tool", "tool"), tm, [], [
+        Track("Expert", "DoubleBass", bass)])), encoding="utf-8", newline="")
     segments = [[0.0, 0.5, "start"], [0.5, 20.0, "verse"], [20.0, FAST_SECONDS, "chorus"]]
     (root / "allin1.json").write_text(json.dumps({"segments": segments}), encoding="utf-8")
     config = {"audio": "mix.wav", "stems": {"drums": "drums.wav"}, "lead_in": 2.5, "sections": "allin1.json",
@@ -1305,6 +1311,7 @@ def test_a_grid_too_slow_for_its_notes_is_doubled(fast_song, monkeypatch):
     assert second["bpm"] == pytest.approx(2 * stats["first"]["click_bpm"]) and second["bpm_range"] == (170.0, 370.0)
     assert second.get("first_beat") is None and second["mode"] == first["mode"] is None
     assert second["half_beat"] is True and not first.get("half_beat")  # the half-beat test, on the second pass only
+    assert second["keep_line"] is True and not first.get("keep_line")  # and its hinted line stays
     assert stats["second"]["half_beat"]["shifted"] is False  # the kicks are on its lines already
     q = result.report["parts"]["guitar"]["quantize"]["expert"]
     assert q["notes_out"] == FAST_NOTES and q["merged"] == q["dropped_distinct"] == q["dropped"] == 0
@@ -1340,3 +1347,20 @@ def test_grid_octave_2_past_300_bpm_is_bad_input(built, monkeypatch):
     with pytest.raises(InputError, match=r"grid_octave 2: the doubled tempo, 240.0 BPM, passes 200 BPM"):
         assemble(parse_config({**CONFIG, "grid_octave": 2, "output": "out/past"}, root))
     assert not (root / "out" / "past").exists()
+
+
+def test_on_a_doubled_grid_the_bass_snaps_to_8ths(fast_song):
+    """On a doubled grid the bass gets the grid's 8ths and their triplets (the first grid's 16ths), so its late
+    8ths (its offset fixed at 0 here) stay on 8th lines instead of the 1/16 after them; the guitar keeps 1/16s.
+    Undoubled, nothing changes."""
+    root, config = fast_song
+    parts = config["parts"] + [{"instrument": "bass", "source": "tool/bass.chart", "offset": 0.0}]
+    result = assemble(parse_config({**config, "parts": parts, "output": "out/bass"}, root))
+    assert result.ok and result.report["grid"]["octave"] == 2
+    assert result.report["parts"]["bass"]["slots"] == {"straight": 2, "triplet": 3}
+    assert result.report["parts"]["guitar"]["slots"] == {"straight": 4, "triplet": 3}
+    res = result.chart.tempo.resolution
+    bass = next(t for t in result.chart.tracks if t.name == "ExpertDoubleBass")
+    assert len(bass.notes) == FAST_NOTES // 2 and all(n.tick % (res // 2) == 0 for n in bass.notes)
+    one = assemble(parse_config({**config, "parts": parts, "grid_octave": 1, "output": "out/bass1"}, root))
+    assert one.report["parts"]["bass"]["slots"] == {"straight": 4, "triplet": 3}

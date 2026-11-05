@@ -671,6 +671,8 @@ OCTAVE_MAX_BPM = 300.0     # ... and the doubled tempo is at most Magma's 300 BP
 OCTAVE_MIN_ONSETS = 200    # ... and the parts have this many distinct onsets in all
 BACKBEAT_WINDOW_S = 0.035  # the snare band's peak within this of a beat line or a beat's midpoint
 BACKBEAT_MIN_BEATS = 16    # confident beats the backbeat ratio needs (fewer: indeterminate)
+DOUBLED_BASS_SLOTS = (2, 3)  # straight and triplet slots per beat for the bass on a doubled grid: its 8ths and
+                             # their triplets, so its scattered onsets get the slots they had on the first grid
 OCTAVE_EVIDENCE_MIN = 0.7  # the doubled grid is kept when its confident share is at least this times the first's
                            # (PROVISIONAL, M5-01's open question: 0.5 is no evidence between the first grid's beats)
 
@@ -1327,11 +1329,22 @@ def _offset(part: PartConfig, song: TimedSong, tempo: TempoMap, pad: float) -> t
     return applied, info, warnings
 
 
-def _quantize(part: PartConfig, song: TimedSong, tempo: TempoMap, pad: float, offset: float
-              ) -> dict[str, tuple[Track, QuantizeReport]]:
-    """The part's taken difficulties on our grid, every one moved by the part's offset (_offset)."""
-    levels = {d: p for (i, d), p in song.parts.items() if i == part.from_instrument}
+def part_rules(part: PartConfig, octave: int = 1):
+    """The quantizer's rules for a part: its HOPO rule (HOPO_RULES), and on a doubled grid (octave 2) the bass one
+    slot level coarser (DOUBLED_BASS_SLOTS, DESIGN.md 2.6): the bass engine's onsets spread about a 16th either side
+    of the notes at 200 BPM, which the doubled grid's 16ths cannot resolve."""
     rules = HOPO_RULES[part.hopo]
+    if octave == 2 and part.instrument == "bass":
+        rules = replace(rules, straight=DOUBLED_BASS_SLOTS[0], triplet=DOUBLED_BASS_SLOTS[1])
+    return rules
+
+
+def _quantize(part: PartConfig, song: TimedSong, tempo: TempoMap, pad: float, offset: float, octave: int = 1
+              ) -> dict[str, tuple[Track, QuantizeReport]]:
+    """The part's taken difficulties on our grid, every one moved by the part's offset (_offset), with its rules
+    (part_rules)."""
+    levels = {d: p for (i, d), p in song.parts.items() if i == part.from_instrument}
+    rules = part_rules(part, octave)
     take = ["expert"] if part.take_difficulties == "expert" else [d for d in DIFFICULTIES if d in levels]
     out = {}
     for d in take:
@@ -1489,7 +1502,7 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
         cfg, grid, onsets, features if src == "drums" else None,
         lambda bpm, bpm_range: beat_grid(grid_audio, sr, duration=duration, bpm=bpm, mode=cfg.grid_mode,
                                          secondary=second_stem, features=features, bpm_range=bpm_range,
-                                         half_beat=True))
+                                         half_beat=True, keep_line=True))
     warnings += warn
     lead = plan_lead_in(grid.beats, grid.downbeats, sr, min_lead=cfg.lead_in, duration=duration)
     tm = TempoMap.from_beats(lead.beats, bars=lead.bars, tolerance=cfg.tempo_tolerance)
@@ -1556,7 +1569,7 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
                                           [(tm.tick_to_sec(t) - pad, n) for t, n in sections], applied)
             if not sections:
                 warnings.append(f"part {part.key}: takes need sections to splice by; the source alone is used")
-        q = _quantize(part, song, tm, pad, applied)
+        q = _quantize(part, song, tm, pad, applied, octave)
         by_inst[part.instrument] = {d: track for d, (track, _) in q.items()}
         src_counts = {d: len({n.time for n in p.notes}) for (i, d), p in songs[part.key].parts.items()
                       if i == part.from_instrument}
@@ -1564,6 +1577,7 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
             "instrument": part.instrument, "source": str(part.source), "source_instrument": part.from_instrument,
             "time_shift": part.time_shift, "take_difficulties": part.take_difficulties, "hopo": part.hopo,
             "source_onsets": src_counts, "offset": offset,
+            "slots": {"straight": part_rules(part, octave).straight, "triplet": part_rules(part, octave).triplet},
             "quantize": {d: _jsonable(asdict(r)) for d, (_, r) in q.items()}}
         if spliced is not None:
             report["parts"][part.key]["takes"] = spliced
