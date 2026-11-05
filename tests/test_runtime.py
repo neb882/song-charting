@@ -173,6 +173,7 @@ def test_the_engines_weights_come_through_the_shared_downloader(server, tmp_path
     assert server.requests == [("/w.pth", None), ("/w.pth", f"bytes={resumed}-")]
     err = capsys.readouterr().err
     assert f"fetch {method.file}: resuming at {resumed // MB} of 3 MB" in err and "trying again" in err
+    assert err.splitlines()[-1] == f"fetch {method.file}: done, 3 MB"   # M5-08: the lyrics' first use ends with it
     path.unlink()   # a .part a failed run left: the next song with lyrics resumes it
     path.with_name(path.name + ".part").write_bytes(data[:1_000_000])
     server.requests.clear()
@@ -180,11 +181,35 @@ def test_the_engines_weights_come_through_the_shared_downloader(server, tmp_path
     assert server.requests == [("/w.pth", "bytes=1000000-")]
     monkeypatch.setattr(AD, "WEIGHTS", AD.Weights(server.url + "/w.pth", sha(data), "w.pth"))
     cut_once()
+    capsys.readouterr()
     assert AD.weights_path(models).read_bytes() == data
     assert server.requests == [("/w.pth", None), ("/w.pth", f"bytes={resumed}-")]
+    assert capsys.readouterr().err.splitlines()[-1] == "fetch w.pth: done, 3 MB"   # M5-08: ADTOF's too
     server.files.clear()   # a 404: no file, and the lyrics say why, as a failed download
     with pytest.raises(E.Unavailable, match="could not be downloaded from .*HTTP 404"):
         E.weights_path(dataclasses.replace(method, file="other.pth"), models)
+
+
+def test_download_part_ends_with_a_done_line(server, tmp_path):
+    """M5-08: every download through download_part ends with `fetch <name>: done, <N> MB` (the install's ADTOF
+    weights ended with no line at all), a resumed one and a .part already whole too; fetch says it once, through
+    download_part, not a second time after its checks."""
+    data = os.urandom(3_000_000)
+    server.files["/w"] = data
+    said = []
+    part = R.download_part(server.url + "/w", tmp_path / "w.pth.part", say=said.append, pause=lambda s: None)
+    assert part.read_bytes() == data and said == ["fetch w.pth: 3 MB", "fetch w.pth: done, 3 MB"]
+    said.clear()
+    part.write_bytes(data[:1_000_000])   # resumed
+    R.download_part(server.url + "/w", part, name="the drums' weights", say=said.append, pause=lambda s: None)
+    assert said == ["fetch the drums' weights: resuming at 1 of 3 MB", "fetch the drums' weights: done, 3 MB"]
+    said.clear()
+    requests = len(server.requests)
+    R.download_part(server.url + "/w", part, len(data), say=said.append)   # whole already: no request
+    assert said == ["fetch w.pth: done, 3 MB"] and len(server.requests) == requests
+    said.clear()
+    fetch(server.url + "/w", tmp_path / "f.bin", sha(data), len(data), said)
+    assert said == ["fetch f.bin: 3 MB", "fetch f.bin: done, 3 MB"]
 
 
 def test_fetch_prints_a_line_every_50_mb(server, tmp_path):
@@ -335,6 +360,86 @@ def test_step_node_installs_and_verifies(server, tmp_path, app, monkeypatch):
     R._rmtree(s.runtime / "node")
     with pytest.raises(R.StepFailed, match="printed 'v23.0.0', not v24.19.0"):
         R.step_node(s)
+
+
+def test_the_hubs_downloads_have_our_lines_and_no_bars_or_warnings(tmp_path, monkeypatch):
+    """M5-08, the install's hub downloads (htdemucs_6s and allin1's eight folds), through the pipeline's own loaders
+    against a stand-in hf_hub_download that logs the hub server's "unauthenticated requests" warning as the hub does
+    (huggingface_hub.utils._http, at warning level): each file downloaded gets `fetch <a name a person reads>: <N> MB`
+    and `fetch <name>: done, <N> MB`; the hub's progress bars are off and its logger at ERROR while it runs, so the
+    warning is not shown, and the logger is back as it was afterwards; a file the cache has says nothing (the
+    reinstall's check: no fetch line), also in `check`; an error still ends as StepFailed."""
+    import logging
+    import types
+
+    import huggingface_hub
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    from songcharter import separate
+    from songcharter.engines import adtof, sections
+    for key in ("HF_HOME", "HF_HUB_DISABLE_SYMLINKS_WARNING", "HF_HUB_DISABLE_PROGRESS_BARS"):
+        monkeypatch.delenv(key, raising=False)   # restored after the test: the step sets them in os.environ
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    spec = separate.MODELS["htdemucs_6s"]
+    pinned = {**spec.files, **dict(sections.ALLIN1_FOLDS[f] for f in sections.ALLIN1_MODELS["harmonix-all"])}
+    sizes = {name: (i + 1) * 3 * MB for i, name in enumerate(pinned)}
+    monkeypatch.setattr(separate, "_sha256", lambda path: pinned[Path(path).name])   # the stand-in's files are sparse
+    monkeypatch.setattr(sections, "_sha256", lambda path: pinned[Path(path).name])
+    monkeypatch.setattr(adtof, "weights_path", lambda models=None, download=None: tmp_path / "adtof.pth")
+    hub, calls, fail = tmp_path / "hub", [], []
+    hub_logger = logging.getLogger("huggingface_hub")
+
+    def hf_hub_download(repo_id, filename, *, revision, cache_dir, local_files_only, dry_run=False):
+        path = hub / repo_id / filename
+        if local_files_only and not path.exists():
+            raise LocalEntryNotFoundError(f"{filename} is not in the cache")
+        if dry_run:
+            return types.SimpleNamespace(file_size=sizes[filename], will_download=not path.exists())
+        calls.append((os.environ.get("HF_HUB_DISABLE_PROGRESS_BARS"), hub_logger.getEffectiveLevel()))
+        logging.getLogger("huggingface_hub.utils._http").warning(
+            "Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN ...")
+        if fail and not path.exists():
+            raise OSError(fail[0])
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "wb") as f:
+                f.truncate(sizes[filename])
+        return str(path)
+
+    class Keep(logging.Handler):
+        def emit(self, record):
+            shown.append(record.getMessage())
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", hf_hub_download)
+    shown, keep, original, level = [], Keep(), hub_logger.level, logging.WARNING
+    hub_logger.addHandler(keep)
+    hub_logger.setLevel(level)   # the hub's default: its warnings shown, as on the install's first run
+    try:
+        said = []
+        s = R.Setup(tmp_path / "home", tmp_path / "app", "cpu", "test", say=said.append)
+        R.step_pipeline_models(s)
+        names = [f"htdemucs_6s, file {i} of 2" for i in (1, 2)] + [f"allin1 fold {i} of 8" for i in range(1, 9)]
+        assert said == [line for name, size in zip(names, sizes.values())
+                        for line in (f"fetch {name}: {size // MB} MB", f"fetch {name}: done, {size // MB} MB")]
+        assert "fetch allin1 fold 3 of 8: done, 15 MB" in said
+        assert calls == [("1", logging.ERROR)] * 10 and shown == [] and hub_logger.level == level
+        said.clear()
+        R.step_pipeline_models(s)   # the reinstall: all in the cache, no line
+        s.download = False
+        R.step_pipeline_models(s)   # `check`: the same
+        assert said == [] and shown == []
+        (hub / sections.ALLIN1_REPO / sections.ALLIN1_FOLDS["harmonix-fold2"][0]).unlink()
+        with pytest.raises(R.StepFailed, match="LocalEntryNotFoundError: harmonix-fold2-.* is not in the cache"):
+            R.step_pipeline_models(s)
+        s.download, fail[:] = True, ["HTTP 503 from the hub"]
+        with pytest.raises(R.StepFailed, match="^OSError: HTTP 503 from the hub$"):
+            R.step_pipeline_models(s)
+        assert said == ["fetch allin1 fold 3 of 8: 15 MB"] and shown == [] and hub_logger.level == level
+        hub_logger.warning("a warning of the hub's")   # outside the step its warnings are shown as before
+        assert shown == ["a warning of the hub's"]
+    finally:
+        hub_logger.removeHandler(keep)
+        hub_logger.setLevel(original)
 
 
 def test_npm_ci_runs_once_per_lock(tmp_path, app):
@@ -533,9 +638,13 @@ def test_check_says_each_step_and_the_failure_line(tmp_path, app, capsys):
 def test_npm_ci_keeps_its_cache_inside_the_install(tmp_path, app):
     """npm's default cache, ~/.npm, is outside what uninstall removes (M4-05's review): both npm ci runs (scan-chart's
     and autochart's) get one in runtime/state. After a failure it stays, with the debug log npm's last line names and
-    the tarballs a rerun reuses (the review workflow's dry run); after a success it is gone."""
+    the tarballs a rerun reuses (the review workflow's dry run); after a success it is gone. Every npm ci, whoever
+    calls it, shows only npm's errors (npm_config_loglevel=error: no "npm warn deprecated" or gitignore-fallback lines)
+    and asks for no audit and no funding (M5-08)."""
     seen = []
     def run(cmd, **kw):
+        assert cmd[2:] == ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], cmd
+        assert kw["env"]["npm_config_loglevel"] == "error" and kw["env"]["npm_config_update_notifier"] == "false"
         cache = Path(kw["env"]["npm_config_cache"])
         (cache / "_logs").mkdir(parents=True, exist_ok=True)
         (cache / "_logs" / "debug-0.log").write_text("npm's log", encoding="utf-8")

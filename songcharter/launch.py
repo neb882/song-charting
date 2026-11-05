@@ -10,8 +10,9 @@ being imported instead.
   * **runtime.json** (songcharter.runtime) says where everything is. Missing, the install has not finished: exit 2.
     The install's own Python finds it beside its environment; $SONGCHARTER_HOME names another install.
   * **The environment** (`environment`): where songcharter finds Node, scan-chart, autochart, allin1's Python, ffmpeg
-    and the models, Node's folder first on PATH (assemble finds scan-chart's node there), and, once the install's
-    models are in, the hub offline (HF_HUB_OFFLINE=1), so a launch with no network works. SONGCHARTER_OFFLINE is
+    and the models, Node's folder first on PATH (assemble finds scan-chart's node there), the hub quiet (no progress
+    bars, no warnings: M5-08), and, once the install's models are in, the hub offline (HF_HUB_OFFLINE=1), so a launch
+    with no network works. SONGCHARTER_OFFLINE is
     left unset: the lyrics aligner's weights, which the install does not fetch, download on the first song with
     lyrics (engines/lyrics.weights_path), and ADTOF's would come again if deleted. Each of songcharter's own
     downloads is pinned and hash-checked and made only when its file is missing: a file already there never goes back
@@ -64,9 +65,11 @@ def load_runtime(home: Path) -> dict | None:
 def environment(runtime: Mapping, base: Mapping[str, str] | None = None) -> dict[str, str]:
     """`base` (os.environ) with what the install's runtime.json says: SONGCHARTER_HOME, SONGCHARTER_NODE,
     SONGCHARTER_AUTOCHART, SONGCHARTER_ALLIN1_PYTHON (only when it is not null: the memory rule),
-    SONGCHARTER_SCAN_CHART, FFMPEG, HF_HOME, HF_HUB_DISABLE_SYMLINKS_WARNING=1, PYTHONUTF8=1, PYTHONSAFEPATH=1 (a
-    child Python, such as the UI's chart job, imports songcharter from the install, never from a songcharter/ folder
-    in the current one), MPLCONFIGDIR in songcharter's cache (the preview's matplotlib keeps its font cache there, not
+    SONGCHARTER_SCAN_CHART, FFMPEG, HF_HOME, HF_HUB_DISABLE_SYMLINKS_WARNING=1, HF_HUB_DISABLE_PROGRESS_BARS=1 and
+    HF_HUB_VERBOSITY=error (a hub download in a chart's log has no bars as wide as the terminal and no "unauthenticated
+    requests" warning, which the hub logs at warning level; its errors still show, and still raise), PYTHONUTF8=1,
+    PYTHONSAFEPATH=1 (a child Python, such as the UI's chart job, imports songcharter from the install, never from a
+    songcharter/ folder in the current one), MPLCONFIGDIR in songcharter's cache (the preview's matplotlib keeps its font cache there, not
     in ~/.cache/matplotlib and ~/.config/matplotlib, which uninstall would leave), and, when models_complete,
     HF_HUB_OFFLINE=1 (never SONGCHARTER_OFFLINE: the module docstring); each only where `base` has no value of its
     own. PATH gets Node's folder first."""
@@ -76,7 +79,8 @@ def environment(runtime: Mapping, base: Mapping[str, str] | None = None) -> dict
               "SONGCHARTER_AUTOCHART": runtime.get("autochart"),
               "SONGCHARTER_ALLIN1_PYTHON": runtime.get("allin1_python"),
               "SONGCHARTER_SCAN_CHART": runtime.get("scan_chart"), "FFMPEG": runtime.get("ffmpeg"),
-              "HF_HOME": runtime.get("hf_home"), "HF_HUB_DISABLE_SYMLINKS_WARNING": "1", "PYTHONUTF8": "1",
+              "HF_HOME": runtime.get("hf_home"), "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
+              "HF_HUB_DISABLE_PROGRESS_BARS": "1", "HF_HUB_VERBOSITY": "error", "PYTHONUTF8": "1",
               "PYTHONSAFEPATH": "1", "MPLCONFIGDIR": user_cache() / "matplotlib"}
     if runtime.get("models_complete"):
         values["HF_HUB_OFFLINE"] = "1"

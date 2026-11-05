@@ -31,10 +31,12 @@ pipeline's models, then runtime.json and doctor.json.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import functools
 import hashlib
 import http.client
 import json
+import logging
 import os
 import re
 import shutil
@@ -74,6 +76,7 @@ PROVIDER = {"libonnxruntime_providers_cuda.so":     # SHA-256 and size of the pl
                 ("c6a12593396095f5670160e284c35d1700b7708cf3037b7042e2a5200ccae772", None)}
 PROVIDER_OTHER = ("libonnxruntime_providers_tensorrt.so",)   # the installer's third file: not used, removed with them
 STAMP = ".songcharter-npm"   # in a folder npm ci filled: its lock's SHA-256 and Node's version
+NPM_CI = ("ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund")   # no audit or funding request either
 PROGRESS_BYTES = 50 * 10 ** 6   # fetch prints a line every 50 MB
 TIMEOUT_S = 60.0                # fetch's socket timeout
 ATTEMPTS = 4                    # fetch's tries (3 retries), each resuming the last
@@ -146,12 +149,14 @@ def download_part(url: str, part: Path | str, size: int | None = None, *, name: 
     """`url` into `part`: the downloader every download of songcharter's own goes through (fetch, and the engines'
     weights in engines/adtof.py and engines/lyrics.py). Resumed with a Range request where `part` holds a start (a
     server that ignores Range sends the whole file again), up to `attempts` tries (3 retries by default, each resuming
-    the last) with a `timeout`-s socket timeout, and a line every 50 MB (`name`: the file's, by default `part`'s name
-    without .part). It is whole once it holds `size` bytes, or the length the server gives (Content-Length or
-    Content-Range): a body that ends short of that is a cut connection and is tried again, never taken for the file;
-    so is one that breaks off mid-chunk (http.client's IncompleteRead). Raises StepFailed, at once for a 4xx but 408
-    and 429, else after the last try. It checks no SHA-256 and renames nothing (the caller does both), and a part left
-    by a failure is resumed by the next call."""
+    the last) with a `timeout`-s socket timeout. Its lines (`name`: the file's, by default `part`'s name without
+    .part): `fetch <name>: <N> MB` (or `resuming at`) first, one every 50 MB, and `fetch <name>: done, <N> MB` once it is
+    whole, so every download ends with one (ADTOF's and the lyrics aligner's weights too: M5-08). It is whole once it
+    holds `size` bytes, or the length the server gives (Content-Length or Content-Range): a body that ends short of
+    that is a cut connection and is tried again, never taken for the file; so is one that breaks off mid-chunk
+    (http.client's IncompleteRead). Raises StepFailed, at once for a 4xx but 408 and 429, else after the last try. It
+    checks no SHA-256 and renames nothing (the caller does both), and a part left by a failure is resumed by the next
+    call."""
     part = Path(part)
     name = name or part.name.removesuffix(".part")
     part.parent.mkdir(parents=True, exist_ok=True)
@@ -199,14 +204,15 @@ def download_part(url: str, part: Path | str, size: int | None = None, *, name: 
             raise StepFailed(f"could not download {url} ({attempts} tries): {error}")
         say(f"fetch {name}: {error}; trying again")
         pause(RETRY_PAUSE_S * (attempt + 1))
+    say(f"fetch {name}: done, {part.stat().st_size // MB} MB")
     return part
 
 
 def fetch(url: str, dest: Path | str, sha256: str | None, size: int | None = None, *,
           say: Callable[[str], None] = _say, attempts: int = ATTEMPTS, timeout: float = TIMEOUT_S,
           pause: Callable[[float], None] = time.sleep) -> Path:
-    """`url` downloaded to `dest` through dest.part (download_part: resumed, retried, a line every 50 MB), then
-    checked (its size and SHA-256, where given) and renamed into place. A `dest` already there and right is kept,
+    """`url` downloaded to `dest` through dest.part (download_part: resumed, retried, its lines and the done line),
+    then checked (its size and SHA-256, where given) and renamed into place. A `dest` already there and right is kept,
     with no request. SONGCHARTER_OFFLINE=1 refuses the download. Raises StepFailed."""
     dest = Path(dest)
     if file_ok(dest, sha256, size):
@@ -225,7 +231,6 @@ def fetch(url: str, dest: Path | str, sha256: str | None, size: int | None = Non
             part.unlink()
             raise StepFailed(f"{url} has SHA-256 {got}, not the pinned {sha256}")
     os.replace(part, dest)
-    say(f"fetch {dest.name}: done, {got_size // MB} MB")
     return dest
 
 
@@ -370,9 +375,12 @@ def _stamp(s: Setup, folder: Path) -> str:
     return f"{file_sha256(folder / 'package-lock.json')} node-v{NODE_VERSION}\n"
 
 
-def _npm_ci(s: Setup, folder: Path, ready: Path, what: str, *flags: str) -> None:
-    """`npm ci --omit=dev --ignore-scripts` with our Node's npm in `folder`, unless its stamp says it was done for this
-    lock and `ready` (a file or folder npm ci makes) is there."""
+def _npm_ci(s: Setup, folder: Path, ready: Path, what: str) -> None:
+    """`npm ci --omit=dev --ignore-scripts --no-audit --no-fund` with our Node's npm in `folder`, unless its stamp says
+    it was done for this lock and `ready` (a file or folder npm ci makes) is there. npm_config_loglevel=error (M5-08):
+    npm's warnings are not shown (its "npm warn deprecated", and npm-packlist's "npm warn gitignore-fallback No
+    .npmignore file found", said for each git dependency npm packs: scan-chart's stream-audio-fingerprint and dsp.js),
+    its errors are, and its debug log in the cache still has every line."""
     stamp = folder / STAMP
     if stamp.is_file() and stamp.read_text(encoding="utf-8") == _stamp(s, folder) and ready.exists():
         return
@@ -384,8 +392,8 @@ def _npm_ci(s: Setup, folder: Path, ready: Path, what: str, *flags: str) -> None
     # tarballs a rerun reuses; deleted once npm ci has succeeded.
     cache = s.runtime / "state" / "npm-cache"
     env = {**os.environ, "PATH": f"{s.node.parent}{os.pathsep}{os.environ.get('PATH', '')}",
-           "npm_config_update_notifier": "false", "npm_config_cache": str(cache)}
-    proc = s.run([str(s.node), str(npm), "ci", "--omit=dev", "--ignore-scripts", *flags], cwd=str(folder), env=env)
+           "npm_config_update_notifier": "false", "npm_config_cache": str(cache), "npm_config_loglevel": "error"}
+    proc = s.run([str(s.node), str(npm), *NPM_CI], cwd=str(folder), env=env)
     if proc.returncode != 0:
         raise StepFailed(f"npm ci in {folder} exited {proc.returncode} (its output above names its log, kept in {cache})")
     _rmtree(cache)
@@ -398,8 +406,7 @@ def step_scan_chart(s: Setup) -> None:
     """scan-chart in runtime/scan-chart: the app's scan.cjs and package files, then npm ci."""
     folder = s.runtime / "scan-chart"
     _copy_files(s, s.app / "tools" / "scan-chart", folder, SCAN_FILES)
-    _npm_ci(s, folder, folder / "node_modules" / "scan-chart" / "package.json", "scan-chart's packages",
-            "--no-audit", "--no-fund")
+    _npm_ci(s, folder, folder / "node_modules" / "scan-chart" / "package.json", "scan-chart's packages")
 
 
 def step_autochart(s: Setup) -> None:
@@ -428,7 +435,7 @@ def step_autochart(s: Setup) -> None:
         os.replace(part, src)
     _copy_files(s, s.app / "eval" / "tools" / "autochart", s.autochart, DRIVER_FILES)
     _npm_ci(s, s.autochart, s.autochart / "node_modules" / "onnxruntime-node" / "package.json",
-            "autochart's packages (onnxruntime-node)", "--no-audit", "--no-fund")
+            "autochart's packages (onnxruntime-node)")
     step_provider(s)
 
 
@@ -495,25 +502,81 @@ def hf_home() -> Path:
     return user_cache() / "models" / "hf"
 
 
+SEPARATION, SECTIONS = "htdemucs_6s", "harmonix-all"   # the pipeline's models the install fetches from the hub
+
+
+@contextlib.contextmanager
+def hub_quiet():
+    """The hub's logger ("huggingface_hub") at ERROR while the install's downloads run (M5-08). Its warnings are not
+    shown: the hub's server sends one in an X-HF-Warning header, "You are sending unauthenticated requests to the HF
+    Hub. Please set a HF_TOKEN ...", which huggingface_hub (utils/_http.py, _warn_on_warning_headers) logs as a
+    warning, and a dropped connection's "Trying to resume download" before it tries again. Its errors are shown, and
+    every failure still raises, so it still ends as StepFailed. Never a token or a login."""
+    logger = logging.getLogger("huggingface_hub")
+    level = logger.level
+    logger.setLevel(max(level, logging.ERROR))
+    try:
+        yield
+    finally:
+        logger.setLevel(level)
+
+
+def hub_labels() -> dict[tuple[str, str], str]:
+    """(repository, file) -> the name a person reads in the hub downloads' lines: "htdemucs_6s, file 2 of 2",
+    "allin1 fold 3 of 8"."""
+    from . import separate
+    from .engines import sections
+    spec = separate.MODELS[SEPARATION]
+    out = {(spec.repo, f): f"{SEPARATION}, file {i} of {len(spec.files)}" for i, f in enumerate(spec.files, 1)}
+    folds = sections.ALLIN1_MODELS[SECTIONS]
+    out.update({(sections.ALLIN1_REPO, sections.ALLIN1_FOLDS[fold][0]): f"allin1 fold {i} of {len(folds)}"
+                for i, fold in enumerate(folds, 1)})
+    return out
+
+
+def said_downloads(get: Callable[..., str], labels: dict[tuple[str, str], str],
+                   say: Callable[[str], None] = _say) -> Callable[..., str]:
+    """`get` (hf_hub_download with the cache's settings) with our own lines in place of the hub's bars (which
+    HF_HUB_DISABLE_PROGRESS_BARS turns off): for each file it downloads, `fetch <label>: <N> MB` first, when the hub
+    gives its size, and `fetch <label>: done, <N> MB` once it is there. A file already in the cache says nothing. The
+    size comes from the hub's dry run (`dry_run=True`: a metadata request, none for a file the cache has at the pinned
+    commit); its errors are the download's own."""
+    def download(repo_id: str, filename: str, **kw) -> str:
+        label = labels.get((repo_id, filename), filename)
+        info = get(repo_id, filename, dry_run=True, **kw)
+        if not info.will_download:
+            return get(repo_id, filename, **kw)
+        if info.file_size is not None:
+            say(f"fetch {label}: {info.file_size // MB} MB")
+        path = get(repo_id, filename, **kw)
+        say(f"fetch {label}: done, {Path(path).stat().st_size // MB} MB")
+        return path
+    return download
+
+
 def step_pipeline_models(s: Setup) -> None:
     """The pipeline's models, through its own pinned, hash-checked loaders, into the per-user cache: the separation's
-    (htdemucs_6s), allin1's Harmonix folds and ADTOF's weights."""
-    os.environ["HF_HOME"] = str(hf_home())   # before the hub's client is imported: it reads it then
+    (htdemucs_6s), allin1's Harmonix folds and ADTOF's weights. The hub's with our lines (said_downloads), no bars
+    and no warnings (hub_quiet); ADTOF's through download_part, whose lines it has."""
+    os.environ["HF_HOME"] = str(hf_home())   # before the hub's client is imported: it reads them then
     os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"   # bars as wide as the terminal (M4-08): said_downloads' lines
     local = not s.download or offline()
     from huggingface_hub import hf_hub_download
     from huggingface_hub.errors import EntryNotFoundError
 
     from . import separate
     from .engines import adtof, sections
-    get = functools.partial(hf_hub_download, cache_dir=str(hf_home() / "hub"), local_files_only=local)
+    get = said_downloads(functools.partial(hf_hub_download, cache_dir=str(hf_home() / "hub"), local_files_only=local),
+                         hub_labels(), s.say)
 
     def no_download(url: str, dest: Path) -> None:
         raise StepFailed(f"the ADTOF weights are missing ({url} not downloaded: only checking)")
 
     try:
-        separate.model_paths("htdemucs_6s", get)
-        sections.checkpoint_paths("harmonix-all", get)
+        with hub_quiet():
+            separate.model_paths(SEPARATION, get)
+            sections.checkpoint_paths(SECTIONS, get)
         adtof.weights_path(download=no_download if local else None)
     except (OSError, ValueError, RuntimeError, EntryNotFoundError) as e:   # the hub's: mostly OSErrors
         raise StepFailed(f"{type(e).__name__}: {str(e).strip().splitlines()[0] if str(e).strip() else ''}") from e
