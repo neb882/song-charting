@@ -437,27 +437,34 @@ def test_the_densest_solos_win():
     assert [a // M for a, _ in got] == [41, 55, 69]   # d (16), c (12), then b (8) before f (8)
 
 
-def test_the_share_cap_skips_a_solo_and_takes_the_next_that_fits():
-    """max_share 0.25 of the first..last onset's 199 s is 49.75 s: the two densest take 39.7 s, the third (23.8 s)
-    would pass it and is skipped, the fourth (7.8 s) fits. The record says what was used and why; a person's names
-    are neither split nor capped."""
+def test_the_share_cap_trims_or_skips_a_solo_and_takes_the_next_that_fits():
+    """Of the first..last onset's 199 s, max_share 0.2375 is 47.26 s: the two densest take 39.7 s, leaving 7.5 s. The
+    third (23.8 s) would pass it, and its densest window within 7.5 s is 3 measures, under the minimum: skipped. The
+    fourth (7.0 s, its last measure half empty) fits. At 0.25 the 10 s left trim the third to a 5-measure window
+    instead; at 0.40 all three fit. The record says what was used and why; a person's names are neither split nor
+    capped."""
     tm = const_map()
     runs = [(11, 10, 16), (31, 10, 14), (51, 12, 12), (71, 4, 10)]    # first measure, measures, notes a measure
-    ex = density({m: n for first, k, n in runs for m in range(first, first + k)})
+    ex = density({**{m: n for first, k, n in runs for m in range(first, first + k)}, 74: 2})
     secs = runs_at(*((first, k) for first, k, _ in runs))
-    rules = SoloRules(max_share=0.25)
+    rules = SoloRules(max_share=0.2375)
     record = {}
     got = place_solos(ex, tm, secs, rules=rules, record=record)
     assert [a // M for a, _ in got] == [11, 31, 71]
     assert record["rules"] == {"min_measures": 4, "min_onsets": 16, "max_solos": 3, "max_measures": 56,
-                               "max_seconds": 100.0, "max_share": 0.25, "min_gap_measures": 4.0}
-    assert record["capped"] and record["skipped_by_gap"] == []
+                               "max_seconds": 100.0, "max_share": 0.2375, "min_gap_measures": 4.0}
+    assert record["capped"] and record["skipped_by_gap"] == record["trimmed_by_share"] == []
     assert [(r["start"], r["end"], r["measures"], r["onsets"]) for r in record["solos"]] == [
-        (a, b, k, k * n) for (a, b), (_, k, n) in zip(got, (runs[0], runs[1], runs[3]))]
+        (11 * M, 21 * M - M // 16, 10, 160), (31 * M, 40 * M + 13 * M // 14, 10, 140), (71 * M, 74 * M + M // 2, 4, 32)]
     assert record["solos"][0]["per_measure"] == 16.0
     assert [(r["start"] // M, r["measures"], r["onsets"]) for r in record["skipped_by_share"]] == [(51, 12, 144)]
-    assert place_solos(ex, tm, secs, rules=SoloRules(max_share=0.40)) == sorted(got[:2] + [
-        (51 * M, 63 * M - M // 12)])                                     # 63.6 s: within 0.40 (79.6 s)
+    record = {}
+    trimmed = place_solos(ex, tm, secs, rules=SoloRules(max_share=0.25), record=record)
+    assert trimmed == got[:2] + [(51 * M, 56 * M - M // 12)]          # 5 measures, 9.8 s of the 10.0 left
+    assert [(r["start"] // M, r["measures"], r["onsets"]) for r in record["trimmed_by_share"]] == [(51, 12, 144)]
+    assert record["solos"][2]["measures"] == 5 and record["skipped_by_share"] == []
+    assert place_solos(ex, tm, secs, rules=SoloRules(max_share=0.40)) == got[:2] + [
+        (51 * M, 63 * M - M // 12)]                                     # 63.6 s: within 0.40 (79.6 s)
     # names: one 60-measure, 120-s run over every cap and 0.60 of the song, taken whole
     long = density({m: 8 for m in range(21, 81)})
     named = lettered(21, [20, 20, 20], "Lead ")
@@ -502,6 +509,23 @@ def test_the_parts_of_a_split_run_never_come_back_to_back():
     assert kept([20, 20], [12, 8], gap=3) == [(21, 20)]
     assert kept([20, 20], [8, 12], gap=3) == [(44, 20)]
     assert kept([20, 20], [12, 8], gap=3, names=["Solo 1", "Solo 2"]) == [(21, 20), (44, 20)]
+
+
+def test_a_song_never_loses_its_only_solo_to_the_share_cap():
+    """Lucretia's case: one 48-measure, 96-s run (within both length caps) in a song whose 0.40 share is 95.6 s. It
+    is cut to its densest measure-aligned window within the budget, 47 measures without the sparse first one, and
+    the record keeps the candidate as it was."""
+    tm = const_map()
+    ex = density({m: (4 if m < 31 else 12) for m in range(21, 69)}, measures=120)
+    secs = runs_at((21, 48))
+    onsets = sorted({n.tick for n in ex.notes})
+    budget = SOLO_RULES.max_share * (tm.tick_to_sec(onsets[-1]) - tm.tick_to_sec(onsets[0]))
+    record = {}
+    got = place_solos(ex, tm, secs, record=record)
+    assert got == [(22 * M, 69 * M - M // 12)]
+    assert tm.tick_to_sec(got[0][1]) - tm.tick_to_sec(got[0][0]) <= budget < 96
+    assert [(r["start"] // M, r["measures"]) for r in record["trimmed_by_share"]] == [(21, 48)]
+    assert record["solos"][0]["measures"] == 47 and record["skipped_by_share"] == []
 
 
 def test_stem_confirm():

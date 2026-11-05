@@ -70,7 +70,8 @@
   * **GPU memory.** On CUDA, torch's cache is emptied after the separation and after the drums, and each stage
     that runs in this process records torch's own peak (`torch_peak_vram_mb`: reset as it begins).
   * **Solos** ("labels" by default): every section the sections engine names "Solo" (allin1's solo label), within
-    starpower.place_solos's rules (16 Expert onsets, 4 measures, at most 3 a song); a list of section names
+    starpower.place_solos's rules (16 Expert onsets and 4 measures; a run over 56 measures or 100 s gives its
+    densest window; at most 3 a song, 4 measures apart, together at most 0.40 of it); a list of section names
     (`--solos "Solo 1,Solo 2"`) puts them exactly there instead. Not "stems", the label confirmed by the stems
     (vocals quiet, guitar loud), which the solo evaluation (DESIGN.md 2.10) found rejecting the very solos the
     friend confirmed on the test song (vocals active in 0.561 and 0.863 of their frames; the test allows 0.25), so

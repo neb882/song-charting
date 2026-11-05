@@ -1047,6 +1047,7 @@ def test_expert_only_and_solos_on_named_sections(built):
         round(result.chart.tempo.tick_to_sec(t) - pad, 3) for t in lead.solos[0]]
     assert row["onsets"] == len({n.tick for n in lead.notes if a <= n.tick < b}) and row["measures"] >= 4
     assert phrases["solos_skipped_by_share"] == phrases["solos_skipped_by_gap"] == []
+    assert phrases["solos_trimmed_by_share"] == []
     assert any("no section is named 'Nowhere'" in w for w in result.report["warnings"])
     assert result.report["tracks"]["guitar"].keys() == {"expert"}
 

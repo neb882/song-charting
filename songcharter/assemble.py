@@ -1709,6 +1709,7 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
                 solo_rules={**solo_record["rules"], "capped": solo_record["capped"]},
                 solo_details=[solo_row(r) for r in solo_record["solos"]],
                 solos_skipped_by_gap=[solo_row(r) for r in solo_record["skipped_by_gap"]],
+                solos_trimmed_by_share=[solo_row(r) for r in solo_record["trimmed_by_share"]],
                 solos_skipped_by_share=[solo_row(r) for r in solo_record["skipped_by_share"]])
         for t in chart.tracks:  # how many fills end on a crash (a source that labels crashes as hi-hats shows here)
             if t.difficulty == "Expert" and t.is_drums:
