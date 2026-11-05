@@ -1362,6 +1362,18 @@ to detect, from the guitar's pick noise, where our chart is too sparse, and to f
   song is unchanged (1:46.6–2:15.3). Grouping from the run's start instead, with the gap rule, gave the power-metal
   song 2:14.4–3:35.9 (0.60 of the human solo) and the shred song three solos covering 0.84 and 0.50; without the gap
   rule, back-to-back markers on both.
+  **Evaluation** (1 CPU take on the kept sections; merge base 1ed6839 against 17055a6, `--rerun drums` on both)
+  [here, M5-03]. The golden diff (`--expect guitar`) has no UNEXPECTED change and every song's onsets and F1 are
+  identical (pooled guitar F1@50: Expert 0.8527, Hard 0.8010, Medium 0.7474, Easy 0.6150). Only Lucretia's guitar
+  changed: its one solo, 140.7–236.7 s (96 s, within both length caps), is skipped by the share cap (0.40 of its
+  231-s span is 92 s), so the reference whose human solo (140.7–217.7 s) the label found has none now [open: a
+  decision]. The stress set: the power-metal song's 2:28.2–3:59.3 (share 0.31) becomes 2:52.2–3:59.3 (56 measures,
+  67 s, share 0.23; the 20 measures before it skipped by the gap), overlapping the three human charts' main solo by
+  0.97, 0.98 and 1.00; the shred song's three solos (share 0.80) become 2:02.4–2:40.6, 4:25.7–5:53.0 and
+  7:22.7–8:46.0 (share 0.40), covering 0.86 and 0.73 of the alt chart's two human solos; the rock song is unchanged
+  (1:46.5–2:15.4; 0.76 and 0.78 of its two charts' solos). The stress scores are identical but for the solo share
+  (5 of 483 fields; the shred song 0.80 to 0.40, the power-metal song 0.31 to 0.23); `stress.py compare`: no
+  regression.
 - **Difficulties:** solos are written on every guitar difficulty. The reducer copies them down and keeps at least one note in each solo on every level (`reduce.py`) [code], so scan-chart's `emptySoloSection`, which it checks on every track, cannot fire.
 
 - **Not chosen:** imported star power (autochart has none; STRUM's 8 phrases placed on the densest Expert windows come out empty on Easy); chartgen's 19 phrases.
