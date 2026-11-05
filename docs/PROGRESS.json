@@ -106,6 +106,13 @@
       "worktree": "wt/m5-01 beside the checkout (dev machine)",
       "stage": "built (2026-11-05): every pass line met on the power-metal song (grid 200 BPM, guitar F1@50 0.78-0.81, beat F1 1.000), golden no UNEXPECTED, CI green on efd2d8d; in review",
       "report": "<scratchpad>/briefs/m5-01.report.md, then docs/reports/M5-01-fast-grid.md"
+    },
+    {
+      "order": "M5-02 long songs (wave 2)",
+      "branch": "m5-02-long-songs",
+      "worktree": "wt/m5-02 beside the checkout (dev machine)",
+      "stage": "building (2026-11-05), from main at e1ebc5a; its stress pass lines restated against stress-base (the shred song's 1-CPU take is cut by the 1,280-beat cap at about 532 s, not the token budget), and a failed piece takes the chart's one CPU retry",
+      "report": "<scratchpad>/briefs/m5-02.report.md, then docs/reports/M5-02-long-songs.md"
     }
   ],
   "next": [
