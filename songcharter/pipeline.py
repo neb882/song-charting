@@ -52,9 +52,21 @@
     even for device "cuda". Every move to the CPU is a **fallback**: recorded (stage, from, to, reason) in
     pipeline.json's `fallbacks` and ChartResult.fallbacks, and warned about, but for device "auto" on a machine with
     no NVIDIA GPU at all (recorded only): "auto" choosing the CPU, separation's fallback, allin1 on the CPU while
-    torch here runs on CUDA, and a guitar take whose transcriber autochart ran on the CPU. A guitar take that fails
-    on CUDA is not run again on the CPU (v0.1): its ToolError says first what to try (`take_failed`: the engine
-    failing, or killed for memory), and the takes that finished stay in the cache for the next run.
+    torch here runs on CUDA, a guitar take whose transcriber autochart ran on the CPU, and a guitar take run again
+    on the CPU after its CUDA run failed.
+  * **A guitar take that fails on CUDA** (each take is a call of its own) is run again on the CPU, once a chart
+    (`CPU_RETRIES`, `cpu_retry`, M5-05): when the engine failed inside (the driver's FAILED line "engine failed
+    (exit <int>)", as a GPU short of memory gives: `failure`'s "engine"), that seed runs again with device "cpu"
+    into the same folder, is recorded as a fallback with a warning, and the takes after it go back to CUDA. Its take
+    on the CPU is not reused by a later chart on CUDA (autochart's cache takes a take only when its transcriber ran
+    on the device asked for), so that chart runs it on CUDA again. Not retried: an engine killed by a signal
+    ("exit null SIGKILL": memory, where the CPU would not help), the driver's own kills (its wall-clock timeout, no
+    decoder progress, the token cap) and failures (models missing, ...), which are not the GPU's, a timeout of
+    autochart.generate's, an exit 0 with no take, a second CUDA failure in the same chart, and any failure with
+    `cpu_retry` off: those end the chart with a ToolError that says first what to try or what failed
+    (`take_failed`), and so does a retry that fails, on the CPU; the takes that finished stay in the cache for the
+    next run. When the first take
+    of the CUDA default is the one retried, it is used alone, as when autochart moved it to the CPU by itself.
   * **GPU memory.** On CUDA, torch's cache is emptied after the separation and after the drums, and each stage
     that runs in this process records torch's own peak (`torch_peak_vram_mb`: reset as it begins).
   * **Solos** ("labels" by default): every section the sections engine names "Solo" (allin1's solo label), within
@@ -92,8 +104,8 @@
   * **Events** (`events`, for the UI: `songcharter chart --events`, M4-04): a dict per step, its kind in "event":
     `plan` {"stages"} once the stages are known; `stage_start` {"stage", "index", "count", "detail"} (index from 1,
     as the log's [k/n]); `take` {"index", "count", "seed"} before each guitar take that runs (not one its cache
-    answers; index from 1 among the stage's takes, so the CUDA default's first take alone and the three after it
-    count 1 to 4 of 4); `fallback` {"stage", "from", "to", "reason"} for every record in `fallbacks`, also those only
+    answers; index from 1 among the stage's takes, so the CUDA default's four takes count 1 to 4 of 4), and again
+    with "device": "cpu" and the same index before a take's run again on the CPU; `fallback` {"stage", "from", "to", "reason"} for every record in `fallbacks`, also those only
     recorded; `warning` {"text"} for every warning; `stage_end` {"stage", "seconds", "cached", "detail"}. A stage
     that stops (an error, or the preview failing) sends no `stage_end`.
 
@@ -133,6 +145,8 @@ SAMPLE_RATE = A.SAMPLE_RATE
 STEMS = ("drums", "bass", "guitar", "other", "vocals")   # the stems assemble reads (piano only reaches allin1)
 EXTRA_SEED_STEP = 101    # takes after the first use seeds 101, 202, 303, ... (the v1 chart's seeds)
 CUDA_TAKES = 4           # guitar takes by default when the guitar stage runs on CUDA (guitar_takes); 1 on the CPU
+CPU_RETRIES = 1          # guitar takes a chart runs again on the CPU after their CUDA run failed (cpu_retry)
+REASON_CHARS = 120       # at most this much of the engine's error line goes into a retry's reason (engine_line)
 SOLO_MODES = ("stems", "labels", "off")  # assemble's solos modes; a list of section names is the other kind
 # the placeholders for what no tag or caller gives ({name}: the song's name, as resolved); the album's is Encore's
 # song.ini rule for a single (docs/reports/charting-conventions.md, section 8), instead of "Unknown"
@@ -171,6 +185,8 @@ class Options:
                                                  # into the chart (None: no lyrics); never into any report
     album_art: Path | str | None = None          # an image for album.jpg, over the song file's own picture (art.py)
     background: Path | str | None = None         # an image for background.jpg, Clone Hero's song background
+    cpu_retry: bool = True                       # a guitar take whose CUDA run failed is run again on the CPU, once
+                                                 # a chart (the module docstring); the page has no control for it
 
     def check(self) -> None:
         if not self.instruments:
@@ -188,6 +204,8 @@ class Options:
             raise InputError(f"device is auto, cpu or cuda, not {self.device!r}")
         if not isinstance(self.preview, bool):
             raise InputError(f"preview is true or false, not {self.preview!r}")
+        if not isinstance(self.cpu_retry, bool):
+            raise InputError(f"cpu_retry is true or false, not {self.cpu_retry!r}")
         if self.threads is not None and (isinstance(self.threads, bool) or not isinstance(self.threads, int)
                                          or self.threads < 1):
             raise InputError(f"threads must be a whole number of at least 1, not {self.threads!r}")
@@ -283,18 +301,78 @@ def guitar_takes(asked: int | None, device: str) -> tuple[int, str]:
 AUTOCHART_EXIT = re.compile(r"autochart seed \d+ failed \(exit (-?\d+)\)")   # engines/autochart.py's ToolError
 
 
-def take_failed(index: int | None, count: int | None, error: BaseException) -> ToolError | None:
-    """The error for a guitar take that failed on CUDA, `index` of `count` (None when no take was running), by
-    autochart's exit code (its ToolError's first line, so engines/autochart.py stays as it is): a positive one is a
-    failure inside the engine, as a GPU short of memory mid-take would give (gpu_failed); a negative one is the
-    engine killed by a signal, SIGKILL most likely from the kernel's OOM killer at WSL's memory limit (stopped).
-    None for the rest, a timeout or an exit 0 with no summary, whose message stays autochart's own."""
+ERROR_WORDS = re.compile(r"error|fail", re.IGNORECASE)   # an engine line that reports the failure (engine_line)
+
+
+def autochart_exit(error: BaseException) -> int:
+    """autochart's exit code in its ToolError's first line (engines/autochart.py stays as it is), 0 when it gives
+    none: a timeout, or another error."""
     m = AUTOCHART_EXIT.match(str(error))
-    code = int(m.group(1)) if m else 0
-    if code > 0:
-        return gpu_failed(index, count, error)
-    if code < 0:
-        return stopped(index, count, -code, error)
+    return int(m.group(1)) if m else 0
+
+
+def engine_line(error: BaseException) -> str:
+    """The engine's first error line in autochart's ToolError, for a CPU retry's reason: of the driver's last stderr
+    lines it quotes (after its first line), the first that names an error or a failure, else the first of them, else
+    the exit code; at most REASON_CHARS characters (cut with "...")."""
+    first, _, rest = str(error).partition("\n")
+    lines = [x.strip() for x in rest.splitlines() if x.strip()]
+    line = next((x for x in lines if ERROR_WORDS.search(x)), lines[0] if lines else None)
+    if line is None:
+        code = autochart_exit(error)
+        line = f"exit {code}" if code else first.strip()
+    return line if len(line) <= REASON_CHARS else line[:REASON_CHARS - 3].rstrip() + "..."
+
+
+# ac_headless.cjs's last word on a failed run, `log("FAILED: " + message)` before its exit 1, and the message of an
+# engine (its child) that failed: "<difficulty>: engine failed (exit <code>[ <signal>]) <stage> <error>", the code
+# null when a signal killed it
+DRIVER_FAILED = re.compile(r"^\[autochart\] FAILED: (.+?)\s*$", re.MULTILINE)
+ENGINE_FAILED = re.compile(r"[\w-]+: engine failed \(exit (?:(-?\d+)|null (SIG[A-Z0-9]+))\)")
+
+
+def failure(error: BaseException) -> tuple[str, int, str]:
+    """How a guitar take failed, from autochart's ToolError (engines/autochart.py and the driver stay as they are):
+    (kind, signal number, the driver's FAILED line). The driver exits 1 whatever failed, so its FAILED line in the
+    quoted stderr decides first (the last one there):
+      "engine"  "engine failed (exit <int>) ...": the engine failed inside, as a GPU short of memory mid-take does
+                (gpu_failed; the one failure run again on the CPU);
+      "signal"  "engine failed (exit null SIG...)": the engine was killed, SIGKILL most likely by the kernel's OOM
+                killer at WSL's memory limit (stopped; never run again);
+      "driver"  any other: the driver's own kill (its wall-clock timeout, "no decoder progress", the token cap) or
+                failure (models missing, takes without one beat map, ffmpeg; driver_failed: not a GPU failure,
+                never run again).
+    With no FAILED line there (the 8 lines quoted cut it off, or the driver itself was killed) the exit code decides
+    as in v0.1: positive "engine", negative "signal". ("", 0, "") for the rest, a timeout of autochart.generate's
+    own or an exit 0 with no summary, whose message stays autochart's."""
+    text = str(error)
+    lines = DRIVER_FAILED.findall(text) if AUTOCHART_EXIT.match(text) else []
+    if lines:
+        m = ENGINE_FAILED.match(lines[-1])
+        if m and m.group(1) is not None:
+            return "engine", 0, lines[-1]
+        if m and m.group(2) in signal.Signals.__members__:
+            return "signal", int(signal.Signals[m.group(2)]), lines[-1]
+        return "driver", 0, lines[-1]
+    code = autochart_exit(error)
+    return ("engine", 0, "") if code > 0 else ("signal", -code, "") if code < 0 else ("", 0, "")
+
+
+def take_failed(index: int | None, count: int | None, error: BaseException, device: str = "cuda",
+                retried: bool = False) -> ToolError | None:
+    """The error for a guitar take that failed, `index` of `count` (None when no take was running), on CUDA or, run
+    again there after its CUDA run failed, on the CPU (`device`), by how it failed (`failure`): the engine failing
+    inside gives gpu_failed on CUDA (`retried`: a take of this chart was run again on the CPU already) and
+    retry_failed on the CPU; the engine killed by a signal, stopped; the driver's own failure, driver_failed. None
+    for the rest, a timeout or an exit 0 with no summary, whose message stays autochart's own. A chart on the CPU
+    does not call it: there autochart's message stays its own."""
+    kind, signum, line = failure(error)
+    if kind == "engine":
+        return gpu_failed(index, count, error, retried) if device == "cuda" else retry_failed(index, count, error)
+    if kind == "signal":
+        return stopped(index, count, signum, error, device)
+    if kind == "driver":
+        return driver_failed(index, count, line, error, device)
     return None
 
 
@@ -309,26 +387,50 @@ def _take_clauses(index: int | None, count: int | None) -> tuple[str, str, str]:
     return where, kept, one
 
 
-def gpu_failed(index: int | None, count: int | None, error: BaseException) -> ToolError:
-    """A take whose engine failed on CUDA (take_failed): what to do, in the page's words, then autochart's own lines.
-    Device CPU makes the guitar's take again on the CPU (and the sections, whose cache key holds the device). No
-    retry on the CPU in v0.1 (PROGRESS, deferred)."""
+def gpu_failed(index: int | None, count: int | None, error: BaseException, retried: bool = False) -> ToolError:
+    """A take whose engine failed on CUDA (take_failed) and is not run again on the CPU: what to do, in the page's
+    words, then autochart's own lines; `retried`: because one take of this chart was run again on the CPU already
+    (CPU_RETRIES), which it says. Device CPU makes the guitar's take again on the CPU (and the sections, whose cache
+    key holds the device)."""
     where, kept, one = _take_clauses(index, count)
-    return ToolError(f"The guitar's GPU run failed{where}{kept}. Close programs that use the GPU (games, Clone Hero, "
-                     f"video) and chart it again{one}. If it fails again, set Device to CPU.\n\n{error}")
+    again = " (one take was already run again on the CPU)" if retried else ""
+    return ToolError(f"The guitar's GPU run failed{where}{again}{kept}. Close programs that use the GPU (games, Clone "
+                     f"Hero, video) and chart it again{one}. If it fails again, set Device to CPU.\n\n{error}")
 
 
-def stopped(index: int | None, count: int | None, signum: int, error: BaseException) -> ToolError:
-    """A take whose engine was killed by signal `signum` (take_failed): that it was stopped, and, for SIGKILL, that
-    this usually means WSL ran out of memory (memory, not the GPU: Device CPU would not help), then what helps."""
+def retry_failed(index: int | None, count: int | None, error: BaseException) -> ToolError:
+    """A take whose engine failed on CUDA and failed again when run again on the CPU (take_failed): the GPU's advice,
+    without Device CPU (it just failed there too), then autochart's own lines of the CPU run."""
+    where, kept, one = _take_clauses(index, count)
+    return ToolError(f"The guitar's run failed{where} on the GPU and again on the CPU{kept}. Close programs that use "
+                     f"the GPU (games, Clone Hero, video) and chart it again{one}.\n\n{error}")
+
+
+def driver_failed(index: int | None, count: int | None, line: str, error: BaseException,
+                  device: str = "cuda") -> ToolError:
+    """A take whose driver failed by itself (take_failed; failure's "driver": its timeout, its stall or token kill,
+    models missing, ...): not the GPU's doing, so no GPU advice: the driver's own line as the reason (at most
+    REASON_CHARS characters; the CPU's run named for a take run again on the CPU), then autochart's own lines."""
+    where, kept, _ = _take_clauses(index, count)
+    run = "CPU run" if device == "cpu" else "run"
+    why = line if len(line) <= REASON_CHARS else line[:REASON_CHARS - 3].rstrip() + "..."
+    return ToolError(f"The guitar's {run} failed{where} ({why}){kept}.\n\n{error}")
+
+
+def stopped(index: int | None, count: int | None, signum: int, error: BaseException,
+            device: str = "cuda") -> ToolError:
+    """A take whose engine was killed by signal `signum` (take_failed): that it was stopped (the CPU's run named, for
+    a take run again on the CPU: `device`), and, for SIGKILL, that this usually means WSL ran out of memory (memory,
+    not the GPU: Device CPU would not help), then what helps."""
     where, kept, one = _take_clauses(index, count)
     try:
         name = signal.Signals(signum).name
     except ValueError:
         name = "an unknown signal"
     why = ", which usually means WSL ran out of memory" if signum == 9 else ""   # SIGKILL (not on Windows)
-    return ToolError(f"The guitar's run was stopped{where} (signal {signum}, {name}){why}{kept}. Close other programs "
-                     f"(browsers, games, Clone Hero) and chart it again{one}.\n\n{error}")
+    run = "CPU run" if device == "cpu" else "run"
+    return ToolError(f"The guitar's {run} was stopped{where} (signal {signum}, {name}){why}{kept}. Close other "
+                     f"programs (browsers, games, Clone Hero) and chart it again{one}.\n\n{error}")
 
 
 def take_seeds(takes: int) -> tuple[int, ...]:
@@ -650,6 +752,11 @@ def _decode(audio: Path, work: Path) -> tuple[np.ndarray, Path, bool]:
     return mix, wav, False
 
 
+def _transcriber(run: Run) -> str | None:
+    """The device autochart's transcriber ran on for a guitar take, from its summary (None: not reported)."""
+    return (run.info.get("devices") or {}).get("transcriber")
+
+
 def _distinct_takes(runs: list[Run], warn: Callable[[str], None]) -> list[Run]:
     """The guitar takes without one whose Expert notes repeat an earlier take's (assemble refuses such a take:
     it always agrees with its twin); fewer than three distinct takes cannot be spliced, so then the first alone."""
@@ -937,47 +1044,73 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
         n_takes, why = guitar_takes(options.takes, gdev)
         seeds = take_seeds(n_takes)
         # the CUDA default first runs one take alone: when autochart moved its transcriber off CUDA by itself (a
-        # provider that failed to load), the other three would cost CPU minutes each
+        # provider that failed to load), the other three would cost CPU minutes each; when its CUDA run failed and
+        # it was run again on the CPU, the others could fail there too, with the one retry spent. Every take is a
+        # call of its own (run_take), so that a take that fails on CUDA can be run again alone.
         probe = options.takes is None and n_takes > 1
         t0 = begin("guitar", f"autochart, {len(seeds)} take{'s' * (len(seeds) > 1)} (seed{'s' * (len(seeds) > 1)} "
                              f"{', '.join(map(str, seeds))}) on {gdev}" + (", the first alone first" if probe else ""))
         del mix, stems   # autochart reads decode.wav; the arrays are not needed again
 
-        running: dict[str, int] = {}   # the take that runs now: autochart's error names only its seed
+        retried: list[int] = []   # the seeds run again on the CPU after their CUDA run failed (at most CPU_RETRIES)
 
-        def on_take(first: int) -> Callable[[int, int, int], None]:
-            """The take event for a call whose seeds start at seeds[first]: numbered among all the stage's seeds."""
-            def heard(index: int, count: int, seed: int) -> None:
-                running.update(index=first + index, count=len(seeds))
-                emit({"event": "take", "index": first + index, "count": len(seeds), "seed": seed})
-            return heard
+        def run_take(k: int) -> Run:
+            """Take k (from 0) of `seeds`, a call of its own, whose `take` event is numbered among the stage's seeds
+            (a take its cache answers sends none). On CUDA a failure inside the engine runs the take again on the
+            CPU, once a chart (`cpu_retry`, the module docstring); any other failure, and the retry's own, says
+            what to do (take_failed); on a CPU chart a failure stays autochart's."""
+            seed, index, count = seeds[k], k + 1, len(seeds)
 
-        def run_takes(chosen: Sequence[int], first: int) -> list[Run]:
-            """The takes of `chosen` (seeds from seeds[first]); one that fails on CUDA says what to do (take_failed)."""
-            running.clear()
+            def call(on: str) -> Run:
+                def heard(_index: int, _count: int, seed: int) -> None:   # autochart's 1 of 1: this take's place
+                    emit({"event": "take", "index": index, "count": count, "seed": seed,
+                          **({"device": on} if on != gdev else {})})
+                return engines.guitar(wav, work / "guitar", [seed], on, meta["name"], meta["artist"],
+                                      scratch=scratch, on_take=heard)[0]
+
             try:
-                return engines.guitar(wav, work / "guitar", chosen, gdev, meta["name"], meta["artist"],
-                                      scratch=scratch, on_take=on_take(first))
+                return call(gdev)
             except ToolError as e:
-                told = take_failed(running.get("index"), running.get("count"), e) if gdev == "cuda" else None
+                if gdev != "cuda":
+                    raise
+                if not (failure(e)[0] == "engine" and options.cpu_retry and len(retried) < CPU_RETRIES):
+                    told = take_failed(index, count, e, retried=bool(retried))
+                    if told is None:
+                        raise
+                    raise told from e
+                failed = e
+            line = engine_line(failed)
+            retried.append(seed)
+            fallback("guitar", "cuda", "cpu", f"take seed_{seed}: the CUDA run failed ({line}); run again on the CPU",
+                     warning=f"guitar take seed {seed}: the GPU run failed ({line}): run again on the CPU, about one "
+                             "transcription's time")
+            try:
+                return call("cpu")
+            except ToolError as e:
+                told = take_failed(index, count, e, "cpu")
                 if told is None:
                     raise
                 raise told from e
 
-        runs = run_takes(seeds[:1] if probe else seeds, 0)
+        runs = [run_take(0)]
         moved = None
-        if probe:
-            used = (runs[0].info.get("devices") or {}).get("transcriber")  # not reported: taken as on CUDA
-            if used not in (None, gdev):
-                moved = used
-                fallback("guitar", gdev, used, f"autochart's transcriber ran on {used}, not {gdev}, for the first take "
-                         f"({runs[0].info.get('devices')}): that take is used alone")
-                n_takes, seeds = 1, seeds[:1]
-                why = f"{why}; but autochart's transcriber ran on {used} for the first take, so that take alone"
+        if probe and (retried or _transcriber(runs[0]) not in (None, gdev)):   # none reported: taken as on CUDA
+            moved = "cpu" if retried else _transcriber(runs[0])
+            if retried:   # its CUDA run failed: more takes there could fail too, with the retry spent
+                warn(f"guitar: the first take was run again on the CPU (its GPU run failed): that take is used alone, "
+                     f"not {n_takes - 1} more on the GPU")
+                why = f"{why}; but the first take was run again on the CPU (its GPU run failed), so that take alone"
             else:
-                runs += run_takes(seeds[1:], 1)
-        for r in runs[1 if moved else 0:]:
+                fallback("guitar", gdev, moved, f"autochart's transcriber ran on {moved}, not {gdev}, for the first "
+                         f"take ({runs[0].info.get('devices')}): that take is used alone")
+                why = f"{why}; but autochart's transcriber ran on {moved} for the first take, so that take alone"
+            n_takes, seeds = 1, seeds[:1]
+        else:
+            runs += [run_take(k) for k in range(1, len(seeds))]
+        for seed, r in zip(seeds, runs, strict=True):
             used = (r.info.get("devices") or {})
+            if (moved and seed == seeds[0]) or seed in retried:   # recorded already
+                continue
             if gdev == "cuda" and used and any(v == "cpu" for v in used.values()):
                 text = f"autochart ran on the CPU ({used})"
                 if used.get("transcriber") == "cpu":
@@ -986,7 +1119,8 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
                 else:   # another of its stages only (its separation or beat map): warned, as the take is not moved
                     warn(f"guitar take {r.path.parent.name}: {text}")
         record["takes"] = {"asked": options.takes, "takes": n_takes, "auto": options.takes is None, "why": why,
-                           "seeds": list(seeds), "transcriber_moved_to": moved}
+                           "seeds": list(seeds), "transcriber_moved_to": moved,
+                           "devices": [_transcriber(r) for r in runs], "cpu_retries": list(retried)}
         runs = _distinct_takes(runs, warn)
         n = _expert_onsets(runs[0].path, "guitar")
         part = {"instrument": "guitar", "source": str(runs[0].path), "hopo": "forced"}

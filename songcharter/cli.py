@@ -2,9 +2,9 @@
 
     songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums]
                       [--levels expert|all|expert,hard,...] [--solos labels|stems|off|"NAME,NAME"] [--takes N]
-                      [--device auto|cpu|cuda] [--threads N] [--no-preview] [--lyrics FILE] [--album-art FILE]
-                      [--background FILE] [--title ...] [--artist ...] [--album ...] [--year ...] [--genre ...]
-                      [--events]
+                      [--device auto|cpu|cuda] [--no-cpu-retry] [--threads N] [--no-preview] [--lyrics FILE]
+                      [--album-art FILE] [--background FILE] [--title ...] [--artist ...] [--album ...] [--year ...]
+                      [--genre ...] [--events]
     songcharter assemble <config.json> [--out DIR]
     songcharter doctor [--json PATH] [--quick]
     songcharter ui [--port N] [--no-browser] [--from-shortcut]
@@ -280,6 +280,9 @@ def main(argv: list[str] | None = None) -> int:
                         "(default: 4 when the guitar runs on CUDA, 1 on the CPU)")
     c.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto",
                    help="where the models run (default: auto, CUDA when available)")
+    c.add_argument("--no-cpu-retry", action="store_true",
+                   help="end the chart when a guitar take fails on CUDA (by default the first such take is run again "
+                        "on the CPU, about one more transcription, and the chart goes on)")
     c.add_argument("--threads", type=int, metavar="N", help="CPU threads for the models (default: theirs)")
     c.add_argument("--lyrics", type=Path, metavar="FILE",
                    help="the song's lyrics as a text file, a line per phrase: timed to the vocal stem and written into "
@@ -357,7 +360,8 @@ def main(argv: list[str] | None = None) -> int:
             options = pipeline.Options(instruments=instruments, takes=args.takes, device=args.device,
                                        threads=args.threads, work=args.work, metadata=meta, levels=args.levels,
                                        solos=args.solos, preview=not args.no_preview, lyrics=lyrics,
-                                       album_art=args.album_art, background=args.background)
+                                       album_art=args.album_art, background=args.background,
+                                       cpu_retry=not args.no_cpu_retry)
             done = pipeline.chart(args.song, args.out, options, events=_event if events else None)
             result, extra = done.assembled, pipeline.summary(done)
         else:
