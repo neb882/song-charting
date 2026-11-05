@@ -1175,7 +1175,7 @@ def _lyrics_stage(options: Options, engines: Engines, stems: Mapping[str, np.nda
                  method=info.get("method", {}).get("name"), device=used, confidence=conf,
                  timings_s=info.get("timings_s"))
     if conf.get("low"):
-        warn(f"lyrics: the alignment is unsure (median word score {conf.get('median')}): check the lyrics' timing")
+        warn(f"lyrics: the alignment is unsure ({conf.get('why')}): check the lyrics' timing")
     end("lyrics", t0, run.cached, f"{words} words, median word score {conf.get('median')}",
         {"words": words, "confidence_median": conf.get("median")})
     return Timed(run.lyrics, tuple(run.starts))
