@@ -111,8 +111,15 @@
       "order": "M5-03 solos (wave 3)",
       "branch": "m5-03-solos",
       "worktree": "wt/m5-03 beside the checkout (dev machine)",
-      "stage": "building (2026-11-05), from main at 1ed6839 (after M5-01); compares with a stress run of its merge base",
+      "stage": "built (2026-11-05): caps from the human charts (56 measures, 100 s, share 0.40) and a 4-measure gap between solos (decided: a split run never gives back-to-back markers); CI green on bf37abb; its suite, golden and stress chain queued on the lock; then review",
       "report": "<scratchpad>/briefs/m5-03.report.md, then docs/reports/M5-03-solos.md"
+    },
+    {
+      "order": "M5-04 lyrics warning (wave 3)",
+      "branch": "m5-04-lyrics-warning",
+      "worktree": "wt/m5-04 beside the checkout (dev machine)",
+      "stage": "building (2026-11-05), from main at fef103d; also checked on the owner's own pasted text (in memory only)",
+      "report": "<scratchpad>/briefs/m5-04.report.md, then docs/reports/M5-04-lyrics-warning.md"
     }
   ],
   "next": [
