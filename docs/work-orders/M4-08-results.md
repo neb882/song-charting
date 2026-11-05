@@ -25,9 +25,10 @@ for the cu132 lane, more than 16 GB of RAM, C: with ample space.
 | The solos | the 1-take charts (this one on the GPU, and the release gate's on the CPU) leave guitar gaps in the solos (about 5:51-5:55 and 6:12-6:22); the 4-take chart has none there (its one flagged gap is 2:49.0-2:50.7, one measure). The 4-take default fills them. |
 | Lyrics | 557 words in 72 phrases, median word score 0.488 (the warning is under 0.25); the lyrics stage 27 s with the first-use download of the aligner's weights |
 | Memory | every chart finished under `memory=12GB`, none killed; the loggers' per-stage RAM, swap and VRAM figures were not collected |
+| A12, Clone Hero (v1.1, keyboard, Bot) | another song charted by songcharter, put in the Songs folder and scanned, plays on Expert guitar; its lyrics show above the highway, the sung words lit as they come. Clone Hero offers only the instruments of the player's controller type: the keyboard player had to be switched from drums to 5 Fret Guitar to see guitar and bass |
 
-**Not run** (the owner chose to send the release to the friend after the core charts): the install into Clone Hero
-and playing it (A11, A12, and the lyrics in Clone Hero), cancel (A8), closing the window mid-chart (A9), the
+**Not run** (the owner chose to send the release to the friend after the core charts): the page's own install into
+Clone Hero and its replace question (A11), cancel (A8), closing the window mid-chart (A9), the
 diagnostics zip's checks (A24), and the rest of part A (A10, A13, A16, A18-A23, Take Me Out). Part B covers the
 install into Clone Hero and playing on the friend's PC.
 
