@@ -103,7 +103,7 @@
       "order": "M5-09 stress set (wave 1)",
       "branch": "m5-09-stress-eval",
       "worktree": "wt/m5-09 beside the checkout (dev machine)",
-      "stage": "building (2026-11-05), from main at fbd9751; the baseline is the stress run of fbd9751",
+      "stage": "building (2026-11-05), from main at fbd9751; stress-base exists (the stress run of fbd9751, 1 CPU take); suite and CI running",
       "report": "<scratchpad>/briefs/m5-09.report.md, then docs/reports/M5-09-stress-eval.md",
       "note": "the session's brief keeps song titles, artists and package md5s out of anything committed (the owner's instruction): the committed eval/stress.json holds generic ids and slots, and the list of packages is a local file outside the repository ($EVAL_DATA/stress.local.json) that the owner keeps"
     },
@@ -111,8 +111,15 @@
       "order": "M5-06 names (wave 1)",
       "branch": "m5-06-names",
       "worktree": "wt/m5-06 beside the checkout (dev machine)",
-      "stage": "building (2026-11-05), from main at fbd9751; M5-05 follows in this slot after its merge",
+      "stage": "built (2026-11-05: suite 890 passed, golden --expect none exit 0, CI green on b1f8ef0); in review; M5-05 follows in a slot after its merge",
       "report": "<scratchpad>/briefs/m5-06.report.md, then docs/reports/M5-06-names.md"
+    },
+    {
+      "order": "M5-01 fast grid (wave 2, started early in the free slot: stress-base exists)",
+      "branch": "m5-01-fast-grid",
+      "worktree": "wt/m5-01 beside the checkout (dev machine)",
+      "stage": "building (2026-11-05), from main at 8f57b88; reads stress.py from M5-09's branch and rebases at M5-09's merge",
+      "report": "<scratchpad>/briefs/m5-01.report.md, then docs/reports/M5-01-fast-grid.md"
     }
   ],
   "next": [
