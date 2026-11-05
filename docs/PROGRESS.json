@@ -105,21 +105,21 @@
       "order": "M5-02 long songs (wave 2)",
       "branch": "m5-02-long-songs",
       "worktree": "wt/m5-02 beside the checkout (dev machine)",
-      "stage": "built (2026-11-05): the shred song's take continued past the beat cap (last note 532 -> 549 s, recall after the cut 0.90/0.77, whole-song F1 up), golden --rerun guitar identical on every song, CI green on 148f15d; in review. The forced token-budget run's seam window -0.024 (the orchestrator's 0.02 line) accepted: a fresh decode of the piece.",
+      "stage": "built; review: one major (a take that uses its whole token budget is killed by the driver's own cap first, so it is never continued; only the beat-cap path works), with its skeptic; three minor test gaps; the fix waits for a builder slot",
       "report": "<scratchpad>/briefs/m5-02.report.md, then docs/reports/M5-02-long-songs.md"
     },
     {
       "order": "M5-03 solos (wave 3)",
       "branch": "m5-03-solos",
       "worktree": "wt/m5-03 beside the checkout (dev machine)",
-      "stage": "built, CI green on 2669be5, suite passed; its golden and stress runs rerun with --rerun drums (the kept folders' drums are fbd9751's); then review",
+      "stage": "built; its stress lines failed one of the order's (troop's solo overlaps the human solo 0.43 < 0.5: grouping from the run's start on the doubled grid leaves a dense tail, and the gap rule drops the rest); fixing: the densest window that fits the caps; then review",
       "report": "<scratchpad>/briefs/m5-03.report.md, then docs/reports/M5-03-solos.md"
     },
     {
       "order": "M5-04 lyrics warning (wave 3)",
       "branch": "m5-04-lyrics-warning",
       "worktree": "wt/m5-04 beside the checkout (dev machine)",
-      "stage": "building (2026-11-05), from main at fef103d; also checked on the owner's own pasted text (in memory only)",
+      "stage": "built (2026-11-05): the warning on the share of weak words (score < 0.05) over 0.108, margin 1.65x on 14 runs; quiet on the power-metal song with the human chart's text and the owner's pasted text; golden --expect none exit 0; CI green on fbb9c1f; in review",
       "report": "<scratchpad>/briefs/m5-04.report.md, then docs/reports/M5-04-lyrics-warning.md"
     },
     {
@@ -131,6 +131,7 @@
     }
   ],
   "next": [
+    "M5-10 (new, after M5-03's merge; assemble.py): on a doubled grid the lyrics snap one level coarser, as M5-01 did for the bass. M5-04 measured the regression: the power-metal song's lyric timing on the chart went from a median 7 ms (0.68 within 50 ms) on the old grid to 67 ms (0.46) on M5-01's 200 BPM grid, the aligner's words 38-75 ms early now snapping a 1/16 (75 ms) before the human's.",
     "M4: M4-08 part B, the friend's PC: he follows the guide alone, charts the test song with 1 take and with the defaults, charts a song of his own, installs it into Clone Hero and plays it, and sends the diagnostics zip saved after his last chart.",
     "M5: the plan on branch m5-plan (docs/work-orders/M5-00-plan.md) is reviewed, amended and decided; next wave 0 (M4-11 merged, the two reports committed) and the waves of its section 3. The next version's release gate is M5-00 section 7: PIPELINE's, plus the stress check with the feel report, CI's update path (0.1.0 installed, then the new line over it), the owner's PC and the play test (the owner on three songs, the friend on his own).",
     "The update notice with a Copy button for the new line is M5-07 (decided over a one-click updater on 2026-11-05: M5-00 section 8).",
