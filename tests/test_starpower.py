@@ -353,39 +353,58 @@ def spans(cands, measure=M):
     return [(a // measure, (b - a) // measure) for a, b in cands]
 
 
-def test_a_long_solo_run_is_split_into_parts_within_the_caps():
-    """Parts are grouped from the run's start while the group stays within both caps; a part over a cap on its own is
-    cut at the measure line where the first cap is reached; a run within both is one candidate. Without a tempo map,
-    or with a person's names, nothing is split."""
+def test_a_long_solo_run_is_split_around_its_densest_window():
+    """A run over a cap gives its densest window within both caps (ties to the earlier start: on even notes the
+    first), and the rest on either side is split the same way; the section starts inside a run do not matter. A run
+    within both caps is one candidate. Without a tempo map, or with a person's names, nothing is split."""
     tm = const_map()                                     # 120 BPM: a measure is 2 s
     rules = SoloRules(max_measures=32, max_seconds=1000)
     end = 300 * M
+    even = sorted({n.tick for n in guitar(300).notes})
 
-    def cands(lengths):
-        return spans(solo_sections(lettered(9, lengths), end, tempo=tm, rules=rules))
+    def cands(lengths, r=rules):
+        got = solo_sections(lettered(9, lengths), end, tempo=tm, onsets=even, rules=r)
+        assert all(a % M == 0 and (b % M == 0 or b == end) for a, b in got)       # on measure lines
+        assert all(b - a <= r.max_measures * M and (b - a) / M * 2 <= r.max_seconds for a, b in got)  # within both
+        return spans(got)
 
-    assert cands([20] * 5) == [(9, 20), (29, 20), (49, 20), (69, 20), (89, 20)]   # two would make 40
-    assert cands([8] * 10) == [(9, 32), (41, 32), (73, 16)]                         # groups of four, four and two
     assert cands([50]) == [(9, 32), (41, 18)]
+    assert cands([100]) == cands([20] * 5) == [(9, 32), (41, 32), (73, 32), (105, 4)]   # the rest is split again
+    assert cands([8] * 10) == [(9, 32), (41, 32), (73, 16)]
+    assert cands([10, 50, 10]) == [(9, 32), (41, 32), (73, 6)]
     assert cands([15, 15]) == [(9, 30)]
-    assert cands([100]) == [(9, 32), (41, 32), (73, 32), (105, 4)]                 # the rest is cut again
-    assert cands([10, 50, 10]) == [(9, 10), (19, 32), (51, 18), (69, 10)]          # the rest is its own candidate
-    assert spans(solo_sections(lettered(9, [8] * 10), end, rules=rules)) == [(9, 80)]       # no tempo map
+    assert spans(solo_sections(lettered(9, [8] * 10), end, onsets=even, rules=rules)) == [(9, 80)]   # no tempo map
     named = [f"Solo 2{c}" for c in "ABCDEFGHIJ"]
-    assert spans(solo_sections(lettered(9, [8] * 10), end, names=named, tempo=tm, rules=rules)) == [(9, 80)]
+    assert spans(solo_sections(lettered(9, [8] * 10), end, names=named, tempo=tm, onsets=even, rules=rules)) == [
+        (9, 80)]
     # the default caps: 56 measures, 100 s (50 measures here)
-    assert spans(solo_sections(lettered(9, [60]), end, tempo=tm)) == [(9, 50), (59, 10)]
+    assert cands([60], SOLO_RULES) == [(9, 50), (59, 10)]
     assert SOLO_RULES.max_measures == 56 and SOLO_RULES.max_seconds == 100 and SOLO_RULES.max_share == 0.40
 
 
+def test_a_long_run_keeps_its_densest_window():
+    """The power-metal song on a 200-BPM map (1.2 s a measure): a 76-measure, 91-s run in four lettered parts, its
+    densest 53 measures in the middle to the end. The 56-measure window holding all 53 (the earliest of four that do)
+    is the solo; the 17 measures before it are skipped as too close, the 3 after are too short."""
+    tm = TempoMap.from_beats(np.arange(1600) * 0.3)
+    ex = density({m: (12 if 41 <= m < 94 else 4) for m in range(21, 97)}, measures=200)    # 239 s: share 0.28
+    secs = lettered(21, [20, 20, 20, 16], "Solo ")
+    onsets = sorted({n.tick for n in ex.notes})
+    got = solo_sections(secs, onsets[-1] + 1, tempo=tm, onsets=onsets)
+    assert spans(got) == [(21, 17), (38, 56), (94, 3)]
+    record = {}
+    assert place_solos(ex, tm, secs, record=record) == [(38 * M, 94 * M - M // 12)]
+    assert [(r["start"] // M, r["measures"]) for r in record["skipped_by_gap"]] == [(21, 17)]
+
+
 def test_a_run_is_cut_at_the_seconds_cap_on_a_fast_map():
-    """At 240 BPM a measure is 1 s: with max_seconds 30 a 40-measure run is cut at 30 measures although it is within
-    max_measures, and two 20-measure parts are two candidates."""
+    """At 240 BPM a measure is 1 s: with max_seconds 30 a 40-measure run gives a 30-measure window although it is
+    within max_measures, whatever its parts."""
     fast = TempoMap.from_beats(np.arange(1200) * 0.25)
     rules = SoloRules(max_seconds=30)
     assert rules.max_measures >= 40
     assert spans(solo_sections(lettered(9, [40]), 200 * M, tempo=fast, rules=rules)) == [(9, 30), (39, 10)]
-    assert spans(solo_sections(lettered(9, [20, 20]), 200 * M, tempo=fast, rules=rules)) == [(9, 20), (29, 20)]
+    assert spans(solo_sections(lettered(9, [20, 20]), 200 * M, tempo=fast, rules=rules)) == [(9, 30), (39, 10)]
     assert spans(solo_sections(lettered(9, [40]), 200 * M, tempo=fast)) == [(9, 40)]   # 40 s: within the defaults
 
 
@@ -457,27 +476,28 @@ def test_the_share_cap_skips_a_solo_and_takes_the_next_that_fits():
 
 
 def test_the_parts_of_a_split_run_never_come_back_to_back():
-    """At 100 BPM (2.4 s a measure) a 34 + 8-measure run (100.8 s) is split at the seconds cap into 81.6 and 19.2 s:
-    only the denser part is kept, whichever side of the other it is on. Two runs 6 measures apart are both kept, 3
-    apart only the denser; a person's names are exempt."""
+    """On a 200-BPM map a 76-measure run with its densest 53 measures at one end: the window is kept and the 20
+    measures of the rest beside it are skipped, on whichever side they lie (the share cap off, which would skip
+    them too). At 100 BPM two runs 6 measures apart are both kept, 3 apart only the denser; names are exempt."""
+    fast = TempoMap.from_beats(np.arange(1600) * 0.3)
+    loose = SoloRules(max_share=1.0)
+    secs = lettered(21, [20, 20, 20, 16], "Solo ")
+    for dense, window, rest in ((range(21, 74), (21, 56), (77, 20)), (range(44, 97), (41, 56), (21, 20))):
+        ex = density({m: (12 if m in dense else 4) for m in range(21, 97)}, measures=120)
+        record = {}
+        got = place_solos(ex, fast, secs, rules=loose, record=record)
+        assert [(a // M, round((b - a) / M)) for a, b in got] == [window]
+        assert [(r["start"] // M, r["measures"]) for r in record["skipped_by_gap"]] == [rest]
+        assert record["skipped_by_share"] == []
     tm = TempoMap.from_beats(np.arange(1200) * 0.6)
 
-    def kept(lengths, dens, names=None, gap=None, record=None):
-        if gap is None:
-            secs = lettered(21, lengths, "Solo ")
-            parts = [(21, lengths[0]), (21 + lengths[0], lengths[1])]
-        else:   # two runs, `gap` measures of verse between them
-            secs = [(1 * M, "Intro"), (21 * M, "Solo 1"), ((21 + lengths[0]) * M, "Verse"),
-                    ((21 + lengths[0] + gap) * M, "Solo 2"), ((21 + lengths[0] + gap + lengths[1]) * M, "Outro")]
-            parts = [(21, lengths[0]), (21 + lengths[0] + gap, lengths[1])]
+    def kept(lengths, dens, gap, names=None):
+        secs = [(1 * M, "Intro"), (21 * M, "Solo 1"), ((21 + lengths[0]) * M, "Verse"),
+                ((21 + lengths[0] + gap) * M, "Solo 2"), ((21 + lengths[0] + gap + lengths[1]) * M, "Outro")]
+        parts = [(21, lengths[0]), (21 + lengths[0] + gap, lengths[1])]
         ex = density({m: n for (first, k), n in zip(parts, dens) for m in range(first, first + k)}, measures=120)
-        return [(a // M, round((b - a) / M)) for a, b in place_solos(ex, tm, secs, names=names, record=record)]
+        return [(a // M, round((b - a) / M)) for a, b in place_solos(ex, tm, secs, names=names)]
 
-    record = {}
-    assert kept([34, 8], [12, 8], record=record) == [(21, 34)]        # the later part starts right after it ends
-    assert [(r["start"] // M, r["measures"]) for r in record["skipped_by_gap"]] == [(55, 8)]
-    assert record["skipped_by_share"] == []
-    assert kept([34, 8], [8, 12]) == [(55, 8)]                         # the earlier part ends right before it starts
     assert kept([20, 20], [12, 8], gap=6) == [(21, 20), (47, 20)]
     assert kept([20, 20], [12, 8], gap=3) == [(21, 20)]
     assert kept([20, 20], [8, 12], gap=3) == [(44, 20)]

@@ -66,10 +66,10 @@ on the test song (the vocals stem is active in 0.561 and 0.863 of their frames),
 second and half of the first. So the pipeline places them by the label; `place_phrases` places none unless asked.
 Confirmed solo sections next to each other are one run. A solo is a featured lead break of a length human charters
 write, and solos are a minority of the song (DESIGN 2.10; M5-03 measured 14 human solos on 13 human charts):
-  * Splitting: a run longer than `SoloRules.max_measures` (56) or `max_seconds` (100 s) is split at its inner section
-    starts (allin1's lettered parts, "Solo 2A", "Solo 2B", ...): the parts are grouped from the run's start while the
-    group stays within both caps, and a part over a cap on its own is cut at the measure line where the first cap is
-    reached (the rest is its own candidate, cut again while it is over one). A run within both is one candidate.
+  * Splitting: a run longer than `SoloRules.max_measures` (56) or `max_seconds` (100 s) gives its densest window:
+    from measure line to measure line (or the run's ends), within both caps, the most Expert onsets, ties to the
+    earlier start. The rest of the run on either side is split the same way while it is over a cap; every piece is
+    a candidate. A run within both caps is one candidate.
   * Choosing: a candidate needs 4 measures and 16 Expert onsets; the densest (onsets per measure, ties to the
     earlier) are taken, at most 3 a song (human median 1, p90 2-3), skipping any that starts or ends within
     `min_gap_measures` (4) of a solo already taken (so a split run never gives back-to-back markers, while a long run
@@ -449,13 +449,13 @@ def place_fills(expert: Track, tempo: TempoMap, sections: Sequence[int] = (),
 
 def solo_sections(sections: Sequence[tuple[int, str]], end_tick: int, *,
                   confirm: Callable[[int, int], bool] | None = None,
-                  names: Sequence[str] | None = None, tempo: TempoMap | None = None,
+                  names: Sequence[str] | None = None, tempo: TempoMap | None = None, onsets: Sequence[int] = (),
                   rules: SoloRules = SOLO_RULES) -> list[tuple[int, int]]:
     """The candidate solos: half-open tick ranges of the sections named as solos that `confirm` accepts (all if
     None), consecutive ones one run; the last section runs to end_tick. With `tempo`, a run longer than
-    rules.max_measures or rules.max_seconds is split at its inner section starts (the module docstring's splitting).
-    names: exactly these sections instead (a person's choice, which neither the "Solo" label, confirm nor the caps
-    overrule: nothing is split)."""
+    rules.max_measures or rules.max_seconds is split around its densest window of the sorted Expert `onsets` (the
+    module docstring's splitting). names: exactly these sections instead (a person's choice, which neither the
+    "Solo" label, confirm nor the caps overrule: nothing is split)."""
     secs = sorted(sections)
     runs: list[list[tuple[int, int]]] = []
     for i, (tick, name) in enumerate(secs):
@@ -471,7 +471,7 @@ def solo_sections(sections: Sequence[tuple[int, str]], end_tick: int, *,
     if tempo is None or names is not None or not runs:
         return [(run[0][0], run[-1][1]) for run in runs]
     caps = _Caps(tempo, max(end_tick, runs[-1][-1][1]), rules)
-    return [c for run in runs for c in caps.split(run)]
+    return [c for run in runs for c in caps.split(run[0][0], run[-1][1], onsets)]
 
 
 class _Caps:
@@ -503,39 +503,27 @@ class _Caps:
         return (self.measures(a, b) <= self.rules.max_measures
                 and self.tempo.tick_to_sec(b) - self.tempo.tick_to_sec(a) <= self.rules.max_seconds + 1e-9)
 
-    def split(self, parts: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        """A run's candidates: the run if it is within both caps; else its parts grouped from the run's start while
-        the group stays within both, a part over a cap on its own cut by `cut` (its pieces each a candidate)."""
-        if self.within(parts[0][0], parts[-1][1]):
-            return [(parts[0][0], parts[-1][1])]
-        out: list[tuple[int, int]] = []
-        group: tuple[int, int] | None = None
-        for a, b in parts:
-            if group is not None and self.within(group[0], b):
-                group = (group[0], b)
-                continue
-            if group is not None:
-                out.append(group)
-            group = (a, b) if self.within(a, b) else None
-            if group is None:
-                out += self.cut(a, b)
-        return out + ([group] if group is not None else [])
+    def split(self, a: int, b: int, onsets: Sequence[int]) -> list[tuple[int, int]]:
+        """A run's candidates: the run if it is within both caps; else its densest window (`window`) and the rest of
+        the run on either side, each split the same way while it is over a cap."""
+        if self.within(a, b):
+            return [(a, b)]
+        s, e = self.window(a, b, onsets)
+        return (self.split(a, s, onsets) if s > a else []) + [(s, e)] + (self.split(e, b, onsets) if e < b else [])
 
-    def cut(self, a: int, b: int) -> list[tuple[int, int]]:
-        """[a, b) cut at the measure line where the first cap is reached, and the rest again while it is over one."""
-        out = []
-        while not self.within(a, b):
-            lines = self.starts[bisect.bisect_right(self.starts, a):bisect.bisect_left(self.starts, b)]
-            if not lines:
-                break
-            m = lines[0]   # at least one measure, even one over a cap on its own
-            for t in lines[1:]:
-                if not self.within(a, t):
-                    break
-                m = t
-            out.append((a, m))
-            a = m
-        return out + [(a, b)]
+    def window(self, a: int, b: int, onsets: Sequence[int]) -> tuple[int, int]:
+        """The window of [a, b) within both caps with the most onsets, ties to the earlier start: it starts on a or a
+        measure line inside and ends on a line inside or b, at least one measure even when that is over a cap."""
+        bounds = [a] + self.starts[bisect.bisect_right(self.starts, a):bisect.bisect_left(self.starts, b)] + [b]
+        best, j = None, 1
+        for i in range(len(bounds) - 1):
+            j = max(j, i + 1)
+            while j + 1 < len(bounds) and self.within(bounds[i], bounds[j + 1]):
+                j += 1          # the furthest end within both caps never moves back as the start moves on
+            n = bisect.bisect_left(onsets, bounds[j]) - bisect.bisect_left(onsets, bounds[i])
+            if best is None or n > best[0]:
+                best = (n, bounds[i], bounds[j])
+        return best[1], best[2]
 
 
 @dataclass(frozen=True)
@@ -576,7 +564,8 @@ def place_solos(expert: Track, tempo: TempoMap, sections: Sequence[tuple[int, st
         return []
     caps = _Caps(tempo, onsets[-1], rules)
     candidates = []
-    for a, b in solo_sections(sections, onsets[-1] + 1, confirm=confirm, names=names, tempo=tempo, rules=rules):
+    for a, b in solo_sections(sections, onsets[-1] + 1, confirm=confirm, names=names, tempo=tempo, onsets=onsets,
+                              rules=rules):
         inside = _between(onsets, a, b)
         measures = caps.measures(a, b)
         if len(inside) >= rules.min_onsets and measures >= rules.min_measures:

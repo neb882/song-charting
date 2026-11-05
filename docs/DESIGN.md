@@ -1327,10 +1327,13 @@ to detect, from the guitar's pick noise, where our chart is too sparse, and to f
   14 solos on 13 charts (12 on the order's 11 without break: the same values): median 1 a chart; the 95th
   percentile of length 52.9 measures and 96.4 s; the largest share 0.357.
   1. `max_measures` **56**: the 95th percentile of length rounded up to a multiple of 8 (within 16–64). A run of
-     Solo sections longer than this, or than `max_seconds`, is split at its inner section starts (the lettered
-     parts): the parts are grouped from the run's start while the group stays within both caps; a part over a cap
-     on its own is cut at the measure line where the first cap is reached, and the rest is its own candidate (cut
-     again while it is over one). A run within both caps is one candidate, as before.
+     Solo sections longer than this, or than `max_seconds`, gives its **densest window**: from a measure line to a
+     measure line (or the run's own ends), within both caps, with the most Expert onsets, ties to the earlier start.
+     The rest of the run on either side is split the same way while it is over a cap, and every piece is a
+     candidate; the section starts inside a run play no part. A run within both caps is one candidate, as before.
+     [decision, the orchestrator, 2026-11-05, after the first stress run: grouping the lettered parts from the run's
+     start left the power-metal song a dense 23-measure tail that won on density, and the gap rule then dropped the
+     larger part beside it, so the solo overlapped the human one by only 0.43.]
   2. `max_seconds` **100**: the same in seconds rounded up to the next 10 s (within 30–120), since the measures are
      counted on our map, which need not be the humans': on the shred song the owner's v0.1 map runs at about twice
      their tempo (154 against 80 BPM; halving is M5-99's), so 56 of our measures there are about 87 s where 56 of
@@ -1352,12 +1355,13 @@ to detect, from the guitar's pick noise, where our chart is too sparse, and to f
   [code].
   **On the owner's v0.1 charts** (4 CUDA takes; the rules rerun on their own notes and sections, numbers only;
   input seconds, as report.json and the human charts) [here, M5-03]: the power-metal song's one solo 2:14.4–3:55.1
-  (101 s, share 0.34) becomes 2:14.4–3:35.9 (81 s, 34 measures, share 0.27): the run is split at the seconds cap
-  and the 19-s rest is skipped by the gap; it covers 0.60–0.65 of the three human charts' solo (about 2:55–4:01).
-  The shred song's 1:04.8–1:41.2 and 1:56.0–8:18.1 (share 0.84) become 1:04.8–1:41.2, 4:42.0–6:02.5 and
-  7:29.2–8:18.1 (share 0.33; two parts skipped by the gap, one by the share), covering 0.84 and 0.50 of the alt
-  chart's two human solos. Without the gap rule the shred song got 3:13.4–4:41.9 and 4:42.0–6:02.5 back to back,
-  and the power-metal song both parts of its run. The rock song is unchanged (1:46.6–2:15.3).
+  (101 s, share 0.34) becomes 2:14.4–3:52.7 (98 s, 41 measures on that 100-BPM map, share 0.33: the seconds cap's
+  window), covering 0.87 of the human solo (2:57.6–4:01.2). The shred song's 1:04.8–1:41.2 and 1:56.0–8:18.1 (share
+  0.84) become 4:17.1–5:49.2 and 6:52.4–8:16.6 (56 measures each, share 0.35; two pieces skipped by the gap, two by
+  the share), covering 0.82 and 0.83 of the alt chart's two human solos (4:30.3–6:06.2, 6:56.1–8:33.0). The rock
+  song is unchanged (1:46.6–2:15.3). Grouping from the run's start instead, with the gap rule, gave the power-metal
+  song 2:14.4–3:35.9 (0.60 of the human solo) and the shred song three solos covering 0.84 and 0.50; without the gap
+  rule, back-to-back markers on both.
 - **Difficulties:** solos are written on every guitar difficulty. The reducer copies them down and keeps at least one note in each solo on every level (`reduce.py`) [code], so scan-chart's `emptySoloSection`, which it checks on every track, cannot fire.
 
 - **Not chosen:** imported star power (autochart has none; STRUM's 8 phrases placed on the densest Expert windows come out empty on Easy); chartgen's 19 phrases.
