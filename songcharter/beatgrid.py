@@ -65,6 +65,8 @@ LOCAL_TEMPO_HOP_S = 5.0    # ... every 5 s, ...
 LOCAL_TEMPO_CHANGE = 0.10  # ... kept where it differs from the global tempo by more than 10 % ...
 LOCAL_TEMPO_MARGIN = 0.5   # ... and scores this much higher than the global period there
 DOWNBEAT_MIN_MARGIN = 0.15  # below this bar-phase margin the downbeats are flagged for review
+HALF_BEAT_SHIFT = 1.25     # the beats move half a beat when the midpoints carry more than this x the lines' kick;
+HALF_BEAT_UNSURE = 0.8     # from this ratio up to the shift the beat phase is unsure (no shift, flagged)
 SECONDARY_DELTA = 0.12     # a second stem's onsets: peaks this far above the normalised envelope's local mean
 SECONDARY_HALF_WIDTH = 4   # their 8th and 16th phase is measured over +-4 beats around each beat, ...
 SECONDARY_MIN_ONSETS = 8   # ... from at least 8 onsets, ...
@@ -707,8 +709,10 @@ def half_beat_phase(features: OnsetFeatures, beats: np.ndarray, use: np.ndarray,
     The kick band's (KICK_BAND) peak within +-half_window of each beat and of each beat's midpoint, as medians over
     the beats in `use`: the lines that carry more kick are the beat, as bar_phase puts beat 1 on the kick. A grid at
     twice the tempo can lock onto the 8ths the drums hit hardest, a snare on every "and" over a kick on every beat
-    (a fast power-metal beat), which puts its lines on the off-beats; this finds that. stats: the two medians, their
-    ratio (midpoints / lines; over 1: shift) and the beats used."""
+    (a fast power-metal beat), which puts its lines on the off-beats; this finds that. The midpoints must carry more
+    than HALF_BEAT_SHIFT times the lines' kick, as bar_phase wants a margin: from HALF_BEAT_UNSURE to there (a double
+    kick on every 8th) nothing moves and stats["unsure"] says so. stats: the two medians, their ratio (midpoints /
+    lines), the beats used, shifted, unsure."""
     fps, kick = features.fps, features.kick
     hw = int(round(half_window * fps))
 
@@ -718,14 +722,14 @@ def half_beat_phase(features: OnsetFeatures, beats: np.ndarray, use: np.ndarray,
 
     b = np.asarray(beats, dtype=np.float64)
     if len(b) < 2 or not use[:-1].any():
-        return False, {"lines": None, "midpoints": None, "ratio": None, "beats": 0, "shifted": False}
+        return False, {"lines": None, "midpoints": None, "ratio": None, "beats": 0, "shifted": False, "unsure": False}
     u = use[:-1]
     lines, mids = float(np.median(peak(b[:-1][u]))), float(np.median(peak(0.5 * (b[:-1] + b[1:])[u])))
     ratio = mids / lines if lines > 0 else (np.inf if mids > 0 else 1.0)
-    shift = bool(ratio > 1.0)
+    shift = bool(ratio > HALF_BEAT_SHIFT)
     return shift, {"lines": round(lines, 6), "midpoints": round(mids, 6),
                    "ratio": round(float(ratio), 4) if np.isfinite(ratio) else None, "beats": int(u.sum()),
-                   "shifted": shift}
+                   "shifted": shift, "unsure": bool(HALF_BEAT_UNSURE <= ratio <= HALF_BEAT_SHIFT)}
 
 
 def shift_half_beat(beats: np.ndarray, duration: float) -> np.ndarray:
@@ -872,6 +876,7 @@ def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None
         if shift:
             onset_beats = shift_half_beat(onset_beats, dur - onset_to_beat_ms / 1000.0)
             confident = local_beats(f, onset_beats).confident
+        stats["half_beat"]["confident_after"] = round(float(confident.mean()), 4)  # the mask the downbeats use
 
     # downbeats on the onset-time beats (also per 16 bars, to show where the bar phase disagrees), then the
     # convention shift, then trim to the audio

@@ -18,7 +18,7 @@ from songcharter.assemble import (BACKBEAT_MIN, CLIP_MARGIN_S, HOPO_RULES, OCTAV
                                   find_scan_chart, grid_octave, last_tick_by, load_config, parse_config,
                                   run_scan_chart, scan_chart_issues, scan_chart_song, scan_rules, self_check,
                                   short_intervals, silent_onsets, stem_alignment, trim_silent_edges, verify_folder)
-from songcharter.beatgrid import ONSET_TO_BEAT_MS, OnsetFeatures
+from songcharter.beatgrid import ONSET_TO_BEAT_MS, BeatGrid, OnsetFeatures
 from songcharter.chart import (DRUM_ACTIVATION, STAR_POWER, Chart, DrumHit, FretNote, Phrase, SongInfo, Track,
                                write_chart)
 from songcharter.cli import main
@@ -1161,6 +1161,9 @@ def test_short_intervals_counts_against_the_local_beat():
     assert short_intervals(onsets, beats) == (3, 7)
     assert short_intervals([0.5, 0.5, 0.6], beats) == (1, 1)  # distinct onsets only
     assert short_intervals([1.0], beats) == (0, 0) and OCTAVE_SHORT == 0.75
+    # an interval is judged by the beat its earlier onset falls in: 0.15 s is short in the 1 s beat (0.1875), not
+    # in the 0.5 s beat its later onset falls in (0.094)
+    assert short_intervals([1.9, 2.05], beats) == (1, 1)
 
 
 def test_grid_octave_doubles_a_grid_too_slow_for_the_notes():
@@ -1214,6 +1217,16 @@ def test_the_backbeat_vetoes_or_lets_it_double():
     half_on = snare_features(SLOW_GRID, "both", mid_level=0.5)
     assert backbeat_ratio(half_on, SLOW_GRID)[0] == pytest.approx(0.5) and grid_octave(notes, SLOW_GRID, half_on)[0] == 2
     assert grid_octave(notes, SLOW_GRID, snare_features(SLOW_GRID, "both", mid_level=0.2))[0] == 1
+    # only the beats with confident drum evidence count: the second half (no envelope peak) has the snare between
+    # the beats, which would make the ratio about 1
+    half = len(SLOW_GRID) // 2
+    mixed = snare_features(SLOW_GRID, "lines")
+    late = SLOW_GRID[half:] - ONSET_TO_BEAT_MS / 1000
+    mixed.env[np.round(late * mixed.fps).astype(int)] = 0.0
+    mixed.snare[np.round(late * mixed.fps).astype(int)] = 0.01
+    mixed.snare[np.round((late[:-1] + 0.5 * np.diff(late)) * mixed.fps).astype(int)] = 1.0
+    ratio, used = backbeat_ratio(mixed, SLOW_GRID)
+    assert ratio < 0.05 and used == half
     # too few confident beats: indeterminate
     assert backbeat_ratio(snare_features(SLOW_GRID[:10], "lines"), SLOW_GRID[:10]) == (None, 9)
 
@@ -1364,3 +1377,50 @@ def test_on_a_doubled_grid_the_bass_snaps_to_8ths(fast_song):
     assert len(bass.notes) == FAST_NOTES // 2 and all(n.tick % (res // 2) == 0 for n in bass.notes)
     one = assemble(parse_config({**config, "parts": parts, "grid_octave": 1, "output": "out/bass1"}, root))
     assert one.report["parts"]["bass"]["slots"] == {"straight": 4, "triplet": 3}
+
+
+def _fake_grid(bpm, share, half_beat=None):
+    beats = 1.0 + np.arange(300) * 60 / bpm
+    stats = {"click": {"bpm": bpm}, "evidence": {"confident_share": share, "n_confident": int(share * 300),
+                                                  "n_beats": 300}}
+    if half_beat is not None:
+        stats["half_beat"] = half_beat
+    return BeatGrid(beats, np.arange(0, 300, 4), "free", stats)
+
+
+def test_the_octave_pass_forced_2_keeps_the_doubled_grid_and_flags_an_unsure_phase(tmp_path):
+    """A forced grid_octave 2 keeps the doubled grid however little evidence it has (auto falls back to the first);
+    a doubled grid whose half-beat test was unsure warns."""
+    first = _fake_grid(99.0, 0.8)
+    onsets = {"guitar": sixteenths()}
+    weak = _fake_grid(198.0, 0.4, {"ratio": 1.02, "shifted": False, "unsure": True})  # ratio 0.5, under 0.7
+    cfg = parse_config(CONFIG, tmp_path)
+    grid, octave, stats, reason, warn = assemble_module._octave_pass(cfg, first, onsets, None, lambda bpm, r: weak)
+    assert octave == 1 and grid is first and stats["evidence_ratio"] == 0.5 and warn[0].startswith("tempo: ")
+    cfg.grid_octave = 2
+    grid, octave, stats, reason, warn = assemble_module._octave_pass(cfg, first, onsets, None, lambda bpm, r: weak)
+    assert octave == 2 and grid is weak and reason == "forced: grid_octave 2"
+    assert warn == ["tempo doubled to 198.0 BPM: grid_octave 2", "beat phase unsure: the kick is about as strong "
+                    "between the beats as on them (ratio 1.02): check that the beat lines are on the kick"]
+    cfg.grid_octave = "auto"
+    sure = _fake_grid(198.0, 0.8, {"ratio": 2.2, "shifted": True, "unsure": False})
+    grid, octave, _, _, warn = assemble_module._octave_pass(cfg, first, onsets, None, lambda bpm, r: sure)
+    assert octave == 2 and len(warn) == 1 and warn[0].startswith("tempo doubled")
+
+
+def test_the_backbeat_test_gets_the_drum_stem_only(fast_song, monkeypatch):
+    """grid_octave is given the grid's features when the grid comes from the drum stem, and none from the mix (its
+    snare band holds the other instruments too)."""
+    root, config = fast_song
+    seen = []
+
+    def octave(onsets, beats, features, rules):
+        seen.append(features)
+        raise _Stop
+
+    monkeypatch.setattr(assemble_module, "grid_octave", octave)
+    for change in ({}, {"grid_source": "mix"}):
+        with pytest.raises(_Stop):
+            assemble(parse_config({**config, **change}, root))
+    assert isinstance(seen[0], OnsetFeatures) and seen[1] is None
+

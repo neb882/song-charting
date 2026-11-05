@@ -427,7 +427,9 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
    - **The second pass's phase: its hinted line, then the half-beat test** (decided 2026-11-05). On the power-metal
      song's drum stem, the comb and the tracker lock onto the snare's 8ths: a kick on every beat under a snare on
      every "and". The test (`beatgrid.half_beat_phase`) moves the second grid's lines half a beat later when the
-     midpoints carry more kick than the lines, as `bar_phase` puts beat 1 on the kick. The tracker had to be kept
+     midpoints carry more than 1.25 times the lines' kick (`HALF_BEAT_SHIFT`), as `bar_phase` puts beat 1 on the
+     kick with a margin; from 0.8 to 1.25 (a double kick on every 8th) nothing moves and the build warns "beat phase
+     unsure". The tracker had to be kept
      out first (`keep_line`): it found more evidence than the hinted line (0.821 against 0.676 confident) by
      flipping between the beats and their "and"s over parts of the song. The line is straight and the test moves
      all of it. On that song, against its three human charts [here, M5-01 probes, 1 CPU take]:
@@ -700,6 +702,14 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
      sextuplets, which no 1/16 grid holds), 22–24 % on the shred instrumental (charted at half our tempo, so its runs
      are 32nds and sextuplets of their map), 0.9–1.8 % on the ordinary rock song and 0.05 % on the power-metal bass
      [here, M5-01]: burst slots (1/32, 1/24) are M5-99's next step, with these numbers.
+   - **On the references** (M5-01's golden run): every onset count and F1 is unchanged, and only chord notes go. Five
+     level-parts' chord shares move away from the human's: Lucretia guitar Expert 0.184 → 0.080 (human 0.142), Hard
+     0.191 → 0.097 (0.188), Medium 0.185 → 0.094 (0.203); All the Small Things bass Expert and Hard 0.007 → 0
+     (0.41). The dropped onsets lie 50.5 / 75.8 / 101 ms (p10 / p50 / p90) from the kept one, none 20–40 ms
+     (Lucretia guitar 149 of 1,433, Lucretia bass 172 of 1,333, Creep bass 154 of 813, Drunk Drivers guitar 12 of
+     611) [here, M5-01 review]. They are distinct fast notes the old quantizer merged into chords the engine never
+     heard, not split strums. The order's line ("the chord shares toward the humans' or stay") is read by its intent,
+     a chord is notes that sound together, and the owner decides at the gate.
    - **The floors, 20 ms** (M5-01; until then 80 ms before a strum and 55 ms before a HOPO or a tap, which deleted
      strummed 16ths above 187.5 BPM) [conventions report 2g]. `brokenNote` at 15 ms is the only spacing the games or
      the lints require, and the floors' only job is that it cannot fire; 20 ms is that plus a margin. Human charts

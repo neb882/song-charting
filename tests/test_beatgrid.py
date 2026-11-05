@@ -3,7 +3,8 @@ import numpy as np
 import pytest
 
 import songcharter.beatgrid as B
-from songcharter.beatgrid import (BPM_RANGE, BeatGrid, OnsetFeatures, beat_grid, estimate_tempo, half_beat_phase,
+from songcharter.beatgrid import (BPM_RANGE, HALF_BEAT_SHIFT, BeatGrid, OnsetFeatures, bar_phase, beat_grid,
+                                  estimate_tempo, half_beat_phase,
                                   local_beats, local_periods, loess, mel_filterbank, missed_tempo_changes,
                                   onset_features, onset_phase, onset_times, robust_line, shift_half_beat,
                                   track_beats, window_tempi)
@@ -479,8 +480,15 @@ def test_the_half_beat_test_puts_the_lines_on_the_kick(steady):
     assert abs(spread_ms(plain.beats, truth)[0]) > 100  # on the "and"s
     assert abs(spread_ms(moved.beats, truth)[0]) < 30 and spread_ms(moved.beats, truth)[1] < 5
     hb = moved.stats["half_beat"]
-    assert hb["shifted"] and hb["ratio"] > 1 and "half_beat" not in plain.stats
+    assert hb["shifted"] and hb["ratio"] > HALF_BEAT_SHIFT and not hb["unsure"] and "half_beat" not in plain.stats
     assert moved.bpm == pytest.approx(198.0, abs=0.1) and len(moved.downbeats)
+    # the downbeats are found on the moved beats with their own evidence, not the mask of the beats before the move
+    onset = moved.beats - moved.stats["onset_to_beat_ms"] / 1000  # (nothing trimmed here)
+    fresh = local_beats(f, onset).confident
+    assert hb["confident_after"] == round(float(fresh.mean()), 4) != moved.stats["evidence"]["confident_share"]
+    phase = bar_phase(f, onset, fresh)[0]
+    assert moved.stats["downbeats"]["phase"] == phase and np.array_equal(moved.downbeats,
+                                                                         np.arange(phase, len(moved.beats), 4))
     _, rock = steady
     g = beat_grid(rock, SR, half_beat=True)
     assert not g.stats["half_beat"]["shifted"] and np.array_equal(g.beats, beat_grid(rock, SR).beats)
@@ -494,4 +502,19 @@ def test_the_half_beat_test_puts_the_lines_on_the_kick(steady):
                                beats, np.ones(len(beats), bool))[0]
     assert np.allclose(shift_half_beat(np.array([0.1, 0.6, 1.1]), 1.3), [0.35, 0.85])
     assert np.allclose(shift_half_beat(np.array([0.3, 0.8, 1.3]), 2.0), [0.05, 0.55, 1.05, 1.55])
+
+
+@pytest.mark.parametrize("mids, shifted, unsure", [(0.5, False, False), (0.98, False, True), (1.02, False, True),
+                                                   (1.3, True, False)])
+def test_the_half_beat_test_needs_a_margin(mids, shifted, unsure):
+    """The beats move only when the midpoints carry more than HALF_BEAT_SHIFT (1.25) times the lines' kick: a double
+    kick on every 8th (about even, 0.98x or 1.02x) moves nothing and is flagged unsure; 1.3x moves."""
+    beats = np.arange(1.0, 20.0, 0.5)
+    k = np.zeros(4000)
+    k[np.round(beats * 100).astype(int)] = 1.0
+    k[np.round((beats[:-1] + 0.25) * 100).astype(int)] = mids
+    feats = OnsetFeatures(100.0, np.zeros(4000), np.zeros(4000), k, np.zeros(4000))
+    shift, stats = half_beat_phase(feats, beats, np.ones(len(beats), bool))
+    assert (shift, stats["shifted"], stats["unsure"]) == (shifted, shifted, unsure)
+    assert stats["ratio"] == pytest.approx(mids)
 

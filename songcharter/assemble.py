@@ -1439,8 +1439,13 @@ def _octave_pass(cfg: AssembleConfig, first: BeatGrid, onsets: dict[str, list[fl
         why = "forced: grid_octave 2" if forced else (
             f"{stats['reason']}; the doubled grid's confident share {s2:.2f} against {s1:.2f} (ratio {ratio:.2f}, "
             f"at least {rules.evidence_min})")
-        return second, 2, stats, why, [f"tempo doubled to {second.bpm:.1f} BPM: " + (
+        warn = [f"tempo doubled to {second.bpm:.1f} BPM: " + (
             "grid_octave 2" if forced else f"the notes are too dense for {first.bpm:.1f} BPM ({dense})")]
+        hb = second.stats.get("half_beat") or {}
+        if hb.get("unsure"):
+            warn.append(f"beat phase unsure: the kick is about as strong between the beats as on them (ratio "
+                        f"{hb['ratio']:.2f}): check that the beat lines are on the kick")
+        return second, 2, stats, why, warn
     why = (f"{stats['reason']}; but the doubled grid's confident share {s2:.2f} against {s1:.2f} (ratio "
            f"{ratio:.2f}, under {rules.evidence_min}): the first grid stays")
     return first, 1, stats, why, [f"tempo: the notes are dense for {first.bpm:.1f} BPM ({dense}) but the drums give "
