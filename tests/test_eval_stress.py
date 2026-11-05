@@ -230,15 +230,16 @@ def beats(n, start=1920, step=480, lanes=None):
 def test_windows_give_each_windows_f1_and_the_lowest(tmp_path, scan_env, monkeypatch, capsys):
     monkeypatch.setenv("SONGCHARTER_SCAN_CHART", scan_env["SONGCHARTER_SCAN_CHART"])
     ref = beats(40)                                   # 2.0 s to 21.5 s, a note a beat
-    cand = ref[:20] + [FretNote(n.tick + 240, n.frets) for n in ref[20:]]   # the second half 250 ms late
-    d = score(tmp_path, ref, cand, extra=["--windows", "10"])
+    # the middle window's notes (9 s to 16 s) 250 ms late, and one note of the last window 60 ms late (still matched)
+    cand = [FretNote(n.tick + (240 if 8640 <= n.tick < 15360 else 58 if n.tick == 18240 else 0), n.frets) for n in ref]
+    d = score(tmp_path, ref, cand, extra=["--windows", "7"])
     w = d["tracks"]["guitar/expert"]["windows_100ms"]
-    assert w["window_s"] == 10 and [r["start_s"] for r in w["windows"]] == [2.0, 12.0]
-    assert [(r["f1"], r["matched"], r["n_ref"]) for r in w["windows"]] == [(1.0, 20, 20), (0.0, 0, 20)]
-    assert w["windows"][1]["n_cand"] == 19            # the last late note is past the ref span
-    assert w["lowest"] == {"start_s": 12.0, "f1": 0.0}
+    assert w["window_s"] == 7 and [r["start_s"] for r in w["windows"]] == [2.0, 9.0, 16.0]
+    assert [(r["f1"], r["matched"], r["n_ref"], r["n_cand"]) for r in w["windows"]] == [
+        (1.0, 14, 14, 14), (0.0, 0, 14, 14), (1.0, 12, 12, 12)]
+    assert w["lowest"] == {"start_s": 9.0, "f1": 0.0}   # the lowest, not the last
     printed = capsys.readouterr().out.splitlines()
-    assert printed[-1] == "lowest 10-s window F1@100: guitar/expert 0.000 at 0:12.0"
+    assert printed[-1] == "lowest 7-s window F1@100: guitar/expert 0.000 at 0:09.0"
     plain = score(tmp_path / "plain", ref, cand)
     assert "windows_100ms" not in plain["tracks"]["guitar/expert"] and "summary_windows" not in plain
 
@@ -274,6 +275,16 @@ def test_jumps_count_big_fast_jumps_and_the_distance_between_the_histograms(tmp_
     assert j["ref"]["big_fast_share"] == round(8 / 12, 4)
 
 
+def test_a_chord_is_no_jump_and_a_jump_150_ms_apart_is_not_fast(tmp_path, scan_env, monkeypatch):
+    monkeypatch.setenv("SONGCHARTER_SCAN_CHART", scan_env["SONGCHARTER_SCAN_CHART"])
+    # green, a green-orange chord, orange (62.5 ms apart); green 150 ms later; orange 62.5 ms after it; four beats
+    ref = [FretNote(1920, (0,)), FretNote(1980, (0, 4)), FretNote(2040, (4,)), FretNote(2184, (0,)),
+           FretNote(2244, (4,))] + beats(4, start=4800)
+    j = score(tmp_path, ref, ref)["tracks"]["guitar/expert"]["jumps"]["ref"]
+    assert j["n_pairs"] == 6 and j["big_fast"] == 1   # neither pair with the chord, nor the 150-ms one
+    assert j["hist"] == [0.0, 0.5, 0.0, 0.0, 0.5, 0.0]
+
+
 def test_the_downbeat_f1_follows_the_measure_lines_not_the_beats(tmp_path, scan_env, monkeypatch):
     monkeypatch.setenv("SONGCHARTER_SCAN_CHART", scan_env["SONGCHARTER_SCAN_CHART"])
     ref = beats(32)
@@ -282,6 +293,8 @@ def test_the_downbeat_f1_follows_the_measure_lines_not_the_beats(tmp_path, scan_
     assert same["downbeat_f1_70ms"]["f1"] == 1.0 and same["downbeat_f1_70ms"]["n_ref"] == 8
     t = late["tempo_map"]
     assert t["beat_f1_70ms"]["f1"] == 1.0 and t["downbeat_f1_70ms"]["f1"] == 0.0   # a bar off, every beat right
+    half = score(tmp_path / "c", ref, ref, cand_kw={"sigs": [TimeSignature(0, 2)]})["tempo_map"]["downbeat_f1_70ms"]
+    assert (half["recall"], half["precision"], half["n_cand"]) == (1.0, 0.5, 16)   # a line every 2 beats: as many extra
 
 
 def test_star_power_per_minute_and_the_solo_share(tmp_path, scan_env, monkeypatch):
@@ -313,6 +326,30 @@ def test_an_unopenable_stem_is_skipped_with_a_note(tmp_path, scan_env, monkeypat
 
 
 # ------------------------------------------------------------------------------------------------ stress.py score and compare
+
+def test_shape_counts_report_jsons_silent_onsets_and_the_previews_gaps(tmp_path):
+    folder = song(tmp_path / "song", beats(16, start=0))      # notes 0 s to 7.5 s, at 120 BPM
+    (folder / "report.json").write_text(json.dumps({"parts": {"guitar": {"silent_onsets": {"count": 3}}},
+                                                    "lead_in": {"pad_seconds": 0.0}}))
+    kept = tmp_path / "kept"
+    (kept / "stems" / "k").mkdir(parents=True)
+    rng = np.random.default_rng(5)
+    y = np.zeros(int(20 * SR), np.float32)
+    for k in range(80):                                       # an attack every 250 ms for 20 s: it plays on
+        i = int(k * 0.25 * SR)
+        y[i:i + 2000] += (0.3 * rng.standard_normal(2000)).astype(np.float32) * np.exp(-np.arange(2000) / 400)
+    for name in ("guitar", "other", "bass", "drums"):
+        A.write_wav(np.stack([y, y]) if name == "guitar" else np.zeros((2, len(y)), np.float32),
+                    kept / "stems" / "k" / f"{name}.wav")
+    (kept / "stems" / "k" / "info.json").write_text("{}")
+    got = S.shape(folder, kept)
+    g = got["guitar"]
+    assert g["silent_onsets"] == 3 and g["judged"] and got["bass"]["silent_onsets"] is None
+    assert not got["bass"]["judged"] and not got["drums"]["judged"]   # no bass or drums part in the chart
+    assert g["flags"]["gap"]["stretches"] == 1 and g["flags"]["gap"]["measures"] >= 4   # 8 s to 20 s: no notes
+    assert "notes in silence" not in g["flags"]
+
+
 
 def made_up_score(f1_50: float, alt: bool = False) -> dict:
     """score.py's JSON as stress.py reads it, made up."""
@@ -378,10 +415,10 @@ def test_score_scores_ours_against_every_chart_and_the_humans_against_the_primar
     assert "| aaa | ours vs primary | 0.900 | 0.950 | 0.600 | 2500.0 |" in text
 
 
-def scores_with(**f1) -> dict:
-    """Made-up stress scores: ours against the primary and an alt, per part F1@50."""
-    def part(f):
-        return {"f1_50": f, "f1_100": f, "timing_err_ms": 5.0, "chord_share": [0.1, 0.05], "lowest_window": None}
+def scores_with(f100: float = 0.95, **f1) -> dict:
+    """Made-up stress scores: ours against the primary and an alt, per part F1@50 (F1@100 apart from it, `f100`)."""
+    def part(f, f100=f100):
+        return {"f1_50": f, "f1_100": f100, "timing_err_ms": 5.0, "chord_share": [0.1, 0.05], "lowest_window": None}
     songs = {"aaa": {"ours": {"primary": {"parts": {p: part(v) for p, v in f1.items() if v is not None},
                                          "tempo": {"beat_f1": 0.9, "downbeat_f1": 0.5}},
                               "alt1": {"parts": {"guitar": part(0.5)}, "tempo": {"beat_f1": 0.9, "downbeat_f1": 0.5}}}}}
@@ -389,7 +426,8 @@ def scores_with(**f1) -> dict:
 
 
 @pytest.mark.parametrize("new, code", [({"guitar": 0.795, "bass": 0.7}, 0), ({"guitar": 0.789, "bass": 0.7}, 1),
-                                       ({"guitar": 0.9, "bass": None}, 1), ({"guitar": 0.85, "bass": 0.75}, 0)])
+                                       ({"guitar": 0.9, "bass": None}, 1), ({"guitar": 0.85, "bass": 0.75}, 0),
+                                       ({"guitar": 0.8, "bass": 0.7, "f100": 0.5}, 0)])   # F1@100 is not the rule
 def test_compare_exits_1_when_a_primary_f1_falls_by_more_than_001(tmp_path, capsys, new, code):
     old = scores_with(guitar=0.8, bass=0.7)
     (tmp_path / "old.json").write_text(json.dumps(old))
@@ -398,6 +436,7 @@ def test_compare_exits_1_when_a_primary_f1_falls_by_more_than_001(tmp_path, caps
     out = capsys.readouterr().out
     assert f"F1@50 down by more than 0.01): {code}" in out
     assert f"| aaa | guitar | primary | 0.800 → {new['guitar']:.3f} ({new['guitar'] - 0.8:+.3f})" in out
+    assert f"| 0.950 → {new.get('f100', 0.95):.3f} (" in out
 
 
 def test_compare_ignores_an_alt_and_refuses_what_is_not_scores(tmp_path, capsys):
@@ -427,6 +466,10 @@ def test_align_finds_the_lag_of_a_shifted_copy_and_none_in_noise(tmp_path, capsy
     assert r["aligned"] and abs(r["lag_ms"] - 150.0) < 1.0 and r["windows_peak_ge_0.3"] == r["windows"]
     assert S.main(["align", "aaa", str(tmp_path / "shifted.wav"), "--refs", str(tmp_path / "s")]) == 0
     assert "lag +150" in capsys.readouterr().out
+    drift = np.interp(np.arange(len(y)) * 1.0005, np.arange(len(y)), y).astype(np.float32)   # 0.05 % fast: 20 ms over 40 s
+    A.write_wav(np.stack([drift, drift]), tmp_path / "drift.wav")
+    r = S.align_file(tmp_path / "s" / "aaa" / "input.wav", tmp_path / "drift.wav")
+    assert r["windows_peak_ge_0.3"] == r["windows"] and r["lag_mad_ms"] >= 2.0 and not r["aligned"]   # the MAD fails it
     r = S.align_file(tmp_path / "s" / "aaa" / "input.wav", tmp_path / "noise.wav")
     assert not r["aligned"] and r["windows_peak_ge_0.3"] < r["windows"] / 2
     assert S.main(["align", "aaa", str(tmp_path / "noise.wav"), "--refs", str(tmp_path / "s")]) == 1
@@ -445,9 +488,10 @@ def write_mid(path: Path, words, start_s=2.0, step_s=0.5) -> Path:
     events = []
     for k, w in enumerate(words):
         tick = int(round((start_s + k * step_s) * 960))
-        if k % 5 == 0:
-            events += [(tick - 30, mido.Message("note_on", note=105, velocity=100)),
-                       (tick + 5 * int(step_s * 960) - 60, mido.Message("note_off", note=105, velocity=0))]
+        if k % 5 == 0:   # the first phrase on note 105, the next on 106 (Rock Band uses both)
+            note = 105 if k % 10 == 0 else 106
+            events += [(tick - 30, mido.Message("note_on", note=note, velocity=100)),
+                       (tick + 5 * int(step_s * 960) - 60, mido.Message("note_off", note=note, velocity=0))]
         events.append((tick, mido.MetaMessage("lyrics", text=w)))
     last = 0
     for tick, msg in sorted(events, key=lambda e: e[0]):
@@ -486,7 +530,10 @@ def test_lyrics_timing_pairs_words_by_index_and_prints_no_word(tmp_path, capsys)
     assert LT.main([str(tmp_path / "missing.chart"), str(ref_chart)]) == 2
     out, err = capsys.readouterr()
     assert err.strip() == "lyrics_timing: failed (FileNotFoundError)"
-    for text in (out, err, json.dumps(stats)):
+    late = LT.Sung([t + (0.6 if k >= 5 else 0.0) for k, t in enumerate(ref.times)], list(ref.phrase_first))
+    off = LT.compare(ref, late)                       # the second phrase 600 ms late: its start is over 500 ms off
+    assert off["phrase_starts_over_500ms"] == 1 and off["phrase_starts_paired"] == 2 and off["within_250ms"] == 0.5
+    for text in (out, err, json.dumps(stats), json.dumps(off)):
         assert not any(w in text for w in WORDS)
 
 
@@ -615,3 +662,7 @@ def test_the_baseline_copy_cuts_the_paths_and_the_local_lists_values(tmp_path, m
     text = (tmp_path / "out" / "summary.json").read_text() + (tmp_path / "out" / "stress_scores.json").read_text()
     assert "Made Up" not in text and secret_md5 not in text and "madeupcharter" not in text
     assert "Break" not in S.secrets_of(S.load_set(local=tmp_path / "local.json"))
+    # a value the scrub would miss: the check refuses and writes nothing
+    monkeypatch.setattr(S, "scrub", lambda obj, secrets: obj)
+    assert S.main(["baseline", str(run), str(tmp_path / "out2"), "--local", str(tmp_path / "local.json")]) == 2
+    assert "left after scrubbing" in capsys.readouterr().err and not (tmp_path / "out2" / "summary.json").exists()
