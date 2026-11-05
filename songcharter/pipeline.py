@@ -147,6 +147,9 @@ EXTRA_SEED_STEP = 101    # takes after the first use seeds 101, 202, 303, ... (t
 CUDA_TAKES = 4           # guitar takes by default when the guitar stage runs on CUDA (guitar_takes); 1 on the CPU
 CPU_RETRIES = 1          # guitar takes a chart runs again on the CPU after their CUDA run failed (cpu_retry)
 REASON_CHARS = 120       # at most this much of the engine's error line goes into a retry's reason (engine_line)
+GUITAR_END_GAP_S = 10.0  # a continued guitar take whose last note is this long before its stem stops playing, and
+                         # whose continuation stopped short, ends early (stitch_lines' "ends at" warning)
+PLAYING_DB = -15.0       # a stem's frame within this of its P95 level is playing (preview.GAP_DB)
 SOLO_MODES = ("stems", "labels", "off")  # assemble's solos modes; a list of section names is the other kind
 # the placeholders for what no tag or caller gives ({name}: the song's name, as resolved); the album's is Encore's
 # song.ini rule for a single (docs/reports/charting-conventions.md, section 8), instead of "Unknown"
@@ -431,6 +434,62 @@ def stopped(index: int | None, count: int | None, signum: int, error: BaseExcept
     run = "CPU run" if device == "cpu" else "run"
     return ToolError(f"The guitar's {run} was stopped{where} (signal {signum}, {name}){why}{kept}. Close other "
                      f"programs (browsers, games, Clone Hero) and chart it again{one}.\n\n{error}")
+
+
+def _mmss(t: float) -> str:
+    return f"{int(t // 60)}:{int(t % 60):02d}"
+
+
+def playing_until(path: Path | str) -> float | None:
+    """Where a stem (a WAV) stops playing: the end of its last 0.1-s frame within PLAYING_DB of its P95 level, as
+    preview.py's gaps judge playing; None for a stem that cannot be read or is silent."""
+    try:
+        y, rate = A.read_wav(path)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    hop = max(1, rate // 10)
+    n = y.shape[1] // hop
+    if n == 0:
+        return None
+    frames = y.mean(axis=0)[:n * hop].reshape(n, hop)
+    rms = np.sqrt(np.einsum("ij,ij->i", frames, frames) / hop)
+    if not np.any(rms > 0):
+        return None
+    db = 20 * np.log10(np.maximum(rms, 1e-10))
+    on = np.flatnonzero(db >= np.percentile(db, 95) + PLAYING_DB)
+    return float((on[-1] + 1) * hop / rate) if on.size else None
+
+
+def stitch_lines(seed: int, info: dict, song_s: float, playing: Callable[[], float | None]
+                 ) -> tuple[list[str], list[str]]:
+    """The log lines and warnings for a guitar take the engine cut short and autochart.generate continued (its
+    summary's `stitch` record in `info`, engines/autochart.continue_take): a line per piece; the budget's warning
+    (where the whole-song run stopped, why, in how many pieces the rest was transcribed and to where); and, when the
+    continuation stopped short (a piece cut short again that advanced under ADVANCE_S, or the last of MAX_PIECES)
+    and its last note is GUITAR_END_GAP_S or more before the guitar stem stops playing (`playing()`, called only
+    then), where the guitar ends. Nothing for a take with no piece (no note at all)."""
+    stitch = info.get("stitch") or {}
+    pieces = stitch.get("pieces") or []
+    if not pieces:
+        return [], []
+    run = (info.get("runs") or [{}])[0]
+    why = (f"{run.get('nTokens')} tokens" if stitch.get("cut_short") == "tokens" else
+           f"{run.get('nBeats')} beats" if stitch.get("cut_short") == "beats" else str(stitch.get("cut_short")))
+    last = stitch.get("last_note_s") or 0.0
+    lines = [f"guitar take seed {seed}: piece {k} of {len(pieces)}: audio from {_mmss(p['start_s'])}, kept from "
+             f"{_mmss(p['keep_from_s'])}, last note at {_mmss(p['last_note_s'])} ({p.get('nTokens')} tokens, "
+             f"{p.get('nBeats')} beats, {p.get('seconds') or 0:.0f} s" + (", cut short again)" if p.get("cut_short")
+                                                                         else ")")
+             for k, p in enumerate(pieces, 1)]
+    warnings = [f"guitar take seed {seed}: the engine's budget ran out at {_mmss(stitch.get('cut_at_s') or 0.0)} of "
+                f"{_mmss(song_s)} ({why}); the rest was transcribed in {len(pieces)} more "
+                f"piece{'s' * (len(pieces) > 1)}, to {_mmss(last)}"]
+    if stitch.get("ended") in ("stalled", "max_pieces"):
+        end = playing()
+        if end is not None and last <= end - GUITAR_END_GAP_S:
+            warnings.append(f"guitar take seed {seed}: the guitar ends at {_mmss(last)} (the engine found nothing "
+                            "after that): check the end of the chart")
+    return lines, warnings
 
 
 def take_seeds(takes: int) -> tuple[int, ...]:
@@ -892,7 +951,8 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
             warn(f"lyrics: not added ({no_lyrics})")
             report["lyrics"] = {"given": True, "added": False, "why": no_lyrics}
         parts, sections, stem_files, stem_folder, timed = _engine_stages(audio, work, scratch, options, engines, meta,
-                                                                         begin, end, warn, fallback, report, emit)
+                                                                         begin, end, warn, fallback, report, emit,
+                                                                         log)
         if not parts:
             raise InputError(f"no instrument has notes ({', '.join(instruments)} all came out empty): nothing to "
                              "chart")
@@ -962,13 +1022,15 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
 
 
 def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Options, engines: Engines, meta: dict,
-                   begin, end, warn, fallback, record: dict, emit: Callable[[dict], None]
+                   begin, end, warn, fallback, record: dict, emit: Callable[[dict], None],
+                   log: Callable[[str], None] = lambda line: None
                    ) -> tuple[list[dict], str | None, dict[str, str], Path, Timed | None]:
     """Decode, separation and the engines: the assemble parts, the sections file, the stem files assemble reads,
     the folder of every stem (the preview's) and the timed lyrics (None without); `record` (pipeline.json) gets the
-    device and why, the guitar takes chosen and why, and the lyrics' counts; `fallback` records each move to the
-    CPU; `emit` gets a `take` event before each guitar take that runs. The audio arrays live only here, so they are
-    freed before assemble reads its own."""
+    device and why, the guitar takes chosen and why, each take's continuation, and the lyrics' counts; `fallback`
+    records each move to the CPU; `emit` gets a `take` event before each guitar take that runs; `log` gets a line
+    per piece of a guitar take that was continued. The audio arrays live only here, so they are freed before
+    assemble reads its own."""
     t0 = begin("decode", audio.name)
     mix, wav, same = _decode(audio, work)
     end("decode", t0, same, f"{mix.shape[1] / SAMPLE_RATE:.2f} s of audio in {wav.name}",
@@ -1050,6 +1112,7 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
         probe = options.takes is None and n_takes > 1
         t0 = begin("guitar", f"autochart, {len(seeds)} take{'s' * (len(seeds) > 1)} (seed{'s' * (len(seeds) > 1)} "
                              f"{', '.join(map(str, seeds))}) on {gdev}" + (", the first alone first" if probe else ""))
+        song_s = mix.shape[1] / SAMPLE_RATE
         del mix, stems   # autochart reads decode.wav; the arrays are not needed again
 
         retried: list[int] = []   # the seeds run again on the CPU after their CUDA run failed (at most CPU_RETRIES)
@@ -1118,9 +1181,26 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
                              warning=f"guitar take {r.path.parent.name}: {text}")
                 else:   # another of its stages only (its separation or beat map): warned, as the take is not moved
                     warn(f"guitar take {r.path.parent.name}: {text}")
+        heard: list[float | None] = []   # where the guitar stem stops playing, read once if a warning needs it
+
+        def playing() -> float | None:
+            if not heard:
+                heard.append(playing_until(stem_files["guitar"]) if "guitar" in stem_files else None)
+            return heard[0]
+
+        stitches = [r.info.get("stitch") or {} for r in runs]
+        for seed, r in zip(seeds, runs, strict=True):   # a take the engine cut short, continued in pieces
+            lines, told = stitch_lines(seed, r.info, song_s, playing)
+            for line in lines:
+                log(line)
+            for text in told:
+                warn(text)
         record["takes"] = {"asked": options.takes, "takes": n_takes, "auto": options.takes is None, "why": why,
                            "seeds": list(seeds), "transcriber_moved_to": moved,
-                           "devices": [_transcriber(r) for r in runs], "cpu_retries": list(retried)}
+                           "devices": [_transcriber(r) for r in runs], "cpu_retries": list(retried),
+                           "cut_short": [st.get("cut_short") for st in stitches],
+                           "pieces": [len(st.get("pieces") or []) for st in stitches],
+                           "last_note_s": [st.get("last_note_s") for st in stitches]}
         runs = _distinct_takes(runs, warn)
         n = _expert_onsets(runs[0].path, "guitar")
         part = {"instrument": "guitar", "source": str(runs[0].path), "hopo": "forced"}

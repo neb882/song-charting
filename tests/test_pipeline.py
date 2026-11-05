@@ -1149,19 +1149,30 @@ class Autochart:
     by a signal (-9, as the OOM killer would, with nothing on stderr), one that never ends ("timeout"), one that exits
     0 without writing its take (0), a bug in the driver ("bug", a KeyError), or the driver's exit 1 with that
     stderr (any other text: the driver's real lines, KILLED, TIMEOUT, ...). `fail` may also be several seeds,
-    and `how` a dict {device: how}: those seeds fail so on those devices only, and succeed on the others. `ran`: the
-    seeds it ran; `on`: the (seed, device) of each run."""
+    and `how` a dict {device: how}: those seeds fail so on those devices only, and succeed on the others. `stops`
+    {seed: [s, ...]} cuts that seed's takes short as the engine's budget does (M5-02): its whole-song run (0) and
+    then each piece of its continuation (k, its --out piece_<k>: the decode's tail, its start the decode's length
+    less its own) chart the song's notes from their audio's start up to stops[k] (absolute seconds; past the list,
+    to the end), and report nTokens 8192 when that is before the last note. `piece`: the piece of the `fail` seeds
+    that fails (by `how`) instead of their whole-song run. `ran`: the seeds it ran; `on`: the (seed, device) of
+    each run; `pieces`: the (seed, device, k) of each run."""
 
-    def __init__(self, fail: int | tuple[int, ...] | None = None, how: int | str | dict = 1):
+    def __init__(self, fail: int | tuple[int, ...] | None = None, how: int | str | dict = 1,
+                 stops: dict[int, list[float]] | None = None, piece: int = 0):
         self.fail = () if fail is None else (fail,) if isinstance(fail, int) else tuple(fail)
-        self.how, self.ran, self.on = how, [], []
+        self.how, self.ran, self.on, self.pieces = how, [], [], []
+        self.stops, self.piece = stops or {}, piece
 
     def __call__(self, cmd, env, cwd, capture_output, text, timeout):
+        import soundfile as sf
         seed, device = int(env["AC_SEED"]), env["AC_DEVICE"]
+        out = Path(cmd[cmd.index("--out") + 1])
+        k = int(out.name.split("_")[1]) if out.name.startswith("piece_") else 0
         self.ran.append(seed)
         self.on.append((seed, device))
+        self.pieces.append((seed, device, k))
         how = self.how.get(device) if isinstance(self.how, dict) else self.how
-        if seed in self.fail and how is not None:
+        if seed in self.fail and how is not None and k == self.piece:
             if how == "timeout":
                 raise subprocess.TimeoutExpired(cmd, timeout)
             if how == "bug":
@@ -1171,23 +1182,32 @@ class Autochart:
             return subprocess.CompletedProcess(cmd, how, "", OOM + "\n" if how > 0 else "")
         folder, audio = Path(cmd[cmd.index("--out") + 1]), Path(cmd[cmd.index("--audio") + 1])
         miss = 0 if seed == DEFAULT_SEED else seed // 101   # as the stand-in guitar: each later take misses a note
-        _write(folder / "notes.chart", Track("Expert", "Single", [FretNote(tick(t), (lane,)) for j, (t, lane)
-                                                                   in enumerate(guitar_times()) if j != 40 * miss]))
+        info = sf.info(str(audio))
+        start = round(DURATION - info.frames / info.samplerate, 6)
+        stops = self.stops.get(seed) or []
+        stop = stops[k] if k < len(stops) else None
+        notes = [(t, lane) for j, (t, lane) in enumerate(guitar_times())
+                 if j != 40 * miss and t >= start - 1e-9 and (stop is None or t <= stop + 1e-9)]
+        _write(folder / "notes.chart", Track("Expert", "Single", [FretNote(tick(t - start), (lane,))
+                                                                   for t, lane in notes]))
+        cut = stop is not None and stop < guitar_times()[-1][0]
         (folder / "autochart_run").mkdir(parents=True, exist_ok=True)
         (folder / "autochart_run" / "summary.json").write_text(json.dumps({
             "inputSha256": AC.sha256(audio), "seed": seed, "difficulties": ["expert"],
-            "temperature": float(env["AC_TEMPERATURE"]), "topP": float(env["AC_TOP_P"]),
-            "runs": [{"status": "completed", "devices": {"transcriber": env["AC_DEVICE"]}}]}), encoding="utf-8")
+            "temperature": float(env["AC_TEMPERATURE"]), "topP": float(env["AC_TOP_P"]), "maxTokens": 8192,
+            "runs": [{"status": "completed", "devices": {"transcriber": env["AC_DEVICE"]},
+                      **({"nTokens": 8192 if cut else 3000, "nBeats": 200} if self.stops else {})}]}),
+            encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
 
 def real_guitar(root: Path, tmp_path: Path, monkeypatch, capsys):
     """`songcharter chart --instruments guitar --events` of the charted song with the real Engines.guitar and
-    autochart.generate and the stand-in driver: chart_it(work, fail, *flags, auto=, how=) runs it with
-    Autochart(fail, how) and returns (exit code, the last event, pipeline.json, the seeds the driver ran, the take
-    events' (index, count)); `driver` keeps that run's driver ("run"), its stderr ("err"), its events ("events") and
-    the guitar stage's calls ("calls": (seeds, device) each). `devices=False`: the takes report no devices, as a
-    summary without them."""
+    autochart.generate and the stand-in driver: chart_it(work, fail, *flags, auto=, how=, stops=, piece=) runs it
+    with Autochart(fail, how, stops, piece) and returns (exit code, the last event, pipeline.json, the seeds the
+    driver ran, the take events' (index, count)); `driver` keeps that run's driver ("run"), its stderr ("err"), its
+    events ("events") and the guitar stage's calls ("calls": (seeds, device) each). `devices=False`: the takes
+    report no devices, as a summary without them."""
     driver, runs = {}, iter(range(99))
     generate = AC.generate
     ac = tmp_path / "ac"
@@ -1195,8 +1215,8 @@ def real_guitar(root: Path, tmp_path: Path, monkeypatch, capsys):
                                                                        ac / "models"))
     monkeypatch.setattr(AC, "generate", lambda *a, **k: generate(*a, **k, run=driver["run"]))
 
-    def chart_it(work, fail=None, *extra, auto="cuda", how=1, devices=True):
-        driver["run"], driver["calls"] = Autochart(fail, how), []
+    def chart_it(work, fail=None, *extra, auto="cuda", how=1, devices=True, stops=None, piece=0):
+        driver["run"], driver["calls"] = Autochart(fail, how, stops, piece), []
 
         class Real(standins(auto=auto)):
             def guitar(self, audio, out, seeds, device, *a, **k):
@@ -1448,6 +1468,101 @@ def test_the_drivers_failed_line_says_what_failed(charted, tmp_path, monkeypatch
     # an engine failure with no FAILED line quoted: the exit code, as in v0.1: run again on the CPU
     code, last, report, ran, takes = chart_it(work, 202, how={"cuda": "[autochart] expert: engine job"})
     assert (code, driver["run"].on) == (0, [(202, "cuda"), (202, "cpu"), (303, "cuda")])
+
+
+def test_a_guitar_take_cut_short_is_warned_about_and_recorded(charted, tmp_path, monkeypatch, capsys):
+    """M5-02: a take the engine's budget cut short at 38 s of the 64-s song, continued in one piece to its last note
+    at 60.75 s: the budget's warning, a log line for the piece, pipeline.json's takes with each take's cut_short,
+    pieces and last_note_s, and the whole guitar in the chart. A take under the budget: none of it."""
+    root, result, _, _ = charted
+    chart_it, driver = real_guitar(root, tmp_path, monkeypatch, capsys)
+    a = warm_work(result, tmp_path, "a")
+    code, last, report, ran, takes = chart_it(a, auto="cpu", stops={DEFAULT_SEED: [38.0]})
+    assert (code, last["ok"], driver["run"].pieces) == (0, True, [(DEFAULT_SEED, "cpu", 0), (DEFAULT_SEED, "cpu", 1)])
+    warning = (f"guitar take seed {DEFAULT_SEED}: the engine's budget ran out at 0:38 of 1:04 (8192 tokens); the rest "
+               "was transcribed in 1 more piece, to 1:00")
+    assert [w for w in report["warnings"] if w.startswith("guitar")] == [warning]
+    assert f"songcharter: warning: {warning}" in driver["err"]
+    assert re.search(rf"(?m)^guitar take seed {DEFAULT_SEED}: piece 1 of 1: audio from 0:29, kept from 0:37, last "
+                     r"note at 1:00 \(3000 tokens, 200 beats, \d+ s\)$", driver["err"])
+    chosen = report["takes"]
+    assert (chosen["cut_short"], chosen["pieces"], chosen["last_note_s"]) == (["tokens"], [1], [60.75])
+    guitar = next(s for s in report["stages"] if s["stage"] == "guitar")
+    assert guitar["onsets"] == len(guitar_times()) - 1   # the whole guitar, stitched (the stand-in's lacks its first)
+    assert (a / "guitar" / f"seed_{DEFAULT_SEED}" / AC.CUT / "notes.chart").is_file()
+    # the next chart reuses the stitched take, and warns again
+    code, last, report, ran, takes = chart_it(a, auto="cpu", stops={DEFAULT_SEED: [38.0]})
+    assert (code, ran, [w for w in report["warnings"] if w.startswith("guitar")]) == (0, [], [warning])
+    # under the budget: nothing of the above
+    b = warm_work(result, tmp_path, "b")
+    code, last, report, ran, takes = chart_it(b, auto="cpu", stops={DEFAULT_SEED: []})
+    assert (code, ran, report["warnings"]) == (0, [DEFAULT_SEED], [w for w in report["warnings"]
+                                                                   if not w.startswith("guitar")])
+    chosen = report["takes"]
+    assert (chosen["cut_short"], chosen["pieces"], chosen["last_note_s"]) == ([None], [0], [None])
+    assert "piece 1" not in driver["err"]
+    assert next(s for s in report["stages"] if s["stage"] == "guitar")["onsets"] == len(guitar_times()) - 1
+
+
+def test_a_continuation_that_stops_short_says_where_the_guitar_ends(charted, tmp_path, monkeypatch, capsys):
+    """M5-02: a piece cut short again 15 s on ends the continuation (the 20-s rule) at 45 s while the guitar stem
+    plays to about 61 s: "the guitar ends at 0:45". Not when the stitched take ends within 10 s of the stem's end,
+    nor when the last piece ran to the end of the song."""
+    root, result, _, _ = charted
+    chart_it, driver = real_guitar(root, tmp_path, monkeypatch, capsys)
+    assert P.playing_until(next((result.work / "stems").rglob("guitar.wav"))) == pytest.approx(60.9, abs=0.15)
+    ends = (f"guitar take seed {DEFAULT_SEED}: the guitar ends at 0:45 (the engine found nothing after that): check "
+            "the end of the chart")
+    code, last, report, ran, takes = chart_it(warm_work(result, tmp_path, "a"), auto="cpu",
+                                              stops={DEFAULT_SEED: [30.0, 45.0]})
+    guitar = [w for w in report["warnings"] if w.startswith("guitar")]
+    assert (code, len(ran), guitar[1:]) == (0, 2, [ends])
+    assert guitar[0].endswith("(8192 tokens); the rest was transcribed in 1 more piece, to 0:45")
+    assert report["takes"]["last_note_s"] == [45.0]
+    for stops in ([45.0, 55.0], [30.0, 55.0]):   # stalled 6 s before the stem stops; or on to the end in 2 pieces
+        code, last, report, ran, takes = chart_it(warm_work(result, tmp_path, f"b{stops[0]:.0f}"), auto="cpu",
+                                                  stops={DEFAULT_SEED: stops})
+        guitar = [w for w in report["warnings"] if w.startswith("guitar")]
+        assert (code, len(guitar)) == (0, 1) and "the guitar ends" not in driver["err"], stops
+    assert report["takes"]["pieces"] == [2] and guitar[0].endswith("in 2 more pieces, to 1:00")
+
+
+def test_a_piece_that_fails_on_cuda_takes_the_charts_cpu_retry(charted, tmp_path, monkeypatch, capsys):
+    """M5-02 with M5-05: a piece of a continued take whose engine fails inside on CUDA ("engine failed (exit 1)")
+    gets the chart's one CPU retry: the take runs again on the CPU, whole and continued; that spends CPU_RETRIES, so
+    a later take failing on CUDA is not run again. A piece killed (SIGKILL), timed out, or failing in the driver is
+    raised as M5-05 says, never run again."""
+    root, result, _, _ = charted
+    chart_it, driver = real_guitar(root, tmp_path, monkeypatch, capsys)
+    cut = {DEFAULT_SEED: [38.0], 101: [38.0], 202: [38.0]}
+    code, last, report, ran, takes = chart_it(warm_work(result, tmp_path, "a"), DEFAULT_SEED, "--takes", "1",
+                                              how={"cuda": 1}, stops=cut, piece=1)
+    assert (code, last["ok"]) == (0, True), driver["err"]
+    assert driver["run"].pieces == [(DEFAULT_SEED, "cuda", 0), (DEFAULT_SEED, "cuda", 1), (DEFAULT_SEED, "cpu", 0),
+                                    (DEFAULT_SEED, "cpu", 1)]
+    line = P.engine_line(ToolError(f"autochart seed {DEFAULT_SEED} failed (exit 1) in piece 1:\n{OOM}"))
+    assert report["fallbacks"] == [{"stage": "guitar", "from": "cuda", "to": "cpu", "reason": (
+        f"take seed_{DEFAULT_SEED}: the CUDA run failed ({line}); run again on the CPU")}]
+    chosen = report["takes"]
+    assert (chosen["cpu_retries"], chosen["devices"], chosen["pieces"]) == ([DEFAULT_SEED], ["cpu"], [1])
+    # the retry spent: seed 101's piece fails on CUDA and is run again on the CPU; seed 202's then is not
+    code, last, report, ran, takes = chart_it(warm_work(result, tmp_path, "b"), (101, 202), "--takes", "3",
+                                              how={"cuda": 1}, stops=cut, piece=1)
+    assert (code, driver["run"].pieces[-3:]) == (2, [(101, "cpu", 1), (202, "cuda", 0), (202, "cuda", 1)])
+    assert last["message"].startswith("The guitar's GPU run failed in take 3 of 3 (one take was already run again "
+                                      "on the CPU); the takes that finished are kept.")
+    assert last["message"].endswith(f"autochart seed 202 failed (exit 1) in piece 1 (its audio from 0:29):\n{OOM}")
+    # killed, timed out, or the driver's own failure: raised as M5-05 says, no CPU run
+    for how, lead in ((KILLED, "The guitar's run was stopped in take 1 of 1 (signal 9, SIGKILL), which usually means "
+                               "WSL ran out of memory."),
+                      (TOKENS, "The guitar's run failed in take 1 of 1 (expert: token cap 8192 exceeded (8193))."),
+                      ("timeout", f"autochart seed {DEFAULT_SEED} did not finish within 4200 s in piece 1 (its "
+                                  "audio from 0:29)")):
+        code, last, report, ran, takes = chart_it(warm_work(result, tmp_path, f"c{len(lead)}"), DEFAULT_SEED,
+                                                  "--takes", "1", how={"cuda": how}, stops=cut, piece=1)
+        assert (code, driver["run"].pieces, report["fallbacks"]) == (
+            2, [(DEFAULT_SEED, "cuda", 0), (DEFAULT_SEED, "cuda", 1)], []), how
+        assert last["message"].startswith(lead), (how, last["message"])
 
 
 def test_every_fallback_is_recorded_and_warned(charted, tmp_path):
