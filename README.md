@@ -45,6 +45,10 @@ songcharter chart song.mp3 --out "Songs/Artist - Title"
   its weights (1.26 GB) on first use, the installed app's included (`SONGCHARTER_OFFLINE=1` forbids it); without
   them the chart is made without lyrics, with a warning. The text goes
   into the chart and nowhere else: the reports count the words, they never hold them.
+- **Title, artist and album** come from the song file's tags. With no artist tag, a file named "Artist - Title"
+  (or "01 - Artist - Title") gives both; otherwise the file's name is the title. `--title`, `--artist`, `--album`,
+  `--year` and `--genre` set them yourself, and the page fills its fields with what it found, for you to change.
+  With no album tag, the album is "<title> - (Single)", as charters write it for a single.
 - **Album art and a background:** the song file's own cover picture, when it has one, becomes the chart's album art
   (`album.jpg`, cut to a 512x512 square). `--album-art FILE` gives another one, and `--background FILE` a picture for
   behind the highway (`background.jpg`, scaled down to fit 1920x1080), which Clone Hero shows when Settings >
