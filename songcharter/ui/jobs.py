@@ -12,7 +12,11 @@
     device is the CPU (asked for, or "auto" where doctor found no CUDA).
   * **The output folder:** <home>/library/<the upload's 16 hex>/<cache.safe_name(f"{artist} - {title}")>, the artist
     and title as the chart will have them (the options', else the upload's tags or file name). The name is safe for
-    Windows, as M4-06 copies the folder to /mnt/c.
+    Windows, as M4-06 copies the folder to /mnt/c, and at most LIBRARY_NAME_MAX (80) characters, cut at a word: it
+    is the name the friend sees in Clone Hero's Songs folder and on the Done screen, so it is not held to the work
+    folder's 40 (cache.NAME_MAX, for autochart's deep cache paths). Installed, its deepest path on the Windows side
+    is clonehero.py's copy, C:\\Users\\<profile>\\Documents\\Clone Hero\\Songs\\.<name>.songcharter-<8 hex>.tmp\\
+    background.jpg: 178 characters with a 20-character profile, 187 with OneDrive's Documents, under Windows' 259.
   * **Reading the child:** its stderr, with its stdout merged in (one ordered stream, and no pipe left unread), line
     by line (UTF-8, errors="replace"). Every line goes to <home>/logs/job-<yyyyMMdd-HHmmss>.log; each
     `@@songcharter <json>` line is an event, kept with "at" (the server's clock when it was read: the page's ticking
@@ -56,6 +60,7 @@ EVENT_PREFIX = "@@songcharter "   # cli.EVENT_PREFIX (not imported: the cli modu
 CLOSING = ("result", "error", "cancelled")   # the events after which a job's stream ends
 META_FLAGS = {"title": "--title", "artist": "--artist", "album": "--album", "year": "--year", "genre": "--genre"}
 IMAGE_FLAGS = {"album_art": "--album-art", "background": "--background"}
+LIBRARY_NAME_MAX = 80   # the library folder's name: at most this many UTF-16 code units (the module docstring)
 OPTION_KEYS = (*META_FLAGS, "instruments", "levels", "solos", "takes", "device", "threads", "preview", "lyrics",
                *IMAGE_FLAGS)
 TAIL_LINES = 8                     # the log's last lines in an error the job writes itself
@@ -200,11 +205,11 @@ def lyrics_file(text: str) -> int:
 
 
 def output_folder(home: Path, upload: Mapping[str, Any], options: ChartOptions) -> Path:
-    """<home>/library/<the upload's id>/<cache.safe_name(f"{artist} - {title}")>."""
+    """<home>/library/<the upload's id>/<cache.safe_name(f"{artist} - {title}", LIBRARY_NAME_MAX)>."""
     tags = upload.get("metadata") or {}
     artist = options.metadata.get("artist") or tags.get("artist") or "Unknown"
     title = options.metadata.get("title") or tags.get("name") or Path(upload["path"]).stem
-    return home / "library" / upload["id"] / cache.safe_name(f"{artist} - {title}")
+    return home / "library" / upload["id"] / cache.safe_name(f"{artist} - {title}", LIBRARY_NAME_MAX)
 
 
 def partial_folders(out: Path) -> list[Path]:

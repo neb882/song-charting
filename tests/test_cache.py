@@ -70,6 +70,25 @@ def test_safe_names(stem, name):
     assert units <= cache.NAME_MAX and name == name.strip(" .") and not set(name) & set('<>:"/\\|?*')
 
 
+@pytest.mark.parametrize("stem,limit,name", [
+    ("a" * 30 + " " + "b" * 20, 40, "a" * 30),                    # inside a word: back to the space, 10 units back
+    ("a" * 28 + " " + "b" * 20, 40, "a" * 28),                    # 12 units back: still at the word
+    ("a" * 27 + " " + "b" * 20, 40, "a" * 27 + " " + "b" * 12),   # 13 back would be too far: cut as before
+    ("Intro " + "x" * 60, 40, "Intro " + "x" * 34),                # a 60-unit word is cut hard
+    ("x" * 60, 40, "x" * 40),
+    ("a" * 30 + " " + "b" * 9 + " c", 40, "a" * 30 + " " + "b" * 9),   # the cut at a word's end stays there
+    ("a" * 29 + ". " + "b" * 20, 40, "a" * 29),                   # no trailing dot after the move either
+    ("a" * 27 + ". " + "b" * 20, 40, "a" * 27 + ". " + "b" * 11),   # the dot is not left: 27 units would be too few
+    ("🎸" * 15 + " " + "b" * 20, 40, "🎸" * 15),                   # UTF-16 units: 30 for the guitars
+    ("Made-Up Band - A Song Title", 20, "Made-Up Band - A"),        # the limit parameter
+    ("Made-Up Band - A Song Title", 8, "Made-Up"),
+    ("Made-Up Band - Another Song", 80, "Made-Up Band - Another Song"),
+])
+def test_safe_names_are_cut_at_a_word(stem, limit, name):
+    assert cache.safe_name(stem, limit) == name
+    assert len(name.encode("utf-16-le")) // 2 <= limit
+
+
 def test_the_key_and_the_folders(tmp_path):
     """The key is the song file's SHA-256, its first 16 hex characters: the same bytes under another name or in
     another folder give the same key; the work folder is <cache>/work/<name>-<key>, the scratch <cache>/ac/<8 hex>."""
