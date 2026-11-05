@@ -2194,6 +2194,20 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
      - **Preview in Clone Hero:** `"Clone Hero.exe" --song <folder> --player Guitar,Expert` (documented CLI [doc, untested]). Not in v0.1.
      - **Open polish workspace:** the stems under non-reserved names (not `guitar.ogg`, `bass.ogg`, `drums.ogg` or any other name Clone Hero loads), kept out of the install and the zip (critique G11), plus a one-page Moonscraper guide and a "Re-check & re-install" button. Not in v0.1.
      - **Diagnostics bundle:** logs and `doctor.json`, with no audio (critique G11).
+- **The update notice** (M5-07) [code; decided by the owner on 2026-11-05 over a one-click updater, M5-00 section 8]:
+  after the first page is served (never on the startup path), a daemon thread runs `updates.check` once per server
+  process. It asks GitHub's list of releases at most once a day (`<home>/state/update.json` keeps the answer; after a
+  failure, an hour before the next try; `SONGCHARTER_OFFLINE=1` asks nothing), with only `songcharter/<version>` as
+  its User-Agent. A release counts when it is not a draft and its tag is `v` and dotted integers: a pre-release
+  counts (the friend is on one), a CI tag such as `-ci-<sha>` does not. When the newest is newer, the line is the
+  guide's own, with install.sh's SHA-256 from that release's SHA256SUMS (without one, only the release page's link):
+  `/api/status` carries `update` {"version", "line", "url"}, and the page shows a box under the header with the line
+  in a read-only box, a Copy button (`navigator.clipboard`, which localhost allows; on the fallback address it
+  selects the line instead) and the release page; "Later" hides it for that page load. Nothing is downloaded or
+  installed by the page, and charting never waits for it. CI's `75-update.sh` runs the update path: v0.1.0 built
+  from its tag and installed with its guide's line, a chart, then the new version's line over it (only install.sh
+  and the app's tarball fetched; the work cache reused), the notice against a releases JSON of its own, and a
+  reinstall after an uninstall.
 - **Status** [code]: screens 1 to 3 built in M4-04; in M4-06 the Done screen (the preview's overview and pages, "Worth a look" from its flags, the zip, Install into Clone Hero, Another folder, Open folder), the "Paste lyrics" box (the text handed to the chart through a memory file, never written to disk or logged), and the diagnostics bundle (`diagnostics.py`, `songcharter diagnostics --out PATH`, `/api/diagnostics`: logs, `doctor.json`, settings and a MANIFEST.txt, every file checked by name, size and first bytes; no audio, chart, image or pasted text). In M4-11 the "Album art" and "Background image" pickers and the album art on the Done screen (§2.16). Quick fixes, Preview in Clone Hero and the polish workspace are not built.
 
 ### 4.6 CI (with the Windows build)
