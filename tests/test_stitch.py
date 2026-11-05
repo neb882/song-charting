@@ -152,3 +152,19 @@ def test_two_stitches_of_the_same_inputs_are_byte_identical(tmp_path):
     written = []
     alone = ST.stitch_files(base_chart(tmp_path, written), []).track("Expert", "Single")
     assert alone.notes == written and len(alone.phrases) == 2 and len(alone.solos) == 2
+
+
+def test_a_piece_note_rounding_onto_the_previous_tick_is_dropped(tmp_path):
+    """A piece note that lands on the previous note's tick (the base's last one before B, or the piece's own) is
+    dropped rather than made a chord with it."""
+    written = []
+    base = base_chart(tmp_path, written)
+    b = 12.0005           # B; the base's note at 12.0 s is tick 4608, before it
+    # piece tick 9601 is 12.00083 s, after B, and base tick 4608.3; 12.501 s is 0.4 base ticks after 12.5 s
+    notes = [FretNote(9601, (2,))] + [FretNote(piece_tick(t), (2,)) for t in (12.5, 12.501)]
+    piece = write(tmp_path / "close.chart", PIECE_TM, notes)
+    track = ST.stitch_files(base, [(piece, START, b)]).track("Expert", "Single")
+    ticks = [n.tick for n in track.notes]
+    assert len(ticks) == len(set(ticks))
+    assert next(n for n in track.notes if n.tick == base_tick(12.0)).frets == (4,)   # the base's, alone
+    assert [n.tick for n in track.notes if n.tick > base_tick(12.0)] == [base_tick(12.5)]

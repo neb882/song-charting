@@ -784,7 +784,8 @@ is unmeasured) instead of a dead end.
 #### A take cut short by the engine's budget: continued and stitched (M5-02)
 autochart's decoder has a budget a job: 8,192 tokens and 1,280 beats (the models' manifest's `maxTokens` and
 `maxBeats`; the engine stops at either). v0.1 neither split a long song nor said that the guitar ended early: the
-owner's 9-minute shred instrumental (4 CUDA takes) stopped at 498.6 s of 544.8 s on the token budget, and the dev
+owner's 9-minute shred instrumental (4 CUDA takes) stopped at 498.6 s of 544.8 s on the beat cap (beat 1,280 of its
+grid falls at 498.65 s; M5-02's skeptic), and the dev
 machine's 1 CPU take of it at about 532 s of 549 s on the beat cap (6,543 tokens, 1,280 beats) [here, M5-09's
 baseline], while the human charts run to about 9:06. The conventions (charting-conventions.md 2a) make that a lost
 ending any player sees.
@@ -798,6 +799,13 @@ ending any player sees.
   separates and times the piece itself). A piece cut short again is continued the same way, up to 6 pieces; one
   whose last note advances the take's by under 20 s ends the loop and is still stitched. A take with no note (T = 0)
   stays as it is.
+- **The driver's watchdog** [code; M5-02's review F1, confirmed by a skeptic with the real driver and engine]: a job
+  that uses the engine's whole token budget ends at budget + 1 tokens (Fretformer 2's 9-token prefix, sampled only
+  after it), and `ac_headless.cjs` kills a job whose count passes `AC_MAX_TOKENS`, by default 8,192, the budget
+  itself. So in v0.1 every take that reached the token budget failed (the driver's "token cap 8192 exceeded (8193)"),
+  and none was ever cut short by tokens: the owner's and the dev machine's cut takes were beat-capped.
+  `autochart.generate` sets `AC_MAX_TOKENS` to the budget + 16; the engine bounds its own loop, and the env is in
+  neither the take's key nor the install key, so no take is made again for it.
 - **How it stitches** (`engines/stitch.py`, pure functions): the whole-song run's chart is the base, its tempo map
   the take's (the engine's timing ran on the whole song; only its decoder stopped). Its notes before B stay as the
   engine wrote them, a sustain over B ending 60 ms before it; each piece's notes from its B to the next piece's are
@@ -828,7 +836,8 @@ ending any player sees.
   Lucretia, and 933 beats, the test song) are under both caps: one run each, charts identical. For comparison, the
   owner's 4 CUDA takes before this change: 0.636 / 0.743 and 0.725 / 0.748 [the owner's PC, 2026-11-05].
 - **The token path on the same song** [here, an install whose models' manifest halves the budget to 4,096 tokens,
-  for this test only]: the whole-song run stopped at 4,097 tokens at 349.5 s, its notes before B identical to the
+  for this test only; the driver's default watchdog, 8,192, was then above the budget, which is why this run did not
+  meet the watchdog above]: the whole-song run stopped at 4,097 tokens at 349.5 s, its notes before B identical to the
   8,192-token run's; one piece of 209 s (from 340 s) decoded 2,831 tokens over 505 beats in 274 s and took the guitar
   to 548.9 s. F1@50 / F1@100 0.668 / 0.804 and 0.786 / 0.806, recall@100 after its cut 0.841 and 0.801 (the
   uncut baseline's there: 0.783 and 0.738). The seam's 30-s window lost 0.024 and 0.020 of F1@100 against the

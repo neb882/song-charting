@@ -40,7 +40,9 @@ per take, behind a process boundary, so no AGPL code is imported.
     last note advances T by under ADVANCE_S ends the loop and is still stitched. The engine's own output moves to
     seed_<seed>/cut_short/, the stitched chart is seed_<seed>/notes.chart, and autochart_run/summary.json is the
     whole-song run's plus a `stitch` record (`continue_take`). A take with no note at all (T = 0) is left as it is,
-    with a `stitch` record of no pieces. Every take under the budget takes exactly the path it took before.
+    with a `stitch` record of no pieces. Every take under the budget takes exactly the path it took before. The
+    driver's own token watchdog (AC_MAX_TOKENS) is set WATCHDOG_MARGIN above the budget: at its default, the
+    budget itself, it killed every job that used the whole budget (which ends at budget + 1).
   * **Takes v0.1 cut short** are in the cache with the same key and the lost ending: a cached take whose summary is
     cut short and has no `stitch` record is a miss (`_done`), run whole again once and continued. The key is
     unchanged, so every other cached take is still a hit.
@@ -73,6 +75,11 @@ KEEP_BACK = 1           # s: a piece's notes replace the take's from B = floor(T
 CONTEXT = 8.0           # s of the decode a piece starts before its B, for the engine's timing and decoder
 MAX_PIECES = 6          # pieces a take is continued in at most
 ADVANCE_S = 20.0        # a piece whose last note advances the take's by less ends the continuation
+# the driver's watchdog (AC_MAX_TOKENS, its default 8192) kills a job whose token count passes it; a job that uses the
+# engine's whole budget ends at budget + 1 (Fretformer 2's 9-token prefix, sampled only after it), so with the
+# default it is killed, never continued. The cap is set this far above the budget (+1 for this model, prefix +
+# budget for one that samples the prefix): the engine bounds its own loop, and the env is in no take's key.
+WATCHDOG_MARGIN = 16
 CUT = "cut_short"       # in a continued take's folder: the engine's own output of the whole-song run
 ENGINE_OUTPUT = ("notes.chart", "song.ini", "song.ogg", "autochart_run")   # what the driver writes into --out
 
@@ -403,7 +410,7 @@ def generate(install: Install, audio: Path | str, out: Path | str, seeds: Sequen
         env = {**os.environ, "AC_SEED": str(seed), "AC_DIFFICULTIES": "expert", "AC_DEVICE": device,
                "AC_TEMPERATURE": str(TEMPERATURE), "AC_TOP_P": str(TOP_P), "AC_TIMEOUT_S": str(int(timeout_s)),
                "AC_APP_ROOT": str(install.app_root), "AC_MODELS": str(install.models),
-               "AUTOCHART_FFMPEG_PATH": ffmpeg or A.ffmpeg_exe()}
+               "AC_MAX_TOKENS": str(caps[0] + WATCHDOG_MARGIN), "AUTOCHART_FFMPEG_PATH": ffmpeg or A.ffmpeg_exe()}
         if device in ("cpu", "cuda"):
             env.setdefault("AUTOCHART_ONNX_TRANSCRIBER_DEVICE", device)
         if device == "cuda":

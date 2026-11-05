@@ -268,9 +268,10 @@ class CutDriver:
     the one asked for). Writes notes.chart, song.ini, song.ogg and autochart_run/ as the driver does; `calls` keeps
     each run's (audio, out, env, whether take.json existed)."""
 
-    def __init__(self, stops=(), by="tokens", fail=None, code=1, seconds=SONG_S, devices=None, stderr=None):
+    def __init__(self, stops=(), by="tokens", fail=None, code=1, seconds=SONG_S, devices=None, stderr=None,
+                 budget=8192):
         self.stops, self.by, self.fail, self.code, self.seconds = list(stops), by, fail, code, seconds
-        self.devices, self.stderr, self.calls, self.charts = devices or {}, stderr, [], []
+        self.devices, self.stderr, self.calls, self.charts, self.budget = devices or {}, stderr, [], [], budget
 
     def __call__(self, cmd, env, cwd, capture_output, text, timeout):
         import soundfile as sf
@@ -290,6 +291,14 @@ class CutDriver:
         stop = self.stops[k] if k < len(self.stops) else None
         notes = [t for t in song_notes(self.seconds) if t >= start - 1e-9 and (stop is None or t <= stop + 1e-9)]
         cut = stop is not None and stop < song_notes(self.seconds)[-1]
+        # as the engine counts: a job that uses its whole budget ends at budget + 1 tokens (the 9-token prefix), and
+        # the driver kills one whose count passes its watchdog (AC_MAX_TOKENS, by default 8192), writing no summary
+        tokens = self.budget + 1 if cut and self.by == "tokens" else 2000
+        cap = int(env.get("AC_MAX_TOKENS", 8192))
+        if tokens > cap:
+            return subprocess.CompletedProcess(cmd, 1, "", f"[autochart] expert: killing engine: token cap {cap} "
+                                               f"exceeded ({tokens})\n[autochart] FAILED: expert: token cap {cap} "
+                                               f"exceeded ({tokens})\n")
         per_s = 960 if k == 0 else 1200   # 120 BPM, or the piece's own 150 BPM, at resolution 480
         tm = TempoMap(480, [Tempo(0, 120000 if k == 0 else 150000)])
         track = Track("Expert", "Single", [FretNote(round((t - start) * per_s), ((0, 1, 2, 3, 4)[i % 5],))
@@ -302,10 +311,9 @@ class CutDriver:
         (folder / "song.ogg").write_bytes(b"OggS")
         (folder / "autochart_run").mkdir(exist_ok=True)
         (folder / "autochart_run" / "expert_job.json").write_text("{}", encoding="utf-8")
-        tokens = 8192 if cut and self.by == "tokens" else 2000
         beats = 1280 if cut and self.by == "beats" else 200
         summary = {"inputSha256": AC.sha256(audio), "seed": int(env["AC_SEED"]), "difficulties": ["expert"],
-                   "temperature": float(env["AC_TEMPERATURE"]), "topP": float(env["AC_TOP_P"]), "maxTokens": 8192,
+                   "temperature": float(env["AC_TEMPERATURE"]), "topP": float(env["AC_TOP_P"]), "maxTokens": cap,
                    "runs": [{"status": "completed", "nTokens": tokens, "nBeats": beats,
                              "devices": {"transcriber": self.devices.get(k, env["AC_DEVICE"])}}]}
         (folder / "autochart_run" / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
@@ -338,6 +346,7 @@ def test_a_take_cut_short_is_continued_and_stitched(tmp_path, by):
     piece_audio, piece_out, env, _ = drv.calls[1]
     assert piece_audio == folder / "piece_1" / "input.wav" and piece_out == folder / "piece_1"
     assert drv.calls[1][2]["AC_SEED"] == "7" and drv.calls[0][2] == env   # the same seed and settings
+    assert int(env["AC_MAX_TOKENS"]) > AC.budget(inst)[0]   # the driver's watchdog never kills a whole-budget job
     y, sr = sf.read(str(piece_audio), dtype="float32", always_2d=True)
     whole, _ = sf.read(str(audio), dtype="float32", always_2d=True)
     assert sr == SONG_SR and np.array_equal(y, whole[51 * SONG_SR:])   # from B - CONTEXT = 59 - 8 s
@@ -386,6 +395,11 @@ def test_a_piece_cut_short_again_is_continued_and_the_loop_ends(tmp_path, monkey
     stitch = json.loads((folder / "autochart_run" / "summary.json").read_text(encoding="utf-8"))["stitch"]
     assert len(drv.calls) == 2 and (stitch["ended"], stitch["last_note_s"]) == ("stalled", 55.0)
     assert stitched_times(folder / "notes.chart") == [t for t in song_notes() if t <= 55.0]
+    # measured from the previous piece's last note: 30 s on, then 5 s on: stalled after two pieces
+    drv = CutDriver(stops=[40.0, 70.0, 75.0])
+    generate(inst, audio, tmp_path / "stall2", (7,), run=drv)
+    stitch = json.loads((tmp_path / "stall2" / "seed_7" / "autochart_run" / "summary.json").read_text())["stitch"]
+    assert (len(drv.calls), len(stitch["pieces"]), stitch["ended"], stitch["last_note_s"]) == (3, 2, "stalled", 75.0)
     # MAX_PIECES: every piece cut short again 21 s on
     drv = CutDriver(stops=[10.0 + 21 * k for k in range(AC.MAX_PIECES + 1)], seconds=160.0)
     generate(inst, song_wav(tmp_path / "long.wav", 160.0), tmp_path / "max", (7,), run=drv)
@@ -458,20 +472,21 @@ def test_a_take_under_both_caps_is_left_as_the_engine_wrote_it(tmp_path):
 
 
 def test_a_cached_take_cut_short_without_its_stitch_is_run_again_and_continued(tmp_path):
-    """A take v0.1 cut short (the driver's files and a take.json of today's key, no stitch record) is a miss: run
+    """A take v0.1 cut short by the beat cap (the driver's files and a take.json of today's key, no stitch record:
+    v0.1's driver killed any take that used its token budget) is a miss: run
     whole again and continued, then a hit. A cut-short take with its stitch record is a hit; so is a take with no
     note at all (T = 0), left as it is with a record of no pieces."""
     inst = find_install(install(tmp_path), node="node")
     audio = song_wav(tmp_path / "decode.wav")
     out, folder = tmp_path / "out", tmp_path / "out" / "seed_7"
-    old = CutDriver(stops=[60.0])
+    old = CutDriver(stops=[60.0], by="beats")   # v0.1's driver killed any take at its token budget: beats only
     old(["node", "drv", "--audio", str(audio), "--out", str(folder), "--work", str(tmp_path / "w")],
         env={"AC_SEED": "7", "AC_TEMPERATURE": "0.95", "AC_TOP_P": "0.98", "AC_DEVICE": "cpu"}, cwd=".",
         capture_output=True, text=True, timeout=1)
     key = AC.take_key(AC.sha256(audio), 7, AC.install_key(inst))
     (folder / AC.TAKE).write_text(json.dumps(key), encoding="utf-8")   # v0.1's take: a hit before M5-02
     assert AC._summary(folder, key) is not None and AC._done(folder, key) is None
-    drv = CutDriver(stops=[60.0])
+    drv = CutDriver(stops=[60.0], by="beats")
     takes = generate(inst, audio, out, (7,), run=drv)
     assert len(drv.calls) == 2 and not takes[0].cached and takes[0].stitch["pieces"][0]["keep_from_s"] == 59.0
     assert stitched_times(folder / "notes.chart") == song_notes()
@@ -501,6 +516,11 @@ def test_a_piece_on_another_device_counts_for_the_take(tmp_path):
     again = generate(inst, audio, tmp_path / "out", (7,), device="cuda", run=drv)
     assert len(drv.calls) == 2 and not again[0].cached and again[0].devices == {"transcriber": "cuda"}
     assert generate(inst, audio, tmp_path / "out", (7,), device="cuda", run=drv)[0].cached
+    # the whole-song run fell back to the CPU while its piece ran on CUDA as asked: the take reports the CPU
+    fell = generate(inst, audio, tmp_path / "fell", (7,), device="cuda", run=CutDriver(stops=[60.0],
+                                                                                         devices={0: "cpu"}))
+    assert fell[0].stitch["pieces"][0]["devices"] == {"transcriber": "cuda"}
+    assert fell[0].devices == {"transcriber": "cpu"}
 
 
 def test_the_budget_comes_from_the_models_manifest(tmp_path):

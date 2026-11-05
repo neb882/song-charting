@@ -1544,6 +1544,32 @@ def test_where_a_stem_stops_playing(tmp_path):
     assert P.playing_until(tmp_path / "silent.wav") is None and P.playing_until(tmp_path / "none.wav") is None
 
 
+def test_the_guitar_ends_at_warning_follows_how_the_continuation_ended():
+    """stitch_lines: "the guitar ends at" when the loop stopped short, on the 20-s rule ("stalled") or with the
+    sixth piece still cut short ("max_pieces"), and the last note is 10 s or more before the stem stops playing;
+    never when the last piece ran to the end, and the stem is read only when it matters."""
+    info = {"runs": [{"nTokens": 8193, "nBeats": 900}], "stitch": {
+        "cut_short": "tokens", "cut_at_s": 100.0, "last_note_s": 230.0, "pieces": [
+            {"start_s": 91.0 + 21 * k, "keep_from_s": 99.0 + 21 * k, "last_note_s": 121.0 + 21 * k, "nTokens": 8193,
+             "nBeats": 500, "seconds": 60.0, "cut_short": "tokens"} for k in range(6)]}}
+    asked = []
+
+    def playing():
+        asked.append(1)
+        return 280.0
+
+    ends = "guitar take seed 7: the guitar ends at 3:50 (the engine found nothing after that): check the end of the chart"
+    for ended, warned in (("max_pieces", True), ("stalled", True), ("end", False)):
+        info["stitch"]["ended"] = ended
+        lines, told = P.stitch_lines(7, info, 300.0, playing)
+        assert len(lines) == 6 and told[0] == ("guitar take seed 7: the engine's budget ran out at 1:40 of 5:00 (8193 "
+                                               "tokens); the rest was transcribed in 6 more pieces, to 3:50"), ended
+        assert (ends in told) == warned, ended
+    assert len(asked) == 2
+    info["stitch"]["ended"] = "max_pieces"
+    assert len(P.stitch_lines(7, info, 300.0, lambda: 239.0)[1]) == 1   # within 10 s of the stem's end
+
+
 def test_a_piece_that_fails_on_cuda_takes_the_charts_cpu_retry(charted, tmp_path, monkeypatch, capsys):
     """M5-02 with M5-05: a piece of a continued take whose engine fails inside on CUDA ("engine failed (exit 1)")
     gets the chart's one CPU retry: the take runs again on the CPU, whole and continued; that spends CPU_RETRIES, so
