@@ -195,7 +195,8 @@ def picture_stream(text: str) -> int | None:
 
 def embedded_picture(song: Path | str, ffmpeg: str | None = None) -> bytes | None:
     """The song file's embedded cover picture, as stored (ffmpeg's stream copy of the attached picture): None when
-    there is none, or ffmpeg cannot read the file (its decode says so)."""
+    there is none, or ffmpeg copies nothing out. What it copies out is checked by its decode alone, whatever ffmpeg's
+    exit code: a cut-short picture fails there and becomes the warning."""
     exe = ffmpeg or A.ffmpeg_exe()
     probe = subprocess.run([exe, "-hide_banner", "-nostdin", "-i", str(song)], capture_output=True)  # exits 1: no output
     index = picture_stream(probe.stderr.decode("utf-8", "replace"))
@@ -203,7 +204,7 @@ def embedded_picture(song: Path | str, ffmpeg: str | None = None) -> bytes | Non
         return None
     got = subprocess.run([exe, "-hide_banner", "-loglevel", "error", "-nostdin", "-i", str(song), "-map", f"0:{index}",
                           "-c", "copy", "-frames:v", "1", "-f", "image2pipe", "pipe:1"], capture_output=True)
-    return got.stdout if got.returncode == 0 and got.stdout else None
+    return got.stdout or None
 
 
 def _made(name: str, data: bytes, source: dict, origin: str) -> dict:
