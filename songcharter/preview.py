@@ -11,7 +11,8 @@
       - **rings past its sustain** (guitar and bass): as loud, but with no new attack, the level carrying on from the
         last note's end: the sustain stops before the sound does. A drum stem that rings on is not flagged;
       - **notes in silence**: notes while the stem stays 25 dB or more below its P95 (assemble's SILENT_DB).
-    Sections, star power, the tempo map and the end of song.ogg are drawn too. The flagged stretches also come back
+    Sections, star power (a cyan band along a row's top), solos (a green band under it, so the owner can judge where
+    the solo trackers go), the tempo map and the end of song.ogg are drawn too. The flagged stretches also come back
     as text (`flags`), with **notes after audio** for notes that run past the end of song.ogg.
   * **Pages** (`page_01.png`, ...): a minute per page in strips of 15 s. Each instrument's lanes as Clone Hero shows
     them (green, red, yellow, blue, orange; drums with cymbals as triangles and toms as circles, the kick as a bar),
@@ -61,6 +62,8 @@ OPEN_COLOR = "#9b4fd6"
 PAD_NAMES = ["kick", "red", "yellow", "blue", "green"]
 DRUM_COLORS = ["#f08a1c", "#e0312b", "#e8c21a", "#2f6fdc", "#21a336"]
 FLAG_COLORS = {"gap": "#e0312b", "rings past its sustain": "#f08a1c", "notes in silence": "#9b4fd6"}
+SP_COLOR = "#20b2d8"     # star power on the overview
+SOLO_COLOR = "#2e9e5b"   # solos on the overview
 PEAK_COLOR = "#111111"   # each measure's peak level on the overview
 RAW_COLOR = "#bbbbbb"    # the raw level behind the bars
 
@@ -387,7 +390,9 @@ def render_overview(pv: Preview, path: Path | str, difficulty: str = "expert") -
                 ax.axvspan(f.start, f.end, color=FLAG_COLORS[f.kind], alpha=0.25, lw=0)
         part = pv.song.parts[(inst, difficulty)]
         for s in part.star_power:
-            ax.axvspan(s.start, s.end, ymin=0.92, ymax=1.0, color="#20b2d8", alpha=0.9, lw=0)
+            ax.axvspan(s.start, s.end, ymin=0.92, ymax=1.0, color=SP_COLOR, alpha=0.9, lw=0)
+        for s in part.solos:
+            ax.axvspan(s.start, s.end, ymin=0.84, ymax=0.91, color=SOLO_COLOR, alpha=0.9, lw=0)
         env = pv.envelopes.get(inst)
         if env is not None:
             back = ax.twinx()  # the raw level, behind the bars (a twin axes draws over its parent unless told)
@@ -429,7 +434,7 @@ def render_overview(pv: Preview, path: Path | str, difficulty: str = "expert") -
     tax.set_xlim(0, pv.duration)
     fig.suptitle(f"{pv.folder.name}: {difficulty}. Bars = notes per beat; black = the stem's peak level per measure "
                  "(grey: its raw level).\nRed = gap (stem plays, no notes); orange = rings past its sustain; "
-                 "purple = notes in silence; cyan = star power", fontsize=10)
+                 "purple = notes in silence; cyan = star power; green = solo", fontsize=10)
     fig.savefig(path, dpi=90)
     plt.close(fig)
     return found

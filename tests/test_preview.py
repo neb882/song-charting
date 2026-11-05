@@ -25,17 +25,17 @@ BEAT = 0.5          # 120 BPM: a 4/4 measure is 2 s
 SR = A.SAMPLE_RATE
 
 
-def song(folder, signatures=(), hard=False):
+def song(folder, signatures=(), hard=False, solos=()):
     """12 measures of 4/4 at 120 BPM. Guitar: 8th notes in measures 1-3, a chord held from measure 5 to 13.75 s,
     nothing in measures 7-8, one note in measure 10. Drums: quarter notes in measures 1-8. hard: a Hard guitar part
-    too (the drums stay Expert only)."""
+    too (the drums stay Expert only). solos: Expert guitar's, (start tick, end tick) with the end inclusive."""
     folder.mkdir(parents=True, exist_ok=True)
     tm = TempoMap(RES, [Tempo(0, 120000)], list(signatures) or [TimeSignature(0, 4)])
     m = 4 * RES
     guitar = [FretNote(k * m + i * RES // 2, ((0,), (1,), (2,))[i % 3]) for k in (1, 2, 3) for i in range(8)]
     guitar += [FretNote(5 * m, (0, 2), 2 * m - RES // 2), FretNote(10 * m, (1,))]
     drums = [DrumHit(k * m + i * RES, i % 2) for k in range(1, 9) for i in range(4)]
-    tracks = [Track("Expert", "Single", guitar), Track("Expert", "Drums", drums)]
+    tracks = [Track("Expert", "Single", guitar, [], list(solos)), Track("Expert", "Drums", drums)]
     tracks += [Track("Hard", "Single", guitar)] if hard else []
     chart = Chart(SongInfo("t", "a"), tm, [(0, "intro"), (5 * m, "verse")], tracks)
     (folder / "notes.chart").write_text(write_chart(chart), encoding="utf-8", newline="")
@@ -410,6 +410,23 @@ def test_what_the_overview_draws(tmp_path, figures):
             spans = [p for p in ax.patches if mc.to_hex(p.get_facecolor()) == color]
             assert len(spans) == sum(f.instrument == inst and f.kind == kind for f in flags(pv)), (inst, kind)
     assert ("drums", "notes in silence", 6.0, 8.0) in found(pv) and ("drums", "gap", 18.0, 20.0) in found(pv)
+
+
+def test_the_overview_draws_the_solos(tmp_path, figures):
+    """A green band per solo in its row, under the star power's, from the solo's start to its end, and none in a row
+    without solos."""
+    import matplotlib.colors as mc
+    m = 4 * RES
+    pv = load(song(tmp_path, solos=[(m, 3 * m + 7 * RES // 2), (10 * m, 10 * m)]), pad=0.0)
+    solos = pv.song.parts[("guitar", "expert")].solos
+    assert [(s.start, round(s.end, 2)) for s in solos] == [(2.0, 7.75), (20.0, 20.0)]
+    render_overview(pv, tmp_path / "overview.png")
+    (_, fig), = figures
+    for ax, want in zip(fig.axes[:2], (solos, [])):
+        bands = [p for p in ax.patches if mc.to_hex(p.get_facecolor()) == P.SOLO_COLOR]
+        got = [x for b in bands for x in (b.get_x(), b.get_x() + b.get_width())]
+        assert got == pytest.approx([x for s in want for x in (s.start, s.end)])
+        assert all(b.get_y() >= 0.84 - 1e-9 and b.get_y() + b.get_height() <= 0.92 for b in bands)  # under star power
 
 
 # ------------------------------------------------------------------------------------------------ command line
