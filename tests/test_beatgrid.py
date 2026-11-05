@@ -4,8 +4,8 @@ import pytest
 
 import songcharter.beatgrid as B
 from songcharter.beatgrid import (BPM_RANGE, BeatGrid, OnsetFeatures, beat_grid, estimate_tempo, local_beats,
-                                  local_periods, loess, mel_filterbank, onset_features, onset_phase, onset_times,
-                                  robust_line, track_beats)
+                                  local_periods, loess, mel_filterbank, missed_tempo_changes, onset_features,
+                                  onset_phase, onset_times, robust_line, track_beats, window_tempi)
 from songcharter.errors import InputError
 from songcharter.tempo import TempoMap, plan_lead_in
 
@@ -381,3 +381,56 @@ def test_features_reject_nothing_and_accept_stereo(steady):
     assert isinstance(f, OnsetFeatures)
     assert f.fps == pytest.approx(SR / 128) and f.duration == pytest.approx(60.0, abs=0.01)
     assert np.allclose(f.env, onset_features(y, SR).env)
+
+
+# ------------------------------------------------------------------------------------------------ the fold range
+
+FAST = 60 / 198  # a 198 BPM beat
+DOUBLED = (2 * BPM_RANGE[0], 2 * BPM_RANGE[1])  # assemble's second pass: (170, 370)
+
+
+@pytest.fixture(scope="module")
+def fast():
+    """198 BPM: kick, snare and hat on every other beat, a soft hat (a tenth as loud) on the beats between, so a
+    window's autocorrelation clearly prefers 99 BPM inside the default range (margin 0.58 there)."""
+    truth = 0.4 + np.arange(int(58 / FAST)) * FAST
+    y = drums(truth[::2], 60.0) + 0.1 * drums(truth[1::2], 60.0, kick_phase=9, snare_phase=9, seed=1)
+    return truth, y, onset_features(y, SR)
+
+
+def test_bpm_range_reaches_every_fold(fast):
+    """A hinted 198 BPM is not pulled back to 99 by the tracker's windows when the range is the doubled one; with the
+    default range the windows fold it to 99 and the tracker's 99 BPM beats win (the fold assemble's second pass
+    avoids). Without a hint, the start line's autocorrelation tempo folds into the range given."""
+    truth, y, f = fast
+    g = beat_grid(y, SR, bpm=198.0, bpm_range=DOUBLED, features=f)
+    assert g.bpm == pytest.approx(198.0, abs=0.1) and g.stats["start"]["grid"] == "line"
+    assert g.stats["start"]["tracker_tempo_changes"] == [] and g.stats["tempo_check"] == []
+    assert spread_ms(g.beats, truth)[1] < 2.0  # on every beat of the 198, not every other one
+    folded = beat_grid(y, SR, bpm=198.0, features=f)  # the hint with the default range
+    assert folded.bpm == pytest.approx(99.0, abs=0.1) and folded.stats["start"]["grid"] == "tracker"
+    assert len(folded.stats["start"]["tracker_tempo_changes"]) == 9  # every window at 99
+    assert beat_grid(y, SR, features=f).bpm == pytest.approx(99.0, abs=0.1)  # the defaults: 99
+    assert beat_grid(y, SR, bpm_range=DOUBLED, features=f).bpm == pytest.approx(198.0, abs=0.1)  # no hint
+    assert estimate_tempo(f.env, f.fps, DOUBLED) == pytest.approx(198.0, abs=0.3)
+    assert estimate_tempo(f.env, f.fps) == pytest.approx(99.0, abs=0.3)
+    # each fold on its own: the windows, the local periods and the tempo check
+    assert {round(b) for _, _, b, _ in window_tempi(f.env, f.fps, lambda s, e: FAST, bpm_range=DOUBLED)} == {198}
+    assert {round(b) for _, _, b, m in window_tempi(f.env, f.fps, lambda s, e: FAST) if m > 0.5} == {99}
+    assert local_periods(f.env, f.fps, FAST, DOUBLED) == (FAST, [])
+    assert len(local_periods(f.env, f.fps, FAST)[1]) == 9
+    onset_beats = g.beats - g.stats["onset_to_beat_ms"] / 1000
+    assert missed_tempo_changes(f, onset_beats, DOUBLED) == []
+    assert all(round(bpm) == 99 for _, _, bpm, _ in missed_tempo_changes(f, onset_beats))
+    assert len(missed_tempo_changes(f, onset_beats)) == 9
+    with pytest.raises(ValueError, match="bpm_range"):
+        beat_grid(y, SR, features=f, bpm_range=(185.0, 85.0))
+
+
+def test_the_default_range_changes_nothing(steady):
+    """The default range is BPM_RANGE, and every result of the default path is the same as passing it."""
+    _, y = steady
+    f = onset_features(y, SR)
+    a, b = beat_grid(y, SR, features=f), beat_grid(y, SR, features=f, bpm_range=BPM_RANGE)
+    assert np.array_equal(a.beats, b.beats) and np.array_equal(a.downbeats, b.downbeats) and a.stats == b.stats
+    assert a.bpm == pytest.approx(120.0, abs=0.05) and BPM_RANGE == (85.0, 185.0)
