@@ -82,7 +82,7 @@
   ],
   "next": [
     "M4: M4-08 part B, the friend's PC: he follows the guide alone, charts the test song with 1 take and with the defaults, charts a song of his own, installs it into Clone Hero and plays it, and sends the diagnostics zip saved after his last chart.",
-    "v0.1.1, before its release: CI installs 0.1.0, then runs 0.1.1's line over it and charts (the update path has never run; the guide now tells the friend to update that way); and the page's update notice with a Copy button for the new line (the owner's choice over a one-click updater, 2026-11-05).",
+    "v0.1.1, before its release: CI installs 0.1.0, then runs 0.1.1's line over it and charts (the update path has never run; the guide now tells the friend to update that way); and the page's update notice with a Copy button for the new line (recommended over a one-click updater on 2026-11-05; the owner has not decided yet).",
     "From M5: the plan by the most capable model, as a fresh agent that reads only the repository, reviewed by a different model (docs/PIPELINE.md, Gates).",
     "Before the next quality decision: grow the reference set to 20 or more human charts, with human-charted solos among them."
   ],
