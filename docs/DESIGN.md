@@ -378,8 +378,8 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 7. **The octave pass** (M5-01; doubling only) [code]. The first pass still folds into [85, 185) BPM
    (`BPM_RANGE`). After it, `assemble.grid_octave` asks whether the grid is an octave too slow for the notes, and
    if so the grid is built again at twice the first grid's click tempo. That pass doubles the fold range
-   (`beat_grid(bpm_range=(170, 370))`, which reaches every fold), drops the first-beat hint and runs the half-beat
-   test (`half_beat=True`). The tempo map, lead-in, downbeats, sections, star power and the HOPO threshold follow
+   (`beat_grid(bpm_range=(170, 370))`, which reaches every fold), drops the first-beat hint, keeps its hinted line
+   (`keep_line=True`) and runs the half-beat test (`half_beat=True`). The tempo map, lead-in, downbeats, sections, star power and the HOPO threshold follow
    the chosen grid. Halving is not built: a pulse under 85 BPM stays at double, as on the shred instrumental; its
    statistics are in M5-99.
    - **Why the fold is wrong** (the charting-conventions report, section 11 item 1): charters chart the musical
@@ -424,13 +424,26 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
      | power-metal | 0.819 → 0.817 | 0.997 |
      | the nine others (doublings never chosen) | 0.659–0.910 → 0.512–0.752 | 0.631–0.936 |
 
-   - **The half-beat test** (`beatgrid.half_beat_phase`): the second grid's lines move half a beat later when the
-     midpoints between them carry more kick than the lines, as `bar_phase` puts beat 1 on the kick. On the
-     power-metal song's drum stem, the comb and the tracker lock onto the snare's 8ths, a kick on every beat under
-     a snare on every "and". The second grid was half a beat off the human beats: plain beat F1 0.446, median beat
-     error 134 ms. The test fires there (2.24 times the kick on the midpoints), but the second grid is the
-     tracker's, which flips phase over parts of the song; shifted whole it reaches only 0.549 [here, M5-01 probe;
-     open].
+   - **The second pass's phase: its hinted line, then the half-beat test** (decided 2026-11-05). On the power-metal
+     song's drum stem, the comb and the tracker lock onto the snare's 8ths: a kick on every beat under a snare on
+     every "and". The test (`beatgrid.half_beat_phase`) moves the second grid's lines half a beat later when the
+     midpoints carry more kick than the lines, as `bar_phase` puts beat 1 on the kick. The tracker had to be kept
+     out first (`keep_line`): it found more evidence than the hinted line (0.821 against 0.676 confident) by
+     flipping between the beats and their "and"s over parts of the song. The line is straight and the test moves
+     all of it. On that song, against its three human charts [here, M5-01 probes, 1 CPU take]:
+
+     | second pass | plain beat F1 | octave-tolerant | median beat error |
+     |---|---|---|---|
+     | tracker (as first specified) | 0.446 | 0.666 | 134 ms |
+     | tracker, then the half-beat test (it fired: 2.24 × the kick on the midpoints) | 0.549–0.557 | 0.660 | — |
+     | hinted line, no test (residuals 3 ms; half a beat off all song) | 0.000 | 0.666 | — |
+     | hinted line, then the half-beat test (built; the stress run) | 1.000 | 1.000 | — |
+
+     The downbeats stay wrong there (downbeat F1 0.000): with a kick on every beat, `bar_phase` has no margin
+     (0.013). That is M5-99's. The stress run's other results on that song are in M5-01's report: guitar F1@50
+     0.784–0.808 against 0.614–0.632 before, its matched notes 3–4 ms off against 62–69, chord share 0.09 against
+     0.33 (the humans 0.03–0.05). The shred and the rock stress songs, and all seven references, keep octave 1 and
+     their grids bit for bit.
 
 **Whole-song runs tonight** [here, beatgrid run].
 
@@ -725,6 +738,16 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
        So the percentile rule is a coin toss on tempo errors of 0.0005 %, 74 ms survives clean grids but breaks at
        drum-like jitter, and 20 ms drops nothing anywhere. The other power-metal charts lost 23.5–26.0 % of their
        guitar notes (and 11.4 % of the bass) to the old floors on their own maps.
+   - **The bass on a doubled grid** (M5-01; decided 2026-11-05, an amendment to the order's "no change to the slot
+     levels"): on a grid the octave pass doubled (§2.3 step 7), the bass part snaps one slot level coarser, to the
+     grid's 8ths and their triplets (`assemble.DOUBLED_BASS_SLOTS`, report.json's `parts.*.slots`), which are the
+     first grid's 16ths. Every other part and every undoubled song is unchanged. The bass engine's onsets spread
+     about a 16th either side of the human notes on the power-metal song (signed error against the human chart,
+     p10/p90 −75/+65 ms; 819 of 1,821 within 50 ms). The doubled grid's 16ths kept that error: bass F1@50 fell
+     from 0.702 to 0.606, 566 matched notes past half a 16th against 249 on the first grid, whose 150 ms slots had
+     pulled them onto the real 8ths where the human bass sits. It was not the offset: the matched notes' median
+     error is −2.6 ms on the first grid and −0.6 ms on the doubled one. With the coarser slots the stress run's bass
+     F1@50 is 0.716 [here, M5-01].
    - A merge takes the union of frets, so a single-note source gains chords: on the bass engine 69–172 onsets per
      song merged on All the Small Things, Lucretia and Creep (Expert chord share after quantizing up to 0.074). The
      human bass charts: 0 on Take Me Out, Lucretia, Creep and Kimochi Warui; 0.41 on All the Small Things Expert and

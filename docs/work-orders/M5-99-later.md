@@ -74,6 +74,15 @@ A halving rule needs its own statistic (the share of onsets on beat lines, the b
 every song, the HOPO shares: ours 0.40 against the humans' 0.55 there) and a check that the natural HOPO threshold
 (in ticks) still reads right; measure on the stress set first. Half a day to measure, a day to build.
 
+## Downbeats when the kick is on every beat (M5-01's follow-up)
+
+`beatgrid.bar_phase` puts beat 1 where the kick band most outweighs the snare band. With a kick on every beat, as on
+the power-metal stress song's fast beat (the snare on every "and"), it has no margin: 0.001 on the doubled grid,
+which is flagged uncertain, and downbeat F1 0.000 against all three human charts while the beats are at 1.000
+(M5-01's probe, 1 CPU take). Measures, sections, star power and solos all start on the wrong beat there. A
+candidate: the crash or the snare pattern over 4 bars (a crash on beat 1 after a fill, the longest kick or the bass's
+note changes), measured on the stress set. Downbeat F1 is reported, not a pass line. Half a day to measure.
+
 ## The octave pass's guard, provisional (M5-01)
 
 `OCTAVE_EVIDENCE_MIN` = 0.7, the doubled grid's confident share against the first grid's, is provisional until the
