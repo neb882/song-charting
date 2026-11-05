@@ -31,11 +31,12 @@ def main(refdir, inst=None):
     for ins in order:
         pads = ('kick', 'redDrum') if ins == 'drums' else None
         t, delay = note_times(os.path.join(refdir, 'ref_notes.json'), ins, pads)
-        if t is None: continue
+        if t is None or len(t) < 2 or len(on) < 2: continue   # no such part (a package with only a rhythm or 6-fret part)
         idx = np.clip(np.searchsorted(on, t), 1, len(on) - 1)
         near = np.where(np.abs(on[idx] - t) < np.abs(on[idx - 1] - t), on[idx], on[idx - 1])
         dev = (near - t) * 1000
         m = np.abs(dev) <= 80
+        if not m.any(): continue
         # click-train cross-correlation against the onset envelope (lags +-150 ms)
         fr = np.round(t * sr / HOP).astype(int); fr = fr[(fr > 200) & (fr < len(env) - 200)]
         e = (env - env.mean()) / (env.std() + 1e-9)

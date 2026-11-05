@@ -50,6 +50,11 @@ Logs go to <out>/logs/, score.py's full output to <out>/scores/.
     folder changed; 2 bad input or environment (a missing reference set, scan-chart or node, an output folder in use
     or that is a file, another sections backend); 3 a bug (with its traceback); 130 interrupted.
 
+**The stress set** (eval/stress.py, DESIGN.md 3.3) runs the same way: `run --refs $EVAL_DATA/stress` builds its songs
+(each one's primary human chart is the one scored here; eval/stress.py score scores the others), with its kept
+folders in $SONGCHARTER_GOLDEN/stress-work (the default when --refs is a folder named `stress`), apart from the
+golden set's.
+
 **diff** compares two summaries (files, or the folders holding them). `--expect` names the parts the change was
 meant to touch: `guitar`, `bass:hard`, ... (comma-separated), or `none`. A part and difficulty whose hash changed (or
 that appeared or vanished, or whose song's chart delay changed) is "changed" when expected, else UNEXPECTED; so is a
@@ -145,6 +150,12 @@ def reference_set(refs: Path, only: tuple[str, ...] = ()) -> list[Song]:
     if missing:
         raise Refused(f"missing: {', '.join(missing)}")
     return songs
+
+
+def default_work(refs: Path) -> str:
+    """The kept folders' folder under $SONGCHARTER_GOLDEN for a set: `stress-work` for the stress set (a --refs folder
+    named stress), else `work`, so the two sets' kept folders never mix."""
+    return "stress-work" if refs.name == "stress" else "work"
 
 
 def checkout(code: Path) -> dict:
@@ -736,7 +747,7 @@ def _cmd_run(a: argparse.Namespace, out: Path) -> int:
     if probe.returncode != 0 or code not in Path(probe.stdout.strip()).resolve().parents:
         raise Refused(f"the build would not import songcharter from {code} ({probe.stdout.strip() or probe.stderr})")
     golden = os.environ.get("SONGCHARTER_GOLDEN")
-    work = Path(a.work or (Path(golden) if golden else cache.user_cache() / "golden") / "work").resolve()
+    work = Path(a.work or (Path(golden) if golden else cache.user_cache() / "golden") / default_work(refs)).resolve()
     ctx = Context(out=out, work=work, code=code, refs=refs, stems=stems, rerun=rerun, threads=a.threads, env=env)
     head = checkout(code)
     ctx.say(f"golden run: {len(songs)} songs from {code} ({(head['commit'] or '?')[:12]}"
@@ -1042,7 +1053,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--code", help="the songcharter checkout that builds the charts (default: this one)")
     r.add_argument("--refs", help="the reference set (default: $EVAL_DATA/refs, else eval/data/refs)")
     r.add_argument("--work", help="the kept work folders, outside the repository (default: $SONGCHARTER_GOLDEN/work, "
-                                  "else <user cache>/golden/work)")
+                                  "else <user cache>/golden/work; stress-work for the stress set)")
     r.add_argument("--stems", help="a separation cache (separate.py's <key>/ folders) to hard-link stems from when a "
                                    "kept folder is made")
     r.add_argument("--rerun", metavar="ENGINES", help=f"engines to run again for this run ({','.join(ENGINES)})")

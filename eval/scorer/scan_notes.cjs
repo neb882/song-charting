@@ -4,6 +4,7 @@
 //  - the song.ini chart modifiers (hopo_frequency, eighthnote_hopo, sustain_cutoff_threshold, chord_snap_threshold,
 //    multiplier_note, song_length, pro_drums, five_lane_drums) are passed to parseChartFile,
 //  - each note also carries msLength, and the top level carries delay / chart_offset / chartFile,
+//  - each track also carries its star power phrases and solo sections (starPower, solos: tick, length, ms, msLength),
 //  - each track also carries its hash, scan-chart's calculateTrackHash (the hash Chorus Encore gives a track: the
 //    resolution, tempos, time signatures, star power, solos, flex lanes, drum fills and every note's tick, length,
 //    type and flags) of this parse.
@@ -39,12 +40,14 @@ if (cands.length) {
     const p = sc.parseChartFile(chartFile.data, /\.mid$/i.test(chartFile.fileName) ? 'mid' : 'chart', mods);
     const types = Object.fromEntries(Object.entries(sc.noteTypes).map(([k, v]) => [v, k]));
     const flags = n => Object.entries(sc.noteFlags).filter(([, v]) => v && (n & v)).map(([k]) => k);
+    const phrases = list => (list || []).map(x => ({ tick: x.tick, length: x.length, ms: x.msTime, msLength: x.msLength }));
     out.resolution = p.resolution;
     out.tempos = p.tempos; out.timeSignatures = p.timeSignatures;
     out.tracks = p.trackData.map(t => ({
       instrument: t.instrument, difficulty: t.difficulty, hash: sc.calculateTrackHash(p, t.instrument, t.difficulty).hash,
       notes: t.noteEventGroups.flatMap(g => g.map(n => ({ tick: n.tick, ms: n.msTime, type: types[n.type], length: n.length,
         msLength: n.msLength, flags: flags(n.flags) }))),
+      starPower: phrases(t.starPowerSections), solos: phrases(t.soloSections),
     }));
   } catch (e) { out.parseError = String(e && e.message || e); }
 }
