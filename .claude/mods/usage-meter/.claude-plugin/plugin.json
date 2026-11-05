@@ -1,0 +1,6 @@
+{
+  "name": "usage-meter",
+  "version": "0.1.0",
+  "description": "The plan's 5-hour and weekly usage in a pane and the status line, and a tool the session reads it with",
+  "types": "./types/index.d.ts"
+}

@@ -1,43 +1,47 @@
-# Handoff to a new session (2026-11-05)
+# Handoff (updated 2026-11-05 evening)
 
-The session that ran M3 and M4 ends here. Its machine restarted overnight and its scheduled check-ins were refused
-("access denied"), so unattended work stalled; the owner chose to continue in a new session with this repository
-alone (a single-repository session reads `.claude/settings.json`). Read CLAUDE.md, docs/PROGRESS.json and
-docs/PIPELINE.md first; this note adds what only the old session knew.
+The session that ran M3 and M4 ended on 2026-11-05; a new session took over that morning and runs M5 (v0.2.0). Read
+CLAUDE.md, docs/PROGRESS.json (`in_flight` says what is building, `deferred` holds the gate's notes) and
+docs/PIPELINE.md first. This note adds what only the running session knows.
 
 ## Where things stand
 
-- **v0.1.0** is published as a pre-release. The friend is running M4-08 part B; when his diagnostics zip and notes
-  arrive, read them as M4-08 says and write part B's results (docs/work-orders/M4-08-results.md has part A's).
-- **M4-11** (album art and a background image) is built on branch `m4-11-art`, reviewed (no major), with its review
-  fixes being made by the old session. The old session merges it into main when CI is green.
-- **M5** (the next version, 0.2.0): the plan is on branch `m5-plan`, written by a planner on the most capable model,
-  reviewed by an advisor on a different model, three scope changes checked by skeptics, and amended on all of them
-  (docs/reports/m5-plan-review.md). The old session merges the amended plan into main when it is done.
-- **Wait for the old session's message** saying both merges are done before touching `m4-11-art`, `m5-plan` or main's
-  PROGRESS. Then run M5's waves as docs/work-orders/M5-00-plan.md sets them, at most two builders at once.
+- **v0.1.0** is published as a pre-release; the friend is running M4-08 part B. When his diagnostics zip and notes
+  arrive, read them as M4-08 says.
+- **M5:** wave 0 (M4-11), M5-09, M5-06, M5-05 and M5-01 are merged; M5-02 and M5-03 are building; M5-04 waits for a
+  builder slot; wave 4 (M5-08, then M5-07) follows; then the release gate (M5-00 section 7). Each merge's report is
+  in docs/reports/.
+- **The owner's decisions today:** the stress set (three songs) with no song title, artist, charter or package md5 in
+  anything committed (the list is a local file he keeps); the suite runs as `python -m pytest`; v0.2's rollout does
+  not wait on his manual GPU experiment (the thin-run spike below is M6's). The release gate's checks on his PC
+  (the provoked GPU failure under memory=12GB, the test song on CUDA, the play test, the art in Clone Hero) and his
+  approval to publish still stand unless he says otherwise.
 
-## The owner's decisions (2026-11-05)
+## The dev machine
 
-Version 0.2.0; M4-11 merged first; an update notice with a Copy button rather than a one-click updater, with
-pre-releases counting as new; a GPU take that fails retried on the CPU by default (its memory measured at the gate);
-the stress set as below; the lyrics weights stay a first-use download; the planner's album placeholder; small
-backgrounds kept as they are, not upscaled. The owner also asked that the version follow the games' conventions
-(docs/reports/charting-conventions.md) and think about how a chart feels to play (docs/reports/feel.md).
+All of it outside the repository, in one folder beside the checkout (`<dev>`; eval/README.md, "Rebuilding the dev
+machine", rebuilds it):
+- `<dev>/eval`: `refs/` (the seven golden songs, the test song from the owner's MP3), `stress/` (the stress set),
+  `stress.local.json` (the owner's package list: md5s, titles, charters), `sng/`.
+- `<dev>/golden`: `base` (main at fbd9751, cold; the six references match eval/baseline/summary.json exactly),
+  `stress-base` (the stress baseline), the kept folders `work/` and `stress-work/` (shared by every order: never
+  delete), and each order's runs.
+- `<dev>/sepcache` (the separation cache), `<dev>/allin1` (allin1's Python).
+- `<dev>/stress`: the owner's audio of the stress songs, a notes folder with the titles and md5s, and `private/`
+  with the owner's lyrics text for the timing-only check (never printed, quoted or committed).
+- `<dev>/owner_v01`: the owner's v0.1 song folders of the stress songs (charts and report.json; the rock song's
+  chart carries lyric events: numbers-only scripts).
+The environment variables are eval/README.md's step 9; every brief names them.
 
-## The dev machine (rebuild it first)
+## Only in the session
 
-The old container's scratch held what the evaluation needs and none of it is in the repository (CLAUDE.md: no audio,
-stems or reference charts). Rebuild it with eval/README.md, "Rebuilding the dev machine": the Python environment, the
-reference set, scan-chart, autochart and its models, allin1's environment, then a golden base on main (compare it with
-eval/baseline/summary.json). Run heavy jobs through tools/heavy.sh.
-
-## The stress set (M5-09)
-
-The new session's first message from the old one lists the human charts to fetch from Chorus Encore (by hash) and
-asks the owner to upload his audio for the songs: they are not in the repository and must not be. Human charts that
-carry lyrics are read only by timing scripts that print numbers (docs/work-orders/M4-10-lyrics.md); the owner's own
-lyrics text for the lyrics check is uploaded by him as a file and never printed.
+- **The usage meter:** `.claude/mods/usage-meter/` (its README installs it); read it before each wave.
+- **Check-ins:** the session schedules its own every ~50 minutes while agents run (PIPELINE, Long runs).
+- **The thin-run spike (M6):** `eval/gpu.sh thin-spike AUDIO` on the owner's GPU (eval/spike/thin_spike.sh). When his
+  `thin_spike_results.zip` arrives, score it per 30-s window with eval/stress.py's scorer against the shred song's
+  human charts; the adoption rule is in M5-99.
+- **Messages from the earlier session** arrive; replies to it were refused (a trusted device is needed): the owner
+  relays.
 
 ## Limits for unattended work (the owner's, unchanged)
 

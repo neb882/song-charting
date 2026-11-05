@@ -258,8 +258,8 @@ export DEV=/path/to/dev        # every step below uses it
 Linux x86_64, or WSL2. Needed: `git`, `curl`, `ffmpeg` (6.x in the container; it decodes the
 reference audio and writes the test song's WAV), Node 20 or newer (22.x in the container), Python 3.13 (the lock
 files are for 3.13 and `requires-python` is below 3.14), and [uv](https://docs.astral.sh/uv/) at exactly 0.13.5,
-which `pyproject.toml` and `packaging/allin1/pyproject.toml` pin with `required-version` (`uv self update 0.13.5`
-or the installer for that version; the container had 0.11.32, which refuses the pin, and never used uv for its
+which `pyproject.toml` and `packaging/allin1/pyproject.toml` pin with `required-version` (`uv self update 0.13.5`, which only works
+for a uv its own installer put there, else `curl -LsSf https://astral.sh/uv/0.13.5/install.sh | sh`; the container had 0.11.32, which refuses the pin, and never used uv for its
 environments). RAM: the guitar engine (autochart's Node process) peaked at 12.8 GB once, and the whole build tree at 10.1 GB on the CPU;
 give WSL2 at least 16 GB (`memory=` in `.wslconfig`, above).
 
@@ -422,7 +422,7 @@ summary shows how far a rebuilt machine's charts are from it. After step 8, run 
 suite once as the check:
 
 ```sh
-SONGCHARTER_SCAN_CHART=$PWD/tools/scan-chart/scan.cjs uv run pytest -q -p no:cacheprovider --basetemp=/dev/shm/pt
+SONGCHARTER_SCAN_CHART=$PWD/tools/scan-chart/scan.cjs uv run python -m pytest -q -p no:cacheprovider --basetemp=/dev/shm/pt
 ```
 
 ### Not rebuildable from the repo
@@ -436,3 +436,12 @@ SONGCHARTER_SCAN_CHART=$PWD/tools/scan-chart/scan.cjs uv run pytest -q -p no:cac
 - The container's exact charts (step 9: `eval/baseline/summary.json` holds their hashes and F1s), and its
   `sepcache/prep.py` (the snippet in step 7 stands in for it).
 - The hand-made `research/timing/venv2` (step 4): replaced by `packaging/allin1`, not reproduced.
+- The stress set's package list (`$EVAL_DATA/stress.local.json`, the owner's) and the owner's own audio of the
+  stress songs: the owner provides them, as for the test song.
+
+**Rebuilt on 2026-11-05** (a new container, these steps in order, the cpu lane): the cold golden base of `main`
+took 64 minutes for the seven songs, and the six references' 72 part-levels came out byte-identical to
+`eval/baseline/summary.json`, so a rebuilt machine can reproduce the committed baseline exactly. The test song's
+upload was another encode of the owner's file (separation key `063cc9c8...`), so its tracks differ and it has a new
+baseline there. `build_refs.sh` then built only the first reference (its helpers' ffmpeg read the song list): fixed
+in M5-09.
