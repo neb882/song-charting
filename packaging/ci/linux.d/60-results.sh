@@ -21,6 +21,8 @@
 # .png is refused there first). The song folder, its zip and its install must hold album.jpg (512x512, from the clip's
 # picture) and background.jpg (1920x1080, no EXIF left); scan-chart, in the gate and run again here on the installed
 # folder, no longer reports noAlbumArt; the Done screen's results name the album art, which the page can fetch.
+# M5-06: the clip is named "Test Artist - Test Clip" and has no tags, so the upload's answer, the song folder's name
+# and its song.ini take the artist and the title from the file name, and the album's placeholder "Test Clip - (Single)".
 # Run by packaging/ci/run-hooks.sh with bash -euo pipefail; uses CI_PY, CI_TMP, CI_ART and CI_CLIP (M4-05a's contract).
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 art="$CI_ART/60-results"
@@ -59,7 +61,7 @@ trap 'stop; cp "$home"/logs/*.log "$art/" 2>/dev/null || true' EXIT
 
 # M4-11: the clip with a picture of its own (FLAC: the WAV's audio, losslessly), and a background bigger than 1920x1080
 # with EXIF, both made here (no real photo); the clip stays in $CI_TMP (it is audio)
-clip="$CI_TMP/clip-art.flac"
+clip="$CI_TMP/Test Artist - Test Clip.flac"
 background="$CI_TMP/background.jpg"
 "$CI_PY" - "$CI_CLIP" "$clip" "$background" <<'PY'
 import subprocess, sys
@@ -121,6 +123,9 @@ def expect(want, what, got):
 
 up = expect(200, "the clip uploaded", request("POST", "/api/upload", clip.read_bytes(),
                                               {"X-Filename": urllib.parse.quote(clip.name)}))
+# M5-06: no tags, so the file's name gives the artist and the title
+assert (up["tags"]["artist"], up["origin"]["artist"], up["tags"]["name"], up["origin"]["name"]) == (
+    "Test Artist", "file name", "Test Clip", "file name"), up
 options = {"instruments": ["bass", "drums"], "device": "cpu"}
 if phase == "chart":   # M4-11: a background through the page's picker, as the song goes up
     refused = expect(415, "a text file named .png", request("POST", "/api/upload/image", b"not a picture",
@@ -193,7 +198,11 @@ if phase == "chart":
     status, headers, body = request("GET", res["art"]["album_art"], raw=True)
     assert status == 200 and headers["Content-Type"] == "image/jpeg" and body == (target / "album.jpg").read_bytes()
     say("the Done screen's album art: served")
-    assert "charter = songcharter" in (target / "song.ini").read_text(encoding="utf-8-sig")
+    ini = (target / "song.ini").read_text(encoding="utf-8-sig").splitlines()
+    assert "charter = songcharter" in ini
+    names = {"name = Test Clip", "artist = Test Artist", "album = Test Clip - (Single)"}   # M5-06
+    assert res["name"] == "Test Artist - Test Clip" and names <= set(ini), (res["name"], ini)
+    say(f"the names from the file's: {res['name']}, {sorted(names)}")
     assert (target / "song.ogg").read_bytes()[:4] == b"OggS" and (target / "notes.chart").stat().st_size > 0
     say(f"installed into {target}: {files}")
     again = expect(409, "installed again", request("POST", "/api/jobs/current/install", {"replace": False}))
