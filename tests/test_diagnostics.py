@@ -52,6 +52,10 @@ def work_folder(root: Path, name: str, used: float, built: Path) -> Path:
     write(w / "decode.wav", WAV_HEAD + b"\0" * 64)
     write(w / "stems" / "abc" / "vocals.wav", WAV_HEAD + b"\0" * 64)
     write(w / "preview" / "overview.png", b"\x89PNG\r\n\x1a\n")
+    write(w / "art" / "album.jpg", b"\xff\xd8\xff\xe0 a person's picture")   # M4-11's pictures
+    write(w / "art" / "background.jpg", b"\xff\xd8\xff\xe0 a person's photo")
+    write(built / "album.jpg", b"\xff\xd8\xff\xe0 a person's picture")
+    write(built / "background.jpg", b"\xff\xd8\xff\xe0 a person's photo")
     write(built / "report.json", json.dumps({"gate": {"ok": True}, "name": name}))
     write(built / "notes.chart", '[Events]\r\n{\r\n  0 = E "lyric zorp"\r\n}\r\n')
     write(built / "song.ogg", b"OggS" + b"\0" * 64)
@@ -73,6 +77,7 @@ def home(tmp_path):
     write(h / "logs" / "shot.png", b"\x89PNG\r\n\x1a\n")
     write(h / "logs" / "song.ogg", b"OggS")
     write(h / "uploads" / ("0" * 16) / "song.wav", WAV_HEAD)
+    write(h / "uploads" / ("1" * 16) / "cover.png", b"\x89PNG\r\n\x1a\n a person's picture")
     root = tmp_path / "cache"
     for i in range(6):                                        # w5 is the newest; w0 is the sixth, left out
         work_folder(root, f"w{i}", 1_000 + i, h / "library" / str(i) / f"Song {i}")
@@ -99,8 +104,8 @@ def test_the_bundle_holds_the_reports_and_never_audio(home, tmp_path):
                             "ui.json", *logs, *works])
     for name in names:
         data = z.read(name)
-        assert len(data) <= D.MAX_BYTES and not data.startswith((b"RIFF", b"OggS", b"\x89PNG"))
-        assert b"lyric" not in data, name   # no chart
+        assert len(data) <= D.MAX_BYTES and not data.startswith((b"RIFF", b"OggS", b"\x89PNG", b"\xff\xd8\xff"))
+        assert b"lyric" not in data and b"a person's" not in data, name   # no chart, no picture
     assert json.loads(z.read("doctor-now.json")) == {"ok": True, "now": True}
     ch = json.loads(z.read("clonehero.json"))
     assert ch == {"folder": "/mnt/c/Songs", "windows_path": "C:\\Songs", "source": "saved", "under_onedrive": False,
@@ -113,7 +118,8 @@ def test_the_bundle_holds_the_reports_and_never_audio(home, tmp_path):
     assert f"{h / 'logs' / 'renamed.log'}: audio: it starts with a RIFF header (WAV)" in manifest
     assert f"{h / 'logs' / 'big.log'}: 6000000 bytes, over 5000000" in manifest
     listed = manifest.split("\nNever in this file")[0]
-    for never in ("job-08.log", "oldest.log", "shot.png", "song.ogg", "w0-", "uploads", "notes.chart", "stems"):
+    for never in ("job-08.log", "oldest.log", "shot.png", "song.ogg", "w0-", "uploads", "notes.chart", "stems",
+                  "album.jpg", "background.jpg", "cover.png"):
         assert never not in listed, never   # never picked, so never even looked at
     # check_no_audio.py on it, unpacked and as the zip it is
     unpacked = tmp_path / "unpacked"
@@ -125,8 +131,14 @@ def test_the_bundle_holds_the_reports_and_never_audio(home, tmp_path):
 
 def test_never_by_name_size_or_first_bytes():
     for name in ("a.WAV", "b.ogg", "c.flac", "d.mp3", "e.m4a", "f.opus", "g.aac", "h.wma", "i.aif", "j.aiff",
-                 "notes.chart", "Notes.Chart", "x.chart", "y.mid", "overview.png"):
+                 "notes.chart", "Notes.Chart", "x.chart", "y.mid", "overview.png", "album.jpg", "background.JPEG",
+                 "cover.webp", "Album.PNG"):
         assert D.refused(name) is not None, name
+    assert D.refused("album.jpg") == "a picture (JPEG)" and D.refused("c.webp") == "a picture (WebP)"
+    # a picture by its first bytes, whatever its name (a WebP is RIFF: refused as audio's header)
+    assert D.refused("album.json", b"\xff\xd8\xff\xe0\x00\x10JFIF") == "a picture: it starts with a JPEG header"
+    assert D.refused("x.log", b"\x89PNG\r\n\x1a\n") == "a picture: it starts with a PNG header"
+    assert D.refused("x.txt", b"RIFF\0\0\0\0WEBPVP8 ") is not None
     assert D.refused("x.log", size=D.MAX_BYTES + 1) and D.refused("x.log", size=D.MAX_BYTES) is None
     for head in (WAV_HEAD, b"OggS", b"ID3\x04", b"fLaC", b"\x1a\x45\xdf\xa3", b"FORM\0\0\0\0AIFF",
                  b"\0\0\0\x20ftypM4A ", b"\xff\xfb\x90", b"\xff\xfe{\0"):

@@ -14,7 +14,13 @@
 #      failed download, not a refusal. No pasted word in any log, record or bundle (only notes.chart may ever hold
 #      one);
 #   4. the diagnostics bundle through the API and `songcharter diagnostics --out`: check_no_audio.py passes on each,
-#      as the zip and unpacked. The bundles, the results and the logs go to $CI_ART/60-results.
+#      as the zip and unpacked, and neither holds a picture. The bundles, the results, the logs and the song folder's
+#      two pictures go to $CI_ART/60-results.
+# M4-11: the clip charted is the CI clip as a FLAC with a picture of its own (900x600: the album art is cropped from
+# it), and the chart phase uploads a background (2400x1350, with EXIF) through /api/upload/image (a text file named
+# .png is refused there first). The song folder, its zip and its install must hold album.jpg (512x512, from the clip's
+# picture) and background.jpg (1920x1080, no EXIF left); scan-chart, in the gate and run again here on the installed
+# folder, no longer reports noAlbumArt; the Done screen's results name the album art, which the page can fetch.
 # Run by packaging/ci/run-hooks.sh with bash -euo pipefail; uses CI_PY, CI_TMP, CI_ART and CI_CLIP (M4-05a's contract).
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 art="$CI_ART/60-results"
@@ -51,14 +57,37 @@ stop() {
 }
 trap 'stop; cp "$home"/logs/*.log "$art/" 2>/dev/null || true' EXIT
 
+# M4-11: the clip with a picture of its own (FLAC: the WAV's audio, losslessly), and a background bigger than 1920x1080
+# with EXIF, both made here (no real photo); the clip stays in $CI_TMP (it is audio)
+clip="$CI_TMP/clip-art.flac"
+background="$CI_TMP/background.jpg"
+"$CI_PY" - "$CI_CLIP" "$clip" "$background" <<'PY'
+import subprocess, sys
+from PIL import Image
+from songcharter import audio
+wav, out, background = sys.argv[1:4]
+cover = out + ".cover.png"
+Image.new("RGB", (900, 600), (30, 90, 200)).save(cover)
+exif = Image.Exif()
+exif[0x010F] = "MadeUpPhoneCo"
+exif[0x8825] = {1: "N", 2: (51.0, 30.0, 12.5)}
+Image.new("RGB", (2400, 1350), (200, 60, 30)).save(background, quality=90, exif=exif.tobytes())
+subprocess.run([audio.ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-y", "-i", wav, "-i", cover, "-map", "0:a",
+                "-map", "1:v", "-c:a", "flac", "-c:v", "copy", "-disposition:v", "attached_pic", out], check=True)
+print(f"60-results: the clip with a picture: {out}; a background: {background}")
+PY
+
 # the API, as the page uses it: python - PHASE (chart | lyrics); its answers go to $art
 drive() {
-  "$CI_PY" - "$1" "$base" "$CI_CLIP" "$songs" "$home" "$art" <<'PY'
-import io, json, sys, urllib.error, urllib.parse, urllib.request, zipfile
+  "$CI_PY" - "$1" "$base" "$clip" "$songs" "$home" "$art" "$background" <<'PY'
+import io, json, os, subprocess, sys, urllib.error, urllib.parse, urllib.request, zipfile
 from pathlib import Path
+from PIL import Image
 
 phase, base, clip, songs, home, art = sys.argv[1], sys.argv[2], Path(sys.argv[3]), sys.argv[4], Path(sys.argv[5]), \
     Path(sys.argv[6])
+background = Path(sys.argv[7])
+PICTURES = ["album.jpg", "background.jpg"]
 HEADERS = {"X-Songcharter": "1", "Origin": base}
 LYRICS = "zorp blen-dak quiv\nfim wob\n\n[Glorp]\ndree smee plin\n"   # made-up words
 WORDS = (b"zorp", b"blen", b"quiv", b"wob", b"Glorp", b"dree", b"smee", b"plin")
@@ -93,6 +122,14 @@ def expect(want, what, got):
 up = expect(200, "the clip uploaded", request("POST", "/api/upload", clip.read_bytes(),
                                               {"X-Filename": urllib.parse.quote(clip.name)}))
 options = {"instruments": ["bass", "drums"], "device": "cpu"}
+if phase == "chart":   # M4-11: a background through the page's picker, as the song goes up
+    refused = expect(415, "a text file named .png", request("POST", "/api/upload/image", b"not a picture",
+                                                              {"X-Filename": "cover.png"}))
+    assert "is not a JPEG, PNG or WebP image" in refused["error"], refused
+    bg = expect(200, "the background uploaded", request("POST", "/api/upload/image", background.read_bytes(),
+                                                        {"X-Filename": background.name}))
+    assert (bg["format"], bg["width"], bg["height"]) == ("JPEG", 2400, 1350), bg
+    options["background"] = bg["id"]
 if phase == "lyrics":
     options = {"instruments": ["bass"], "device": "cpu", "lyrics": LYRICS}
 expect(202, f"a job on the clip ({phase})", request("POST", "/api/jobs", {"upload": up["id"], "options": options}))
@@ -119,7 +156,8 @@ if phase == "chart":
     status, headers, body = request("GET", zipped["url"], raw=True)
     assert status == 200 and headers["Content-Disposition"].startswith("attachment;"), headers
     names = sorted(zipfile.ZipFile(io.BytesIO(body)).namelist())
-    assert names == sorted(f"{res['name']}/{f}" for f in ("notes.chart", "report.json", "song.ini", "song.ogg")), names
+    assert names == sorted(f"{res['name']}/{f}" for f in ["notes.chart", "report.json", "song.ini", "song.ogg",
+                                                         *PICTURES]), names
     say(f"the zip downloaded: {names}")
     for bad in ("..%2Fui.json", "x.zip", urllib.parse.quote(res["name"])):
         assert request("GET", "/api/exports/" + bad)[0] == 404, bad
@@ -130,8 +168,31 @@ if phase == "chart":
     target = Path(songs) / res["name"]
     assert done["installed"] == str(target), done
     files = sorted(p.name for p in target.iterdir())
-    assert files == ["notes.chart", "report.json", "song.ini", "song.ogg"], files
-    assert json.loads((target / "report.json").read_text(encoding="utf-8"))["gate"]["ok"] is True
+    assert files == sorted(["notes.chart", "report.json", "song.ini", "song.ogg", *PICTURES]), files
+    report = json.loads((target / "report.json").read_text(encoding="utf-8"))
+    assert report["gate"]["ok"] is True
+    # M4-11: the pictures, and scan-chart without noAlbumArt (the gate's run, and one here on the installed folder)
+    scan = report["gate"]["scan_chart"]
+    assert scan["ran"] and "noAlbumArt" not in scan["folder_issues"], scan
+    found = json.loads(subprocess.run(["node", os.environ["SONGCHARTER_SCAN_CHART"], str(target)], check=True,
+                                      capture_output=True, text=True).stdout)
+    issues = [i["folderIssue"] for i in found["folderIssues"]]
+    assert found["playable"] and not {"noAlbumArt", "albumArtSize", "badAlbumArt"} & set(issues), issues
+    assert report["art"]["album_art"]["from"] == "embedded" and report["art"]["background"]["from"] == "given", \
+        report["art"]
+    album, bg_out = Image.open(target / "album.jpg"), Image.open(target / "background.jpg")
+    assert (album.format, album.size, bg_out.format, bg_out.size) == ("JPEG", (512, 512), "JPEG", (1920, 1080))
+    raw_bg = (target / "background.jpg").read_bytes()
+    assert b"Exif" not in raw_bg and b"MadeUpPhoneCo" not in raw_bg and not bg_out.getexif()
+    for name in PICTURES:
+        (art / name).write_bytes((target / name).read_bytes())
+    say(f"the pictures: album.jpg {album.size} from the clip's own, background.jpg {bg_out.size} with no EXIF; "
+        f"scan-chart's folder issues {issues}")
+    assert res["art"] == {"album_art": "/api/jobs/current/art/album.jpg", "album_from": "embedded",
+                          "background": True}, res["art"]
+    status, headers, body = request("GET", res["art"]["album_art"], raw=True)
+    assert status == 200 and headers["Content-Type"] == "image/jpeg" and body == (target / "album.jpg").read_bytes()
+    say("the Done screen's album art: served")
     assert "charter = songcharter" in (target / "song.ini").read_text(encoding="utf-8-sig")
     assert (target / "song.ogg").read_bytes()[:4] == b"OggS" and (target / "notes.chart").stat().st_size > 0
     say(f"installed into {target}: {files}")
@@ -167,6 +228,7 @@ assert status == 200 and headers["Content-Disposition"].startswith('attachment; 
 with zipfile.ZipFile(io.BytesIO(body)) as z:
     names = z.namelist()
     assert any(n.endswith("/pipeline.json") for n in names) and "MANIFEST.txt" in names, names
+    assert not any(n.lower().endswith((".jpg", ".jpeg", ".png", ".webp")) for n in names), names   # no picture
     for n in names:
         assert not any(w in z.read(n) for w in WORDS), n
 say(f"the diagnostics bundle: {len(names)} files")

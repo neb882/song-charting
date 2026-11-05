@@ -1,5 +1,6 @@
-// songcharter's page (M4-04, M4-06): drop a song, choose the options (the lyrics too), follow the chart, cancel it;
-// then the preview, the zip, the install into Clone Hero, and the diagnostics in the footer. No framework, no build
+// songcharter's page (M4-04, M4-06, M4-11): drop a song, choose the options (the lyrics and the pictures too), follow
+// the chart, cancel it; then the album art, the preview, the zip, the install into Clone Hero, and the diagnostics in
+// the footer. No framework, no build
 // step. Every request sends X-Songcharter: 1 (the server's guard for anything but a GET). The job's events come over
 // a streamed fetch of /api/jobs/current/events (Server-Sent Events), which can send that header too, and which
 // resumes after the last event it saw when the connection drops; a reload reattaches to the current job.
@@ -14,7 +15,10 @@ const LABELS = {
 const DISMISSED = "songcharter.dismissed";   // sessionStorage: the finished job "Chart another song" put away
 
 const $ = (id) => document.getElementById(id);
-const state = { status: null, upload: null, job: null, stages: {}, offset: 0, ticker: null, follow: 0, ch: null };
+const state = { status: null, upload: null, job: null, stages: {}, offset: 0, ticker: null, follow: 0, ch: null,
+  images: { album_art: null, background: null }, sending: 0 };
+// the pictures' pickers: the option each sets (an image upload's id) and what its line says when none is chosen
+const PICTURES = { album_art: "None chosen: the song file's own picture, if it has one", background: "None chosen" };
 
 function show(screen) {
   for (const id of ["drop-screen", "options-screen", "progress-screen", "done-screen"]) $(id).hidden = id !== screen;
@@ -152,7 +156,60 @@ function fillOptions(up) {
     box.checked = !d.instruments || d.instruments.includes(box.value);
   }
   soloNames();
+  for (const key of Object.keys(PICTURES)) clearPicture(key);
   text($("options-error"), "").hidden = true;
+}
+
+// ------------------------------------------------------------------------------------------------ the pictures
+
+function clearPicture(key) {
+  state.images[key] = null;
+  text($(`${key}-name`), PICTURES[key]);
+  $(`${key}-remove`).hidden = true;
+  text($(`${key}-error`), "").hidden = true;
+}
+
+// a picture goes up as the song does (POST /api/upload/image); the chart gets its upload id
+function uploadPicture(key, file) {
+  clearPicture(key);
+  text($(`${key}-name`), `Uploading ${file.name}…`);
+  state.sending += 1;
+  $("chart").disabled = true;
+  const done = () => { state.sending -= 1; $("chart").disabled = state.sending > 0; };
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "/api/upload/image");
+  xhr.setRequestHeader("X-Songcharter", "1");
+  xhr.setRequestHeader("X-Filename", encodeURIComponent(file.name));
+  xhr.addEventListener("load", () => {
+    done();
+    let data = {};
+    try { data = JSON.parse(xhr.responseText); } catch (e) { data = {}; }
+    if (xhr.status === 200) {
+      state.images[key] = data.id;
+      text($(`${key}-name`), `${data.name} (${data.width}×${data.height})`);
+      $(`${key}-remove`).hidden = false;
+    } else {
+      clearPicture(key);
+      text($(`${key}-error`), data.error || `The upload failed (${xhr.status}).`).hidden = false;
+    }
+  });
+  xhr.addEventListener("error", () => {
+    done();
+    clearPicture(key);
+    text($(`${key}-error`), "The upload failed: is songcharter still running?").hidden = false;
+  });
+  xhr.send(file);
+}
+
+function setupPictures() {
+  for (const key of Object.keys(PICTURES)) {
+    $(`${key}-file`).addEventListener("change", (e) => {
+      const f = e.target.files[0];
+      if (f) uploadPicture(key, f);
+      e.target.value = "";
+    });
+    $(`${key}-remove`).addEventListener("click", () => clearPicture(key));
+  }
 }
 
 function soloNames() {
@@ -179,6 +236,7 @@ function readOptions() {
   options.preview = f.preview.checked;
   const lyrics = f.lyrics.value;   // as pasted; the server keeps it out of every record
   if (lyrics.trim()) options.lyrics = lyrics;
+  for (const key of Object.keys(PICTURES)) if (state.images[key]) options[key] = state.images[key];
   return options;
 }
 
@@ -418,6 +476,7 @@ async function loadResults() {
   try { r = await api("GET", "/api/jobs/current/results"); } catch (e) { return; }
   if (r.status !== 200) return;
   const res = r.data;
+  renderArt(res.art, res.name, res.job);
   renderLyrics(res.lyrics);
   renderPreview(res.preview, res.job);
   $("export-box").hidden = !res.installable;
@@ -425,6 +484,19 @@ async function loadResults() {
   $("open-exports").hidden = true;
   $("results").hidden = false;
   if (res.installable) loadCloneHero();
+}
+
+// the album art beside the song's name, and a line when there is a background
+function renderArt(art, name, job) {
+  const has = !!(art && art.album_art);
+  $("art").hidden = !has;
+  if (has) {
+    $("album-art").src = `${art.album_art}?job=${encodeURIComponent(job)}`;   // this chart's, not a cached one
+    text($("art-name"), name);
+    text($("art-from"), art.album_from === "given" ? "Album art: your picture" :
+      art.album_from === "embedded" ? "Album art: the song file's own picture" : "");
+  }
+  $("background-line").hidden = !(art && art.background);
 }
 
 function renderLyrics(ly) {
@@ -601,6 +673,7 @@ async function openFolder(what, where) {
 
 async function start() {
   setupDrop();
+  setupPictures();
   $("options").addEventListener("submit", chartIt);
   $("options").elements.solos.addEventListener("change", soloNames);
   $("other-song").addEventListener("click", again);

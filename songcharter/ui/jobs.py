@@ -29,6 +29,9 @@
     into the chart. The job writes it into a memory file (memfd, Linux), which the child gets as an open file and
     reads as `--lyrics=/dev/fd/<n>`: nothing on disk, and the command line, the log, the job's options (`lyrics`:
     whether given) and every event name the file, never a word of it.
+  * **Pictures** (M4-11): `album_art` and `background` are the paths of images uploaded through the page; the server
+    puts them in for the page's upload ids (server.py: a path never comes from the page) and they become
+    --album-art and --background. The job's options say whether each was given.
 """
 from __future__ import annotations
 
@@ -52,7 +55,9 @@ from ..timed import DIFFICULTIES, INSTRUMENTS
 EVENT_PREFIX = "@@songcharter "   # cli.EVENT_PREFIX (not imported: the cli module is the child's)
 CLOSING = ("result", "error", "cancelled")   # the events after which a job's stream ends
 META_FLAGS = {"title": "--title", "artist": "--artist", "album": "--album", "year": "--year", "genre": "--genre"}
-OPTION_KEYS = (*META_FLAGS, "instruments", "levels", "solos", "takes", "device", "threads", "preview", "lyrics")
+IMAGE_FLAGS = {"album_art": "--album-art", "background": "--background"}
+OPTION_KEYS = (*META_FLAGS, "instruments", "levels", "solos", "takes", "device", "threads", "preview", "lyrics",
+               *IMAGE_FLAGS)
 TAIL_LINES = 8                     # the log's last lines in an error the job writes itself
 END_WAIT_S = 10.0                  # how long a new job waits for one whose closing event is out to exit
 
@@ -88,13 +93,16 @@ class ChartOptions:
     preview: bool = True
     metadata: Mapping[str, str] = field(default_factory=dict)   # title, artist, album, year, genre: the non-blank
     lyrics: str | None = field(default=None, repr=False)       # the pasted text, None without: never shown, never kept
+    album_art: str | None = None   # an uploaded image's path (the server's, for the page's upload id), None without
+    background: str | None = None
 
     def as_dict(self) -> dict:
         """The options as the job's records show them: `lyrics` is whether some were given, never the text."""
         return {"instruments": list(self.instruments), "levels": list(self.levels),
                 "solos": self.solos if isinstance(self.solos, str) else list(self.solos), "takes": self.takes,
                 "device": self.device, "threads": self.threads, "preview": self.preview,
-                "lyrics": self.lyrics is not None, **self.metadata}
+                "lyrics": self.lyrics is not None, "album_art": self.album_art is not None,
+                "background": self.background is not None, **self.metadata}
 
 
 def _words(raw: Any, what: str) -> tuple[str, ...]:
@@ -135,13 +143,17 @@ def parse_options(raw: Any) -> ChartOptions:
     lyrics = get.get("lyrics")
     if lyrics is not None and not isinstance(lyrics, str):
         raise InputError(f"lyrics is text, not a {type(lyrics).__name__}")   # the type alone: never the words
+    for key in IMAGE_FLAGS:
+        if key in get and not isinstance(get[key], str):
+            raise InputError(f"{key} is an uploaded image, not {get[key]!r}")
     options = ChartOptions(instruments=instruments, levels=levels, solos=solos, takes=get.get("takes"),
                            device=get.get("device", "auto"), threads=get.get("threads"), preview=preview,
-                           metadata=meta, lyrics=lyrics if lyrics and lyrics.strip() else None)
+                           metadata=meta, lyrics=lyrics if lyrics and lyrics.strip() else None,
+                           album_art=get.get("album_art"), background=get.get("background"))
     pipeline_meta = {"name" if k == "title" else k: v for k, v in meta.items()}
     Options(instruments=options.instruments, takes=options.takes, device=options.device, threads=options.threads,
             metadata=pipeline_meta, solos=options.solos, levels=options.levels, preview=options.preview,
-            lyrics=options.lyrics).check()
+            lyrics=options.lyrics, album_art=options.album_art, background=options.background).check()
     return options
 
 
@@ -168,6 +180,7 @@ def chart_command(song: Path, out: Path, options: ChartOptions, threads: int | N
     if not options.preview:
         cmd.append("--no-preview")
     cmd += [f"{flag}={options.metadata[key]}" for key, flag in META_FLAGS.items() if key in options.metadata]
+    cmd += [f"{flag}={getattr(options, key)}" for key, flag in IMAGE_FLAGS.items() if getattr(options, key)]
     return cmd
 
 

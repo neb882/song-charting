@@ -72,6 +72,9 @@ page.
 - **Lyrics, if you want them on screen:** before "Chart it", paste the song's words into the "Paste lyrics" box,
   one line for each sung line. songcharter times the words you paste to the singing; it never looks lyrics up. The
   first song with lyrics downloads 1.26 GB, once.
+- **Pictures, if you want them:** a song file with its own cover picture gets it as the album art. Under "Pictures"
+  in the options you can choose another album art, and a background image to show behind the highway (JPEG, PNG or
+  WebP). To see song backgrounds in Clone Hero, turn on Settings > Gameplay > "Use Song Backgrounds".
 - When it is done, look at the preview, then press "Install into Clone Hero". The first time, it may ask where your
   Clone Hero Songs folder is.
 - In Clone Hero: Settings > General > Scan Songs.

@@ -28,8 +28,10 @@ def safe_folder_name(artist: str, name: str) -> str:
 
 def build_song_folder(out_dir, chart: Chart, song_audio: np.ndarray, pad_samples: int,
                       sample_rate: int = A.SAMPLE_RATE, difficulty: dict[str, int] | None = None,
-                      album_art: Path | None = None, quality: float = 7.0) -> PackageResult:
-    """Write notes.chart, song.ini and song.ogg (the decode with `pad_samples` of silence in front).
+                      album_art: Path | None = None, quality: float = 7.0,
+                      background: Path | None = None) -> PackageResult:
+    """Write notes.chart, song.ini and song.ogg (the decode with `pad_samples` of silence in front), and copy
+    `album_art` and `background` in as album<ext> and background<ext> when given.
 
     Raises if the encoded song.ogg does not line up with the samples the chart was made against.
     """
@@ -42,11 +44,12 @@ def build_song_folder(out_dir, chart: Chart, song_audio: np.ndarray, pad_samples
     sync = A.verify_sync(padded, ogg, sample_rate)
     if not sync.ok:
         raise ToolError(f"song.ogg is out of sync with the chart: {sync.summary()}")
-    if album_art is not None:
-        suffix = Path(album_art).suffix.lower()
-        if suffix not in (".png", ".jpg", ".jpeg"):
-            raise InputError("album art must be .png or .jpg")
-        (folder / f"album{suffix}").write_bytes(Path(album_art).read_bytes())
+    for image, name in ((album_art, "album"), (background, "background")):
+        if image is not None:
+            suffix = Path(image).suffix.lower()
+            if suffix not in (".png", ".jpg", ".jpeg"):
+                raise InputError(f"{name} must be .png or .jpg")
+            (folder / f"{name}{suffix}").write_bytes(Path(image).read_bytes())
     return PackageResult(folder, sync)
 
 

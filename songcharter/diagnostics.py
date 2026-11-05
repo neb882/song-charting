@@ -17,7 +17,9 @@
 
 **Never** (`refused`, each candidate checked by its name, its size and its first bytes): an audio extension or audio
 magic bytes (packaging/ci/check_no_audio.py's test, copied here since that script is not part of the package), a
-notes.chart (it holds the lyrics), a stem, a PNG, or any file over MAX_BYTES (5 MB). Only the files above are ever
+notes.chart (it holds the lyrics), a stem, a picture (PNG, JPEG or WebP by its extension or its first bytes: the
+previews, and the album art and backgrounds of M4-11, which may be a person's photo), or any file over MAX_BYTES
+(5 MB). Only the files above are ever
 picked, so the songs, stems, decodes, previews and charts in the home and the cache are never looked at. The lyrics a
 person pasted reach only notes.chart: pipeline.json, assemble.json and report.json count them, never hold a word.
 """
@@ -41,8 +43,10 @@ HEAD = 512
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".ogg", ".flac", ".m4a", ".opus", ".aac", ".wma", ".aif", ".aiff"}
 MAGIC = {b"RIFF": "a RIFF header (WAV)", b"OggS": "an Ogg header", b"ID3": "an ID3 tag (MP3)",
          b"fLaC": "a FLAC header", b"\x1a\x45\xdf\xa3": "a Matroska header (WebM, MKA)"}
-NEVER_SUFFIXES = {".png": "a picture (PNG)", ".chart": "a chart (notes.chart holds the lyrics)",
+NEVER_SUFFIXES = {".png": "a picture (PNG)", ".jpg": "a picture (JPEG)", ".jpeg": "a picture (JPEG)",
+                  ".webp": "a picture (WebP)", ".chart": "a chart (notes.chart holds the lyrics)",
                   ".mid": "a chart (MIDI)"}
+PICTURE_MAGIC = {b"\x89PNG": "a PNG header", b"\xff\xd8\xff": "a JPEG header"}   # WebP is RIFF: refused as audio
 WORK_FILES = ("pipeline.json", "assemble.json", cache.MARKER)
 PREVIEW_KEYS = ("ok", "flags", "flags_by_kind", "remarks", "pages", "skipped", "error")
 
@@ -76,6 +80,9 @@ def refused(name: str, data: bytes | None = None, size: int | None = None) -> st
         why = magic_reason(data[:HEAD])
         if why is not None:
             return f"audio: it {why}"
+        why = next((what for magic, what in PICTURE_MAGIC.items() if data.startswith(magic)), None)
+        if why is not None:
+            return f"a picture: it starts with {why}"
     return None
 
 

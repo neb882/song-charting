@@ -45,17 +45,22 @@ songcharter chart song.mp3 --out "Songs/Artist - Title"
   its weights (1.26 GB) on first use, the installed app's included (`SONGCHARTER_OFFLINE=1` forbids it); without
   them the chart is made without lyrics, with a warning. The text goes
   into the chart and nowhere else: the reports count the words, they never hold them.
+- **Album art and a background:** the song file's own cover picture, when it has one, becomes the chart's album art
+  (`album.jpg`, cut to a 512x512 square). `--album-art FILE` gives another one, and `--background FILE` a picture for
+  behind the highway (`background.jpg`, scaled down to fit 1920x1080), which Clone Hero shows when Settings >
+  Gameplay > Use Song Backgrounds is on. JPEG, PNG or WebP, up to 20 MB; every picture is re-encoded, so no EXIF (a
+  photo's GPS position) is kept.
 - **The work files** (the decode, the stems, each engine's output) go to a per-user cache, `~/.cache/songcharter`:
   in v0.1, which runs in WSL, that is inside Ubuntu, whose disk grows on C:. (`%LOCALAPPDATA%\songcharter` is the
   cache of a native Windows run, which v0.1 does not ship.) The cache is pruned to 5 GB, and `--work DIR` puts the
   work files elsewhere.
 - **Model weights** are downloaded on first use and checked against pinned hashes.
 - **The page:** `songcharter ui` opens a local page in the browser: drop a song, keep or change the options (paste
-  the lyrics, if you want them on screen), watch each stage and cancel. Then look at the preview, install the song
+  the lyrics and choose the pictures, if you want them), watch each stage and cancel. Then look at the preview, install the song
   into Clone Hero's Songs folder or save it as a zip. `songcharter chart --events` writes the same progress as JSON
   lines for other programs.
 - **When something goes wrong:** `songcharter diagnostics --out FILE.zip` (or the page's Diagnostics link) makes
-  one file of logs and settings to send. It holds no audio, charts or lyrics.
+  one file of logs and settings to send. It holds no audio, charts, lyrics or pictures.
 
 ## What does not live here
 
