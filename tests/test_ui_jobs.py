@@ -173,6 +173,9 @@ def test_the_options_become_the_command_line(tmp_path, monkeypatch):
     ({"solos": ["Solo, 1"]}, "cannot hold a comma"),
     ({"solos": "stems", "instruments": ["drums"]}, "solos are guitar solos"),
     ({"title": 3}, "title is text"),
+    ({"album_art": 3}, "album_art is an uploaded image"),
+    ({"background": ["x.png"]}, "background is an uploaded image"),
+    ({"background": "  "}, "background is an image file's path or None"),
     ({"tempo": "auto"}, "unknown option(s): tempo"),
     ([], "options is an object"),
 ])
@@ -180,6 +183,34 @@ def test_bad_options_are_refused_with_the_checks_message(raw, message):
     with pytest.raises(InputError, match=None) as e:
         J.parse_options(raw)
     assert message in str(e.value), str(e.value)
+
+
+def test_the_pictures_become_their_flags(tmp_path, monkeypatch):
+    """The images' paths (the server's, for the page's upload ids) become --album-art and --background, as values
+    (one that starts with "-" stays a value), and reach pipeline.Options; the job's records say only whether each
+    was given."""
+    art, bg = tmp_path / "up" / "-cover.png", tmp_path / "up" / "bg one.jpg"
+    opts = J.parse_options({"album_art": str(art), "background": str(bg)})
+    assert (opts.album_art, opts.background) == (str(art), str(bg))
+    assert opts.as_dict()["album_art"] is True and opts.as_dict()["background"] is True
+    assert str(art) not in json.dumps(opts.as_dict())
+    out = tmp_path / "library" / "x" / "A - T"
+    cmd = J.chart_command(Path("/s/song.flac"), out, opts, None)
+    assert cmd[-2:] == [f"--album-art={art}", f"--background={bg}"]
+    import songcharter.pipeline as P
+    from songcharter.cli import main
+    seen = {}
+
+    def chart(song, o, options, events=None):
+        seen.update(options=options)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(P, "chart", chart)
+    assert main(cmd[3:]) == 130
+    assert (seen["options"].album_art, seen["options"].background) == (art, bg)
+    none = J.parse_options({"album_art": None})
+    assert none.album_art is None and none.as_dict()["album_art"] is False
+    assert not any(a.startswith(("--album-art", "--background")) for a in J.chart_command(Path("/s"), out, none, None))
 
 
 def test_threads_default_on_the_cpu_only():

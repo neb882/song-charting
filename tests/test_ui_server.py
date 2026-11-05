@@ -1305,3 +1305,200 @@ def test_a_blocked_replace_names_where_the_older_chart_is(finished, tmp_path, mo
     status, answer = post(ctx, "/api/jobs/current/install", {})   # "try again"
     assert status == 200 and Path(answer["replaced"]).parent.parent == ctx.home / "replaced"
     assert [p.name for p in songs.iterdir()] == [job.out.name] and "went to" in answer["note"]
+
+
+# ------------------------------------------------------------------------------------------------ the pictures (M4-11)
+
+def picture_bytes(fmt: str = "PNG", size=(64, 48)) -> bytes:
+    from PIL import Image
+    import io
+    out = io.BytesIO()
+    Image.new("RGB", size, (200, 30, 30)).save(out, fmt)
+    return out.getvalue()
+
+
+def upload_image(ctx, data: bytes, name: str) -> tuple[int, dict]:
+    status, _, body = call(ctx.port, "POST", "/api/upload/image", data,
+                           {**guarded(ctx.port), "X-Filename": urllib.parse.quote(name)})
+    return status, json.loads(body)
+
+
+def test_picture_uploads_and_the_jobs_pictures(served, monkeypatch):
+    """A picture goes up as the song does (the same guards, folder and records, kind "image"), is checked as the
+    chart checks it (refused with why, and nothing kept), and the job's album_art and background, image upload ids,
+    become those images' paths: a song's id, an unknown one or a path is refused, as is an image as the song."""
+    pytest.importorskip("PIL")
+    ctx, port = served, served.port
+    uploads = ctx.home / "uploads"
+    for name in ("cover.gif", "cover", "cover.png.exe", "song.mp3", ""):
+        status, body = upload_image(ctx, b"GIF89a", name)
+        assert status == 415 and "is not a picture songcharter takes (.jpg, .jpeg, .png, .webp)" in body["error"], name
+    for data, name in ((b"just some text", "cover.png"), (picture_bytes("GIF"), "c.jpg"),
+                       (picture_bytes("BMP"), "c.webp")):
+        status, body = upload_image(ctx, data, name)
+        assert status == 415 and body["error"] == f"the picture {name} is not a JPEG, PNG or WebP image", body
+    assert not list(uploads.iterdir())   # nothing kept, not even the folder
+    status, _, body = call(port, "POST", "/api/upload/image", picture_bytes(), {"X-Filename": "c.png"})
+    assert status == 403   # the guard, as for every POST
+    data = picture_bytes("PNG", (640, 400))
+    status, body = upload_image(ctx, data, "C:\\Pics\\Mý Cover.PNG")
+    key = hashlib.sha256(data).hexdigest()[:16]
+    assert status == 200 and body == {"id": key, "name": "Mý Cover.PNG", "bytes": len(data), "format": "PNG",
+                                      "width": 640, "height": 400}
+    folder = uploads / key
+    assert sorted(p.name for p in folder.iterdir()) == ["My Cover.png", "upload.json"]
+    record = json.loads((folder / "upload.json").read_text(encoding="utf-8"))
+    assert record["kind"] == "image" and record["file"] == "My Cover.png" and (record["width"], record["height"]) == (
+        640, 400)
+    assert S.read_upload(ctx.home, key, kind="image")["path"] == str(folder / "My Cover.png")
+    assert S.read_upload(ctx.home, key) is None   # not a song
+    status, bg = upload_image(ctx, picture_bytes("JPEG", (2400, 1350)), "bg.jpeg")
+    assert status == 200 and bg["format"] == "JPEG"
+    # a job: the pictures' ids become their paths; anything else is refused
+    ctx.mode = "ok"
+    status, up = upload(ctx, song(ctx.home / "s.wav"), "Song.wav")
+    assert status == 200 and S.read_upload(ctx.home, up["id"], kind="image") is None
+
+    def start(upload_id, options):
+        status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": upload_id, "options": options})
+                               .encode(), guarded(port))
+        return status, json.loads(body)
+
+    for options, why in (({"album_art": "0" * 16}, "no such album art: '0000000000000000'"),
+                         ({"background": up["id"]}, f"no such background image: '{up['id']}'"),
+                         ({"album_art": str(folder / "My Cover.png")}, "no such album art"),
+                         ({"background": 7}, "no such background image: 7")):
+        status, answer = start(up["id"], options)
+        assert status == 400 and answer["error"].startswith(why), answer
+    status, answer = start(key, {})
+    assert status == 400 and "no such upload" in answer["error"]   # a picture is not a song
+    assert ctx.app.jobs.current is None
+    status, answer = start(up["id"], {"album_art": key, "background": bg["id"], "background_x": 1})
+    assert status == 400 and "unknown option(s): background_x" in answer["error"]
+    status, answer = start(up["id"], {"album_art": key, "background": bg["id"], "device": "cpu"})
+    assert status == 202, answer
+    job = wait_state(ctx, "done")
+    assert job.options.album_art == str(folder / "My Cover.png")
+    assert job.options.background == S.read_upload(ctx.home, bg["id"], kind="image")["path"]
+    snap = json.loads(call(port, "GET", "/api/jobs/current")[2])
+    assert snap["options"]["album_art"] is True and snap["options"]["background"] is True
+    # too big: 413 before a byte is read
+    monkeypatch.setattr(S.ART, "MAX_BYTES", 10)
+    status, body = upload_image(ctx, b"x" * 11, "big.jpg")
+    assert status == 413 and "over the limit of 10 bytes" in body["error"]
+
+
+def test_the_results_show_the_album_art_by_its_exact_name_only(finished):
+    ctx = finished
+    assert get(ctx, "/api/jobs/current/art/album.jpg")[0] == 404   # no job yet
+    job = ctx.run()
+    res = json.loads(get(ctx, "/api/jobs/current/results")[2])
+    assert res["art"] == {"album_art": None, "album_from": None, "background": False}
+    assert get(ctx, "/api/jobs/current/art/album.jpg")[0] == 404   # none in the folder
+    jpeg = picture_bytes("JPEG", (512, 512))
+    (job.out / "album.jpg").write_bytes(jpeg)
+    (job.out / "background.jpg").write_bytes(picture_bytes("JPEG", (192, 108)))
+    pipeline = json.loads((ctx.work / "pipeline.json").read_text(encoding="utf-8"))
+    pipeline["art"] = {"album_art": {"added": True, "from": "embedded", "file": "album.jpg"},
+                       "background": {"added": True, "from": "given", "file": "background.jpg"}}
+    (ctx.work / "pipeline.json").write_text(json.dumps(pipeline), encoding="utf-8")
+    res = json.loads(get(ctx, "/api/jobs/current/results")[2])
+    assert res["art"] == {"album_art": "/api/jobs/current/art/album.jpg", "album_from": "embedded",
+                          "background": True}
+    status, headers, body = get(ctx, res["art"]["album_art"] + "?job=1")
+    assert status == 200 and headers["Content-Type"] == "image/jpeg" and secure(headers) and body == jpeg
+    for name in ("background.jpg", "album.png", "ALBUM.JPG", "album.jpg/", "../report.json", "..%2Freport.json",
+                 "%2e%2e%2fsong.ini", "", "album.jpg%00", "/etc/passwd", "report.json"):
+        assert get(ctx, "/api/jobs/current/art/" + name)[0] == 404, name
+
+
+PICTURES_PAGE = r"""
+const vm = require("vm"), fs = require("fs");
+const els = {};
+const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [], src: "",
+  replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); },
+  addEventListener() {}, classList: { add() {}, remove() {} } });
+const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node,
+  addEventListener() {} };
+const field = (value) => ({ value, checked: true });
+els.options = Object.assign(node("form"), { querySelectorAll: () => [], elements: { title: field(""),
+  artist: field(""), album: field(""), year: field(""), genre: field(""), solos: field("labels"), takes: field(""),
+  device: field("auto"), preview: field(""), lyrics: field("") } });
+let xhr = null;
+class XMLHttpRequest {
+  constructor() { this.on = {}; this.headers = {}; this.upload = { addEventListener() {} }; xhr = this; }
+  open(method, path) { this.path = path; } setRequestHeader(k, v) { this.headers[k] = v; } send(f) { this.sent = f; }
+  addEventListener(kind, f) { this.on[kind] = f; }
+}
+const ctx = { document, window: { addEventListener() {} }, XMLHttpRequest, encodeURIComponent, console,
+  fetch: async () => ({ status: 200, json: async () => ({}) }), setInterval() {}, clearInterval() {}, setTimeout() {} };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(process.argv[2], "utf8"), ctx);
+const images = () => vm.runInContext("JSON.stringify(state.images)", ctx);
+const out = {};
+ctx.renderArt({ album_art: "/api/jobs/current/art/album.jpg", album_from: "embedded", background: true },
+              "Made-Up Band - Song", "job 1");
+out.shown = { art: els.art.hidden, src: els["album-art"].src, name: els["art-name"].textContent,
+              from: els["art-from"].textContent, bg: els["background-line"].hidden };
+ctx.renderArt({ album_art: "/api/jobs/current/art/album.jpg", album_from: "given", background: false }, "x", "j2");
+out.given = { from: els["art-from"].textContent, bg: els["background-line"].hidden };
+ctx.renderArt({ album_art: null, album_from: null, background: false }, "x", "j3");
+out.none = { art: els.art.hidden, bg: els["background-line"].hidden };
+ctx.renderArt(null, "x", "j4");
+out.nothing = { art: els.art.hidden, bg: els["background-line"].hidden };
+ctx.uploadPicture("background", { name: "Bg pic.png" });
+out.sending = { path: xhr.path, name: xhr.headers["X-Filename"], guard: xhr.headers["X-Songcharter"],
+                chart: els.chart.disabled, line: els["background-name"].textContent };
+xhr.status = 200;
+xhr.responseText = JSON.stringify({ id: "0123456789abcdef", name: "Bg pic.png", width: 2400, height: 1350 });
+xhr.on.load();
+out.sent = { chart: els.chart.disabled, line: els["background-name"].textContent,
+             remove: els["background-remove"].hidden, images: images(), options: ctx.readOptions() };
+ctx.uploadPicture("album_art", { name: "x.gif" });
+xhr.status = 415;
+xhr.responseText = JSON.stringify({ error: "the picture x.gif is not a JPEG, PNG or WebP image" });
+xhr.on.load();
+out.refused = { error: els["album_art-error"].textContent, hidden: els["album_art-error"].hidden,
+                line: els["album_art-name"].textContent, images: images(), chart: els.chart.disabled };
+ctx.clearPicture("background");
+out.cleared = { line: els["background-name"].textContent, remove: els["background-remove"].hidden,
+                images: images(), options: ctx.readOptions() };
+console.log(JSON.stringify(out));
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_page_uploads_the_pictures_and_shows_the_album_art(tmp_path):
+    """The page (app.js in node with a stand-in DOM): a picture chosen goes to /api/upload/image with the guard's
+    header, "Chart it" waits for it, and its upload id goes into the options; a refused one shows why and sets
+    nothing; Remove takes it out. The Done screen shows the album art beside the song's name (this chart's, by its
+    job), where it came from, and a line for a background; nothing when there is no album art."""
+    files = S.static_files()
+    script = tmp_path / "pictures.cjs"
+    script.write_text(PICTURES_PAGE, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(files["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["shown"] == {"art": False, "src": "/api/jobs/current/art/album.jpg?job=job%201",
+                            "name": "Made-Up Band - Song", "from": "Album art: the song file's own picture", "bg": False}
+    assert out["given"] == {"from": "Album art: your picture", "bg": True}
+    assert out["none"] == {"art": True, "bg": True} and out["nothing"] == {"art": True, "bg": True}
+    assert out["sending"] == {"path": "/api/upload/image", "name": "Bg%20pic.png", "guard": "1", "chart": True,
+                              "line": "Uploading Bg pic.png…"}
+    assert out["sent"]["chart"] is False and out["sent"]["line"] == "Bg pic.png (2400×1350)"
+    assert out["sent"]["remove"] is False and json.loads(out["sent"]["images"]) == {"album_art": None,
+                                                                                  "background": "0123456789abcdef"}
+    assert out["sent"]["options"]["background"] == "0123456789abcdef" and "album_art" not in out["sent"]["options"]
+    assert out["refused"] == {"error": "the picture x.gif is not a JPEG, PNG or WebP image", "hidden": False,
+                              "line": "None chosen: the song file's own picture, if it has one",
+                              "images": out["sent"]["images"], "chart": False}
+    assert out["cleared"]["line"] == "None chosen" and out["cleared"]["remove"] is True
+    assert json.loads(out["cleared"]["images"]) == {"album_art": None, "background": None}
+    assert "background" not in out["cleared"]["options"]
+    html = files["index.html"].decode()
+    for key in ("album_art", "background"):
+        assert f'<input id="{key}-file" type="file" accept=".jpg,.jpeg,.png,.webp" hidden>' in html
+    assert '<img id="album-art" class="album-art" alt="The album art">' in html
+    assert html.index('id="art"') < html.index('id="lyrics-line"') < html.index('id="preview"')
