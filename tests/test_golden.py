@@ -624,3 +624,8 @@ def test_bad_input_exits_2_and_a_bug_exits_3(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(G, "_cmd_run", boom)
     assert G.main(["run", "--out", str(tmp_path / "o2")]) == 3
     assert "internal error" in capsys.readouterr().err
+
+
+def test_the_stress_sets_kept_folders_default_apart_from_the_golden_sets(tmp_path):
+    assert G.default_work(tmp_path / "data" / "stress") == "stress-work"
+    assert G.default_work(tmp_path / "data" / "refs") == "work"
