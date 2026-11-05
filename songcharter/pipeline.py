@@ -40,6 +40,9 @@
     title. The album's placeholder is "<the song's name> - (Single)" (Encore's rule for a single), "Unknown" the
     artist's, genre's and year's. scan-chart's own defaults ("Unknown Artist", ...) count as missing, so they are
     not used.
+  * **A song too short or silent** (under MIN_SONG_S, or its peak under MIN_PEAK_DBFS) is refused right after the
+    decode, before the separation, with an InputError that says which (`check_song`): the engines have nothing to
+    work on there, and the librosa sections fallback raised on such songs.
   * **Before any audio work** the inputs are checked (the file exists, the output folder holds nothing a build does
     not write) and so is every component the instruments need: a missing one fails with what to install or set,
     never a traceback. Where DESIGN.md has a fallback the stage takes it and says so: sections fall back to
@@ -140,6 +143,8 @@ DEFAULTS = {"artist": "Unknown", "album": "{name} - (Single)", "genre": "Unknown
 NAME_SEPARATOR = re.compile(r"(?<= )[-\u2013\u2014](?= )")
 TRACK_NUMBER = re.compile(r"[0-9]{1,3}")               # before a separator: "01 - Artist - Title"
 TRACK_PREFIX = re.compile(r"^[0-9]{1,3}(?:\. ?| )")   # or before the artist: "01. Artist", "1.Artist", "01 Artist"
+MIN_SONG_S = 10.0        # a song shorter than this is refused after the decode (check_song)
+MIN_PEAK_DBFS = -60.0    # and so is one whose peak is under this: silence
 # the tags each song.ini value is read from, first found wins (ffmpeg's names, lower-cased)
 TAGS = {"name": ("title",), "artist": ("artist", "album_artist", "albumartist"), "album": ("album",),
         "genre": ("genre",), "year": ("date", "year", "originaldate"), "album_track": ("track", "tracknumber")}
@@ -609,6 +614,19 @@ def _expert_onsets(path: Path, instrument: str) -> int:
     return len({n.time for n in part.notes}) if part else 0
 
 
+def check_song(name: str, mix: np.ndarray) -> None:
+    """An InputError for a decode too short to chart (under MIN_SONG_S) or silent (its peak under MIN_PEAK_DBFS),
+    naming the file (`name`) and which it is."""
+    seconds = mix.shape[-1] / SAMPLE_RATE
+    if seconds < MIN_SONG_S:
+        raise InputError(f"{name} is {seconds:.2f} s long: songcharter charts songs of {MIN_SONG_S:g} s or more")
+    peak = float(np.max(np.abs(mix))) if mix.size else 0.0
+    if peak < 10 ** (MIN_PEAK_DBFS / 20):
+        level = "every sample is 0" if peak == 0 else (f"its peak is {20 * np.log10(peak):.1f} dBFS, under "
+                                                      f"{MIN_PEAK_DBFS:g} dBFS")
+        raise InputError(f"{name} is silent ({level}): there is nothing to chart")
+
+
 def _decode(audio: Path, work: Path) -> tuple[np.ndarray, Path, bool]:
     """The decode, and work/decode.wav holding it (rewritten only when the samples differ from the last run's)."""
     mix = A.decode(audio, SAMPLE_RATE)
@@ -846,6 +864,7 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
     mix, wav, same = _decode(audio, work)
     end("decode", t0, same, f"{mix.shape[1] / SAMPLE_RATE:.2f} s of audio in {wav.name}",
         {"samples": int(mix.shape[1])})
+    check_song(audio.name, mix)   # before the separation: a song too short or silent stops here
 
     device, why, cuda_error = engines.device(options.device)
     record["device"] = {"asked": options.device, "chosen": device, "reason": why}
