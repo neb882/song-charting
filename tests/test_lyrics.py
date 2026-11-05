@@ -584,7 +584,7 @@ def test_lyrics_with_nothing_to_spell_are_left_out_with_why(song, tmp_path, monk
 
 
 def test_the_confidence_warns_on_the_share_of_weak_words():
-    """The warning reads the share of weak words (DESIGN.md 2.15): over UNSURE_SHARE is unsure, whatever the median.
+    """The warning reads the share of weak words (DESIGN.md 2.15): over UNSURE_SHARE is unsure, at any median.
     One weak word in nine (0.111) is warned about, one in ten (0.100) is not, though their median of 0.06 is far
     under the 0.25 the median rule warned at; a weak word in three is, though the median is 0.9; no scored word is."""
     words = "zorp blen dak quiv fim wob dree smee plin tako"
