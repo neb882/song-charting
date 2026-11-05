@@ -20,8 +20,12 @@ It follows DESIGN.md §2.6 with the critique's corrections (CRITIQUE.json):
      above 125).
   3. **5-fret clean-up.** Notes that land on one tick merge (the union of their frets), then the difficulty's chord
      limits apply (`limit_chord`). Onsets at least 3/4 of a slot apart are not merged: one moves to its free
-     neighbouring slot instead (`_separate`), so two 16ths never become a chord. An onset closer to the previous one
-     than the minimum spacing (strums 80 ms, HOPOs and taps 55 ms) is dropped, so brokenNote (15 ms) cannot fire.
+     neighbouring slot instead (`_separate`). Onsets left on one tick that lie more than MERGE_MAX_S (20 ms) apart in
+     the source are not a chord either: the onset nearest the tick stays and the others are dropped
+     (`QuantizeReport.dropped_distinct`), since a chord is notes that sound together (a strummed chord's notes come
+     at one time from every source; a flam is under 20 ms) and dropping a note is better than a chord of a run. An
+     onset closer to the previous one than the minimum spacing (20 ms, strums, HOPOs and taps alike: brokenNote's 15
+     ms and a margin) is dropped, so brokenNote cannot fire; on 1/16 slots the floor never binds up to 750 BPM.
   4. **Sustains.** The end snaps to the grid and stops max(85 ms, a 1/16) before the next note on Expert and Hard (a
      1/8 on Medium, a 1/4 on Easy). A sustain shorter than max(200 ms, 0.75 beat) on Expert and Hard (1 beat on
      Medium, 2 on Easy) is dropped. So badSustainGap (40 ms) and babySustain (100 ms) cannot fire either.
@@ -88,8 +92,9 @@ SUSTAIN_GAP_BEATS = {"expert": 0.25, "hard": 0.25, "medium": 0.5, "easy": 1.0}  
 SLOT_PRIOR = {1: 0.41, 2: 0.33, 4: 0.17, 3: 0.053, 8: 0.020, 6: 0.011}
 
 HOPO_THRESHOLD = 65 / 192  # of a beat: a .chart natural HOPO is at most floor(65/192 x resolution) ticks after
-STRUM_SPACING_S = 0.080    # minimum onset spacing before a strummed note (DESIGN.md §2.6) ...
-HOPO_SPACING_S = 0.055     # ... and before a HOPO or a tap
+STRUM_SPACING_S = 0.020    # minimum onset spacing before a strummed note (DESIGN.md §2.6: brokenNote's 15 ms and a
+HOPO_SPACING_S = 0.020     # margin) and before a HOPO or a tap; human charts reach 17 notes a second (59 ms)
+MERGE_MAX_S = 0.020        # source onsets on one tick further apart than this are no chord (_frets: the farther go)
 MAX_HANDS = 2              # drum pads other than the kick on one tick
 TOM_MOVES = {2: (3, 4), 3: (2, 4), 4: (2, 3)}  # where a tom that collides with a cymbal goes, in order of preference
 
@@ -130,7 +135,8 @@ RULES = QuantizeRules()
 
 @dataclass
 class QuantizeReport:
-    """What quantizing did to one part, counted in source notes: notes_in = notes_out + merged + dropped."""
+    """What quantizing did to one part, counted in source notes: notes_in = notes_out + merged + dropped +
+    dropped_distinct."""
     instrument: str
     difficulty: str
     measured_offset: float = 0.0  # estimate_offset on this part, seconds (positive: the source is late)
@@ -142,6 +148,8 @@ class QuantizeReport:
     separated: int = 0            # moved to a neighbouring slot, off a tick a clearly earlier or later note holds
     dropped: int = 0              # left out: before tick 0, under the minimum spacing, a 2x kick below Expert,
                                   # a third hand pad, a tom with no free pad
+    dropped_distinct: int = 0     # left out of a tick an onset nearer it holds, more than MERGE_MAX_S apart in the
+                                  # source (no chord of notes distinct in time; 5-fret parts only)
     limited: int = 0              # changed by the difficulty's limits (chord shape, a tom moved off a cymbal)
     triplet_notes: int = 0        # written on a triplet slot that is not a 1/16 line
     odd_32nds: int = 0            # on an odd 1/32 of a source on a 1/32 grid (odd_32nds): near the midpoint
@@ -558,12 +566,33 @@ class _Onset:
     src: list[int]
 
 
+def _one_time(notes: list[TimedNote], idx: list[int], at: float) -> list[int]:
+    """The source onsets of one tick that make one note (idx in time order; `at` the tick in source seconds): the
+    onset nearest the tick (the earlier on a tie), and with it every other within MERGE_MAX_S of all those kept,
+    taken nearest it first. The rest are distinct in time from it and are dropped rather than made a chord with it
+    (DESIGN.md §2.6 step 3): nearest the tick, not earliest, so an on-tick note stays where a stray early one was."""
+    anchor = min(idx, key=lambda i: (abs(notes[i].time - at), i))
+    t0 = notes[anchor].time
+    lo = hi = t0
+    keep = {anchor}
+    for i in sorted(idx, key=lambda i: (abs(notes[i].time - t0), i)):
+        t = notes[i].time
+        if max(hi, t) - min(lo, t) <= MERGE_MAX_S + 1e-9:
+            keep.add(i)
+            lo, hi = min(lo, t), max(hi, t)
+    return [i for i in idx if i in keep]
+
+
 def _frets(notes: list[TimedNote], groups: dict[int, list[int]], grid: SnapGrid, tm: TempoMap, shift: float,
            difficulty: str, rules: QuantizeRules, rep: QuantizeReport) -> tuple[list[FretNote], list]:
     res = tm.resolution
     threshold = math.floor(HOPO_THRESHOLD * res)
     kept: list[_Onset] = []
     for k, idx in groups.items():
+        if len(idx) > 1:
+            kept_idx = _one_time(notes, idx, tm.tick_to_sec(k) - shift)
+            rep.dropped_distinct += len(idx) - len(kept_idx)
+            idx = kept_idx
         first = notes[idx[0]]
         union = tuple(sorted({f for i in idx for f in notes[i].frets}))
         frets = limit_chord(union, difficulty)
@@ -573,7 +602,7 @@ def _frets(notes: list[TimedNote], groups: dict[int, list[int]], grid: SnapGrid,
             prev = kept[-1]
             natural = _natural(prev.frets, k - prev.tick, frets, threshold)
             hopo = tap or (natural if want is None else want)
-            if tm.tick_to_sec(k) - tm.tick_to_sec(prev.tick) < (HOPO_SPACING_S if hopo else STRUM_SPACING_S):
+            if tm.tick_to_sec(k) - tm.tick_to_sec(prev.tick) < (HOPO_SPACING_S if hopo else STRUM_SPACING_S) - 1e-9:
                 rep.dropped += len(idx)
                 continue
         rep.merged += len(idx) - 1

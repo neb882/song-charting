@@ -3,9 +3,11 @@ import numpy as np
 import pytest
 
 import songcharter.beatgrid as B
-from songcharter.beatgrid import (BPM_RANGE, BeatGrid, OnsetFeatures, beat_grid, estimate_tempo, local_beats,
-                                  local_periods, loess, mel_filterbank, onset_features, onset_phase, onset_times,
-                                  robust_line, track_beats)
+from songcharter.beatgrid import (BPM_RANGE, HALF_BEAT_SHIFT, BeatGrid, OnsetFeatures, bar_phase, beat_grid,
+                                  estimate_tempo, half_beat_phase,
+                                  local_beats, local_periods, loess, mel_filterbank, missed_tempo_changes,
+                                  onset_features, onset_phase, onset_times, robust_line, shift_half_beat,
+                                  track_beats, window_tempi)
 from songcharter.errors import InputError
 from songcharter.tempo import TempoMap, plan_lead_in
 
@@ -381,3 +383,138 @@ def test_features_reject_nothing_and_accept_stereo(steady):
     assert isinstance(f, OnsetFeatures)
     assert f.fps == pytest.approx(SR / 128) and f.duration == pytest.approx(60.0, abs=0.01)
     assert np.allclose(f.env, onset_features(y, SR).env)
+
+
+# ------------------------------------------------------------------------------------------------ the fold range
+
+FAST = 60 / 198  # a 198 BPM beat
+DOUBLED = (2 * BPM_RANGE[0], 2 * BPM_RANGE[1])  # assemble's second pass: (170, 370)
+
+
+@pytest.fixture(scope="module")
+def fast():
+    """198 BPM: kick, snare and hat on every other beat, a soft hat (a tenth as loud) on the beats between, so a
+    window's autocorrelation clearly prefers 99 BPM inside the default range (margin 0.58 there)."""
+    truth = 0.4 + np.arange(int(58 / FAST)) * FAST
+    y = drums(truth[::2], 60.0) + 0.1 * drums(truth[1::2], 60.0, kick_phase=9, snare_phase=9, seed=1)
+    return truth, y, onset_features(y, SR)
+
+
+def test_bpm_range_reaches_every_fold(fast):
+    """A hinted 198 BPM is not pulled back to 99 by the tracker's windows when the range is the doubled one; with the
+    default range the windows fold it to 99 and the tracker's 99 BPM beats win (the fold assemble's second pass
+    avoids). Without a hint, the start line's autocorrelation tempo folds into the range given."""
+    truth, y, f = fast
+    g = beat_grid(y, SR, bpm=198.0, bpm_range=DOUBLED, features=f)
+    assert g.bpm == pytest.approx(198.0, abs=0.1) and g.stats["start"]["grid"] == "line"
+    assert g.stats["start"]["tracker_tempo_changes"] == [] and g.stats["tempo_check"] == []
+    assert spread_ms(g.beats, truth)[1] < 2.0  # on every beat of the 198, not every other one
+    folded = beat_grid(y, SR, bpm=198.0, features=f)  # the hint with the default range
+    assert folded.bpm == pytest.approx(99.0, abs=0.1) and folded.stats["start"]["grid"] == "tracker"
+    kept = beat_grid(y, SR, bpm=198.0, features=f, keep_line=True)  # keep_line: the tracker never replaces the line
+    assert kept.bpm == pytest.approx(198.0, abs=0.1) and kept.stats["start"]["grid"] == "line"
+    assert kept.stats["start"]["tracker_confident_share"] == folded.stats["start"]["tracker_confident_share"]
+    assert len(folded.stats["start"]["tracker_tempo_changes"]) == 9  # every window at 99
+    assert beat_grid(y, SR, features=f).bpm == pytest.approx(99.0, abs=0.1)  # the defaults: 99
+    assert beat_grid(y, SR, bpm_range=DOUBLED, features=f).bpm == pytest.approx(198.0, abs=0.1)  # no hint
+    assert estimate_tempo(f.env, f.fps, DOUBLED) == pytest.approx(198.0, abs=0.3)
+    assert estimate_tempo(f.env, f.fps) == pytest.approx(99.0, abs=0.3)
+    # each fold on its own: the windows, the local periods and the tempo check
+    assert {round(b) for _, _, b, _ in window_tempi(f.env, f.fps, lambda s, e: FAST, bpm_range=DOUBLED)} == {198}
+    assert {round(b) for _, _, b, m in window_tempi(f.env, f.fps, lambda s, e: FAST) if m > 0.5} == {99}
+    assert local_periods(f.env, f.fps, FAST, DOUBLED) == (FAST, [])
+    assert len(local_periods(f.env, f.fps, FAST)[1]) == 9
+    onset_beats = g.beats - g.stats["onset_to_beat_ms"] / 1000
+    assert missed_tempo_changes(f, onset_beats, DOUBLED) == []
+    assert all(round(bpm) == 99 for _, _, bpm, _ in missed_tempo_changes(f, onset_beats))
+    assert len(missed_tempo_changes(f, onset_beats)) == 9
+    with pytest.raises(ValueError, match="bpm_range"):
+        beat_grid(y, SR, features=f, bpm_range=(185.0, 85.0))
+
+
+def test_the_windows_estimate_inside_the_range():
+    """Pulses at 120 and 180 BPM at once: the best tempo in [85, 185) is 120, in [170, 370) 180, which no octave of
+    120 reaches. So a window folded into (170, 370) reads 180 against a 180 reference, not 240."""
+    fps = SR / 128
+    env = np.zeros(int(60 * fps))
+    env[np.round(np.arange(1, 59, 60 / 120) * fps).astype(int)] += 1.0
+    env[np.round(np.arange(1, 59, 60 / 180) * fps).astype(int)] += 0.7
+    assert estimate_tempo(env, fps) == pytest.approx(120.0, abs=0.3)
+    assert estimate_tempo(env, fps, DOUBLED) == pytest.approx(180.0, abs=0.3)
+    assert {round(b) for _, _, b, _ in window_tempi(env, fps, lambda s, e: 60 / 180, bpm_range=DOUBLED)} == {180}
+
+
+def test_the_default_range_changes_nothing(steady):
+    """The default range is BPM_RANGE, and every result of the default path is the same as passing it."""
+    _, y = steady
+    f = onset_features(y, SR)
+    a, b = beat_grid(y, SR, features=f), beat_grid(y, SR, features=f, bpm_range=BPM_RANGE)
+    assert np.array_equal(a.beats, b.beats) and np.array_equal(a.downbeats, b.downbeats) and a.stats == b.stats
+    assert a.bpm == pytest.approx(120.0, abs=0.05) and BPM_RANGE == (85.0, 185.0)
+
+
+def skank(seed=0):
+    """198 BPM: a kick on every beat, a loud snare on every "and" (a fast power-metal beat). The snares are the
+    loudest 8ths, so a grid at 198 BPM puts its lines on them."""
+    rng = np.random.default_rng(seed)
+    truth = 0.4 + np.arange(int(58 / FAST)) * FAST
+    y = np.zeros(int(60.0 * SR))
+    t = np.arange(int(0.12 * SR)) / SR
+    kick = np.sin(2 * np.pi * 55 * t) * np.exp(-t / 0.05)
+    snare = (0.5 * np.sin(2 * np.pi * 190 * t) + 0.8 * rng.standard_normal(len(t))) * np.exp(-t / 0.04)
+    for b in truth:
+        for at, hit in ((b, kick), (b + FAST / 2, snare)):
+            i = int(round(at * SR))
+            y[i:i + len(t)] += hit
+    y += rng.standard_normal(len(y)) * 1e-3
+    return truth, (0.4 * y).astype(np.float32)
+
+
+def test_the_half_beat_test_puts_the_lines_on_the_kick(steady):
+    """On the fast beat the grid's lines fall on the snares; half_beat moves them half a beat later, onto the
+    kicks, and says so. On a rock beat (kick and snare on the beats, hats between) nothing moves."""
+    truth, y = skank()
+    f = onset_features(y, SR)
+    plain = beat_grid(y, SR, bpm=198.0, bpm_range=DOUBLED, features=f)
+    moved = beat_grid(y, SR, bpm=198.0, bpm_range=DOUBLED, features=f, half_beat=True)
+    assert abs(spread_ms(plain.beats, truth)[0]) > 100  # on the "and"s
+    assert abs(spread_ms(moved.beats, truth)[0]) < 30 and spread_ms(moved.beats, truth)[1] < 5
+    hb = moved.stats["half_beat"]
+    assert hb["shifted"] and hb["ratio"] > HALF_BEAT_SHIFT and not hb["unsure"] and "half_beat" not in plain.stats
+    assert moved.bpm == pytest.approx(198.0, abs=0.1) and len(moved.downbeats)
+    # the downbeats are found on the moved beats with their own evidence, not the mask of the beats before the move
+    onset = moved.beats - moved.stats["onset_to_beat_ms"] / 1000  # (nothing trimmed here)
+    fresh = local_beats(f, onset).confident
+    assert hb["confident_after"] == round(float(fresh.mean()), 4) != moved.stats["evidence"]["confident_share"]
+    phase = bar_phase(f, onset, fresh)[0]
+    assert moved.stats["downbeats"]["phase"] == phase and np.array_equal(moved.downbeats,
+                                                                         np.arange(phase, len(moved.beats), 4))
+    _, rock = steady
+    g = beat_grid(rock, SR, half_beat=True)
+    assert not g.stats["half_beat"]["shifted"] and np.array_equal(g.beats, beat_grid(rock, SR).beats)
+    # the test itself, and the shift's geometry
+    beats = np.arange(1.0, 20.0, 0.5)
+    k = np.zeros(4000)
+    k[np.round((beats[:-1] + 0.25) * 100).astype(int)] = 1.0
+    feats = OnsetFeatures(100.0, np.zeros(4000), np.zeros(4000), k, np.zeros(4000))
+    assert half_beat_phase(feats, beats, np.ones(len(beats), bool))[0]
+    assert not half_beat_phase(OnsetFeatures(100.0, *(np.zeros(4000),) * 2, np.roll(k, -25), np.zeros(4000)),
+                               beats, np.ones(len(beats), bool))[0]
+    assert np.allclose(shift_half_beat(np.array([0.1, 0.6, 1.1]), 1.3), [0.35, 0.85])
+    assert np.allclose(shift_half_beat(np.array([0.3, 0.8, 1.3]), 2.0), [0.05, 0.55, 1.05, 1.55])
+
+
+@pytest.mark.parametrize("mids, shifted, unsure", [(0.5, False, False), (0.98, False, True), (1.02, False, True),
+                                                   (1.3, True, False)])
+def test_the_half_beat_test_needs_a_margin(mids, shifted, unsure):
+    """The beats move only when the midpoints carry more than HALF_BEAT_SHIFT (1.25) times the lines' kick: a double
+    kick on every 8th (about even, 0.98x or 1.02x) moves nothing and is flagged unsure; 1.3x moves."""
+    beats = np.arange(1.0, 20.0, 0.5)
+    k = np.zeros(4000)
+    k[np.round(beats * 100).astype(int)] = 1.0
+    k[np.round((beats[:-1] + 0.25) * 100).astype(int)] = mids
+    feats = OnsetFeatures(100.0, np.zeros(4000), np.zeros(4000), k, np.zeros(4000))
+    shift, stats = half_beat_phase(feats, beats, np.ones(len(beats), bool))
+    assert (shift, stats["shifted"], stats["unsure"]) == (shifted, shifted, unsure)
+    assert stats["ratio"] == pytest.approx(mids)
+
