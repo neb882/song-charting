@@ -925,6 +925,73 @@ is unmeasured) instead of a dead end.
   are recorded. A retry killed for memory fails the chart with `stopped`'s advice, no worse than v0.1; if swap passes
   4 GB during the retry, the default goes to `cpu_retry` off for WSL [decision at the gate, the owner's].
 
+#### A take cut short by the engine's budget: continued and stitched (M5-02)
+autochart's decoder has a budget a job: 8,192 tokens and 1,280 beats (the models' manifest's `maxTokens` and
+`maxBeats`; the engine stops at either). v0.1 neither split a long song nor said that the guitar ended early: the
+owner's 9-minute shred instrumental (4 CUDA takes) stopped at 498.6 s of 544.8 s on the beat cap (beat 1,280 of its
+grid falls at 498.65 s; M5-02's skeptic), and the dev
+machine's 1 CPU take of it at about 532 s of 549 s on the beat cap (6,543 tokens, 1,280 beats) [here, M5-09's
+baseline], while the human charts run to about 9:06. The conventions (charting-conventions.md 2a) make that a lost
+ending any player sees.
+- **When** (`autochart.cut_short`) [code]: the driver's summary of the whole-song run says `runs[0].nTokens` reached
+  its `maxTokens` (or the models' manifest's, when lower) or `nBeats` reached the beat cap. Every take under both
+  takes v0.1's path and is byte-identical (the golden check below).
+- **Where it cuts** (`autochart.continue_take`): with T the last note of the run's chart, a piece of the decode from
+  B − 8 s (B = floor(T) − 1 s; the 8 s give the engine's beat tracker and decoder some context) to the end, written
+  as `seed_<seed>/piece_<k>/input.wav` with the same samples, is one more engine job with the same seed and settings,
+  through the same driver call, timeout and errors as a take (its own job in the shared work folder; the engine
+  separates and times the piece itself). A piece cut short again is continued the same way, up to 6 pieces; one
+  whose last note advances the take's by under 20 s ends the loop and is still stitched. A take with no note (T = 0)
+  stays as it is.
+- **The driver's watchdog** [code; M5-02's review F1, confirmed by a skeptic with the real driver and engine]: a job
+  that uses the engine's whole token budget ends at budget + 1 tokens (Fretformer 2's 9-token prefix, sampled only
+  after it), and `ac_headless.cjs` kills a job whose count passes `AC_MAX_TOKENS`, by default 8,192, the budget
+  itself. So in v0.1 every take that reached the token budget failed (the driver's "token cap 8192 exceeded (8193)"),
+  and none was ever cut short by tokens: the owner's and the dev machine's cut takes were beat-capped.
+  `autochart.generate` sets `AC_MAX_TOKENS` to the budget + 16; the engine bounds its own loop, and the env is in
+  neither the take's key nor the install key, so no take is made again for it.
+- **How it stitches** (`engines/stitch.py`, pure functions): the whole-song run's chart is the base, its tempo map
+  the take's (the engine's timing ran on the whole song; only its decoder stopped). Its notes before B stay as the
+  engine wrote them, a sustain over B ending 60 ms before it; each piece's notes from its B to the next piece's are
+  read in seconds (importers.read_song), moved by the piece's start and put on the base's ticks (rounded), sustains
+  too, taps kept, and a flip written wherever the piece's HOPO or strum differs from the natural state on the
+  base's map (as the quantizer keeps a source's intent). A note at B is the piece's alone. The pieces' star power
+  and solos are dropped (assemble drops every engine's). The engine's own output moves to `seed_<seed>/cut_short/`,
+  and `autochart_run/summary.json` is the whole-song run's plus a `stitch` record (the reason, each piece's start,
+  B, last note, tokens, beats, seconds and devices, the take's last note, how the loop ended). The take's key is
+  unchanged, so the stitched take is reused like any other; a take v0.1 cut short, which has no `stitch` record, is
+  run again whole once and continued. A piece whose transcriber ran on another device counts as that device for the
+  take, and a piece that fails is a failed take (M5-05's retry included: a GPU failure in a piece takes the chart's
+  one CPU retry).
+- **What the user sees:** a warning on the Done screen, "guitar take seed N: the engine's budget ran out at m:ss of
+  M:SS (R); the rest was transcribed in K more piece(s), to m:ss", a log line per piece, and `pipeline.json`'s
+  `takes` with each take's `cut_short`, `pieces` and `last_note_s`. When the loop stopped on the 20-s rule or the
+  sixth piece and the take's last note is 10 s or more before the guitar stem stops playing (its last 0.1-s frame
+  within 15 dB of its P95, preview's measure), a second warning says where the guitar ends.
+- **Cost and result on the shred instrumental** (1 CPU take, the dev machine, M5-09's stress set) [here]: the
+  whole-song run stopped on the beat cap at its last note, 532.3 s; one piece of 26.3 s of audio (from 523 s, kept
+  from 531 s) decoded 246 tokens over 70 beats in 19–25 s, was not cut short, and took the guitar to 548.9 s (the
+  built chart's last guitar onset 546.0 s, where the primary human chart's span ends). Against M5-09's baseline:
+  guitar Expert F1@50 / F1@100 0.651 / 0.789 → 0.658 / 0.795 against the primary chart and 0.765 / 0.790 → 0.770 /
+  0.795 against the other; the last 30-s window 0.652 → 0.786 and 0.656 → 0.783, every other window unchanged; the
+  human onsets after the old cut found at ±100 ms, 0 of 31 → 28 of 31 and 0 of 22 → 17 of 22. At the seam, 10
+  onsets in B ± 1 s in the stitched take, 10 in the whole-song run and 10 in the piece, none doubled or lost. The
+  power-metal song (5,805 tokens, 1,029 beats), the rock song and the seven reference songs (at most 3,906 tokens,
+  Lucretia, and 933 beats, the test song) are under both caps: one run each, charts identical. For comparison, the
+  owner's 4 CUDA takes before this change: 0.636 / 0.743 and 0.725 / 0.748 [the owner's PC, 2026-11-05].
+- **The token path on the same song** [here, an install whose models' manifest halves the budget to 4,096 tokens,
+  for this test only; the driver's default watchdog, 8,192, was then above the budget, which is why this run did not
+  meet the watchdog above]: the whole-song run stopped at 4,097 tokens at 349.5 s, its notes before B identical to the
+  8,192-token run's; one piece of 209 s (from 340 s) decoded 2,831 tokens over 505 beats in 274 s and took the guitar
+  to 548.9 s. F1@50 / F1@100 0.668 / 0.804 and 0.786 / 0.806, recall@100 after its cut 0.841 and 0.801 (the
+  uncut baseline's there: 0.783 and 0.738). The seam's 30-s window lost 0.024 and 0.020 of F1@100 against the
+  baseline: the piece's own decode of 340–366 s has 8 more onsets and 1 fewer match there, and in B ± 1 s it has 1
+  onset where the continuous decode had 3 (none doubled, none that both runs have lost). A piece is a fresh decode
+  of its stretch, as another seed's would be.
+- **Not built:** windows split at section boundaries before the decode (route B2's plan in "Engine A (B2) method"
+  below); B1 cannot set the engine's budget, so a piece is the whole tail. A piece re-transcribes its 8-s context
+  and drops it, and the seam may still split a phrase the two runs heard differently.
+
 #### Under-charted strumming: a detector, no fill
 The friend found a sparse stretch in the test song around 2:32–2:35 of the original song (his clarification; an
 earlier message gave 2:27–2:29 and was withdrawn). The research tried
@@ -1043,7 +1110,7 @@ to detect, from the guitar's pick noise, where our chart is too sparse, and to f
   - Decoding ran at 12.3–40.7 tokens/s on CUDA against 10.1–35.2 on the dev container's CPU [here, 5070; here].
   - The critique's decoder benchmark gives about 8.6 + 0.0079·L ms per step (L = context length) on 3 threads, i.e. 107–204 s per take for the test song [here].
   - Three takes of autochart's engine cost about 9.5–11.4 min [here, 5070].
-- **Caps:** 1,280 beats and 8,192 tokens [doc, manifest]. Dense songs hit the token cap first: Lucretia used 9.0 tokens/beat, so about 910 beats. The test song used 3,531 tokens over 933 beats [here, 5070].
+- **Caps:** 1,280 beats and 8,192 tokens [doc, manifest]. Dense songs hit the token cap first: Lucretia used 9.0 tokens/beat, so about 910 beats. The test song used 3,531 tokens over 933 beats [here, 5070]. A take that reaches either is continued in pieces ("A take cut short by the engine's budget", above; M5-02).
 - **Faults to scaffold** [here, 5070]: no star-power token; `badSustainGap`; lower tiers not nested.
 - **Seed variance:** chord share 15–90 % across seeds [here, v1]; 239 vs 166 Expert onsets in 120–180 s between two takes [here].
 
@@ -2496,7 +2563,7 @@ Omit `delay`, `song_length`, `hopo_frequency`, `eighthnote_hopo` and `sustain_cu
 | Compound meters and shuffles (G2) | Only octave moves, x/4 only (`TempoMap.from_beats` writes denominator 4); a 6/8 ballad's 16ths land 64 ticks apart. | M5: ternary-level test (inter-beat-interval ratios near 1.5), `TS 6 3` / `TS 12 3` and denominators in `tempo.py`; 6/8 and shuffle songs in the stress set. Until then, flag "check time signature". |
 | Drumless songs (G3) | Designed (refine on bass/guitar onsets; a low-evidence flag instead of `beat_grid`'s `ValueError`; gate ADTOF mix hits by stem energy; omit absent parts). Built: the ADTOF engine's hat gate (G3, §2.9; untested on a drumless song), and the pipeline leaves out a part whose engine finds no note [code]. The rest is unimplemented and without thresholds. Inside a drummed song, drumless beats now follow a second stem calibrated on the same song (§2.3); a song with no drums at all still cannot calibrate the second stem. The −22 ms phase offset is calibrated on drums only. | Implement in M3; calibrate the offset for bass and guitar onsets; set thresholds on drumless stress songs in M5. |
 | Fretformer driving (G5) | Level mismatch with autochart's grid untested; descriptor knobs (chords, HOPOs, speed) and the Fill-in model unused; a section that fails its checks is only flagged. | M2: ×1 vs ×2 level test, and 1 knob-conditioned take vs seeded takes. M5: regenerate failed windows. |
-| Long songs, hidden tracks, long silences (G9) | Token-cap windowing is untested; the DP decoder carries beats through silence; `decode()` buffers the whole song through stdout. | Onsets outside a stem's activity are removed (§2.8); mid-song silences are open (§9, Q23); split long songs at silences or sections; a 12–15 min stress song with measured peak RAM (M5; M3 measured 10.1 GB for the process tree on the 6:52 test song, 7.8 GB of it allin1's runner). |
+| Long songs, hidden tracks, long silences (G9) | A guitar take the engine's budget (8,192 tokens, 1,280 beats) cut short is continued in pieces and stitched, and the user is told (§2.7, M5-02); route B2's windows at section boundaries are not built; the DP decoder carries beats through silence; `decode()` buffers the whole song through stdout. | Onsets outside a stem's activity are removed (§2.8); mid-song silences are open (§9, Q23); split long songs at silences or sections; a 12–15 min stress song with measured peak RAM (M5; M3 measured 10.1 GB for the process tree on the 6:52 test song, 7.8 GB of it allin1's runner). |
 | Degraded rips and live recordings (G10) | Never measured. | Degraded versions of the references in the harness; live songs in the stress set (M5). |
 | Packaging figures (G14) | The lock and sizes predate the final model set. madmom-infer and all-in-one-infer: wheel tags read (py3-none-any), Windows install untested; all-in-one-infer needs torchaudio listed explicitly (§4.3). | Re-lock and re-measure in M4. |
 | ADTOF port provenance | Written from reading an unlicensed port of BY-NC-SA code; no provenance record. | A separate module treated as BY-NC-SA, or a G13-style record; ask xavriley for a licence (§4.2). |

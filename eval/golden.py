@@ -100,7 +100,8 @@ ENGINE_FILES = {
               "songcharter/chart.py", "songcharter/tempo.py", "songcharter/ini.py"),
     "bass": ("songcharter/engines/bass.py", "songcharter/chart.py", "songcharter/tempo.py", "songcharter/timed.py"),
     "sections": ("songcharter/engines/sections.py", "songcharter/engines/allin1_runner.py", "songcharter/sections.py"),
-    "guitar": ("songcharter/engines/autochart.py",),   # autochart's install and driver are in the take's own key
+    "guitar": ("songcharter/engines/autochart.py", "songcharter/engines/stitch.py"),   # autochart's install and
+                                                                                       # driver: in the take's key
 }
 TEST_SONG = "test_song"                     # the reference set's song with no human chart
 KEPT = "golden.json"                        # in a kept work folder: it is finished, and who made it
