@@ -102,17 +102,10 @@
     },
     {
       "order": "M5-01 fast grid (wave 2, started early in the free slot: stress-base exists)",
-      "branch": "m5-01-fast-grid",
+      "branch": "m5-01-fast-grid-rebased (rebased on e24b1b7; the stale m5-01-fast-grid is for the owner to delete)",
       "worktree": "wt/m5-01 beside the checkout (dev machine)",
-      "stage": "building (2026-11-05): the decisions on its questions applied (BACKBEAT_MIN 0.34 from the table, the half-beat test, the second pass keeps its hinted line, a doubled song's bass one slot level coarser); golden and stress runs; rebases on M5-09's merge",
+      "stage": "built (2026-11-05): every pass line met on the power-metal song (grid 200 BPM, guitar F1@50 0.78-0.81, beat F1 1.000), golden no UNEXPECTED, CI green on efd2d8d; in review",
       "report": "<scratchpad>/briefs/m5-01.report.md, then docs/reports/M5-01-fast-grid.md"
-    },
-    {
-      "order": "M5-05 GPU retry (wave 1, the second slot after M5-06's merge)",
-      "branch": "m5-05-gpu-retry",
-      "worktree": "wt/m5-05 beside the checkout (dev machine)",
-      "stage": "built (CI green on 3e10f3b); review: one major (an engine killed by a signal, the driver's timeout or its stall kill exits the driver 1 and is retried on the CPU), with its skeptic",
-      "report": "<scratchpad>/briefs/m5-05.report.md, then docs/reports/M5-05-gpu-retry.md"
     }
   ],
   "next": [
@@ -207,7 +200,7 @@
     "[CLAUDE.md] The suite's command `uv run pytest ...` fails collecting tests/test_golden.py (it cannot import `eval`); `uv run python -m pytest ...`, as CI runs it, works. Fix the command (asked the owner).",
     "[M5-09] Repeat consistency (the feel note's measure 4) was not built: M5-99 (M6) with its fix.",
     "[M5-02] On the dev machine's 1-take CPU baseline the shred instrumental's guitar runs to 532 s of 545 (last two 30-s windows F1@100 0.78 and 0.65), unlike the owner's 4-take CUDA run (all takes stop at 498.6 s): M5-02's pass lines are restated against stress-base in its brief.",
-    "[M5-05] README's chart flags lack --no-cpu-retry (README is not in M5-05's files): added at its merge."
+    "[M5-05] Release gate: the provoked GPU failure under memory=12GB on the owner's PC (M4-08's A23): the chart must finish with the take on the CPU and the banner, with the guitar stage's memory samples; swap past 4 GB during the retry turns cpu_retry off for WSL (the owner's decision)."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
   "how_work_is_run": "docs/PIPELINE.md. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices, /prompt-caching, /sub-agents, /settings",

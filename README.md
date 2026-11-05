@@ -35,6 +35,8 @@ songcharter chart song.mp3 --out "Songs/Artist - Title"
 
 - **Expert only by default:** `--levels all` writes every difficulty.
 - **Guitar takes:** 4 on a CUDA GPU and 1 on the CPU; `--takes N` overrides.
+- **A take that fails on the GPU** is run again on the CPU, once per chart, and the page says so;
+  `--no-cpu-retry` turns that off.
 - **Solos** go on the sections the section model labels as solos. `--solos "Solo 1,Solo 2"` names them yourself,
   and `--solos off` turns them off.
 - **A preview** of how the chart fits the audio is written next to the work files: the run's summary prints its
