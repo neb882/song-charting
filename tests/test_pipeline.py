@@ -1128,6 +1128,18 @@ def test_chart_events_on_errors(charted, tmp_path, monkeypatch, capsys):
 OOM = ("[autochart] expert: engine job\n[autochart] FAILED: expert: engine failed (exit 1) transcription Non-zero "
        "status code returned while running MatMul node. Failed to allocate memory for requested buffer of size "
        "268435456")
+# the driver's real last lines when it fails otherwise (ac_headless.cjs; seen by M5-05's skeptic with the real driver,
+# engine and models): it exits 1 every time. The engine killed from outside (the OOM killer), the driver's wall-clock
+# timeout, its stall kill and its token cap, then failures of the driver's own (the paths made up)
+KILLED = "[autochart] expert: engine job\n[autochart] FAILED: expert: engine failed (exit null SIGKILL) transcription"
+TIMEOUT = ("[autochart] expert: killing engine: wall-clock timeout 3600s\n"
+           "[autochart] FAILED: expert: wall-clock timeout 3600s")
+STALL = ("[autochart] expert: killing engine: no decoder progress for 900s\n"
+         "[autochart] FAILED: expert: no decoder progress for 900s")
+TOKENS = ("[autochart] expert: killing engine: token cap 8192 exceeded (8193)\n"
+          "[autochart] FAILED: expert: token cap 8192 exceeded (8193)")
+MODELS = "[autochart] FAILED: models missing under /opt/ac/models; run fetch_models.sh"
+BEAT_MAP = "[autochart] FAILED: takes do not share one beat map (expert)"
 
 
 class Autochart:
@@ -1135,7 +1147,8 @@ class Autochart:
     with the summary autochart writes; for the seed `fail`, by `how`, a run that ends as one short of GPU memory would
     (1: exit 1, onnxruntime's allocation error last, as in the skeptic's probe of the release candidate), one killed
     by a signal (-9, as the OOM killer would, with nothing on stderr), one that never ends ("timeout"), one that exits
-    0 without writing its take (0), or a bug in the driver ("bug", a KeyError). `fail` may also be several seeds,
+    0 without writing its take (0), a bug in the driver ("bug", a KeyError), or the driver's exit 1 with that
+    stderr (any other text: the driver's real lines, KILLED, TIMEOUT, ...). `fail` may also be several seeds,
     and `how` a dict {device: how}: those seeds fail so on those devices only, and succeed on the others. `ran`: the
     seeds it ran; `on`: the (seed, device) of each run."""
 
@@ -1153,6 +1166,8 @@ class Autochart:
                 raise subprocess.TimeoutExpired(cmd, timeout)
             if how == "bug":
                 raise KeyError("a bug in the driver")
+            if isinstance(how, str):
+                return subprocess.CompletedProcess(cmd, 1, "", how + "\n")
             return subprocess.CompletedProcess(cmd, how, "", OOM + "\n" if how > 0 else "")
         folder, audio = Path(cmd[cmd.index("--out") + 1]), Path(cmd[cmd.index("--audio") + 1])
         miss = 0 if seed == DEFAULT_SEED else seed // 101   # as the stand-in guitar: each later take misses a note
@@ -1376,6 +1391,63 @@ def test_a_guitar_take_that_fails_on_cuda_is_run_again_on_the_cpu(charted, tmp_p
                                             (202, "cuda")])
     assert (report["takes"]["devices"], report["takes"]["cpu_retries"]) == (["cpu", "cuda", "cuda"], [DEFAULT_SEED])
     assert report["fallbacks"] == [{**retry, "reason": first}]
+
+
+def test_the_drivers_failed_line_says_what_failed(charted, tmp_path, monkeypatch, capsys):
+    """M5-05's review F1: the driver exits 1 whatever failed, so its FAILED line decides (pipeline.failure): only
+    "engine failed (exit <int>)" is a GPU failure, run again on the CPU; the engine killed by a signal ("exit null
+    SIGKILL": the OOM killer) is stopped's, for memory; the driver's own kills (wall-clock timeout, no decoder
+    progress, token cap) and failures (models missing, no shared beat map) are not the GPU's: its own line is the
+    reason, and neither is run again. With no FAILED line the exit code decides, as in v0.1. On the CPU, a take run
+    again there that fails so says the same, the CPU's run named."""
+    exit1 = "autochart seed 202 failed (exit {}):\n{}"
+    for tail, code, want in ((OOM, 1, ("engine", 0)), (KILLED, 1, ("signal", 9)), (TIMEOUT, 1, ("driver", 0)),
+                             (STALL, 1, ("driver", 0)), (TOKENS, 1, ("driver", 0)), (MODELS, 1, ("driver", 0)),
+                             (BEAT_MAP, 1, ("driver", 0)),
+                             (KILLED.replace("SIGKILL", "SIGNOPE"), 1, ("driver", 0)),   # not a signal Python knows
+                             ("[autochart] expert: engine job", 1, ("engine", 0)),    # no FAILED line: the exit code
+                             ("", -9, ("signal", 9)), ("", 0, ("", 0))):
+        assert P.failure(ToolError(exit1.format(code, tail)))[:2] == want, tail
+    assert P.failure(ToolError(exit1.format(1, TIMEOUT)))[2] == "expert: wall-clock timeout 3600s"
+    assert P.failure(ToolError("autochart seed 202 did not finish within 4200 s")) == ("", 0, "")
+    assert str(P.driver_failed(2, 4, "x" * 200, ToolError("e"))).startswith(f"The guitar's run failed in take 2 of 4 "
+                                                                        f"({'x' * 117}...);")   # at most 120 quoted
+    root, result, _, _ = charted
+    chart_it, driver = real_guitar(root, tmp_path, monkeypatch, capsys)
+    kept = "; the takes that finished are kept"
+    one = ", or set Guitar takes to 1 (it uses the first take if that one finished)"
+    work = warm_work(result, tmp_path, "w")
+    # on CUDA: none of them is run again on the CPU, and none is called the GPU's
+    for tail, lead in ((KILLED, "The guitar's run was stopped in take 3 of 4 (signal 9, SIGKILL), which usually means "
+                                f"WSL ran out of memory{kept}. Close other programs (browsers, games, Clone Hero) and "
+                                f"chart it again{one}."),
+                       (TIMEOUT, f"The guitar's run failed in take 3 of 4 (expert: wall-clock timeout 3600s){kept}."),
+                       (STALL, f"The guitar's run failed in take 3 of 4 (expert: no decoder progress for 900s){kept}."),
+                       (TOKENS, "The guitar's run failed in take 3 of 4 (expert: token cap 8192 exceeded "
+                                f"(8193)){kept}."),
+                       (MODELS, "The guitar's run failed in take 3 of 4 (models missing under /opt/ac/models; run "
+                                f"fetch_models.sh){kept}."),
+                       (BEAT_MAP, "The guitar's run failed in take 3 of 4 (takes do not share one beat map "
+                                  f"(expert)){kept}.")):
+        code, last, report, ran, takes = chart_it(work, 202, how={"cuda": tail})
+        assert (code, driver["run"].on[-1], report["fallbacks"]) == (2, (202, "cuda"), []), tail
+        assert last == {"event": "error", "kind": "tool", "message": f"{lead}\n\n{exit1.format(1, tail)}"}, tail
+        assert "GPU" not in last["message"]
+    # run again on the CPU after a GPU failure, and failing there: the CPU's run named
+    for tail, lead in ((KILLED, "The guitar's CPU run was stopped in take 3 of 4 (signal 9, SIGKILL), which usually "
+                                f"means WSL ran out of memory{kept}. Close other programs (browsers, games, Clone "
+                                f"Hero) and chart it again{one}."),
+                       (TIMEOUT, "The guitar's CPU run failed in take 3 of 4 (expert: wall-clock timeout "
+                                 f"3600s){kept}."),
+                       (MODELS, "The guitar's CPU run failed in take 3 of 4 (models missing under /opt/ac/models; run "
+                                f"fetch_models.sh){kept}.")):
+        code, last, report, ran, takes = chart_it(work, 202, how={"cuda": 1, "cpu": tail})
+        assert (code, driver["run"].on) == (2, [(202, "cuda"), (202, "cpu")]), tail
+        assert last["message"] == f"{lead}\n\n{exit1.format(1, tail)}", tail
+        assert [f["to"] for f in report["fallbacks"]] == ["cpu"]
+    # an engine failure with no FAILED line quoted: the exit code, as in v0.1: run again on the CPU
+    code, last, report, ran, takes = chart_it(work, 202, how={"cuda": "[autochart] expert: engine job"})
+    assert (code, driver["run"].on) == (0, [(202, "cuda"), (202, "cpu"), (303, "cuda")])
 
 
 def test_every_fallback_is_recorded_and_warned(charted, tmp_path):

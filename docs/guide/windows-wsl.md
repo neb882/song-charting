@@ -68,8 +68,8 @@ page.
   Guitar) before you press "Chart it": then a 4-minute song takes about 4 to 6 minutes. These times are estimates.
 - **If a guitar take fails on the graphics card** (a game, Clone Hero or a browser left open can take the memory it
   needs), songcharter runs that take again on the CPU, once a song, and carries on. The page says so: a note at the
-  top, and "take 3 of 4 (on the CPU)". That take takes a few minutes longer. If a second take fails, the chart stops
-  and the page says what to try.
+  top, and "take 3 of 4 (on the CPU)". That take takes a few minutes longer. If a second take fails, or a take was
+  stopped because the PC ran out of memory, the chart stops and the page says what to try.
 - **Keep the PC awake while a song charts:** a chart takes long enough for the PC to go to sleep. For the evening,
   set its sleep to Never in Windows' power settings.
 - Drop the song file on the page (or use "Choose a file"), then press "Chart it".
