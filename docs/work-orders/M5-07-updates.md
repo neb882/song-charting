@@ -1,6 +1,7 @@
 # M5-07: the page's update notice with a Copy button, and the update path tested in CI
 
-**Branch:** `m5-07-updates`, from `main` after wave 4 (wave 5, alone). **Agent:** `sc-builder`, then `sc-reviewer`.
+**Branch:** `m5-07-updates`, from `main` after wave 3 (wave 4, beside M5-08, which merges first: both may set the
+launcher's environment, and its noise check then runs in this order's CI). **Agent:** `sc-builder`, then `sc-reviewer`.
 May push its branch to run CI. **Files:** `songcharter/ui/server.py`, `songcharter/ui/static/{index.html, app.js,
 app.css}`, a new `songcharter/updates.py`, `songcharter/launch.py` (environment only, if needed),
 `packaging/ci/linux.d/75-update.sh` (new), `packaging/ci/linux.d/70-release.sh` only to share a helper, their tests,
@@ -12,9 +13,10 @@ ci.yml` unless the tag fetch below cannot be done from the hook (then one line, 
 
 The friend updates by pasting the new version's install line (the guide's section 3), but nothing tells him a new
 version exists, and the update path has never run anywhere: CI installs one version, and `install.sh` removes the
-other `app/*` folders and rebuilds the wheel (PROGRESS `deferred`, the advisor's finding 10). The owner leans to a
-notice on the page with a Copy button for the new line rather than a one-click updater (PROGRESS, 2026-11-05;
-M5-00 says what the updater would add) [owner].
+other `app/*` folders and rebuilds the wheel (PROGRESS `deferred`, the advisor's finding 10). The owner decided on a
+notice on the page with a Copy button for the new line rather than a one-click updater, and that a pre-release
+counts as a new release, since the friend is on one (2026-11-05; M5-00 section 8; M5-99 says what the updater
+would add).
 
 ## What to build
 
@@ -22,8 +24,8 @@ M5-00 says what the updater would add) [owner].
    - reads `<home>/state/update.json` and returns it when it is under a day old (`CHECK_EVERY_S` = 86400) and for
      this version; otherwise fetches `url` (`https://api.github.com/repos/neb882/song-charting/releases?per_page=10`,
      `SONGCHARTER_RELEASES_URL` overriding it for CI), takes the newest non-draft release whose tag is `v<version>`
-     with a version that parses as dotted integers (a pre-release counts while songcharter is under 1.0 [owner];
-     a tag with a suffix such as `-ci-abc` does not count), and compares it with `version` the same way;
+     with a version that parses as dotted integers (a pre-release counts [decided: the friend is on one]; a tag with
+     a suffix such as `-ci-abc` does not count), and compares it with `version` the same way;
    - when newer: fetches that release's `SHA256SUMS` asset (its `browser_download_url`), reads install.sh's line, and
      builds the guide's line exactly: `curl -fsSLO <download base>/v<new>/install.sh && echo "<sha>  install.sh" |
      sha256sum -c - && bash install.sh`; without a readable SHA256SUMS the result has no line, only the release page's

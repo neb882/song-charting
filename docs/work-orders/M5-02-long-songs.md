@@ -1,11 +1,15 @@
 # M5-02: long, busy songs: a guitar take cut short by the engine's budget is continued and stitched
 
-**Branch:** `m5-02-long-songs`, from `main` after wave 1 (wave 2, beside M5-03). **Agent:** `sc-builder`, then
+**Branch:** `m5-02-long-songs`, from `main` after wave 1 (wave 2, beside M5-01; M5-05's per-seed calls in the
+guitar stage are merged by then, so the warnings below go in that per-seed loop). **Agent:** `sc-builder`, then
 `sc-reviewer`. May push its branch to run CI. **Files:** `songcharter/engines/autochart.py`, a new
 `songcharter/engines/stitch.py` (added to `eval/golden.py`'s `ENGINE_FILES["guitar"]`: the one line this order may
 change in `eval/`), `songcharter/pipeline.py` (the guitar stage's warnings and log lines only), `songcharter/chart.py`
 only if the writer lacks something, their tests, `docs/DESIGN.md` 2.7, the guide's section 5 (one sentence).
 **Time budget:** 2 days, the golden run with `--rerun guitar` on both sides included (about 2 hours of machine time).
+
+*Amended 2026-11-05 after the advisor's review (finding 7, confirmed by a skeptic): a take cut short by v0.1 and
+cached is continued after the update (step 1's cache rule), and every cut-short take gets a `stitch` record.*
 
 **Conventions** (`docs/reports/charting-conventions.md`, section 2a, ranked gap 5): **[conventions]** Expert is a
 literal transcription of the part; a chart whose notes stop while the guitar plays is an underchart and a lost
@@ -33,8 +37,17 @@ exactly today's path and gives a byte-identical take (the golden check).
    short when `runs[0].nTokens >= maxTokens` (the summary carries both) or `runs[0].nBeats >= 1280`
    (`MAX_BEATS`, the manifest's cap; read it from the models' manifest when it is there, else 1280). Record
    `cut_short` with the reason in the Take.
+   - **The cache, for takes v0.1 made:** the take's key holds the input, the seed, the settings and the install, not
+     songcharter's code, so a take v0.1 cut short is a cache hit after the update with the same lost ending and no
+     warning (the friend's long songs and the owner's shred instrumental are in their caches). So `_done` treats a
+     cached take whose summary is cut short by the rule above and has no `stitch` record (step 3) as a miss: the take
+     runs whole again, once, and is continued. The driver has not changed since v0.1.0, so v0.1 summaries carry
+     `maxTokens`, `nTokens` and `nBeats` (every real summary on the dev machine does). The key is unchanged: a
+     version in the key would rerun every take after the update and break M5-07's cached-update check (its CI needs
+     "(cached)" for the guitar); all seven golden takes are under both caps and still hit.
 2. **The continuation.** For a take cut short, with `T` = the time of the last note of its chart (seconds of the
-   decode; 0 notes means `T` = 0, which is "no guitar at all": then no continuation, the take stays as it is):
+   decode; 0 notes means `T` = 0, which is "no guitar at all": then no continuation, the take stays as it is, but it
+   gets a `stitch` record with `pieces: []` so it is a hit next time):
    - the piece starts at `B = floor(T) - 1` s (`KEEP_FROM`), and its audio is the decode from `B - CONTEXT` (8 s;
      clipped at 0) to the end, written as a WAV beside the take (`seed_<seed>/piece_<k>/input.wav`, the same
      samples as `decode.wav`, so the engine's input is still our decode);
@@ -56,9 +69,10 @@ exactly today's path and gives a byte-identical take (the golden check).
    `seed_<seed>/cut_short/` (its notes.chart, song.ini, song.ogg and autochart_run/) and each piece's song folder
    stays in `seed_<seed>/piece_<k>/`. `autochart_run/summary.json` of the stitched take is the whole-song run's
    summary plus `"stitch": {"cut_short": reason, "pieces": [{"start_s", "keep_from_s", "last_note_s", "nTokens",
-   "nBeats", "seconds"}], "last_note_s"}`; `take.json`'s key is unchanged (the pieces follow from the seed and the
-   input), so `_done` reuses a stitched take as it reuses any other, and a run interrupted mid-stitch leaves no
-   take.json and is run again whole next time.
+   "nBeats", "seconds"}], "last_note_s"}`, written for every cut-short take this step handles (`pieces: []` for a
+   `T` = 0 take); `take.json`'s key is unchanged (the pieces follow from the seed and the input), so `_done` reuses
+   a stitched take as it reuses any other, and a run interrupted mid-stitch leaves no take.json and is run again
+   whole next time.
    - `Take.devices` must still answer from the whole-song run; a piece whose transcriber ran on another device than
      asked counts as that device for the take (the pipeline's fallback rules read it).
 4. **The pipeline** (`pipeline.py`, the guitar stage): a take with `stitch` gets a warning
@@ -83,7 +97,9 @@ exactly today's path and gives a byte-identical take (the golden check).
   written last; the `nBeats` 1280 path the same; a piece cut short again continues (two pieces); the 20-s rule ends
   the loop; `MAX_PIECES`; a piece's non-zero exit raises ToolError naming the seed; `_done` hits on the stitched
   take; a summary under both caps makes one `run` call and leaves the engine's files exactly as today (byte-identical
-  folder listing and notes.chart).
+  folder listing and notes.chart); the cache rule: a cached cut-short take without `stitch` (a v0.1 take, made by
+  the test with today's files) runs again and is continued; the same with `stitch`, no run; the `T` = 0 take is a
+  hit on the second run.
 - `pipeline.py` with `standins`: the warning and the record for a stitched take; the "ends at" warning.
 - Each test fails when its code is broken (say which break).
 
@@ -92,11 +108,12 @@ exactly today's path and gives a byte-identical take (the golden check).
 - **Golden:** `engines/autochart.py` changed, so `--rerun guitar` on both runs, `--expect none`: every reference song's
   guitar take must be byte-identical (no reference song reaches the budget: check each kept summary's `nTokens`
   and report the largest; Lucretia's is the one to watch). Any change fails the order.
-- **The stress set** (M5-09): the shred instrumental, 1 CPU take, before and after. Pass:
+- **The stress set** (M5-09): the shred instrumental, 1 CPU take, before and after ("today's" is M5-09's baseline
+  run of `main`; the owner's 4-take figures are reported beside it). Pass:
   - the stitched take's last note at 530 s or later; `cut_short` recorded with its reason; the warning shown;
   - in the song's last 60 s, guitar F1@100 against each human chart at least 0.60 (`score.py --windows 30`, M5-09;
-    today 0 for the last 45 s), and the whole-song F1@50 and F1@100 not below today's (0.636 / 0.743 and
-    0.725 / 0.748);
+    today 0 for the last 45 s), and the whole-song F1@50 and F1@100 not below the baseline's (the owner's run:
+    0.636 / 0.743 and 0.725 / 0.748);
   - no note within 1 s of the seam `B` missing on both sides or doubled (count the onsets in `[B - 1, B + 1]` in the
     stitched chart against the whole-song run's and the piece's: the stitched count is max(the two), not their sum);
   - the power-metal song and every reference song: one engine run per take, no piece, identical charts.
@@ -117,6 +134,10 @@ exactly today's path and gives a byte-identical take (the golden check).
   every take everywhere) or the take's key. No change to `takes.py`'s splice. No new dependency.
 - The stitched chart is a take like any other for the splice, the quantizer and the gate: no special path after the
   guitar stage.
+- The stress songs' human-chart packages have vocal tracks: they are read only through `stress.py` and `score.py`,
+  which print numbers; never open a package's chart, nor the scratch folders' (`<S>/sooth/human_*` and
+  `<S>/troop/human_*`, and the scratch `ref_*` folders, one of which still holds lyric events). Once M5-09 has
+  merged, only `$EVAL_DATA/stress/` refs are read.
 
 ## Report
 

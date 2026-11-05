@@ -30,17 +30,25 @@ Its ranked gaps 1-3, 5 and 6 are M5-01, M5-02 and M5-03; part of 9 and 10 are M5
 - **HOPO, strum and tap states independent of the octave** (gap 4, section 2f): `hopo: "forced"` leaves every
   unforced note to the natural rule on our map, so the played articulation follows our octave. The convention
   reproduces the articulation: the state on the source's own map, written with `N 5` flips. `assemble.HOPO_RULES`
-  already has `"source"`; M5-01 measures both on the stress set (HOPO shares against the humans' 0.51 and 0.55).
-  DESIGN C10 chose "forced" because autochart's own map can be at the wrong octave too; the decision needs those
-  numbers and a HOPO-agreement metric in `score.py`. Half a day to decide, a day to build with the bass engine's
-  state rule in time rather than ticks.
-- **1/32 and 1/24 burst slots** (gap 2's second half): M5-01 drops a distinct note rather than make a chord when its
-  slot is taken, and counts it (`dropped_distinct`); over 1 % of a part's notes on the stress set means the quantizer
-  needs the finer levels. A day, with the slot priors re-measured (DESIGN 2.6).
+  already has `"source"`; M5-01 measures both on the stress set: the HOPO shares (the humans' differ among
+  themselves: 0.21, 0.51 and 0.29 on the power-metal song's three charts, 0.55 on the shred song) and the per-note
+  state agreement M5-09 adds to `score.py`. DESIGN C10 chose "forced" because autochart's own map can be at the wrong
+  octave too; the owner decides at the gate if the numbers are clear (M5-00 section 8), else here. A day to build
+  with the bass engine's state rule in time rather than ticks.
+- **1/32 and 1/24 burst slots** (gap 2's second half): M5-01 drops a distinct note rather than make a chord of two
+  onsets on one tick more than 20 ms apart, keeping the one nearest the tick, and counts the rest
+  (`dropped_distinct`). The human charts themselves lose 5.4-6.4 % of the power-metal song's notes that way when
+  they go through the quantizer as a perfect engine (their 37.5 ms 32nds and 50 ms sextuplets, which no 1/16 grid
+  holds), so that figure is the plan working as intended, and M5-01 reports ours beside it. The finer levels would
+  recover those notes: a day, with the slot priors re-measured (DESIGN 2.6). Also recorded by M5-01: `_separate`'s
+  moves of 47-168 ms on the references (an onset 0.75 slot or more from its neighbour moves to the next free slot),
+  for a look at whether they should drop instead.
 - **Fret-quality metrics and repeat consistency** (gap 7, section 2b): exact fret agreement (16-27 %, humans 46 %
-  with each other) is the wrong target; score contour, same-pitch-same-fret within phrases, repeated riffs charted
-  the same way, and jump sizes against the humans; then reuse one take across repeated riffs (found by section
-  labels and self-similarity). The metrics are a day in `score.py`; the reuse is M6's and needs the larger set.
+  with each other) is the wrong target. M5-09's feel report scores contour (`lane_direction_agreement`), jump sizes
+  and big fast jumps against the humans, and repeat consistency (repeated-label sections' fret-sequence similarity,
+  against the human chart's own) if it fits its budget; otherwise the measure is M6's with the fix: reuse one take,
+  or the best riff, across repeated riffs (found by section labels and self-similarity), which needs repeat detection
+  and the larger set.
 - **Section names:** Rock Band's "Guitar Solo" for a solo section; it changes the names people pass to `--solos`
   ("Solo 1" on the test song). An hour, with the guide.
 - **The song folder** (gap 10, section 8): `song_length` (Encore requires it, the Clone Hero wiki advises against
@@ -59,20 +67,23 @@ Its ranked gaps 1-3, 5 and 6 are M5-01, M5-02 and M5-03; part of 9 and 10 are M5
 ## The grid at double the humans' tempo
 
 The shred instrumental's grid came out at twice the human charts' tempo (octave-tolerant beat F1 0.94-0.96).
-M5-01 doubles a grid that is too slow and never halves one. A halving rule needs its own statistic (the share of
-onsets on beat lines, the HOPO shares: ours 0.40 against the humans' 0.55 there) and a check that the natural HOPO
-threshold (in ticks) still reads right; measure on the stress set first. Half a day to measure, a day to build.
+M5-01 doubles a grid that is too slow and never halves one: this version builds the doubling pass only, and the
+first pass still folds into 85-185 BPM, so a pulse under 85 stays at double with its effects on the HOPO states,
+the star-power count (about twice the phrases) and the solo measures (M5-03 caps solos in seconds for that reason).
+A halving rule needs its own statistic (the share of onsets on beat lines, the backbeat ratio M5-01 records for
+every song, the HOPO shares: ours 0.40 against the humans' 0.55 there) and a check that the natural HOPO threshold
+(in ticks) still reads right; measure on the stress set first. Half a day to measure, a day to build.
 
 ## The reference set at 20 or more songs, with human-charted solos
 
 PROGRESS `next`. M5-09 makes adding a song one entry in `stress.json` and a build; the cost on the dev machine is
 10-18 minutes cold and about 1.2 GB per song (kept folder and stems), so 13 more songs are about 3 hours and 16 GB
-on a machine with little room. The songs are the owner's to pick [owner] (fast, 6/8 and shuffle, drumless, long,
-live); until then the stress set holds the two from 2026-11-05.
+on a machine with little room. The songs are the owner's to pick (fast, 6/8 and shuffle, drumless, long, live); for
+this version he chose the two hard songs of 2026-11-05 and one ordinary rock song as the guard (M5-00 section 8).
 
 ## A one-click updater
 
-M5-07 builds the notice. A button that runs the update would need: the server starting `install.sh` detached from
+M5-07 builds the notice (the owner's decision, 2026-11-05). A button that runs the update would need: the server starting `install.sh` detached from
 itself (the install restarts WSL at its end, which kills the server), `--yes` for the licence prompt (the guide's
 link must then be shown on the page), the install's log streamed to the page and kept when the window closes, the
 Start-menu shortcut's rewrite (the install does it), and the page reopening on the new version. About two days,
@@ -102,8 +113,9 @@ the preview rerun) is a day, with the quick fixes of M4-99 (the downbeat and the
 - The 24-hour pruning exemption and a "free the cache" button; the pruning race; Q26 (the grid period to ADTOF);
   the golden charts' blind spot on the separation's code; the separation cache maker as an eval script.
 - The cu126 allin1 pairing untested on real hardware; the dev machine's hand-made allin1 Python.
-- The lyrics weights fetched at install [owner: install size and time]; doctor not counting a missing torch or
-  demucs as a problem.
+- The lyrics weights fetched at install: decided against for this version (the owner, 2026-11-05: the install stays
+  smaller, and the first-use download already resumes and retries); doctor not counting a missing torch or demucs as
+  a problem.
 - The CI personal-details check, stall logs, the builder-effort trial, DESIGN's split by area (the pipeline review's
   deferred findings).
 - M4-08 part A's checks not run (A8-A11, A13, A16, A18-A24, Take Me Out) and M4-08a's harness: the release gate of

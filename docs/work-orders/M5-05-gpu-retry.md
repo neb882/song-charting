@@ -1,10 +1,11 @@
 # M5-05: a guitar take that fails on CUDA is run again on the CPU
 
-**Branch:** `m5-05-gpu-retry`, from `main` after wave 2 (wave 3, beside M5-04; merged after M5-04). **Agent:**
-`sc-builder`, then `sc-reviewer`. May push its branch to run CI. **Files:** `songcharter/pipeline.py` (the guitar
-stage, `Options`, the module docstring), `songcharter/cli.py` (one flag), `tests/test_pipeline.py`,
-`songcharter/ui/static/app.js` (the take line only; wave 4's orders touch app.js after this merges), `docs/DESIGN.md`
-2.7, `docs/guide/windows-wsl.md` (one bullet). **Time budget:** 1 day.
+**Branch:** `m5-05-gpu-retry`, from `main` after M5-06's merge (wave 1, in the builder slot beside M5-09 once M5-06
+is done; it needs nothing of M5-09). **Agent:** `sc-builder`, then `sc-reviewer`. May push its branch to run CI.
+**Files:** `songcharter/pipeline.py` (the guitar stage, `Options`, the module docstring), `songcharter/cli.py` (one
+flag), `tests/test_pipeline.py`, `songcharter/ui/static/app.js` (the take line only; M5-07 touches app.js after this
+merges), `docs/DESIGN.md` 2.7, `docs/guide/windows-wsl.md` (one bullet). **Time budget:** 1 day. M5-02 (wave 2)
+adds its stitched-take warnings to the per-seed loop this order makes.
 
 ## Why
 
@@ -74,8 +75,9 @@ the owner's card; a browser or Clone Hero left open can tip a take over. A retry
 ## Limits
 
 - No change to `engines/autochart.py` or the take's key. The engine's error text is quoted at most to its first line.
-- [owner] `cpu_retry` on by default (recommended: the friend's PC has the memory headroom the install set, and a
-  dead end costs him more than a slow take). The order builds it on; the gate's hardware check can turn it off.
+- `cpu_retry` on by default [decided by the owner, 2026-11-05: the friend's PC has the memory headroom the install
+  set, and a dead end costs him more than a slow take]; recorded as a fallback; the gate measures its memory under
+  `memory=12GB` on the owner's PC and can turn it off for WSL.
 
 ## Report
 

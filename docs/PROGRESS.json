@@ -63,17 +63,21 @@
     },
     {
       "id": "M5",
-      "status": "planned 2026-11-05 on branch m5-plan (docs/work-orders/M5-00-plan.md and M5-01 to M5-09, M5-99); next the advisor on the plan, then the waves",
-      "what": "v0.2.0 (the number is the owner's call): the owner's 2026-11-05 findings fixed and judged against human charts: the grid's tempo octave from note density and no chord of notes distinct in time (M5-01), a guitar take cut short by the engine's budget continued and stitched (M5-02), solo caps from the human charts (M5-03), the lyrics warning calibrated (M5-04), a CUDA take retried on the CPU (M5-05), 'Artist - Title' from the file name and folder names cut at a word (M5-06), the update notice and the update path in CI (M5-07), install polish (M5-08), the two hard songs as a repeatable stress check (M5-09); M4-11's art joins it (wave 0). Left for later with reasons in M5-99: the engine thinning fast runs, the halving rule, the 20-song set, the one-click updater, the tempo control.",
-      "plan": "docs/work-orders/M5-00-plan.md: waves 0 (M4-11 merged, the conventions report committed) to 5 (M5-07 alone), at most two builders at once; every charting-path order with its golden expectation and its stress-set pass lines; the release gate adds the stress check, the CI update path and the owner's PC (the update over his 0.1.0 install, the two hard songs, a provoked GPU failure under memory=12GB)",
-      "conventions": "the owner asked that the version rest on how charts are supposed to be made: a research brief on the community's charting conventions and songcharter's gaps (2026-11-05, to be committed as docs/reports/charting-conventions.md at wave 0) ranks ten gaps; the orders take up 1-3 (M5-01), 5 (M5-02), 6 (M5-03) and parts of 9 and 10 (M5-04, M5-06, M4-11), state each rule they assume marked [conventions] for the advisor, and leave 4, 7, 8 and the rest in M5-99 with reasons",
-      "owner_questions": [
-        "the version number: 0.2.0 (recommended) or 0.1.1",
-        "M4-11 merged into main as wave 0 now that the next version is approved",
-        "the update notice rather than a one-click updater; a pre-release counts as a new version while under 1.0",
-        "the CPU retry of a failed CUDA take on by default (recommended: on; the gate's memory check may turn it off for WSL)",
-        "which songs, if any, join the stress set now (recommended: the two from 2026-11-05; more in M6)",
-        "the lyrics weights at install or at first use (recommended: unchanged, first use)"
+      "status": "planned 2026-11-05 on branch m5-plan (docs/work-orders/M5-00-plan.md and M5-01 to M5-09, M5-99); the advisor reviewed it the same day (11 findings and the feel note; skeptics confirmed findings 1 and 7, partly 2) and the plan was amended; the owner's open questions are decided (M5-00 section 8); next wave 0, then the waves of M5-00 section 3",
+      "what": "v0.2.0: the owner's 2026-11-05 findings fixed and judged against human charts: the grid's tempo octave from note density and the backbeat (doubling only), no chord of notes distinct in time (the farther onset dropped, never moved) and the spacing floors at 20 ms (M5-01), a guitar take cut short by the engine's budget continued and stitched, a cached v0.1 take too (M5-02), solo caps in measures, seconds and share from the human charts (M5-03), the lyrics warning calibrated (M5-04), a CUDA take retried on the CPU (M5-05), 'Artist - Title' from the file name and folder names cut at a word (M5-06), the update notice and the update path in CI (M5-07), install polish (M5-08), the two hard songs and an ordinary rock song as a repeatable stress check with the feel measures (M5-09); M4-11's art joins it (wave 0). Left for later with reasons in M5-99: the engine thinning fast runs, the halving rule, the burst slots, the repeat-consistency fix, the 20-song set, the one-click updater, the tempo control.",
+      "plan": "docs/work-orders/M5-00-plan.md: waves 0 (M4-11 merged, the conventions report and the feel note committed) to 4 (M5-08 beside M5-07), at most two builders at once; M5-09 first, since M5-01's octave threshold needs its baseline run's engine charts, with M5-06 then M5-05 in the second slot meanwhile; every charting-path order with its golden expectation and its stress-set pass lines (set from M5-09's 1-take baseline, not the owner's 4-take figures); the release gate adds the stress check with the feel report, the CI update path, the owner's PC (the update over his 0.1.0 install, the two hard songs, a provoked GPU failure under memory=12GB) and a play test of three songs by the owner and the friend's own songs",
+      "conventions": "the owner asked that the version rest on how charts are supposed to be made: a research brief on the community's charting conventions and songcharter's gaps (2026-11-05, to be committed as docs/reports/charting-conventions.md at wave 0) ranks ten gaps; the orders take up 1-3 (M5-01), 5 (M5-02), 6 (M5-03) and parts of 9 and 10 (M5-04, M5-06, M4-11), state each rule they assume marked [conventions] for the advisor, and leave 4, 7, 8 and the rest in M5-99 with reasons. A second note, how a chart should feel (nine parts, each with its measure; docs/reports/feel.md at wave 0), is carried by M5-09's feel report, M5-01's pass lines and the gate's play test (M5-00 section 5)",
+      "decisions": [
+        "2026-11-05, the owner left the plan's open questions to the orchestrator; decided with reasons in M5-00 section 8:",
+        "the version number is 0.2.0: new features and changes to how charts are made, not a fix release",
+        "M4-11 merges now as wave 0, once its review fixes pass CI",
+        "the update notice with a Copy button, not a one-click updater; a pre-release counts as a new release (the friend is on one)",
+        "the CPU retry of a failed GPU take is on by default, recorded as a fallback; the gate measures its memory under memory=12GB on the owner's PC",
+        "the stress set is three songs: the shred instrumental, the power-metal song and an ordinary rock song with four human guitar charts as the guard against making normal songs worse; M5-09 checks that the owner's own file of it aligns with the human charts' audio and reports it; the seven reference songs stay the golden set",
+        "the lyrics aligner's weights stay a first-use download (the install stays smaller; the download resumes and retries)",
+        "the album placeholder is '<the song's name> - (Single)' when the file has no album tag (Encore's song.ini rule, the conventions report's section 8)",
+        "a background smaller than 1280x720 is kept as it is, not upscaled (Clone Hero scales it to the screen; upscaling only blurs it)",
+        "left for the gate, with the numbers: the solo share for songs with vocals, the HOPO mode (forced or source) if M5-01's state-agreement numbers are clear, the CPU retry's default for WSL if its swap passes 4 GB"
       ]
     }
   ],
@@ -91,15 +95,15 @@
     },
     {
       "order": "M5 plan: the next version (the owner, 2026-11-05: start it with the improvements found that day)",
-      "stage": "the plan and its orders are written on branch m5-plan (docs/work-orders/M5-00-plan.md); next the advisor (a different model) reviews them, then the orchestrator answers the owner's questions in M5-00 section 7 and runs the waves",
-      "then": "wave 0 merges M4-11 (album art and a background image, building on m4-11-art); wave 1 is M5-09 (the stress check) beside M5-01 (the fast grid)"
+      "stage": "the plan and its orders are written on branch m5-plan (docs/work-orders/M5-00-plan.md), reviewed by the advisor and amended (2026-11-05); the owner's questions are decided (M5-00 section 8); next the orchestrator merges the plan and runs the waves",
+      "then": "wave 0 merges M4-11 (album art and a background image, building on m4-11-art) and commits the conventions report and the feel note; wave 1 is M5-09 (the stress check, its baseline run first) beside M5-06 then M5-05; M5-01 (the fast grid) starts when M5-09's baseline run exists, beside M5-02"
     }
   ],
   "next": [
     "M4: M4-08 part B, the friend's PC: he follows the guide alone, charts the test song with 1 take and with the defaults, charts a song of his own, installs it into Clone Hero and plays it, and sends the diagnostics zip saved after his last chart.",
-    "M5: the advisor reviews the plan on branch m5-plan (docs/work-orders/M5-00-plan.md); the owner answers its section 7; then wave 0 (M4-11 merged) and the waves of section 3. The next version's release gate is M5-00 section 6: PIPELINE's, plus the stress check, CI's update path (0.1.0 installed, then the new line over it) and the owner's PC.",
-    "The update notice with a Copy button for the new line is planned as M5-07 (recommended over a one-click updater on 2026-11-05; the owner decides at the plan's review: M5-00 section 7).",
-    "Before the next quality decision beyond this version's defect fixes: grow the reference set to 20 or more human charts, with human-charted solos among them. M5-09 makes a song one entry in eval/stress.json; the songs are the owner's to pick (M5-99)."
+    "M5: the plan on branch m5-plan (docs/work-orders/M5-00-plan.md) is reviewed, amended and decided; next wave 0 (M4-11 merged, the two reports committed) and the waves of its section 3. The next version's release gate is M5-00 section 7: PIPELINE's, plus the stress check with the feel report, CI's update path (0.1.0 installed, then the new line over it), the owner's PC and the play test (the owner on three songs, the friend on his own).",
+    "The update notice with a Copy button for the new line is M5-07 (decided over a one-click updater on 2026-11-05: M5-00 section 8).",
+    "Before the next quality decision beyond this version's defect fixes: grow the reference set to 20 or more human charts, with human-charted solos among them. M5-09 makes a song one entry in eval/stress.json; the songs are the owner's to pick (M5-99); this version's set is the two hard songs and one ordinary rock song."
   ],
   "dead_ends": [
     {

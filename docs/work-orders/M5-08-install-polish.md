@@ -1,7 +1,7 @@
 # M5-08: install polish: no noise in the install's output, a "done" line after every download, the closing summary
 
-**Branch:** `m5-08-install-polish`, from `main` after wave 3 (wave 4, beside M5-06). **Agent:** `sc-builder`, then
-`sc-reviewer`. May push its branch to run CI. **Files:** `songcharter/runtime.py`, `songcharter/launch.py`
+**Branch:** `m5-08-install-polish`, from `main` after wave 3 (wave 4, beside M5-07; merged first, since both may set
+the launcher's environment). **Agent:** `sc-builder`, then `sc-reviewer`. May push its branch to run CI. **Files:** `songcharter/runtime.py`, `songcharter/launch.py`
 (environment only), `songcharter/device.py` (one component row), `packaging/linux/install.sh` (the closing summary),
 `packaging/ci/linux.d/30-install.sh` (the noise check), their tests, `docs/DESIGN.md` 4.3. Not `engines/adtof.py`
 (in the golden's `ENGINE_FILES`: the "done" line goes into the downloader it calls). **Time budget:** 1 day.

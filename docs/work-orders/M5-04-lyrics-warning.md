@@ -1,10 +1,13 @@
 # M5-04: the lyrics "alignment is unsure" warning, calibrated
 
-**Branch:** `m5-04-lyrics-warning`, from `main` after wave 2 (wave 3, beside M5-05). **Agent:** `sc-builder`, then
-`sc-reviewer`. May push its branch to run CI. **Files:** `songcharter/engines/lyrics.py` (`confidence` and its
-constants), `tests/test_lyrics.py` (or the engine's test file), `songcharter/pipeline.py` only for the one warning
-line in `_lyrics_stage` (M5-05 edits the guitar stage of the same file in this wave: a different function; the
-orchestrator merges M5-04 first), `docs/DESIGN.md` 2.15. **Time budget:** 1 day.
+**Branch:** `m5-04-lyrics-warning`, from `main` after wave 2 (wave 3, beside M5-03; M5-01's octave fix and M5-09's
+lyrics check are merged by then). **Agent:** `sc-builder`, then `sc-reviewer`. May push its branch to run CI.
+**Files:** `songcharter/engines/lyrics.py` (`confidence` and its constants), `tests/test_lyrics.py` (or the engine's
+test file), `songcharter/pipeline.py` only for the one warning line in `_lyrics_stage`, `docs/DESIGN.md` 2.15.
+**Time budget:** 1 day.
+
+*Amended 2026-11-05 after the advisor's review (note 11b): the choice's constraint follows the timing ground truth
+("every bad run and no good run"), and one statistic is preferred over an OR.*
 
 ## The lyrics rule (absolute)
 
@@ -28,12 +31,15 @@ good song. The warning is the friend's only sign that his lyrics may be off; a f
 1. **The data** (a script of your own under the scratch folder, never committed; numbers only):
    - the six references with lyrics: their words from the packages' lyric events in memory (as M4-10's phase A did),
      each aligned to its separated vocal stem (the separation cache answers) and to its full mix (the collapsed case);
-   - the power-metal song: its words from the human chart that has vocals (M5-09's stress set holds the package), its
-     stem and its mix;
-   - for each run, the alignment's timings against the human chart's (M5-09's `eval/lyrics_timing.py`, or the
-     scratch `<S>/troop/scripts/lyrtime.py` until it lands): the share within 250 ms and 50 ms, the median error.
+   - the power-metal song: its words from the human chart that has vocals (M5-09's stress set holds the package, at
+     `$EVAL_DATA/sng/`: the one place they are read from, through `stress.py lyrics` or `lyrics_timing.py` in
+     memory; the scratch folders' packages and `ref_*` charts, one of which still holds lyric events, are not
+     opened), its stem and its mix;
+   - for each run, the alignment's timings against the human chart's (M5-09's `eval/lyrics_timing.py`): the share
+     within 250 ms and 50 ms, the median error.
    Ground truth: a run is good when at least 85 % of its paired words are within 250 ms, bad when under 60 %;
-   anything between is reported and left out of the choice.
+   anything between is reported and left out of the choice. The runs on the full mixes are expected to be bad and
+   the stem runs good, but the timing decides, not the audio: a stem run that times badly is a bad run.
 2. **Candidate statistics**, each computed from what `align` already has (the characters' probabilities on the path,
    the word times, the stem):
    - the median word score (today's), its 10th percentile, the share of words under `LOW_SCORE`;
@@ -43,10 +49,13 @@ good song. The warning is the friend's only sign that his lyrics may be off; a f
      `align` is given);
    - the share of lines (phrases) whose words span more than 3 x the median line duration.
 3. **The choice:** for each statistic the margin between the worst good run and the best bad run (on a log scale
-   for shares); choose the statistic, or the OR of two, with the widest margin; put the threshold at the midpoint.
-   The warning must fire on every mix run and on no stem run, the power-metal stem included. Report the full table
-   (per song: good/bad, each statistic, the timing shares). If no statistic separates them with a margin of at least
-   1.5x, keep the median with its threshold lowered to the midpoint between 0.214 and 0.18 and say so.
+   for shares); choose the statistic with the widest margin and put the threshold at the midpoint. The warning must
+   fire on every bad run and on no good run (good and bad by step 1's timing ground truth: the power-metal stem is
+   expected to be a good run, and the warning must then stay quiet on it). An OR of two statistics is allowed only
+   when its margin is clearly wider than the best single one's (say twice): about six statistics and their pairwise
+   ORs on some fourteen runs is room to overfit. Report the full table (per song: good/bad, each statistic, the
+   timing shares). If no statistic separates them with a margin of at least 1.5x, keep the median with its threshold
+   lowered to the midpoint between 0.214 and 0.18 and say so.
 4. **The code:** `confidence()` returns the chosen statistic(s) with their values and threshold(s), `low` from them,
    and `why` (one clause naming the statistic and its value, e.g. "median word score 0.12, under 0.17"); the
    pipeline's warning prints `why`. pipeline.json keeps `confidence` with every field (numbers only). The cache key
@@ -72,7 +81,8 @@ good song. The warning is the friend's only sign that his lyrics may be off; a f
   without lyrics changes).
 - **The stress set, lyrics:** M5-09's lyrics check on the power-metal song (its text from the human chart in memory,
   the chart built with it, timed against the human chart): at least 90 % within 250 ms and no warning; the same on
-  two references (Take Me Out and one Car Seat Headrest song), no warning; the full-mix runs warn.
+  two references (Take Me Out and one Car Seat Headrest song), no warning; the full-mix runs, which step 1's timing
+  shows bad, warn.
 
 ## Done means
 
@@ -86,7 +96,9 @@ good song. The warning is the friend's only sign that his lyrics may be off; a f
 
 - No change to the aligner, its windows, the star tokens or the weights: the warning only. No new dependency.
 - Nothing that could hold a word is written under the repository or the scratch folder: the built charts go to a
-  folder you delete at the end, and the report says so.
+  folder you delete at the end, and the report says so. A failed gate writes the chart, words included, to
+  `<out>.failed` beside `out` (`pipeline.py`): `out` and the work folder are both under that temporary folder, as
+  M5-09's `stress.py lyrics` does it, so nothing survives its deletion.
 
 ## Report
 

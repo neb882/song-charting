@@ -1,7 +1,7 @@
 # M5-06: "Artist - Title" from the file name, and song folder names cut at a word
 
-**Branch:** `m5-06-names`, from `main` after wave 3 (wave 4, beside M5-08). **Agent:** `sc-builder`, then
-`sc-reviewer`. May push its branch to run CI. **Files:** `songcharter/pipeline.py` (`song_metadata` and the
+**Branch:** `m5-06-names`, from `main` after M4-11's merge (wave 1, beside M5-09; M5-05 follows in the same builder
+slot). **Agent:** `sc-builder`, then `sc-reviewer`. May push its branch to run CI. **Files:** `songcharter/pipeline.py` (`song_metadata` and the
 metadata constants only), `songcharter/cache.py` (`safe_name`), `songcharter/ui/jobs.py` (`output_folder`),
 `songcharter/ui/server.py` (the upload answer, only if it needs the new origin), `songcharter/ui/static/app.js`
 (`fillOptions`, only if the placeholder logic needs it), their tests, `docs/DESIGN.md` 2.13 and the README.
@@ -36,7 +36,8 @@ in the options, filled from the tags and left empty with an "Unknown" placeholde
    the folder's name and needs no change.
 3. **The autochart job's metadata** (`AC_TITLE`, `AC_ARTIST`) follows `meta`, as today: nothing to do but check.
 4. **The album placeholder** [conventions: Encore's song.ini rule gives a single the album "<Name> - (Single)";
-   `docs/reports/charting-conventions.md` section 8] [owner: a default the friend sees; recommended]: when no tag
+   `docs/reports/charting-conventions.md` section 8] [decided by the owner, 2026-11-05: the recommendation, with
+   that source]: when no tag
    gives the album, song.ini's `album` is `"<the song's name> - (Single)"` with origin `"default"`, instead of
    "Unknown"; the page's Album field shows it as its placeholder, as it shows the other defaults. Genre and year keep
    "Unknown" (no convention names a better placeholder). `song_length`, `diff_band` and report.json in the folder

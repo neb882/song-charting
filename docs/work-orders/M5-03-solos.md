@@ -1,9 +1,13 @@
 # M5-03: solos on long instrumentals: a solo has a longest length and solos a largest share of the song
 
-**Branch:** `m5-03-solos`, from `main` after wave 1 (wave 2, beside M5-02). **Agent:** `sc-builder`, then
+**Branch:** `m5-03-solos`, from `main` after wave 2 (wave 3, beside M5-04). **Agent:** `sc-builder`, then
 `sc-reviewer`. May push its branch to run CI. **Files:** `songcharter/starpower.py` (the solo rules), its tests,
-`docs/DESIGN.md` 2.10. Not `assemble.py` (M5-01 touched it in wave 1; nothing here needs it), not `engines/sections.py`
-or `sections.py` (the labels and names stay). **Time budget:** 1 day.
+`songcharter/preview.py` (step 6), `docs/DESIGN.md` 2.10. Not `assemble.py` (M5-01 touched it in wave 2; nothing
+here needs it), not `engines/sections.py` or `sections.py` (the labels and names stay). **Time budget:** 1 day.
+
+*Amended 2026-11-05 after the advisor's review (finding 9): the measured caps come out loose (about 56 measures and a
+share of 0.40 from the human data, and the shred song's map is at double the humans' tempo, so a measure there is
+half the seconds), so a solo is capped in seconds as well; the owner sees the shred song's solo spans at the gate.*
 
 **Conventions** (`docs/reports/charting-conventions.md`, section 5, ranked gap 6). The rules this order assumes,
 marked **[conventions]** for the advisor: solo markers go on a featured lead break, not on every instrumental
@@ -27,23 +31,33 @@ instrumental: the fix is in what songcharter makes of them.
 
 1. **Measure human solos first** (numbers only, a script of your own, never committed, that reads solo spans through
    `eval/scorer/scan_notes.cjs` or `importers.read_chart` and prints only counts and times): on the six reference
-   charts (`$EVAL_DATA/refs/<id>/ref`, two of them have solos) and the five stress charts (M5-09's set, else the
-   scratch folders `<S>/sooth/human_*` and `<S>/troop/human_*`): per solo its length in seconds and in measures of
-   the chart's own map, and per chart the solos' share of the span between its first and last Expert onset. Report
-   the table. Do not open any chart's [Events] or vocal track with Read, cat or grep (the stress charts have
-   vocals).
+   charts (`$EVAL_DATA/refs/<id>/ref`, two of them have solos) and the five stress charts (`$EVAL_DATA/stress/`,
+   M5-09's set, merged before this order): per solo its length in seconds and in measures of the chart's own map,
+   and per chart the solos' share of the span between its first and last Expert onset. Report the table. The
+   stress packages have vocals: nothing of them is read but through the two readers named, and no chart is opened
+   with Read, cat or grep. The advisor's probe, for orientation (measures): 8 and 32 on the references; 4, 4, 52 /
+   52 / 4, 4, 15, 52 on the power-metal song's three charts; 31 and 32 on one shred chart, none on the other; the
+   largest share 0.36.
 2. **The rules** (`SoloRules`, with the measured defaults) [conventions: a solo is a featured lead break of a
    length human charters write, and solos are a minority of the song]:
    - `max_measures`: a solo span longer than this is split. Default 32; set it to the 95th percentile of the human
-     solos' lengths in measures rounded up to a multiple of 8, never under 16 nor over 64.
+     solos' lengths in measures rounded up to a multiple of 8, never under 16 nor over 64 (the probe says about 52,
+     so 56).
+   - `max_seconds`: the same cap in seconds, since the measures are counted on our map and the shred song's map is
+     at double the humans' tempo (halving is M5-99's), so a measure cap there means half the seconds it means on the
+     human map. Default 60; set it to the 95th percentile of the human solos' lengths in seconds rounded up to the
+     next 10 s, never under 30 nor over 120. A span is cut at whichever cap comes first.
    - `max_share`: the solos of a song together cover at most this share of the span between the first and last
-     Expert onset. Default 0.25; set it to the largest human share rounded up to the next 0.05, never under 0.15.
+     Expert onset. Default 0.25; set it to the largest human share rounded up to the next 0.05, never under 0.15
+     (the probe says 0.40, set by the shred chart itself: that still allows about 3.6 minutes of solo markers on
+     the shred song, against 7 today and one human chart's 3.2; the owner may want a tighter share for songs with
+     vocals, M5-00 section 8).
    - `min_measures` 4, `min_onsets` 16 and `max_solos` 3 stay (the human median is 1, the 90th percentile 2-3).
-3. **Splitting** (`solo_sections` and `place_solos`): a run of consecutive Solo sections longer than `max_measures` is
-   split at the run's inner section starts (the lettered parts the sections engine made: "Solo 2A", "Solo 2B", ...)
-   into parts, which are grouped from the run's start into candidate spans of at most `max_measures` each (a part
-   longer than the cap on its own is cut at the measure line `max_measures` after its start; the remainder is its
-   own candidate). A run within the cap is one candidate, as now.
+3. **Splitting** (`solo_sections` and `place_solos`): a run of consecutive Solo sections longer than `max_measures`
+   or `max_seconds` is split at the run's inner section starts (the lettered parts the sections engine made: "Solo
+   2A", "Solo 2B", ...) into parts, which are grouped from the run's start into candidate spans within both caps (a
+   part longer than a cap on its own is cut at the measure line where the first cap is reached; the remainder is its
+   own candidate). A run within both caps is one candidate, as now.
 4. **Choosing** [conventions: on an instrumental, the spans where the lead stands out]: candidates that pass
    `min_onsets` and `min_measures` are ranked by onset density (Expert onsets per measure), ties by the earlier start; they are taken in that order, at most `max_solos`, skipping any that would
    take the solos' total past `max_share` of the charted span. The result is sorted by start, as now. With `names`
@@ -56,12 +70,13 @@ instrumental: the fix is in what songcharter makes of them.
 
 ## Tests
 
-- `solo_sections`: parts are grouped from the run's start while the group stays within the cap, so with
+- `solo_sections`: parts are grouped from the run's start while the group stays within the caps, so with
   `max_measures` 32 a run of five 20-measure parts gives five candidates of 20 (two would make 40), a run of ten
   8-measure parts gives groups of four, four and two, and a single part of 50 measures gives a 32-measure candidate
-  and an 18-measure one; a run of 30 measures stays one candidate.
+  and an 18-measure one; a run of 30 measures stays one candidate; on a map at 240 BPM with `max_seconds` 30, a run
+  of 40 measures (40 s) is cut at the seconds cap (30 measures) although it is within `max_measures`.
 - `place_solos`: the densest candidates win; the share cap skips the third candidate when it would pass 0.25 and
-  takes the next that fits; `names` bypasses both; the existing tests pass unchanged where no run exceeds the cap.
+  takes the next that fits; `names` bypasses all three; the existing tests pass unchanged where no run exceeds a cap.
 - Each test fails when its code is broken (say which break).
 
 ## Evaluation
@@ -69,22 +84,28 @@ instrumental: the fix is in what songcharter makes of them.
 - **Golden** (the charting path): `--expect guitar` on the songs whose solo spans change, named in the report; every
   song's onsets per part and difficulty must be identical old → new (the `report.md` table), so the only hash
   changes come from solo spans. Say which reference solos changed and whether the human chart there has a solo.
-- **The stress set:** the shred instrumental: at most 3 solos, each at most `max_measures`, together at most
-  `max_share` of the charted span; at least one of ours overlaps a human solo (either chart) by at least half of the
-  human solo's length, if those charts have solos (the script of step 1 says). The power-metal song: the 134-235 s
-  run split, the kept parts the densest, the same overlap check against its three charts.
-- No F1 can move (onsets unchanged): check that the stress scores are identical but for the solo-related fields.
+- **The stress set:** the shred instrumental: at most 3 solos, each within `max_measures` and `max_seconds`,
+  together at most `max_share` of the charted span; at least one of ours overlaps a human solo (either chart) by at
+  least half of the human solo's length, if those charts have solos (the script of step 1 says). The power-metal
+  song: the 134-235 s run split, the kept parts the densest, the same overlap check against its three charts. The
+  report lists the resulting solo spans of both songs in minutes and seconds beside the humans': the owner looks at
+  them at the gate (M5-00 section 7, step 8).
+- No F1 can move (onsets unchanged): check that the stress scores are identical to a stress run of this branch's
+  merge base but for the solo-related fields (M5-01 and M5-02 moved the notes since M5-09's baseline, so the
+  baseline itself is not the comparison here).
 
 ## Done means
 
 - [dev] The suite; the new tests fail when their code is broken.
 - [dev] The golden diff as above; the step-1 table; the stress lines.
 - [CI] Green on the branch.
-- [docs] DESIGN 2.10: the two rules, the measured table and the choice; the solo evaluation's numbers stay.
+- [docs] DESIGN 2.10: the three rules, the measured table and the choice; the solo evaluation's numbers stay.
 
 ## Limits
 
 - No change to allin1's labels, the librosa fallback's naming or `sections.py`'s merge and split; no new dependency.
+- The stress songs' human-chart packages have vocal tracks: read only by the two readers of step 1 and by
+  `stress.py`, which print numbers; never opened. Nothing is read from the scratch folders once M5-09 has merged.
 
 ## Report
 
