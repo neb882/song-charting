@@ -11,12 +11,39 @@
 #      - uninstall answering No, then the install again: exit 0, with no download (no uv "Downloading" line, no fetch
 #        line);
 #      - uninstall answering Yes: ~/.local/share/songcharter, ~/.cache/songcharter and the launcher are gone.
+#   4. the noise check (M5-08), on the logs of the install that ran to its end and of the reinstall: no npm warning
+#      ("npm warn", or "WARN"), no hub or Python warning ("Warning:"), no "unauthenticated", no carriage return (a bar
+#      redrawn in place) and no bar character (█, ▏-▉). The check is tried on lines it must flag and on quiet ones
+#      first. The killed install's log is not checked: it has curl's meter for uv's tarball (install.sh's download).
 # The logs, runtime.json, doctor.json and the clip's report.json go to $CI_ART/30-install (no audio).
 # Run by packaging/ci/run-hooks.sh with bash -euo pipefail; uses CI_PY, CI_TMP, CI_ART and CI_CLIP, uv and Docker.
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 art="$CI_ART/30-install"
 dist="$CI_TMP/dist"
 mkdir -p "$art"
+
+NOISE=$'npm warn|WARN|[Ww]arning:|unauthenticated|\r|█|▏|▎|▍|▌|▋|▊|▉'   # alternatives, not a bracket: any locale
+noisy() {   # FILE...: prints each line that is noise (with its file and number); true when there is one
+  grep -naE -- "$NOISE" "$@"
+}
+quiet() {   # FILE...: the logs are there and have no noise, else the hook fails
+  local f
+  for f in "$@"; do [ -s "$f" ] || { echo "30-install: $f is missing or empty"; exit 1; }; done
+  if noisy "$@"; then echo "30-install: the install's log has noise, above (M5-08)"; exit 1; fi
+  echo "30-install: no noise in $*"
+}
+probe="$CI_TMP/noise-probe.log"
+for line in "npm warn deprecated fluent-ffmpeg@2.1.3" "npm WARN old npm" "Warning: You are sending unauthenticated" \
+  "UserWarning: a Python warning" "warning: \`VIRTUAL_ENV=/x\` does not match the project environment path" \
+  "unauthenticated requests" $'a bar\rredrawn' "50%|█████     | 1/2" "▏" "▉"; do
+  printf '%s\n' "$line" >"$probe"
+  noisy "$probe" >/dev/null || { echo "30-install: the noise check misses: $line"; exit 1; }
+  if (quiet "$probe") >/dev/null; then echo "30-install: the noise check passes a log with: $line"; exit 1; fi
+done
+printf '%s\n' "fetch htdemucs_6s, file 2 of 2: done, 84 MB" "added 19 packages in 2s" "the lane changes: cu126 → cu132" \
+  >"$probe"
+if noisy "$probe"; then echo "30-install: the noise check flags a quiet line"; exit 1; fi
+(quiet "$probe") >/dev/null || { echo "30-install: the noise check fails a quiet log"; exit 1; }
 
 uv pip install --python "$CI_PY" --quiet LnkParse3==1.6.0
 "$CI_PY" -m pytest -q -rs -p no:cacheprovider --basetemp="$CI_TMP/pt-install" tests/test_winshortcut.py \
@@ -76,6 +103,7 @@ du -sh ~/.local/share/songcharter/runtime/uv-cache   # in the home: its own du, 
 [ ! -e ~/.cache/uv ] || { echo "30-install: the install wrote ~/.cache/uv, not its own runtime/uv-cache"; exit 1; }'
 keep /tmp/install-2.log /home/friend/.local/share/songcharter/runtime/runtime.json \
   /home/friend/.local/share/songcharter/doctor.json
+quiet "$art/install-2.log"
 
 friend "doctor" '~/.local/bin/songcharter doctor --json /tmp/doctor-full.json'
 keep /tmp/doctor-full.json
@@ -93,6 +121,7 @@ if grep -nE "Download(ing|ed) " /tmp/install-3.log; then echo "30-install: uv do
 if grep -n "^fetch " /tmp/install-3.log; then echo "30-install: fetch downloaded on the reinstall"; exit 1; fi
 echo "the reinstall downloaded nothing"'
 keep /tmp/install-3.log
+quiet "$art/install-3.log"
 
 friend "uninstall, deleting everything" '
 printf "y\n" | ~/.local/bin/songcharter uninstall

@@ -434,7 +434,7 @@ def test_the_report_runs_here(monkeypatch, tmp_path):
                           "guitar_device", "guitar_reason", "cpu", "ram", "disk", "components", "install",
                           "problems", "notes", "ok"}
         assert set(r["components"]) == {"ffmpeg", "node", "scan_chart", "autochart", "demucs", "librosa",
-                                        "matplotlib"} | ({"autochart_cuda", "allin1"} if full else set())
+                                        "matplotlib", "torchaudio"} | ({"autochart_cuda", "allin1"} if full else set())
         assert r["ok"] == (not r["problems"]) and json.loads(json.dumps(r)) == r
         assert r["gpu"] is None and r["gpu_error"] == "nvidia-smi not found"
         assert set(r["device"]) == {"chosen", "reason"} and set(r["disk"]) == {"home_free_mb", "windows_c_free_mb"}
@@ -487,6 +487,40 @@ def test_the_doctor_command(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(D, "report", bug)
     assert main(["doctor"]) == 3
     assert "KeyError: 'a bug'" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("present", [True, False])
+def test_doctor_lists_torchaudio(monkeypatch, present):
+    """M5-08 (M4-10's deferred item): torchaudio, which the lyrics aligner needs and NOTICE.txt lists, is among
+    doctor's components, its version from this Python's environment (the main one, from the launcher); missing, it
+    is said as missing, and is not a problem (the lyrics are optional)."""
+    import importlib.metadata
+    import importlib.util
+    find, version = importlib.util.find_spec, importlib.metadata.version
+
+    def find_spec(name, *a, **kw):
+        if name == "torchaudio":
+            return find("json") if present else None   # any spec: _module asks only whether there is one
+        return find(name, *a, **kw)
+
+    def metadata_version(dist):
+        if dist == "torchaudio":
+            if not present:
+                raise importlib.metadata.PackageNotFoundError(dist)
+            return "2.11.1+cpu"
+        return version(dist)
+
+    monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+    monkeypatch.setattr(importlib.metadata, "version", metadata_version)
+    comps = D.components(full=False)
+    assert comps["torchaudio"] == ({"ok": True, "version": "2.11.1+cpu"} if present else {"ok": False, "version": None})
+    r = base_report()
+    r["components"]["torchaudio"] = comps["torchaudio"]
+    assert D.findings(r) == ([], [])
+    r.update(songcharter="0.1.0", platform="Linux", python={"version": "3.13.17", "executable": "py"}, gpu=None,
+             gpu_error="nvidia-smi not found", torch={}, cpu={})
+    want = "torchaudio: ok, 2.11.1+cpu" if present else "torchaudio: missing: not installed"
+    assert [line for line in D.summary(r) if line.startswith("torchaudio")] == [want]
 
 
 def test_doctor_says_the_cuda_provider_is_not_needed_when_the_guitar_runs_on_the_cpu():

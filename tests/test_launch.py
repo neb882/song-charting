@@ -40,6 +40,17 @@ def test_environment_fills_in_what_the_person_has_not_set():
         assert launch.environment(RUNTIME, {"SONGCHARTER_OFFLINE": mine})["SONGCHARTER_OFFLINE"] == mine
 
 
+def test_the_hub_is_quiet_in_the_launchers_environment():
+    """M5-08: a hub download in a chart (models deleted, the install's models not complete) has no bars as wide as
+    the terminal and no "unauthenticated requests" warning (the hub logs it at warning level; HF_HUB_VERBOSITY=error
+    keeps its errors), with or without the install's models; a value the person set wins."""
+    for complete in (True, False):
+        env = launch.environment({**RUNTIME, "models_complete": complete}, {"PATH": "/bin"})
+        assert env["HF_HUB_DISABLE_PROGRESS_BARS"] == "1" and env["HF_HUB_VERBOSITY"] == "error"
+    mine = {"HF_HUB_DISABLE_PROGRESS_BARS": "0", "HF_HUB_VERBOSITY": "debug"}
+    assert {k: launch.environment(RUNTIME, mine)[k] for k in mine} == mine
+
+
 def test_the_installed_app_downloads_the_lyrics_weights_on_first_use(tmp_path, monkeypatch):
     """The release gate's major finding: runtime_record always writes models_complete, and the launcher once set
     SONGCHARTER_OFFLINE=1 with it, so the aligner's weights (which the install does not fetch) could never download

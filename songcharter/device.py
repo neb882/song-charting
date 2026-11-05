@@ -461,7 +461,8 @@ def _allin1() -> dict:
 
 def components(full: bool = True) -> dict:
     """What a chart needs, each {"ok", ...}: ffmpeg, node, scan_chart, autochart (and, with `full`, autochart_cuda:
-    autochart_cuda(), and allin1: its Python's probe), demucs, librosa, matplotlib."""
+    autochart_cuda(), and allin1: its Python's probe), demucs, librosa, matplotlib, torchaudio (the lyrics aligner's,
+    from this Python's environment: M5-08)."""
     from .engines import autochart
     out = {"ffmpeg": _ffmpeg(), "node": _node(), "scan_chart": _scan_chart()}
     install = None
@@ -478,7 +479,8 @@ def components(full: bool = True) -> dict:
             ok, detail = autochart_cuda(install)
             out["autochart_cuda"] = {"ok": ok, "detail": detail}
         out["allin1"] = _allin1()
-    out.update(demucs=_module("demucs"), librosa=_module("librosa"), matplotlib=_module("matplotlib"))
+    out.update(demucs=_module("demucs"), librosa=_module("librosa"), matplotlib=_module("matplotlib"),
+               torchaudio=_module("torchaudio"))
     return out
 
 
@@ -714,7 +716,7 @@ def summary(r: dict) -> list[str]:
                  + (f"; {_gb(c_free)} GB free on C:" if c_free is not None else ""))
     names = {"ffmpeg": "ffmpeg", "node": "node", "scan_chart": "scan-chart", "autochart": "autochart",
              "autochart_cuda": "autochart's CUDA provider", "allin1": "allin1", "demucs": "demucs",
-             "librosa": "librosa", "matplotlib": "matplotlib"}
+             "librosa": "librosa", "matplotlib": "matplotlib", "torchaudio": "torchaudio"}
     for key, c in comps.items():
         if key == "autochart_cuda" and not c.get("ok") and dev.get("chosen") != "cuda":
             text = f"not needed: the guitar runs on the CPU ({dev.get('reason')})"   # its load error would read as one
