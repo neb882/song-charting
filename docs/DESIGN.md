@@ -1305,7 +1305,48 @@ to detect, from the guitar's pick noise, where our chart is too sparse, and to f
   borderline. The ensemble runs were allin1 1.1.0 on the CPU, not all-in-one-infer on CUDA; the stem thresholds were
   never tuned; nobody listened to whether the busy vocals stem is singing or guitar bleed; the 6s stems give Solo 2
   0.863 where v1's ft stems gave 95 %.
-- **Placement:** `E solo` on the first note, `E soloend` on the last (inclusive). No back-to-back solos; expect 1–3 per song.
+- **Placement:** `E solo` on the first note, `E soloend` on the last (inclusive). Consecutive solo sections are one
+  run; expect 1–3 per song.
+- **Length and share (M5-03)** [conventions: solo markers go on a featured lead break, not on every instrumental
+  passage; a counter running for most of a song makes the bonus meaningless; here, M5-03]. On the owner's 9-minute
+  shred instrumental allin1 labelled most of the song Solo (Solo 1A–1C at 64–103 s, Solo 2A–2Z at 116–535 s), so two
+  markers covered about 7 minutes; on the power-metal song the Solo A–E run was one 100-s solo (134–235 s of 302).
+  Three rules (`starpower.SoloRules`), set from the human charts' own solo markers (`importers.read_song`, numbers
+  only):
+
+  | chart | solos | each: measures of the chart's map (s) | share of the first..last Expert onset |
+  |---|---|---|---|
+  | the six references | 2 (four have none) | Kimochi Warui 8.0 (17.9), Lucretia 32.0 (77.0) | 0.064, 0.333 |
+  | troop, primary | 1 | 53.0 (63.6) | 0.214 |
+  | troop, alt 1 | 3 | 4.3 (5.1), 4.3 (5.1), 52.8 (63.3) | 0.248 |
+  | troop, alt 2 | 4 | 4.1 (5.0), 4.3 (5.1), 15.9 (19.1), 52.9 (63.5) | 0.311 |
+  | sooth, primary | 0 | – | 0 |
+  | sooth, alt | 2 | 31.8 (95.9), 32.0 (96.9) | 0.357 |
+  | break, primary and its lead alt | 1 each | 13.0 (27.0); 12.0 (24.9) | 0.163, 0.150 |
+
+  14 solos on 13 charts (12 on the order's 11 without break: the same values): median 1 a chart; the 95th
+  percentile of length 52.9 measures and 96.4 s; the largest share 0.357.
+  1. `max_measures` **56**: the 95th percentile of length rounded up to a multiple of 8 (within 16–64). A run of
+     Solo sections longer than this, or than `max_seconds`, is split at its inner section starts (the lettered
+     parts): the parts are grouped from the run's start while the group stays within both caps; a part over a cap
+     on its own is cut at the measure line where the first cap is reached, and the rest is its own candidate (cut
+     again while it is over one). A run within both caps is one candidate, as before.
+  2. `max_seconds` **100**: the same in seconds rounded up to the next 10 s (within 30–120), since the measures are
+     counted on our map, which need not be the humans': on the shred song the owner's v0.1 map runs at about twice
+     their tempo (154 against 80 BPM; halving is M5-99's), so 56 of our measures there are about 87 s where 56 of
+     theirs are 168 s, and on the power-metal song at about half (100 against 198 BPM), where the seconds cap binds.
+  3. `max_share` **0.40**: the largest human share rounded up to the next 0.05 (at least 0.15), set by the shred
+     song's alt chart itself: about 3.6 minutes of markers on the shred song against one human chart's 3.2. The
+     owner may want a tighter share for songs with vocals (M5-00 section 8).
+  **The choice** [conventions: on an instrumental, the spans where the lead stands out]: the candidates with 4
+  measures and 16 Expert onsets are ranked by onset density (Expert onsets per measure, ties to the earlier start)
+  and taken in that order, at most 3, skipping any that would take the solos' seconds (first to last onset) past
+  `max_share` of the first..last Expert onset's; the result is sorted by start. Two parts of one split run can both
+  be taken, back to back. A person's names (`--solos "Solo 1,Solo 2"`) are neither split nor share-capped: the
+  person's choice stands, within the minimums and the 3-solo cap. `report.json`'s `phrases.guitar` holds
+  `solo_rules` (the values used, and `capped`: false with names), `solo_details` (per solo: start, end, measures,
+  onsets, onsets per measure) and `solos_skipped_by_share`; the preview's overview draws each solo as a green band
+  under the star power's cyan one [code].
 - **Difficulties:** solos are written on every guitar difficulty. The reducer copies them down and keeps at least one note in each solo on every level (`reduce.py`) [code], so scan-chart's `emptySoloSection`, which it checks on every track, cannot fire.
 
 - **Not chosen:** imported star power (autochart has none; STRUM's 8 phrases placed on the densest Expert windows come out empty on Easy); chartgen's 19 phrases.
