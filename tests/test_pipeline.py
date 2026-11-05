@@ -25,7 +25,7 @@ from songcharter.chart import Chart, DrumHit, FretNote, SongInfo, Track, write_c
 from songcharter.cli import main
 from songcharter.engines import autochart as AC
 from songcharter.engines.autochart import DEFAULT_SEED
-from songcharter.errors import ToolError
+from songcharter.errors import InputError, ToolError
 from songcharter.importers import read_song
 from songcharter.pipeline import Engines, Options, Run, chart, parse_ffmetadata, read_tags, song_metadata
 from songcharter.tempo import Tempo, TempoMap
@@ -1394,8 +1394,8 @@ def test_metadata_rules():
     meta, origin = song_metadata(Path("x/My Song.mp3"), {"title": " Real  Title ", "album_artist": "Group",
                                                          "date": "Released 1987", "track": "B2"},
                                  {"name": None, "year": "  ", "genre": "Rock"})
-    assert meta == {"name": "Real Title", "artist": "Group", "album": "Unknown", "genre": "Rock", "year": "1987",
-                    "charter": "songcharter"}
+    assert meta == {"name": "Real Title", "artist": "Group", "album": "Real Title - (Single)", "genre": "Rock",
+                    "year": "1987", "charter": "songcharter"}
     assert origin["artist"] == "tag album_artist" and origin["year"] == "tag date" and origin["album"] == "default"
     meta, origin = song_metadata(Path("x/My Song.mp3"), {}, {})
     assert meta["name"] == "My Song" and origin["name"] == "file name"
@@ -1403,6 +1403,101 @@ def test_metadata_rules():
     scan_defaults = {"name": "Unknown Name", "artist": "Unknown Artist", "album": "Unknown Album",
                      "genre": "Unknown Genre", "year": "Unknown Year", "charter": "Unknown Charter"}
     assert all(meta[k] != v and meta[k] for k, v in scan_defaults.items())
+
+
+@pytest.mark.parametrize("stem,artist,name", [
+    ("Made-Up Band - Some Song", "Made-Up Band", "Some Song"),     # a hyphen inside a word is no separator
+    ("01 - Made-Up Band - Some Song", "Made-Up Band", "Some Song"),   # a track number, then a separator
+    ("01. Made-Up Band – Some Song", "Made-Up Band", "Some Song"),   # a track number and a dot; an en dash
+    ("7 Made-Up Band — Some Song", "Made-Up Band", "Some Song"),     # a track number and a space; an em dash
+    ("Made-Up Band - Some Album - Some Song", "Made-Up Band", "Some Song"),   # the artist first, the title last
+    ("  Made-Up   Band  -  Some  Song ", "Made-Up Band", "Some Song"),       # white space as one space, trimmed
+    ("311 - Some Song", "311", "Some Song"),     # a number before the only separator is the artist
+    ("1984 Band - Some Song", "1984 Band", "Some Song"),   # four digits are no track number
+    ("1984 - Made-Up Band - Some Song", "1984", "Some Song"),   # not before a separator either: the artist
+    ("Some Song", None, "Some Song"),            # no separator: the stem is the title, as before
+    ("Made-Up Band-Some Song", None, "Made-Up Band-Some Song"),   # no space around the hyphen: no separator
+    ("- Some Song", None, "Some Song"),          # a separator first: a blank artist, so none
+    ("\u2013 Some Song", None, "Some Song"),
+    ("-Some Song", None, "-Some Song"),          # no space after the dash: no separator
+    ("01. - Some Song", None, "Some Song"),      # the artist's part blank once the track number goes: no artist
+])
+def test_the_file_name_gives_the_artist_and_the_title(stem, artist, name):
+    """With no tags, "[<track number><sep>]<artist><sep><title>" (a hyphen, en dash or em dash with a space on
+    each side) gives the artist and the title, from the file name; the album's placeholder is the title's single."""
+    meta, origin = song_metadata(Path(f"x/{stem}.mp3"), {}, {})
+    assert (meta["name"], origin["name"]) == (name, "file name"), stem
+    assert (meta["artist"], origin["artist"]) == ((artist, "file name") if artist else ("Unknown", "default")), stem
+    assert (meta["album"], origin["album"]) == (f"{name} - (Single)", "default"), stem
+    assert (meta["genre"], meta["year"]) == ("Unknown", "Unknown")
+
+
+def test_the_tags_and_the_caller_win_over_the_file_name():
+    path = Path("x/01 - Made-Up Band - Some Song.flac")
+    # a tagged artist: the file's name is not read for "Artist - Title", and its stem is the title, as before
+    for tag in ("artist", "album_artist", "albumartist"):
+        meta, origin = song_metadata(path, {tag: "Tagged Band"}, {})
+        assert (meta["artist"], origin["artist"]) == ("Tagged Band", f"tag {tag}"), tag
+        assert (meta["name"], origin["name"]) == ("01 - Made-Up Band - Some Song", "file name"), tag
+    # a tagged title with the file name's artist
+    meta, origin = song_metadata(path, {"title": "Tagged Song", "artist": "  "}, {})
+    assert (meta["name"], origin["name"], meta["artist"], origin["artist"]) == (
+        "Tagged Song", "tag title", "Made-Up Band", "file name")
+    assert (meta["album"], origin["album"]) == ("Tagged Song - (Single)", "default")
+    # the caller's values win over the file name's, and the album's placeholder follows the title given
+    meta, origin = song_metadata(path, {}, {"artist": "Given Band", "name": " "})
+    assert (meta["artist"], origin["artist"], meta["name"], origin["name"]) == (
+        "Given Band", "given", "Some Song", "file name")
+    meta, origin = song_metadata(path, {}, {"name": "Given Song"})
+    assert (meta["name"], origin["name"], meta["artist"], origin["artist"]) == (
+        "Given Song", "given", "Made-Up Band", "file name")
+    assert meta["album"] == "Given Song - (Single)"
+    # a tagged or given album: no placeholder
+    assert song_metadata(path, {"album": "Tagged Album"}, {})[0]["album"] == "Tagged Album"
+    assert song_metadata(path, {}, {"album": "Given Album"})[1]["album"] == "given"
+
+
+def test_a_song_too_short_or_silent_is_an_input_error():
+    """Under MIN_SONG_S (10 s), or its peak under MIN_PEAK_DBFS (-60 dBFS, 0.001): the file named, and which."""
+    loud = np.full((2, int(P.MIN_SONG_S * SR)), 0.0011, dtype=np.float32)   # -59.2 dBFS
+    P.check_song("song.wav", loud)
+    quiet = loud.copy()
+    quiet[1, 7] = -0.5   # the peak is the loudest sample either way up
+    P.check_song("song.wav", quiet * 0.5)
+    with pytest.raises(InputError) as e:
+        P.check_song("song.wav", loud[:, :int(9.99 * SR)])
+    assert str(e.value) == "song.wav is 9.99 s long: songcharter charts songs of 10 s or more"
+    with pytest.raises(InputError, match=r"^song\.wav is 0\.00 s long"):
+        P.check_song("song.wav", np.zeros((2, 0), np.float32))
+    with pytest.raises(InputError) as e:
+        P.check_song("song.wav", loud * 0.82)
+    assert str(e.value) == "song.wav is silent (its peak is -60.9 dBFS, under -60 dBFS): there is nothing to chart"
+    with pytest.raises(InputError, match=r"^song\.wav is silent \(every sample is 0\): there is nothing to chart$"):
+        P.check_song("song.wav", np.zeros((2, 12 * SR), np.float32))
+
+
+def test_a_song_too_short_or_silent_is_refused_before_the_separation(tmp_path, own_cache, monkeypatch, capsys):
+    """Right after the decode, through chart() (an InputError) and the command line (exit 2), with nothing built:
+    the PROGRESS finding of a 1-s, 4-s or silent song that exited 3 when the librosa sections fallback raised."""
+    t = np.arange(4 * SR) / SR
+    tone = (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+    A.write_wav(np.stack([tone, tone]), tmp_path / "short.wav")
+    A.write_wav(np.zeros((2, 12 * SR), np.float32), tmp_path / "silent.wav")
+    for name, words in (("short.wav", "short.wav is 4.00 s long: songcharter charts songs of 10 s or more"),
+                        ("silent.wav", "silent.wav is silent (every sample is 0): there is nothing to chart")):
+        engines = standins()()
+        with pytest.raises(InputError) as e:
+            chart(tmp_path / name, tmp_path / "Song", Options(takes=1), engines=engines, log=lambda line: None,
+                  sampler=None)
+        assert str(e.value).startswith(words), str(e.value)
+        assert [c[0] for c in engines.calls] == [] and not (tmp_path / "Song").exists()
+        report = json.loads((default_work(own_cache, tmp_path / name) / "pipeline.json").read_text(encoding="utf-8"))
+        assert [s["stage"] for s in report["stages"]] == ["decode"] and report["error"] == f"InputError: {e.value}"
+    monkeypatch.setattr(P, "Engines", standins())
+    assert main(["chart", str(tmp_path / "short.wav"), "--out", str(tmp_path / "Cli")]) == 2
+    err = capsys.readouterr().err
+    assert "songcharter: error: short.wav is 4.00 s long" in err and "Traceback" not in err
+    assert P.Engines.calls == [] and not (tmp_path / "Cli").exists()
 
 
 def test_options_and_seeds():

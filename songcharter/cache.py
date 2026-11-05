@@ -64,6 +64,7 @@ from . import __version__
 from .errors import InputError
 
 NAME_MAX = 40            # <name>: at most this many characters (UTF-16 code units, as Windows counts a path)
+WORD_BACK = 12           # safe_name: a cut inside a word moves back to a space at most this many units before it
 KEY_HEX = 16             # <key>: this many hex characters of the song file's SHA-256
 SCRATCH_HEX = 8          # autochart's scratch folder: <cache>/ac/<this many of them>
 MARKER = "songcharter-work.json"  # in each work folder: what made it, its scratch folder, when it was last used
@@ -133,18 +134,24 @@ def safe_name(stem: str, limit: int = NAME_MAX) -> str:
     """A file stem as a folder name any Windows accepts: ASCII-folded where a character has an ASCII form (other
     scripts are kept); control characters and < > : " / \\ | ? * as "_", invisible format characters (a zero-width
     space) left out; runs of spaces as one; no
-    leading or trailing dots or spaces; at most `limit` UTF-16 code units; never a reserved device name (CON, PRN,
-    AUX, NUL, COM0-9, LPT0-9, CONIN$, CONOUT$, also before an extension: "nul.txt"), which gets a "_" in front.
-    Empty: "song"."""
+    leading or trailing dots or spaces; at most `limit` UTF-16 code units, cut at a word where one ends close
+    enough (a cut inside a word goes back to the last space before it when that leaves at least `limit` -
+    WORD_BACK units; else it cuts the word); never a reserved device name (CON, PRN, AUX, NUL, COM0-9, LPT0-9,
+    CONIN$, CONOUT$, also before an extension: "nul.txt"), which gets a "_" in front. Empty: "song"."""
     text = "".join(_fold(c) for c in unicodedata.normalize("NFC", stem))
     text = "".join("_" if c in _FORBIDDEN or unicodedata.category(c) == "Cc" else c for c in text
                    if unicodedata.category(c) != "Cf")
     text = " ".join(text.split())
 
     def cut(t: str, n: int) -> str:
-        while _units(t) > n:
-            t = t[:-1]
-        return t.strip(" .")
+        head = t
+        while _units(head) > n:
+            head = head[:-1]
+        if head and len(head) < len(t) and head[-1] != " " and t[len(head)] != " ":   # inside a word
+            space = head.rfind(" ")
+            if space >= 0 and _units(head[:space].rstrip(" .")) >= n - WORD_BACK:
+                head = head[:space]
+        return head.strip(" .")
 
     text = cut(text.strip(" ."), limit)
     if text.split(".")[0].rstrip(" ").upper() in _RESERVED:

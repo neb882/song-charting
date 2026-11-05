@@ -34,8 +34,15 @@
     that fails is a warning. pipeline.json's and report.json's `art` say what was added and where it came from
     ("embedded", "given", or None), with no path of the person's (the options record whether each was given).
   * **Metadata.** The file's tags as ffmpeg prints them (title, artist, album, genre, date, track), the caller's
-    values on top, and defaults for what scan-chart requires: the file's name for the title, "Unknown" for the
-    rest. scan-chart's own defaults ("Unknown Artist", ...) count as missing, so they are not used.
+    values on top, and defaults for what scan-chart requires. With no artist tag, a file named "Artist - Title"
+    (`from_file_name`: a hyphen, en dash or em dash with a space on each side, after an optional track number)
+    gives the artist and the title, where the caller and the tags give none; otherwise the file's name is the
+    title. The album's placeholder is "<the song's name> - (Single)" (Encore's rule for a single), "Unknown" the
+    artist's, genre's and year's. scan-chart's own defaults ("Unknown Artist", ...) count as missing, so they are
+    not used.
+  * **A song too short or silent** (under MIN_SONG_S, or its peak under MIN_PEAK_DBFS) is refused right after the
+    decode, before the separation, with an InputError that says which (`check_song`): the engines have nothing to
+    work on there, and the librosa sections fallback raised on such songs.
   * **Before any audio work** the inputs are checked (the file exists, the output folder holds nothing a build does
     not write) and so is every component the instruments need: a missing one fails with what to install or set,
     never a traceback. Where DESIGN.md has a fallback the stage takes it and says so: sections fall back to
@@ -127,7 +134,18 @@ STEMS = ("drums", "bass", "guitar", "other", "vocals")   # the stems assemble re
 EXTRA_SEED_STEP = 101    # takes after the first use seeds 101, 202, 303, ... (the v1 chart's seeds)
 CUDA_TAKES = 4           # guitar takes by default when the guitar stage runs on CUDA (guitar_takes); 1 on the CPU
 SOLO_MODES = ("stems", "labels", "off")  # assemble's solos modes; a list of section names is the other kind
-DEFAULTS = {"artist": "Unknown", "album": "Unknown", "genre": "Unknown", "year": "Unknown", "charter": "songcharter"}
+# the placeholders for what no tag or caller gives ({name}: the song's name, as resolved); the album's is Encore's
+# song.ini rule for a single (docs/reports/charting-conventions.md, section 8), instead of "Unknown"
+DEFAULTS = {"artist": "Unknown", "album": "{name} - (Single)", "genre": "Unknown", "year": "Unknown",
+            "charter": "songcharter"}
+# "Artist - Title" in a file's name (from_file_name): the separator, a hyphen, en dash or em dash with a space on each
+# side, or at the start with a space after ("- Title": a blank artist); a track number before the artist, one to three
+# digits followed by a dot, a space or a separator
+NAME_SEPARATOR = re.compile(r"(?:(?<= )|^)[-\u2013\u2014](?= )")
+TRACK_NUMBER = re.compile(r"[0-9]{1,3}")               # before a separator: "01 - Artist - Title"
+TRACK_PREFIX = re.compile(r"^[0-9]{1,3}(?:\. ?| )")   # or before the artist: "01. Artist", "1.Artist", "01 Artist"
+MIN_SONG_S = 10.0        # a song shorter than this is refused after the decode (check_song)
+MIN_PEAK_DBFS = -60.0    # and so is one whose peak is under this: silence
 # the tags each song.ini value is read from, first found wins (ffmpeg's names, lower-cased)
 TAGS = {"name": ("title",), "artist": ("artist", "album_artist", "albumartist"), "album": ("album",),
         "genre": ("genre",), "year": ("date", "year", "originaldate"), "album_track": ("track", "tracknumber")}
@@ -370,25 +388,47 @@ def read_tags(path: Path | str, ffmpeg: str | None = None) -> dict[str, str]:
     return tags
 
 
+def _clean(v) -> str:
+    """A value with its runs of white space as one space and none at either end ("" for None)."""
+    return " ".join(str(v).split()) if v is not None else ""
+
+
+def from_file_name(stem: str) -> dict[str, str]:
+    """The artist and the title a file's stem gives when it reads "[<track number><sep>]<artist><sep><title>" (the
+    module docstring; <sep> NAME_SEPARATOR): {"artist": the part before the first separator, "name": the part after
+    the last one}, so "Artist - Album - Title" gives the artist and the title. A track number is one to three digits
+    followed by a dot, a space or a separator ("01 - Artist - Title", "01. Artist - Title"); a number before the
+    only separator is the artist ("311 - Amber"). A part blank after trimming is left out, so "- Title" gives the
+    title alone; no separator: {}."""
+    parts = [p.strip() for p in NAME_SEPARATOR.split(_clean(stem))]
+    if len(parts) < 2:
+        return {}
+    first = TRACK_PREFIX.sub("", parts[0]).strip()
+    if len(parts) > 2 and (TRACK_NUMBER.fullmatch(parts[0]) or not first):
+        parts = parts[1:]   # a track number, then a separator: "01 - Artist - Title", "01. - Artist - Title"
+    else:
+        parts[0] = first
+    return {key: value for key, value in (("artist", parts[0]), ("name", parts[-1])) if value}
+
+
 def song_metadata(path: Path | str, tags: Mapping[str, str], overrides: Mapping[str, str | None]
                   ) -> tuple[dict[str, Any], dict[str, str]]:
     """assemble's metadata (name, artist, album, genre, year, charter, album_track when tagged) and where each
-    value came from ("given", "tag <name>" or "default"). A blank value counts as not given."""
+    value came from ("given", "tag <name>", "file name" or "default"). A blank value counts as not given. With no
+    artist tag, the file's name gives the artist and the title the caller and the tags do not (`from_file_name`);
+    else, or without a separator in it, the file's stem is the title, as before."""
     meta: dict[str, Any] = {}
     origin: dict[str, str] = {}
 
-    def clean(v) -> str:
-        return " ".join(str(v).split()) if v is not None else ""
-
     for key, names in TAGS.items():
-        given = clean(overrides.get(key)) if key in OVERRIDES else ""
+        given = _clean(overrides.get(key)) if key in OVERRIDES else ""
         if given:
             meta[key], origin[key] = given, "given"
             continue
-        tag = next((n for n in names if clean(tags.get(n))), None)
+        tag = next((n for n in names if _clean(tags.get(n))), None)
         if tag is None:
             continue
-        value = clean(tags[tag])
+        value = _clean(tags[tag])
         if key == "year":
             m = re.search(r"\b(1[0-9]{3}|2[0-9]{3})\b", value)
             value = m.group(1) if m else value
@@ -398,11 +438,15 @@ def song_metadata(path: Path | str, tags: Mapping[str, str], overrides: Mapping[
                 continue
             value = int(m.group(1))
         meta[key], origin[key] = value, f"tag {tag}"
+    tagged_artist = any(_clean(tags.get(n)) for n in TAGS["artist"])
+    for key, value in ({} if tagged_artist else from_file_name(Path(path).stem)).items():
+        if key not in meta:
+            meta[key], origin[key] = value, "file name"
     if "name" not in meta:
         meta["name"], origin["name"] = Path(path).stem, "file name"
     for key, value in DEFAULTS.items():
         if key not in meta:
-            meta[key], origin[key] = value, "default"
+            meta[key], origin[key] = value.format(name=meta["name"]), "default"
     return meta, origin
 
 
@@ -570,6 +614,19 @@ def _expert_onsets(path: Path, instrument: str) -> int:
     """Onsets in the Expert part of the instrument in an engine's chart (0 when it has none)."""
     part = read_song(path).parts.get((instrument, "expert"))
     return len({n.time for n in part.notes}) if part else 0
+
+
+def check_song(name: str, mix: np.ndarray) -> None:
+    """An InputError for a decode too short to chart (under MIN_SONG_S) or silent (its peak under MIN_PEAK_DBFS),
+    naming the file (`name`) and which it is."""
+    seconds = mix.shape[-1] / SAMPLE_RATE
+    if seconds < MIN_SONG_S:
+        raise InputError(f"{name} is {seconds:.2f} s long: songcharter charts songs of {MIN_SONG_S:g} s or more")
+    peak = float(np.max(np.abs(mix))) if mix.size else 0.0
+    if peak < 10 ** (MIN_PEAK_DBFS / 20):
+        level = "every sample is 0" if peak == 0 else (f"its peak is {20 * np.log10(peak):.1f} dBFS, under "
+                                                      f"{MIN_PEAK_DBFS:g} dBFS")
+        raise InputError(f"{name} is silent ({level}): there is nothing to chart")
 
 
 def _decode(audio: Path, work: Path) -> tuple[np.ndarray, Path, bool]:
@@ -809,6 +866,7 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
     mix, wav, same = _decode(audio, work)
     end("decode", t0, same, f"{mix.shape[1] / SAMPLE_RATE:.2f} s of audio in {wav.name}",
         {"samples": int(mix.shape[1])})
+    check_song(audio.name, mix)   # before the separation: a song too short or silent stops here
 
     device, why, cuda_error = engines.device(options.device)
     record["device"] = {"asked": options.device, "chosen": device, "reason": why}

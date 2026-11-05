@@ -233,6 +233,24 @@ def test_the_output_folder_is_safe_for_windows(tmp_path):
     assert J.output_folder(tmp_path, bare, J.parse_options({})).name == "Unknown - CON"
 
 
+def test_the_library_folder_is_cut_at_a_word_within_80(tmp_path):
+    """The name the friend sees in Clone Hero's Songs folder: up to LIBRARY_NAME_MAX (80) units, not the work
+    folder's 40, cut at a word; installed, its deepest Windows path (clonehero.py's .tmp copy) stays under 259."""
+    artist, title = "The Made-Up Orchestra of Somewhere", "A Rather Long Song Title That Goes On and On Forever"
+    up = {"id": UPLOAD["id"], "path": "/u/x.flac", "metadata": {"name": title, "artist": artist}}
+    name = J.output_folder(tmp_path, up, J.parse_options({})).name
+    full = f"{artist} - {title}"
+    assert len(full) > J.LIBRARY_NAME_MAX == 80
+    # 78 units: the cut at 80 fell inside "On"
+    assert name == "The Made-Up Orchestra of Somewhere - A Rather Long Song Title That Goes On and"
+    assert len(name) <= 80 and full[len(name)] == " "   # ends at a word: the next character is a space
+    given = J.parse_options({"artist": "Given Band", "title": "x" * 90})
+    assert J.output_folder(tmp_path, up, given).name == "Given Band - " + "x" * 67   # one long word: cut hard
+    deepest = ("C:\\Users\\" + "u" * 20 + "\\Documents\\Clone Hero\\Songs\\." + "n" * J.LIBRARY_NAME_MAX
+               + ".songcharter-01234567.tmp\\background.jpg")
+    assert len(deepest) == 178 < 259
+
+
 # ------------------------------------------------------------------------------------------------ a job
 
 def test_a_chart_whose_gate_fails_is_done_with_ok_false(tmp_path, standin):

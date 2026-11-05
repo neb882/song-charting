@@ -543,6 +543,72 @@ def test_uploads_older_than_a_week_go(tmp_path):
     assert S.prune_uploads(tmp_path / "nowhere") == []
 
 
+NAMED_PAGE = r"""
+const vm = require("vm"), fs = require("fs");
+const els = {};
+const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [], value: 0,
+  replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); },
+  addEventListener() {}, classList: { add() {}, remove() {} } });
+const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node,
+  addEventListener() {} };
+const META = ["title", "artist", "album", "year", "genre"];
+const field = (value) => ({ value, placeholder: "", checked: true });
+els.options = Object.assign(node("form"), { querySelectorAll: () => [],
+  reset() { for (const k of META) this.elements[k].value = ""; },   // a form's reset: the fields' values go
+  elements: { title: field("Last Song"), artist: field("Last Band"), album: field(""), year: field(""),
+    genre: field(""), solos: field("labels"), takes: field(""), device: field("auto"), preview: field(""),
+    lyrics: field("") } });
+let xhr = null;
+class XMLHttpRequest {
+  constructor() { this.on = {}; this.headers = {}; this.upload = { addEventListener() {} }; xhr = this; }
+  open(method, path) { this.path = path; } setRequestHeader(k, v) { this.headers[k] = v; } send(f) { this.sent = f; }
+  addEventListener(kind, f) { this.on[kind] = f; }
+}
+const ctx = { document, window: { addEventListener() {} }, XMLHttpRequest, encodeURIComponent, console,
+  fetch: async () => ({ status: 200, json: async () => ({}) }), setInterval() {}, clearInterval() {}, setTimeout() {} };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(process.argv[2], "utf8"), ctx);
+ctx.upload({ name: "Made-Up Band - Some Song.mp3" });
+const sent = { path: xhr.path, name: xhr.headers["X-Filename"] };
+xhr.status = 200;
+xhr.responseText = process.argv[3];   // the server's own answer to that upload
+xhr.on.load();
+const f = els.options.elements;
+console.log(JSON.stringify({ sent, shown: !els["options-screen"].hidden,
+  fields: Object.fromEntries(META.map((k) => [k, [f[k].value, f[k].placeholder]])), options: ctx.readOptions() }));
+"""
+
+
+def test_the_file_name_gives_the_artist_and_title_the_page_prefills(served, tmp_path):
+    """A file named "Artist - Title" with no tags: /api/upload answers its artist and title with the origin "file
+    name", as upload.json keeps them for the library folder's name; the page (app.js in node with a stand-in DOM)
+    prefills both, editable, and shows the album's placeholder "<title> - (Single)" and the other defaults as
+    placeholders, so the chart gets the artist and title as given and the rest as placeholders."""
+    status, body = upload(served, song(served.home / "tmp.wav"), "Made-Up Band - Some Song.mp3")
+    assert status == 200, body
+    assert {k: (body["tags"][k], body["origin"][k]) for k in ("name", "artist", "album", "genre")} == {
+        "name": ("Some Song", "file name"), "artist": ("Made-Up Band", "file name"),
+        "album": ("Some Song - (Single)", "default"), "genre": ("Unknown", "default")}
+    record = S.read_upload(served.home, body["id"])
+    assert record["metadata"] == body["tags"] and Path(record["path"]).name == "Made-Up Band - Some Song.mp3"
+    assert J.output_folder(served.home, record, J.parse_options({})).name == "Made-Up Band - Some Song"
+    if shutil.which("node") is None:
+        pytest.skip("the page's half needs node")
+    script = tmp_path / "named.cjs"
+    script.write_text(NAMED_PAGE, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(S.static_files()["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js), json.dumps(body)], capture_output=True, text=True,
+                          timeout=60)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["sent"] == {"path": "/api/upload", "name": "Made-Up%20Band%20-%20Some%20Song.mp3"} and out["shown"]
+    assert out["fields"] == {"title": ["Some Song", ""], "artist": ["Made-Up Band", ""],
+                             "album": ["", "Some Song - (Single)"], "year": ["", "Unknown"], "genre": ["", "Unknown"]}
+    assert {k: out["options"].get(k) for k in ("title", "artist", "album", "year", "genre")} == {
+        "title": "Some Song", "artist": "Made-Up Band", "album": None, "year": None, "genre": None}
+
+
 def test_one_job_at_a_time_then_cancel(served):
     ctx, port = served, served.port
     status, up = upload(ctx, song(ctx.home / "s.wav"), "Song.wav")
