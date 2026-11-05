@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 
 from songcharter.chart import DRUM_ACTIVATION, STAR_POWER, Chart, SongInfo, write_chart
-from songcharter.quantize import (QuantizeRules, SnapGrid, estimate_offset, limit_chord, odd_32nds, play_states,
-                                  quantize_part, quantize_song)
+from songcharter.quantize import (HOPO_SPACING_S, MERGE_MAX_S, STRUM_SPACING_S, QuantizeRules, SnapGrid,
+                                  estimate_offset, limit_chord, odd_32nds, play_states, quantize_part, quantize_song)
 from songcharter.tempo import TempoMap
 from songcharter.timed import OPEN, TimedHit, TimedNote, TimedPart, TimedSong, TimedSpan
 
@@ -43,7 +43,7 @@ def rock_pattern(beats):
 
 
 def check(rep):
-    assert rep.notes_in == rep.notes_out + rep.merged + rep.dropped
+    assert rep.notes_in == rep.notes_out + rep.merged + rep.dropped + rep.dropped_distinct
 
 
 # ------------------------------------------------------------------------------------------------ offset
@@ -325,10 +325,11 @@ def test_onsets_a_16th_apart_never_share_a_tick():
              TimedNote(at(tm, 5, 30), (3,)), TimedNote(at(tm, 5.25, -48), (4,)), TimedNote(at(tm, 5.25), (2,))]
     track, rep = quantize_part(part(notes), tm, PAD, offset=0.0)
     # 4 - 50 ms and 4 + 45 ms both snap to beat 4: the earlier fits its other slot better and moves there.
-    # 5.25 - 48 ms and 5.25 are under 3/4 of a slot apart: they merge into a chord
+    # 5.25 - 48 ms and 5.25 are under 3/4 of a slot apart, so they stay on one tick, but 48 ms apart they are no
+    # chord: the one on the tick stays (the chord rule)
     assert [(n.tick, n.frets) for n in track.notes] == [
-        (3 * RES, (2,)), (4 * RES - 48, (0,)), (4 * RES, (1,)), (5 * RES, (3,)), (5 * RES + 48, (2, 4))]
-    assert rep.separated == 1 and rep.merged == 1
+        (3 * RES, (2,)), (4 * RES - 48, (0,)), (4 * RES, (1,)), (5 * RES, (3,)), (5 * RES + 48, (2,))]
+    assert rep.separated == 1 and rep.merged == 0 and rep.dropped_distinct == 1
     check(rep)
     # drums: one lane per pad; a flam on one pad merges
     hits = [TimedHit(at(tm, 4, -50), 1), TimedHit(at(tm, 4, 45), 1), TimedHit(at(tm, 4, 45), 2, cymbal=True),
@@ -338,15 +339,57 @@ def test_onsets_a_16th_apart_never_share_a_tick():
     assert rep.separated == 1 and rep.merged == 1
 
 
-def test_onsets_under_the_minimum_spacing_are_dropped():
-    tm = const_map(200.0)  # a 1/16 is 75 ms: too close for strums (80 ms), fine for HOPOs (55 ms)
-    strums = [TimedNote(at(tm, q / 4), (0,)) for q in range(4)]          # same fret: strummed
-    hopos = [TimedNote(at(tm, 4 + q / 4), (q % 3,)) for q in range(4)]  # changing frets: natural HOPOs
-    track, rep = quantize_part(part(strums + hopos), tm, PAD, offset=0.0)
-    ticks = [n.tick for n in track.notes]
-    assert ticks == [0, 96, 4 * RES, 4 * RES + 48, 4 * RES + 96, 4 * RES + 144]
-    assert rep.dropped == 2
+def test_onsets_distinct_in_time_make_no_chord():
+    """Two onsets 50 ms apart on one tick (under 3/4 of a 125 ms slot, so _separate leaves them): the one farther
+    from the tick is dropped and counted, the earlier one when it is the farther; its state goes with it. 15 ms
+    apart they stay a chord, and a chord never spans more than MERGE_MAX_S. Drum hits are not touched."""
+    assert MERGE_MAX_S == 0.020
+    tm = const_map()  # 120 BPM: a 1/16 is 125 ms
+    notes = [TimedNote(at(tm, 4, -10), (0,)), TimedNote(at(tm, 4, 40), (1,)),            # the later is farther
+             TimedNote(at(tm, 6, -40), (2,), tap=True), TimedNote(at(tm, 6, 10), (3,)),  # the earlier is farther
+             TimedNote(at(tm, 8, -5), (0,)), TimedNote(at(tm, 8, 10), (2,)),             # 15 ms: a chord
+             TimedNote(at(tm, 10), (0,)), TimedNote(at(tm, 10, 15), (1,)), TimedNote(at(tm, 10, 30), (2,))]
+    track, rep = quantize_part(part(notes), tm, PAD, offset=0.0)
+    assert [(n.tick, n.frets, n.tap) for n in track.notes] == [
+        (4 * RES, (0,), False), (6 * RES, (3,), False), (8 * RES, (0, 2), False), (10 * RES, (0, 1), False)]
+    assert rep.dropped_distinct == 3 and rep.merged == 2 and rep.dropped == 0 and rep.separated == 0
     check(rep)
+    hits = [TimedHit(at(tm, 4, -10), 1), TimedHit(at(tm, 4, 40), 2, cymbal=True)]  # two pads: not a chord
+    track, rep = quantize_part(part(hits, "drums"), tm, PAD, offset=0.0)
+    assert [(n.tick, n.pad) for n in track.notes] == [(4 * RES, 1), (4 * RES, 2)] and rep.dropped_distinct == 0
+
+
+def test_fast_16ths_keep_every_note():
+    """At 200 BPM a 1/16 is 75 ms: strummed (the same fret) and HOPO (changing frets) 16ths all stay. The floors of
+    80 and 55 ms before them dropped every other strum."""
+    tm = const_map(200.0)
+    strums = [TimedNote(at(tm, 4 + q / 4), (0,)) for q in range(4)]
+    hopos = [TimedNote(at(tm, 8 + q / 4), (q % 3,)) for q in range(4)]
+    track, rep = quantize_part(part(strums + hopos), tm, PAD, offset=0.0)
+    assert [n.tick for n in track.notes] == [4 * RES + 48 * q for q in range(4)] + [8 * RES + 48 * q for q in range(4)]
+    assert play_states(track.notes, RES) == ["strum"] * 5 + ["hopo"] * 3 and rep.dropped == 0
+    check(rep)
+
+
+@pytest.mark.parametrize("gap, kept", [(0.020, True), (0.019, False)])
+def test_the_spacing_floors_are_20_ms(gap, kept):
+    """An onset one millisecond under the floor is dropped and one at it is kept, before a strum (the same fret
+    again) and before a HOPO (a fret change) alike. 1/16 slots fall that close only above 750 BPM, so the maps here
+    are that fast: a 1/16 is `gap` (with a snapping scale under a slot, so a note keeps its 1/16)."""
+    assert STRUM_SPACING_S == HOPO_SPACING_S == 0.020
+    tm = const_map(60 / (4 * gap), beats=1000)
+    rules = QuantizeRules(sigma_s=0.002)
+    strum = [TimedNote(at(tm, 40), (0,)), TimedNote(at(tm, 40.25), (0,))]
+    hopo = [TimedNote(at(tm, 80), (0,)), TimedNote(at(tm, 80.25), (1,))]
+    for notes, state in ((strum, "strum"), (hopo, "hopo")):
+        track, rep = quantize_part(part(notes), tm, PAD, offset=0.0, rules=rules)
+        gap_s = tm.tick_to_sec(track.notes[-1].tick) - tm.tick_to_sec(track.notes[0].tick)
+        if kept:
+            assert len(track.notes) == 2 and rep.dropped == 0 and gap_s == pytest.approx(gap, abs=1e-6)
+            assert play_states(track.notes, RES)[1] == state
+        else:
+            assert len(track.notes) == 1 and rep.dropped == 1
+        check(rep)
 
 
 # ------------------------------------------------------------------------------------------------ sustains
