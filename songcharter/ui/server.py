@@ -45,8 +45,13 @@ one chart runs at a time as a child process group (jobs.py). In WSL the Windows 
     over 1 GB: 413; no Content-Length: 411. Streamed to uploads/<16 hex of its SHA-256>/<cache.safe_name(stem)><ext>,
     with upload.json beside it; answers {"id", "name", "bytes", "tags", "origin"}: the song.ini values the chart
     would take from the tags or the file's name (pipeline.read_tags and song_metadata), and where each came from.
+  * POST /api/upload/image (M4-11): a picture for the album art or the background, as the song is uploaded (the same
+    guards, folder and pruning; upload.json's kind "image"). An extension not in art.EXTENSIONS: 415; over
+    art.MAX_BYTES (20 MB): 413. It must decode as art.py's checks say (a JPEG, PNG or WebP within its pixel limit),
+    else 415 with why, and nothing is kept. Answers {"id", "name", "bytes", "format", "width", "height"}.
   * POST /api/jobs {"upload", "options"}: 202 {"job"}; 409 while a job runs; 400 for bad options (Options.check()'s
-    message) or an unknown upload.
+    message) or an unknown upload. The options' `album_art` and `background` are image upload ids, which become the
+    images' paths here (an unknown one, or a song's: 400), so no path ever comes from the page.
   * GET /api/jobs/current: its state (running, done, failed, cancelled) and events; 404 before the first job.
   * GET /api/jobs/current/events: Server-Sent Events. Every event so far, then each new one, as `id: <index>` and
     `data: <json>`; a comment every 15 s keeps the connection open; it closes after `result`, `error` or `cancelled`,
@@ -59,10 +64,12 @@ install need one that passed its gate (else 400): a .failed folder is for a look
 `result` is out has its chart in place (the chart prints it last), so these routes take it at once, while its process
 is still exiting (a second or more, with its state still `running`): the page asks for the results the moment it
 reads that event (the release gate's finding: the Done screen once hid "Install into Clone Hero" after a normal chart).
-  * GET /api/jobs/current/results: {"job", "state", "ok", "folder", "name", "installable", "preview", "lyrics"}:
-    the preview's overview and pages as URLs with its flags and remarks, or {"why"} there is none; pipeline.json's
-    lyrics as counts ({"given", "added", "words", "phrases", "why", "low"}), null when none were given. 404 before
-    the first job.
+  * GET /api/jobs/current/results: {"job", "state", "ok", "folder", "name", "installable", "preview", "lyrics",
+    "art"}: the preview's overview and pages as URLs with its flags and remarks, or {"why"} there is none;
+    pipeline.json's lyrics as counts ({"given", "added", "words", "phrases", "why", "low"}), null when none were
+    given; the folder's art ({"album_art": its URL or null, "album_from": "embedded", "given" or null,
+    "background": whether there is one}). 404 before the first job.
+  * GET /api/jobs/current/art/album.jpg: the result's album art (image/jpeg), that one name only; anything else 404.
   * GET /api/jobs/current/preview/<name>: only overview.png and page_NN.png from the result's preview folder (the
     work folder's preview/), by an exact pattern; anything else 404.
   * POST /api/jobs/current/export/zip: clonehero.export_zip into $SONGCHARTER_HOME/exports/<name>.zip; answers
@@ -112,7 +119,8 @@ from typing import Any, Callable, Iterable
 from urllib.parse import quote, unquote, urlsplit
 
 from .. import __version__, cache, clonehero, device, diagnostics, wsl
-from ..errors import InputError
+from .. import art as ART
+from ..errors import InputError, ToolError
 from ..timed import DIFFICULTIES, INSTRUMENTS
 from . import home as default_home
 from .jobs import CLOSING, Jobs, JobRunning, NotRunning
@@ -138,6 +146,8 @@ STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; ch
 PREVIEW_NAME = re.compile(r"^(?:overview|page_\d{2,3})\.png$")   # preview.py's files: overview.png, page_01.png, ...
 PREVIEW_PAGE = re.compile(r"^page_\d{2,3}\.png$")
 OPEN = ("song", "exports")         # POST /api/open's only two folders
+IMAGE_OPTIONS = {"album_art": "album art", "background": "background image"}   # the options that name an image upload
+ART_FILES = (ART.ALBUM,)           # GET /api/jobs/current/art/<name>: only these
 
 
 def console_line(text: str) -> None:
@@ -287,9 +297,10 @@ def uploads_folder(home: Path) -> Path:
     return Path(home) / "uploads"
 
 
-def read_upload(home: Path, upload_id: Any) -> dict | None:
-    """An upload's record ({"id", "name", "file", "path", "bytes", "metadata", "origin"}), or None when there is no
-    such upload (an id is 16 hex characters, nothing else)."""
+def read_upload(home: Path, upload_id: Any, kind: str = "song") -> dict | None:
+    """An upload's record ({"id", "name", "file", "path", "bytes", "metadata", "origin"} for a song; "format",
+    "width", "height" for an image), or None when there is no such upload of that kind ("song" or "image"; a record
+    without one is a song's), as an id is 16 hex characters, nothing else."""
     if not isinstance(upload_id, str) or len(upload_id) != cache.KEY_HEX or \
             any(c not in "0123456789abcdef" for c in upload_id):
         return None
@@ -299,7 +310,7 @@ def read_upload(home: Path, upload_id: Any) -> dict | None:
     except (OSError, ValueError):
         return None
     path = folder / str(record.get("file"))
-    if not path.is_file() or path.parent != folder:
+    if not path.is_file() or path.parent != folder or record.get("kind", "song") != kind:
         return None
     return {**record, "path": str(path)}
 
@@ -472,6 +483,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, results(job))
         if path.startswith("/api/jobs/current/preview/"):
             return self._preview(unquote(path[len("/api/jobs/current/preview/"):]))
+        if path.startswith("/api/jobs/current/art/"):
+            return self._art(unquote(path[len("/api/jobs/current/art/"):]))
         if path.startswith("/api/exports/"):
             return self._export(unquote(path[len("/api/exports/"):]))
         if path == "/api/clonehero":
@@ -487,13 +500,24 @@ class Handler(BaseHTTPRequestHandler):
         app = self.app
         if path == "/api/upload":
             return self._json(200, self._upload())
+        if path == "/api/upload/image":
+            return self._json(200, self._upload_image())
         if path == "/api/jobs":
             body = self._read_json()
             upload = read_upload(app.home, body.get("upload"))
             if upload is None:
                 raise Refused(400, f"no such upload: {body.get('upload')!r} (upload the song file again)")
+            options = body.get("options")
+            if isinstance(options, dict):   # the images' upload ids become their paths: none comes from the page
+                options = dict(options)
+                for key, what in IMAGE_OPTIONS.items():
+                    if options.get(key) is not None:
+                        image = read_upload(app.home, options[key], kind="image")
+                        if image is None:
+                            raise Refused(400, f"no such {what}: {options[key]!r} (choose the picture again)")
+                        options[key] = image["path"]
             try:
-                job = app.jobs.start(upload, body.get("options"), auto_device=app.auto_device())
+                job = app.jobs.start(upload, options, auto_device=app.auto_device())
             except JobRunning as e:
                 raise Refused(409, f"a chart is running already (job {e})") from None
             except InputError as e:
@@ -556,6 +580,18 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             return self._refuse(404, "not found")
         return self._send(200, data, "image/png")
+
+    def _art(self, name: str) -> None:
+        """The result's album art, by its exact name only."""
+        job = self.app.jobs.current
+        result = job.result() if job is not None else None
+        if result is None or name not in ART_FILES:
+            return self._refuse(404, "not found")
+        try:
+            data = (Path(str(result.get("folder"))) / name).read_bytes()
+        except OSError:
+            return self._refuse(404, "not found")
+        return self._send(200, data, "image/jpeg")
 
     def _export(self, name: str) -> None:
         folder = self.app.home / clonehero.EXPORTS
@@ -661,17 +697,19 @@ class Handler(BaseHTTPRequestHandler):
             raise Refused(400, "the request body is a JSON object")
         return value
 
-    def _upload(self) -> dict:
+    def _receive(self, kinds: Iterable[str], limit: int, refused: str) -> tuple[str, Path, Path, int, str]:
+        """The request's body streamed to uploads/<16 hex of its SHA-256>/<cache.safe_name(stem)><ext>: the name as
+        sent (its last part), the folder, the file, its bytes and its SHA-256. An extension not in `kinds`: 415
+        (`refused` + the extensions); over `limit`: 413; no length: 411; a full disk: 507."""
         try:
             name = unquote(self.headers.get("X-Filename") or "", errors="strict")
         except UnicodeDecodeError:
             raise Refused(400, "X-Filename is not percent-encoded UTF-8") from None
         name = PureWindowsPath(name.replace("\0", "")).name   # no folder, whichever separator it uses
         stem, ext = os.path.splitext(name)
-        if ext.lower() not in AUDIO:
-            raise Refused(415, f"{name or 'that file'} is not a song file songcharter takes "
-                               f"({', '.join(AUDIO)})")
-        n = self._length(MAX_UPLOAD)
+        if ext.lower() not in kinds:
+            raise Refused(415, f"{name or 'that file'} is not {refused} ({', '.join(kinds)})")
+        n = self._length(limit)
         folder = uploads_folder(self.app.home)
         folder.mkdir(parents=True, exist_ok=True)
         part = folder / f".incoming-{secrets.token_hex(8)}.part"
@@ -699,11 +737,10 @@ class Handler(BaseHTTPRequestHandler):
             raise Refused(507, DISK_FULL) from None
         finally:
             part.unlink(missing_ok=True)
-        from .. import pipeline   # numpy loads with it
-        tags = pipeline.read_tags(dest)
-        meta, origin = pipeline.song_metadata(Path(name), tags, {})   # the name as dropped, not its safe form
-        record = {"id": target.name, "name": name, "file": dest.name, "bytes": n, "sha256": key, "metadata": meta,
-                  "origin": origin, "uploaded": time.time()}
+        return name, target, dest, n, key
+
+    def _keep(self, target: Path, dest: Path, record: dict) -> None:
+        """upload.json beside the upload; a full disk is a 507, and an upload with no record goes."""
         tmp, had = target / "upload.json.part", (target / "upload.json").is_file()
         try:
             tmp.write_text(json.dumps(record, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -712,12 +749,36 @@ class Handler(BaseHTTPRequestHandler):
             tmp.unlink(missing_ok=True)
             if e.errno != errno.ENOSPC:
                 raise
-            if not had:   # a song with no record is of no use, and holds the space until the 7-day prune
+            if not had:   # a file with no record is of no use, and holds the space until the 7-day prune
                 dest.unlink(missing_ok=True)
             raise Refused(507, DISK_FULL) from None
         os.utime(target)
+
+    def _upload(self) -> dict:
+        name, target, dest, n, key = self._receive(AUDIO, MAX_UPLOAD, "a song file songcharter takes")
+        from .. import pipeline   # numpy loads with it
+        tags = pipeline.read_tags(dest)
+        meta, origin = pipeline.song_metadata(Path(name), tags, {})   # the name as dropped, not its safe form
+        self._keep(target, dest, {"id": target.name, "name": name, "file": dest.name, "bytes": n, "sha256": key,
+                                  "metadata": meta, "origin": origin, "uploaded": time.time()})
         self.app.log(f"upload {target.name}: {name} ({n} bytes)")
         return {"id": target.name, "name": name, "bytes": n, "tags": meta, "origin": origin}
+
+    def _upload_image(self) -> dict:
+        name, target, dest, n, key = self._receive(ART.EXTENSIONS, ART.MAX_BYTES, "a picture songcharter takes")
+        try:
+            _, source = ART.decode(dest.read_bytes(), f"picture {name}")   # the chart checks it again
+        except (InputError, ToolError) as e:
+            dest.unlink(missing_ok=True)
+            if not (target / "upload.json").is_file():
+                shutil.rmtree(target, ignore_errors=True)
+            raise Refused(415, str(e)) from None
+        self._keep(target, dest, {"id": target.name, "kind": "image", "name": name, "file": dest.name, "bytes": n,
+                                  "sha256": key, **{k: source[k] for k in ("format", "width", "height")},
+                                  "uploaded": time.time()})
+        self.app.log(f"upload {target.name}: picture {name} ({n} bytes, {source['width']}x{source['height']})")
+        return {"id": target.name, "name": name, "bytes": n, "format": source["format"], "width": source["width"],
+                "height": source["height"]}
 
     def _events(self) -> None:
         job = self.app.jobs.current
@@ -773,7 +834,7 @@ def results(job) -> dict:
     """GET /api/jobs/current/results (the module docstring), from the job's result event and its pipeline.json."""
     result = job.result()
     out: dict[str, Any] = {"job": job.id, "state": job.state, "ok": None, "folder": None, "name": None,
-                           "installable": False, "preview": None, "lyrics": None}
+                           "installable": False, "preview": None, "lyrics": None, "art": None}
     if result is None:
         return out
     folder = Path(str(result.get("folder")))
@@ -798,6 +859,10 @@ def results(job) -> dict:
                           "flags": list(pv.get("flags") or []), "remarks": list(pv.get("remarks") or [])}
     else:
         out["preview"] = {"why": _preview_why(pv)}
+    pictures = pipeline.get("art") if isinstance(pipeline.get("art"), dict) else {}
+    album = pictures.get("album_art") if isinstance(pictures.get("album_art"), dict) else {}
+    out["art"] = {"album_art": "/api/jobs/current/art/" + ART.ALBUM if (folder / ART.ALBUM).is_file() else None,
+                  "album_from": album.get("from"), "background": (folder / ART.BACKGROUND).is_file()}
     ly = pipeline.get("lyrics")
     if isinstance(ly, dict):
         out["lyrics"] = {"given": bool(ly.get("given")), "added": bool(ly.get("added")), "words": ly.get("words"),

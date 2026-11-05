@@ -27,6 +27,12 @@
      a Ctrl+C while it runs or while the cache is pruned after it (the build is in place by then: the run ends as
      the gate says, with its summary).
 
+  * **Art** (art.py, M4-11): album.jpg from the album art a person gives (`album_art`), else from the song file's
+    embedded cover picture, and background.jpg from the background image a person gives (`background`), made before
+    any audio work into work/art/ and copied into the song folder by assemble: nothing else in the chart changes. A
+    given image that is not a JPEG, PNG or WebP, or is over its limits, is an InputError then; an embedded picture
+    that fails is a warning. pipeline.json's and report.json's `art` say what was added and where it came from
+    ("embedded", "given", or None), with no path of the person's (the options record whether each was given).
   * **Metadata.** The file's tags as ffmpeg prints them (title, artist, album, genre, date, track), the caller's
     values on top, and defaults for what scan-chart requires: the file's name for the title, "Unknown" for the
     rest. scan-chart's own defaults ("Unknown Artist", ...) count as missing, so they are not used.
@@ -106,6 +112,7 @@ from typing import Any, Callable, Mapping, Sequence
 import numpy as np
 
 from . import __version__
+from . import art as ART
 from . import audio as A
 from . import cache
 from . import device as D
@@ -144,6 +151,8 @@ class Options:
     preview: bool = True                         # the preview of the built folder into work/preview/ (preview.py)
     lyrics: str | None = None                    # the song's lyrics as text, a line per phrase, to time and write
                                                  # into the chart (None: no lyrics); never into any report
+    album_art: Path | str | None = None          # an image for album.jpg, over the song file's own picture (art.py)
+    background: Path | str | None = None         # an image for background.jpg, Clone Hero's song background
 
     def check(self) -> None:
         if not self.instruments:
@@ -185,6 +194,10 @@ class Options:
                 raise InputError(f"lyrics is a text or None, not a {type(self.lyrics).__name__}")
             if not parse_lyrics(self.lyrics).syllables:
                 raise InputError("the lyrics hold no word to time")
+        for key in ("album_art", "background"):
+            value = getattr(self, key)
+            if value is not None and (not isinstance(value, (str, Path)) or not str(value).strip()):
+                raise InputError(f"{key} is an image file's path or None, not {value!r}")
 
 
 @dataclass(frozen=True)
@@ -217,6 +230,7 @@ class ChartResult:
     work_bytes: int = 0          # the work folder's size after the run, its scratch folder's included
     fallbacks: list[dict] = field(default_factory=list)  # every move to the CPU: {"stage", "from", "to", "reason"}
     lyrics: dict | None = None   # pipeline.json's `lyrics` (counts and confidence only); None when none were given
+    art: dict = field(default_factory=dict)   # pipeline.json's `art`: {"album_art", "background"} (art.prepare)
 
     @property
     def ok(self) -> bool:
@@ -629,6 +643,7 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
     problems = engines.missing(options)
     if problems:
         raise ToolError("cannot chart: " + "; ".join(problems))
+    pictures = ART.prepare(audio, options.album_art, options.background)   # a bad given image: before any audio work
 
     instruments = [i for i in INSTRUMENTS if i in options.instruments]
     # the quick engines first, so a failure there comes before the guitar's minutes
@@ -646,7 +661,10 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
                               "scratch": None if scratch is None else str(scratch), "cache_key": key,
                               "options": {**{k: v for k, v in options.__dict__.items() if k not in ("work", "lyrics")},
                                           "instruments": instruments, "metadata": dict(options.metadata),
-                                          "lyrics": options.lyrics is not None},   # whether given; never the text
+                                          "lyrics": options.lyrics is not None,    # whether given; never the text
+                                          "album_art": options.album_art is not None,   # whether given; no path
+                                          "background": options.background is not None},
+                              "art": pictures.record,
                               "versions": {"python": platform.python_version(), "numpy": np.__version__,
                                            "platform": platform.platform()},
                               "stages": [], "fallbacks": fallbacks}
@@ -703,6 +721,9 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         tags = read_tags(audio)
         meta, origin = song_metadata(audio, tags, options.metadata)
         report["metadata"], report["metadata_from"], report["tags"] = meta, origin, tags
+        images = ART.write(pictures, work / "art")
+        for text in pictures.warnings:
+            warn(text)
         if options.lyrics is not None and no_lyrics is not None:
             warn(f"lyrics: not added ({no_lyrics})")
             report["lyrics"] = {"given": True, "added": False, "why": no_lyrics}
@@ -717,11 +738,13 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
                "solos": (options.solos if isinstance(options.solos, str) else list(options.solos))
                if any(p["instrument"] == "guitar" for p in parts) else "off",
                "levels": [d for d in DIFFICULTIES if d in options.levels],
-               "metadata": meta, "output": str(out)}
+               "metadata": meta, "output": str(out),
+               **{key: str(images[name]) for key, name in (("album_art", ART.ALBUM), ("background", ART.BACKGROUND))
+                  if name in images}}
         config = work / "assemble.json"
         config.write_text(json.dumps(cfg, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
         t0 = begin("assemble", "grid, parts, tiers, phrases, sections, gate")
-        result = assemble(load_config(config, out), lyrics=timed)
+        result = assemble(load_config(config, out), lyrics=timed, art=pictures.record)
         g = result.report["gate"]
         if timed is not None:
             report["lyrics"]["chart"] = result.report.get("lyrics")
@@ -759,7 +782,7 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         size = cache.tree_size(work) + (cache.tree_size(scratch) if scratch is not None else 0)
         report["work_bytes"] = size
         return ChartResult(result, stages, work, config, meta, warnings, preview, scratch, size, fallbacks,
-                           report.get("lyrics"))
+                           report.get("lyrics"), pictures.record)
     except BaseException as e:
         report["error"] = f"{type(e).__name__}: {e}"
         report["traceback"] = traceback.format_exc()
@@ -967,9 +990,14 @@ def _lyrics_stage(options: Options, engines: Engines, stems: Mapping[str, np.nda
 
 
 def summary(result: ChartResult) -> str:
-    """What the pipeline adds to assemble's summary: the preview's overview and its flags, the work folder and its
-    size (autochart's scratch folder's included, and named when it exists), then the stage times."""
+    """What the pipeline adds to assemble's summary: the art added (when any was), the preview's overview and its
+    flags, the lyrics, the work folder and its size (autochart's scratch folder's included, and named when it
+    exists), then the stage times."""
     lines = []
+    added = [f"{r['file']} ({'the song file' if r['from'] == 'embedded' else r['from']})"
+             for r in (result.art.get("album_art"), result.art.get("background")) if r and r.get("added")]
+    if added:
+        lines.append(f"art: {', '.join(added)}")
     if result.preview:
         kinds = ", ".join(f"{k} {n}" for k, n in result.preview["flags_by_kind"].items())
         lines.append(f"preview: {result.preview['overview']} and {len(result.preview['pages'])} pages "

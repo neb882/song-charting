@@ -43,7 +43,8 @@ own difficulties, star power, fills and sections, and a Clone Hero folder that i
      starpower.check_phrases run per instrument.
   5. **Folder.** package.build_song_folder writes notes.chart, song.ini (difficulty ratings from DESIGN.md 2.12,
      the preview at the first chorus) and song.ogg into a staging folder beside the output, and refuses a song.ogg
-     more than a sample out of sync.
+     more than a sample out of sync. The config's `album_art` and `background` images, when it names them, are copied
+     in as album<ext> and background<ext> (the pipeline makes them: art.py); they change nothing else.
   6. **Gate** (`verify_folder`, DESIGN.md 2.13). scan-chart itself (`node tools/scan-chart/scan.cjs <folder>
      --notes`) must find the folder playable with no chart, metadata or folder issue but noAlbumArt, and its parsed
      notes must match the chart we built (`self_check`: onsets, times within 1 ms, lanes, HOPO, tap and cymbal
@@ -58,6 +59,9 @@ own difficulties, star power, fills and sections, and a Clone Hero folder that i
      the phrases are written as phrase_start, lyric and phrase_end events in [Events] (lyrics.place, DESIGN.md
      2.15). The gate reads them back from notes.chart (every event as written) and has scan-chart find them.
      report.json counts them; it never holds a word.
+  * **Art** (optional: `assemble(config, art=...)`, the pipeline's record of where its album art and background came
+     from, art.prepare's): report.json's `art` says, for each, whether it was added, its file, and where it came from
+     ("embedded", "given", or "config" when only the config named it).
   7. **Report.** report.json in the folder: the grid's stats, per-part offsets and what quantizing and trimming did,
      note counts per difficulty, phrases (and the share of drum fills that end on a crash), sections, ratings, the
      sync check, the gate (with scan-chart's verdict) and every warning. Times in the report are seconds of the
@@ -84,6 +88,7 @@ The config (JSON; relative paths are relative to the config file, keys starting 
                                                                default; "stems": those the vocals and guitar stems
                                                                confirm; or a list of section names: ["Solo 1"])
      "levels": ["expert", "hard", "medium", "easy"],          (the difficulties written; Expert always)
+     "album_art": "album.jpg", "background": "background.jpg",  (optional: .png, .jpg or .jpeg, copied as they are)
      "metadata": {"name": "...", "artist": "...", "album": "...", "genre": "...", "year": "2014",
                   "album_track": 2, "charter": "songcharter"},  (album, genre and year required; charter defaults)
      "output": "out/song"}
@@ -155,7 +160,9 @@ SCAN_CHART = Path(__file__).resolve().parent.parent / "tools" / "scan-chart" / "
 SCAN_CHART_TIMEOUT_S = 600.0
 SCAN_ALLOWED = {"noAlbumArt"}  # the folder issue the gate accepts
 # what a build writes: an output folder holding anything else is not replaced (it may be Clone Hero's Songs folder)
-OUTPUT_FILES = {"notes.chart", "song.ini", "song.ogg", "album.png", "album.jpg", "album.jpeg", "report.json"}
+OUTPUT_FILES = {"notes.chart", "song.ini", "song.ogg", "album.png", "album.jpg", "album.jpeg", "background.png",
+                "background.jpg", "background.jpeg", "report.json"}
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")   # album art and backgrounds as Clone Hero reads them
 _HARMLESS_FILES = {"thumbs.db", "desktop.ini"}  # and names starting with "."; left where they are
 FAILED_SUFFIX = ".failed"  # a build the gate fails goes to <output>.failed
 
@@ -219,13 +226,14 @@ class AssembleConfig:
     solos: str | tuple[str, ...] = "off"           # "off", "stems" (vocals quiet, lead loud), "labels", or the
                                                    # names of the sections that are solos (a person's choice)
     levels: tuple[str, ...] = DIFFICULTIES         # the difficulties written (Expert always; the rest reduced)
-    album_art: Path | None = None
+    album_art: Path | None = None                  # copied in as album<ext>
+    background: Path | None = None                 # copied in as background<ext> (Clone Hero's song background)
     quality: float = 7.0                           # song.ogg Vorbis quality
 
 
 _CONFIG_KEYS = {"audio", "output", "parts", "metadata", "stems", "beat_hints", "grid_mode", "grid_source",
                 "grid_secondary", "lead_in", "tempo_tolerance", "sections", "solos", "levels", "album_art",
-                "quality"}
+                "background", "quality"}
 _PART_KEYS = {f.name for f in fields(PartConfig)}
 _METADATA_KEYS = {"name", "artist", "album", "genre", "year", "charter", "album_track", "preview_start_ms",
                   "loading_phrase"}
@@ -398,9 +406,12 @@ def parse_config(data: dict, base: Path | str = ".", output: Path | str | None =
         tempo_tolerance=opt("tempo_tolerance", TEMPO_TOLERANCE, above=0),
         sections=_string(d.get("sections"), "sections", True), solos=_solos(d.get("solos", "off")),
         levels=_levels(d.get("levels", list(DIFFICULTIES))),
-        album_art=path(d.get("album_art"), "album_art", True), quality=opt("quality", 7.0, low=0, high=10))
-    if cfg.album_art is not None and cfg.album_art.suffix.lower() not in (".png", ".jpg", ".jpeg"):
-        raise InputError(f"album_art {cfg.album_art} is not a .png or .jpg")
+        album_art=path(d.get("album_art"), "album_art", True), background=path(d.get("background"), "background", True),
+        quality=opt("quality", 7.0, low=0, high=10))
+    for key in ("album_art", "background"):
+        image = getattr(cfg, key)
+        if image is not None and image.suffix.lower() not in IMAGE_SUFFIXES:
+            raise InputError(f"{key} {image} is not a .png or .jpg")
     if cfg.grid_mode not in (None, "free", "click"):
         raise InputError("grid_mode is 'free', 'click' or null")
     if cfg.grid_source is not None and cfg.grid_source != "mix" and cfg.grid_source not in cfg.stems:
@@ -463,8 +474,7 @@ def check_inputs(cfg: AssembleConfig) -> None:
     named += [(f"part {p.key}'s take", t) for p in cfg.parts for t in p.takes]
     if cfg.sections is not None and not cfg.sections.startswith("from:"):
         named.append(("sections", Path(cfg.sections)))
-    if cfg.album_art is not None:
-        named.append(("album_art", cfg.album_art))
+    named += [(key, getattr(cfg, key)) for key in ("album_art", "background") if getattr(cfg, key) is not None]
     missing = [f"{what} {p}" for what, p in named if not p.exists()]
     if missing:
         raise FileNotFoundError(f"not found: {'; '.join(missing)}")
@@ -1247,12 +1257,14 @@ def _remove_build(folder: Path) -> None:
         folder.rmdir()
 
 
-def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | None = None) -> AssembleResult:
+def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | None = None,
+             art: dict | None = None) -> AssembleResult:
     """Build the song folder a config describes (the module docstring), write report.json into it and return the
     chart, the report and every issue. Errors in the checks or the gate do not raise: the build goes to
     <output>.failed for inspection (`AssembleResult.folder`), <output> keeps what it held, and `AssembleResult.ok`
     is False. Bad inputs and a song.ogg out of sync raise, and leave both folders as they were. `lyrics`: the text
-    and its syllables' starts in seconds of the decode, written as [Events] lyrics."""
+    and its syllables' starts in seconds of the decode, written as [Events] lyrics. `art`: where the album art and
+    the background came from (art.Pictures.record), for report.json's `art`."""
     if isinstance(config, (str, Path)):
         config = load_config(config)
     elif isinstance(config, dict):
@@ -1454,7 +1466,9 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
     staging = Path(tempfile.mkdtemp(prefix=f".{cfg.output.name}.", suffix=".partial", dir=cfg.output.parent))
     try:
         pkg = build_song_folder(staging, chart, mix, lead.pad_samples, sr, difficulty=ratings,
-                                album_art=cfg.album_art, quality=cfg.quality)  # ffmpeg failing: a ToolError
+                                album_art=cfg.album_art, background=cfg.background,
+                                quality=cfg.quality)  # ffmpeg failing: a ToolError
+        report["art"] = art_record(cfg, art)
         report["sync"] = {"ok": pkg.sync.ok, "summary": pkg.sync.summary(),
                           "max_abs_lag_samples": pkg.sync.max_abs_lag, "min_correlation": pkg.sync.min_correlation,
                           "length_difference": pkg.sync.length_difference}
@@ -1500,6 +1514,19 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
     if not errors:
         _remove_build(failed_folder(cfg.output))  # an earlier failed build is stale now
     return AssembleResult(folder, chart, report, grid, lead, replace(pkg, folder=folder), issues)
+
+
+def art_record(cfg: AssembleConfig, art: dict | None) -> dict:
+    """report.json's `art`: for the album art and the background, whether it was added and its file in the folder,
+    with where it came from (`art`, the pipeline's record; "config" when only the config named the image)."""
+    out = {}
+    for key, image, name in (("album_art", cfg.album_art, "album"), ("background", cfg.background, "background")):
+        given = {k: v for k, v in ((art or {}).get(key) or {}).items() if k not in ("added", "file")}
+        if image is None:
+            out[key] = {"added": False, "file": None, "from": None, **{k: v for k, v in given.items() if k == "why"}}
+        else:
+            out[key] = {"added": True, "file": name + image.suffix.lower(), "from": "config", **given}
+    return out
 
 
 def _count(issues: list[GateIssue]) -> dict[str, int]:

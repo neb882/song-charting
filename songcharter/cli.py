@@ -2,8 +2,9 @@
 
     songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums]
                       [--levels expert|all|expert,hard,...] [--solos labels|stems|off|"NAME,NAME"] [--takes N]
-                      [--device auto|cpu|cuda] [--threads N] [--no-preview] [--lyrics FILE] [--title ...]
-                      [--artist ...] [--album ...] [--year ...] [--genre ...] [--events]
+                      [--device auto|cpu|cuda] [--threads N] [--no-preview] [--lyrics FILE] [--album-art FILE]
+                      [--background FILE] [--title ...] [--artist ...] [--album ...] [--year ...] [--genre ...]
+                      [--events]
     songcharter assemble <config.json> [--out DIR]
     songcharter doctor [--json PATH] [--quick]
     songcharter ui [--port N] [--no-browser] [--from-shortcut]
@@ -30,6 +31,11 @@ or, before exit 2, 3 or 130, `error` {"kind", "message"}: kind "input" for an er
 --lyrics FILE: the song's lyrics as a text file (UTF-8, or Windows' ANSI code page 1252), a line per phrase and a
 blank line between sections; they are timed to the vocal stem and written into the chart (pipeline.py, 3b). Without
 the aligner (pip install songcharter[lyrics]) the chart is made without them, with a warning.
+
+--album-art FILE and --background FILE: a JPEG, PNG or WebP image (at most 20 MB and 64 megapixels) for the song
+folder's album.jpg (512x512, centre-cropped; without it, the song file's own picture when it has one) and
+background.jpg (scaled down to fit 1920x1080), re-encoded with no metadata (art.py). Clone Hero shows the background
+when Settings > Gameplay > Use Song Backgrounds is on.
 
 --solos takes a mode (labels, the default: every section named Solo; pipeline.py says why) or the names of the
 sections to make solos, as one argument with the names separated by
@@ -248,8 +254,9 @@ def main(argv: list[str] | None = None) -> int:
                                    "folder: one decode, one stem separation, the drums, bass, guitar and "
                                    "sections engines, then our grid, tiers, star power, fills and sections, and "
                                    "the gate. Every stage caches its work in the work folder, so a re-run is "
-                                   "quick. Writes notes.chart, song.ini, song.ogg and report.json into the output "
-                                   "folder (into <output>.failed when the gate fails).")
+                                   "quick. Writes notes.chart, song.ini, song.ogg and report.json, and album.jpg and "
+                                   "background.jpg when there are pictures, into the output folder (into "
+                                   "<output>.failed when the gate fails).")
     c.add_argument("song", type=Path, help="the song file")
     c.add_argument("--out", type=Path, required=True, help="the song folder to write")
     c.add_argument("--work", type=Path, help="the work folder for the decode, stems and engine outputs (default: "
@@ -277,6 +284,12 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--lyrics", type=Path, metavar="FILE",
                    help="the song's lyrics as a text file, a line per phrase: timed to the vocal stem and written into "
                         "the chart (needs songcharter[lyrics]; without it the chart is made without them)")
+    c.add_argument("--album-art", type=Path, metavar="FILE",
+                   help="an image (JPEG, PNG or WebP) for the album art, album.jpg: centre-cropped to 512x512 (default: "
+                        "the song file's own picture, when it has one)")
+    c.add_argument("--background", type=Path, metavar="FILE",
+                   help="an image (JPEG, PNG or WebP) for the song's background in Clone Hero, background.jpg: scaled "
+                        "down to fit 1920x1080 (Clone Hero shows it with Settings > Gameplay > Use Song Backgrounds)")
     c.add_argument("--no-preview", action="store_true",
                    help="no preview (by default the overview and pages of the built folder go into the work "
                         "folder's preview/ when matplotlib and librosa are installed)")
@@ -343,7 +356,8 @@ def main(argv: list[str] | None = None) -> int:
             lyrics = read_lyrics(args.lyrics) if args.lyrics is not None else None
             options = pipeline.Options(instruments=instruments, takes=args.takes, device=args.device,
                                        threads=args.threads, work=args.work, metadata=meta, levels=args.levels,
-                                       solos=args.solos, preview=not args.no_preview, lyrics=lyrics)
+                                       solos=args.solos, preview=not args.no_preview, lyrics=lyrics,
+                                       album_art=args.album_art, background=args.background)
             done = pipeline.chart(args.song, args.out, options, events=_event if events else None)
             result, extra = done.assembled, pipeline.summary(done)
         else:
