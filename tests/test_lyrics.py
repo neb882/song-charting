@@ -616,6 +616,13 @@ def test_a_cached_confidence_is_judged_again(tmp_path):
     again = E.align(TEXT, stem, tmp_path, aligner=Aligner(score=0.2))
     assert again.cached and again.info["confidence"]["low"] is False
     assert again.info["confidence"]["why"] == "share of weak words (score under 0.05) 0.000, not over 0.108"
+    # A verdict that already carries a why is judged again too (a later threshold must not leave stale warnings).
+    info["confidence"] = {"words_scored": 13, "median": 0.2, "p10": 0.2, "low_share": 0.0, "statistic": "low_share",
+                          "threshold": 0.0, "low": True, "why": "share of weak words (score under 0.05) 0.000, over 0.0"}
+    path.write_text(json.dumps(info), encoding="utf-8")
+    stale = E.align(TEXT, stem, tmp_path, aligner=Aligner(score=0.2))
+    assert stale.cached and stale.info["confidence"]["low"] is False
+    assert stale.info["confidence"]["why"] == "share of weak words (score under 0.05) 0.000, not over 0.108"
     info["confidence"] = {"words_scored": 13, "median": 0.6, "p10": 0.01, "low_share": 0.154, "low": False}
     path.write_text(json.dumps(info), encoding="utf-8")
     assert E.align(TEXT, stem, tmp_path, aligner=Aligner(score=0.2)).info["confidence"]["low"] is True
