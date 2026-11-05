@@ -5,7 +5,7 @@ import io
 import json
 import shutil
 import sys
-from dataclasses import replace
+from dataclasses import asdict, replace
 
 import numpy as np
 import pytest
@@ -25,6 +25,7 @@ from songcharter.cli import main
 from songcharter.errors import InputError, ToolError
 from songcharter.importers import read_chart, read_song
 from songcharter.quantize import play_states, quantize_part
+from songcharter.starpower import SOLO_RULES
 from songcharter.tempo import Tempo, TempoMap
 from songcharter.timed import TimedHit, TimedNote, TimedPart, TimedSong, TimedSpan
 
@@ -1037,6 +1038,15 @@ def test_expert_only_and_solos_on_named_sections(built):
     i = next(k for k, (_, n) in enumerate(secs) if n == pick)
     a, b = secs[i][0], secs[i + 1][0]
     assert len(lead.solos) == 1 and a <= lead.solos[0][0] and lead.solos[0][1] < b
+    # report.json: the rules used (not capped: a person's names), and each solo's measures and onsets
+    pad = result.report["lead_in"]["pad_seconds"]
+    phrases = result.report["phrases"]["guitar"]
+    assert phrases["solo_rules"] == {**asdict(SOLO_RULES), "capped": False}
+    (row,) = phrases["solo_details"]
+    assert [row["start"], row["end"]] == list(phrases["solos"][0]) == [
+        round(result.chart.tempo.tick_to_sec(t) - pad, 3) for t in lead.solos[0]]
+    assert row["onsets"] == len({n.tick for n in lead.notes if a <= n.tick < b}) and row["measures"] >= 4
+    assert phrases["solos_skipped_by_share"] == []
     assert any("no section is named 'Nowhere'" in w for w in result.report["warnings"])
     assert result.report["tracks"]["guitar"].keys() == {"expert"}
 

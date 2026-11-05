@@ -1611,9 +1611,10 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
     experts = [by_inst[i]["expert"] for i in INSTRUMENTS if i in by_inst]
     chart = Chart(info, tm, sections, experts)
     named = cfg.solos if isinstance(cfg.solos, tuple) else None
+    solo_record: dict = {}   # the solo rules used and why each solo is where it is (place_solos), for the report
     chart = place_phrases(chart, solos=named is not None or (cfg.solos != "off" and (cfg.solos == "labels"
                                                                                        or confirm is not None)),
-                          confirm_solo=confirm, solo_names=named)
+                          confirm_solo=confirm, solo_names=named, solo_record=solo_record)
     if named:
         have = {n for _, n in sections}
         lead_track = next((t for t in chart.tracks if t.instrument == "Single" and t.difficulty == "Expert"), None)
@@ -1701,6 +1702,13 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
                       if p.kind == DRUM_ACTIVATION],
             "solos": [(_in_s(tm, a, pad), _in_s(tm, b, pad)) for a, b in t.solos]}
             for t in chart.tracks if t.difficulty == "Expert"}
+        if solo_record and "guitar" in report["phrases"]:
+            def solo_row(row: dict) -> dict:
+                return {**row, "start": _in_s(tm, row["start"], pad), "end": _in_s(tm, row["end"], pad)}
+            report["phrases"]["guitar"].update(
+                solo_rules={**solo_record["rules"], "capped": solo_record["capped"]},
+                solo_details=[solo_row(r) for r in solo_record["solos"]],
+                solos_skipped_by_share=[solo_row(r) for r in solo_record["skipped_by_share"]])
         for t in chart.tracks:  # how many fills end on a crash (a source that labels crashes as hi-hats shows here)
             if t.difficulty == "Expert" and t.is_drums:
                 crash = fill_crash_share(t, tm)
