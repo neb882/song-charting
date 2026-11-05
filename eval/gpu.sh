@@ -6,6 +6,8 @@
 #   eval/gpu.sh status    running or not, the latest driver.log lines, GPU and memory now
 #   eval/gpu.sh stop      stop the run; finished jobs are kept, and `start` carries on from there
 #   eval/gpu.sh takes     check, then run eval/takes.py detached: 4 autochart Expert takes of every song (no scoring)
+#   eval/gpu.sh thin-spike AUDIO   run eval/spike/thin_spike.sh detached: Expert takes of one song under several engine
+#                         settings (M6's spike on fast runs; its header has the settings); results in $RUNS/thin_spike
 #   eval/gpu.sh results   zip the scores, the logs, the test-song charts and the takes' charts (no audio) to send back
 # Env: TOOLS (default "autochart chartgen strum", so STRUM's long test song runs last), SKIP (e.g. "strum:test_song"),
 #      MEM_WAIT_MB (default 4000), EVAL_DATA, ALLOW_CPU=1 (start even if the check fails).
@@ -160,6 +162,34 @@ takes() {
   fi
 }
 
+_thin() {
+  echo $$ > "$PIDFILE"
+  echo 500 > /proc/self/oom_score_adj 2>/dev/null || true
+  echo "$(date '+%F %T') thin spike started"
+  "$HERE/spike/thin_spike.sh" "$1" "$RUNS/thin_spike"
+  local rc=$?
+  echo "$(date '+%F %T') thin spike finished (exit $rc)"
+  rm -f "$PIDFILE"
+}
+
+# The thin spike checks its own device: it stops after a take whose transcriber did not run on CUDA (the spike's
+# CUDA library path is songcharter's, not cuda_libs above).
+thin_spike() {
+  [ -n "${1:-}" ] && [ -f "$1" ] || { echo "usage: eval/gpu.sh thin-spike AUDIO (the song's audio file)"; exit 2; }
+  if running; then echo "already running (pid $(cat "$PIDFILE")): eval/gpu.sh status"; exit 1; fi
+  command -v nvidia-smi >/dev/null && nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv,noheader \
+    || { echo "no nvidia-smi: is the GPU visible in WSL?"; exit 1; }
+  mkdir -p "$RUNS"
+  setsid nohup "$0" _thin "$(realpath "$1")" >> "$RUNS/gpu_run.log" 2>&1 < /dev/null &
+  for _ in 1 2 3 4 5 6 7 8 9 10; do running && break; sleep 0.5; done
+  if running; then
+    echo; echo "started (pid $(cat "$PIDFILE")). Follow it with: tail -f $RUNS/thin_spike/thin_spike.log"
+    echo "Keep one Ubuntu window open while it runs: WSL may shut down when the last one closes."
+  else
+    echo "did not start; see $RUNS/gpu_run.log:"; tail -n 20 "$RUNS/gpu_run.log"; exit 1
+  fi
+}
+
 start() {
   if running; then echo "already running (pid $(cat "$PIDFILE")): eval/gpu.sh status"; exit 1; fi
   if pgrep -f "$DRIVER_RE" >/dev/null; then
@@ -229,7 +259,9 @@ case "${1:-}" in
   stop) stop ;;
   results) results ;;
   takes) takes ;;
+  thin-spike) shift; thin_spike "$@" ;;
+  _thin) shift; _thin "$@" ;;
   _run) _run ;;
   _takes) _takes ;;
-  *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
