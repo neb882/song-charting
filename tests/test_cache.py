@@ -63,6 +63,7 @@ def test_the_cache_on_windows_and_elsewhere(tmp_path, monkeypatch):
     ("a" * 39 + "🎸", "a" * 39),                                       # the emoji would make 41
     ("a" * 39 + ". b", "a" * 39),                                     # no trailing dot after the cut either
     ("CON." + "x" * 60, "_CON." + "x" * 35),                          # 40 with the "_"
+    ("CON." + "a" * 34 + ".b", "_CON." + "a" * 34),                   # cut again for the "_": no trailing dot
 ])
 def test_safe_names(stem, name):
     assert cache.safe_name(stem) == name

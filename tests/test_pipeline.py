@@ -1414,9 +1414,12 @@ def test_metadata_rules():
     ("  Made-Up   Band  -  Some  Song ", "Made-Up Band", "Some Song"),       # white space as one space, trimmed
     ("311 - Some Song", "311", "Some Song"),     # a number before the only separator is the artist
     ("1984 Band - Some Song", "1984 Band", "Some Song"),   # four digits are no track number
+    ("1984 - Made-Up Band - Some Song", "1984", "Some Song"),   # not before a separator either: the artist
     ("Some Song", None, "Some Song"),            # no separator: the stem is the title, as before
     ("Made-Up Band-Some Song", None, "Made-Up Band-Some Song"),   # no space around the hyphen: no separator
-    ("- Some Song", None, "- Some Song"),        # no artist
+    ("- Some Song", None, "Some Song"),          # a separator first: a blank artist, so none
+    ("\u2013 Some Song", None, "Some Song"),
+    ("-Some Song", None, "-Some Song"),          # no space after the dash: no separator
     ("01. - Some Song", None, "Some Song"),      # the artist's part blank once the track number goes: no artist
 ])
 def test_the_file_name_gives_the_artist_and_the_title(stem, artist, name):

@@ -1258,7 +1258,8 @@ later than Expert.
     em dash with a space on each side; the track number is one to three digits followed by a dot, a space or a
     separator. The artist is the part before the first separator and the title the part after the last, so
     "01 - Artist - Album - Title" gives "Artist" and "Title"; a number before the only separator is the artist
-    ("311 - Amber"), and a part blank after trimming does not count. Their origin is "file name" in pipeline.json's
+    ("311 - Amber"), and a part blank after trimming does not count: "- Title" (a separator first) gives the title
+    alone. Their origin is "file name" in pipeline.json's
     `metadata_from` and in `/api/upload`'s `origin`, so the page prefills them, editable before the chart. A stem
     with no separator, or a file with an artist tag, keeps the old rule: the stem is the title. [Seen by the owner in
     M4-08 part A: an MP3 with no artist tag charted as "Unknown", although its name read "Artist - Title".]

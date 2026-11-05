@@ -139,8 +139,9 @@ SOLO_MODES = ("stems", "labels", "off")  # assemble's solos modes; a list of sec
 DEFAULTS = {"artist": "Unknown", "album": "{name} - (Single)", "genre": "Unknown", "year": "Unknown",
             "charter": "songcharter"}
 # "Artist - Title" in a file's name (from_file_name): the separator, a hyphen, en dash or em dash with a space on each
-# side; a track number before the artist, one to three digits followed by a dot, a space or a separator
-NAME_SEPARATOR = re.compile(r"(?<= )[-\u2013\u2014](?= )")
+# side, or at the start with a space after ("- Title": a blank artist); a track number before the artist, one to three
+# digits followed by a dot, a space or a separator
+NAME_SEPARATOR = re.compile(r"(?:(?<= )|^)[-\u2013\u2014](?= )")
 TRACK_NUMBER = re.compile(r"[0-9]{1,3}")               # before a separator: "01 - Artist - Title"
 TRACK_PREFIX = re.compile(r"^[0-9]{1,3}(?:\. ?| )")   # or before the artist: "01. Artist", "1.Artist", "01 Artist"
 MIN_SONG_S = 10.0        # a song shorter than this is refused after the decode (check_song)
@@ -397,7 +398,8 @@ def from_file_name(stem: str) -> dict[str, str]:
     module docstring; <sep> NAME_SEPARATOR): {"artist": the part before the first separator, "name": the part after
     the last one}, so "Artist - Album - Title" gives the artist and the title. A track number is one to three digits
     followed by a dot, a space or a separator ("01 - Artist - Title", "01. Artist - Title"); a number before the
-    only separator is the artist ("311 - Amber"). A part blank after trimming is left out; no separator: {}."""
+    only separator is the artist ("311 - Amber"). A part blank after trimming is left out, so "- Title" gives the
+    title alone; no separator: {}."""
     parts = [p.strip() for p in NAME_SEPARATOR.split(_clean(stem))]
     if len(parts) < 2:
         return {}
