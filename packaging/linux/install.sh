@@ -375,29 +375,33 @@ main() {
   local after=none summary=0
   if [ -f "$flag" ]; then after=restart; fi
   "$py" -P - "$home/doctor.json" "$after" <<'PY' || summary=$?
-import json, sys
-from songcharter import device
-r = json.load(open(sys.argv[1], encoding="utf-8"))
-restart = sys.argv[2] == "restart"
-problems, notes, ok = r.get("problems") or [], r.get("notes") or [], r.get("ok")
-if restart:
-    w = r.get("wsl") or None
-    unmeasured = {**r, "ram": {**(r.get("ram") or {}), "total_mb": None},
-                  "wsl": w and {**w, "memory_matches_config": None}}
-    gone = [set(a) - set(b) for a, b in zip(device.findings(r), device.findings(unmeasured))]
-    problems = [p for p in problems if p not in gone[0]]
-    notes = [n for n in notes if n not in gone[1]]
-    ok = not problems
-    r = {**r, "problems": problems, "notes": notes,
-         "wsl": w and {**w, "wslconfig": {"exists": False}, "memory_matches_config": None}}
-for line in device.summary(r):
-    if restart and line.startswith("WSL: ") and line.endswith("; no .wslconfig"):
-        line = line.removesuffix("; no .wslconfig") + "; .wslconfig: just written"
-    print(line)
-n = len(problems)
-print("doctor: OK" if ok else f"doctor: {n} problem{'s' * (n != 1)}")
-if restart:
-    print("WSL's memory is measured again after the restart.")
+import json, sys, traceback
+try:   # a bug here is exit 3, never 1: only 0 and 1 are doctor's verdict, and a crash leaves setup's status
+    from songcharter import device
+    r = json.load(open(sys.argv[1], encoding="utf-8"))
+    restart = sys.argv[2] == "restart"
+    problems, notes, ok = r.get("problems") or [], r.get("notes") or [], r.get("ok")
+    if restart:
+        w = r.get("wsl") or None
+        unmeasured = {**r, "ram": {**(r.get("ram") or {}), "total_mb": None},
+                      "wsl": w and {**w, "memory_matches_config": None}}
+        gone = [set(a) - set(b) for a, b in zip(device.findings(r), device.findings(unmeasured))]
+        problems = [p for p in problems if p not in gone[0]]
+        notes = [n for n in notes if n not in gone[1]]
+        ok = not problems
+        r = {**r, "problems": problems, "notes": notes,
+             "wsl": w and {**w, "wslconfig": {"exists": False}, "memory_matches_config": None}}
+    for line in device.summary(r):
+        if restart and line.startswith("WSL: ") and line.endswith("; no .wslconfig"):
+            line = line.removesuffix("; no .wslconfig") + "; .wslconfig: just written"
+        print(line)
+    n = len(problems)
+    print("doctor: OK" if ok else f"doctor: {n} problem{'s' * (n != 1)}")
+    if restart:
+        print("WSL's memory is measured again after the restart.")
+except Exception:
+    traceback.print_exc()
+    sys.exit(3)
 sys.exit(0 if ok else 1)
 PY
   if [ "$after" = restart ] && [ "$summary" -le 1 ]; then code=$summary; fi   # else setup's

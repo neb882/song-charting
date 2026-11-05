@@ -34,13 +34,16 @@ quiet() {   # FILE...: the logs are there and have no noise, else the hook fails
 }
 probe="$CI_TMP/noise-probe.log"
 for line in "npm warn deprecated fluent-ffmpeg@2.1.3" "npm WARN old npm" "Warning: You are sending unauthenticated" \
-  "UserWarning: a Python warning" "unauthenticated requests" $'a bar\rredrawn' "50%|█████     | 1/2" "▏" "▉"; do
+  "UserWarning: a Python warning" "warning: \`VIRTUAL_ENV=/x\` does not match the project environment path" \
+  "unauthenticated requests" $'a bar\rredrawn' "50%|█████     | 1/2" "▏" "▉"; do
   printf '%s\n' "$line" >"$probe"
   noisy "$probe" >/dev/null || { echo "30-install: the noise check misses: $line"; exit 1; }
+  if (quiet "$probe") >/dev/null; then echo "30-install: the noise check passes a log with: $line"; exit 1; fi
 done
 printf '%s\n' "fetch htdemucs_6s, file 2 of 2: done, 84 MB" "added 19 packages in 2s" "the lane changes: cu126 → cu132" \
   >"$probe"
 if noisy "$probe"; then echo "30-install: the noise check flags a quiet line"; exit 1; fi
+(quiet "$probe") >/dev/null || { echo "30-install: the noise check fails a quiet log"; exit 1; }
 
 uv pip install --python "$CI_PY" --quiet LnkParse3==1.6.0
 "$CI_PY" -m pytest -q -rs -p no:cacheprovider --basetemp="$CI_TMP/pt-install" tests/test_winshortcut.py \

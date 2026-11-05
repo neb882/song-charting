@@ -682,3 +682,33 @@ def test_plain_linux_has_the_summary_as_it_was(tmp_path, monkeypatch, free_mb):
     assert [line for line in lines if line.startswith(("problem:", "note:"))] == (
         [f"problem: {x}" for x in r["problems"]] + [f"note: {x}" for x in r["notes"]])
     assert lines[-1] == ("doctor: 1 problem" if r["problems"] else "doctor: OK")
+
+
+def test_a_restart_also_leaves_out_the_old_wslconfigs_memory(tmp_path, monkeypatch):
+    """The review's m3: .wslconfig asks for 10 GB, not yet in force (WSL has 7.4), and step 9 raises it to 12 GB
+    (its flag): the note "but .wslconfig asks for 10.0 GB: restart WSL" names the file step 9 has just replaced and
+    asks for the restart that follows, so it is left out with the rest of what doctor said of WSL's memory."""
+    i = Install(tmp_path, wsl=True)
+    r = doctor(i.home, monkeypatch, wslconfig_gb=10)
+    assert any("but .wslconfig asks for 10.0 GB: restart WSL" in n for n in r["notes"])
+    i.real_summary(r)
+    i.mode("runtime", "problems")
+    i.mode("wslsetup", "changed")
+    p = i.run("--from", str(i.dist))
+    assert p.returncode == 0, p.stdout + p.stderr
+    lines = summary(p)
+    assert lines[-2:] == ["doctor: OK", CLOSING] and not any("asks for" in line for line in lines), lines
+    assert lines[1].endswith("; Windows RAM 15.4 GB; .wslconfig: just written"), lines[1]   # not the old 10 GB
+
+
+def test_a_summary_that_crashes_leaves_setups_exit_status(tmp_path, monkeypatch):
+    """The review's m2: with the flag, the summary's exit status is doctor's verdict only when it is 0 or 1; a
+    summary that crashes (here doctor.json with no "python") exits 3 with its traceback, and install.sh keeps
+    setup's status (0 here), not "doctor found problems"."""
+    i = Install(tmp_path, wsl=True)
+    i.real_summary({"ok": True, "problems": [], "notes": [], "components": None})
+    i.mode("wslsetup", "changed")
+    p = i.run("--from", str(i.dist))
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "KeyError: 'python'" in p.stderr and "is installed" in p.stdout and CLOSING not in p.stdout
+    assert i.log("cmd.log")[-1] == "/d /c wsl.exe --shutdown"
