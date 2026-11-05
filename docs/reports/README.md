@@ -23,6 +23,7 @@ ones then, but the CI runs they link still name the old ones.
 | `M4-06-ui-results.md` | the Done screen, the install into Clone Hero's Songs folder, diagnostics and the lyrics box; the review's fixes |
 | `M4-07-release.md` | the friend's guide, NOTICE.txt with each licence checked at its source, the release build and its CI check; the review's fixes |
 | `M4-10-lyrics.md` | lyrics from pasted text: five aligners measured on the references (timings only), the build, and the review's fixes |
+| `M4-11-art.md` | album art from the song's cover and a given background image, re-encoded with no metadata; the review and its fixes |
 | `rc-advisor.md` | the advisor's review of the v0.1 release candidate as a whole, from the friend's side, and the three skeptics' reproductions |
 | `rc-fixes.md` | the release candidate's fixes (the guide's timings, the guitar's GPU-failure message, doctor's problems on the page, M4-08's release-first order and checks) and their review |
 | `release-gate.md` | the release gate for v0.1: the full review, the golden charts and the test song; the GPU smoke test on the owner's 5070; the gate's fixes and their second review |

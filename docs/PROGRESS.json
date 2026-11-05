@@ -96,7 +96,7 @@
     {
       "order": "M5 plan: the next version (the owner, 2026-11-05: start it with the improvements found that day)",
       "stage": "the plan is merged into main (2026-11-05): docs/work-orders/M5-00-plan.md and M5-01..M5-09, M5-99; reviewed by the advisor, three scope changes checked by skeptics, amended on all of them (docs/reports/m5-plan-review.md); the owner's questions decided (M5-00 section 8)",
-      "then": "wave 0: M4-11 merged (its review fixes in CI) and the reports committed (done: charting-conventions.md, feel.md); then the waves, run by the new session (docs/handoff.md)"
+      "then": "wave 0 is done (M4-11 merged, the reports committed); the waves are run by the new session (docs/handoff.md)"
     }
   ],
   "next": [
