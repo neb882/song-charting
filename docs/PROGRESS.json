@@ -86,7 +86,8 @@
     "what": "python -m eval.golden run builds the seven reference songs with songcharter chart (every level, 1 take, CPU) and records per part and difficulty the onsets, scan-chart's track hash and score.py's F1; diff OLD NEW --expect PARTS flags every other change UNEXPECTED (exit 1). DESIGN 3.6, eval/README.md; the commands are in eval/README.md (Golden charts), which docs/PIPELINE.md's release gate and sc-inspector use; a run takes the heavy-job lock (tools/heavy.sh).",
     "baseline": "main at 072ed20 (--rerun guitar): eval/baseline/summary.json, committed (hashes and F1s, no audio); the first, at 77b2afd, in <scratchpad>/golden/base. The kept work folders are in <scratchpad>/golden/work, made at 77b2afd, so the guitar is rerun on both sides since M4-02 changed engines/autochart.py. Environment in the dev container: EVAL_DATA=<scratchpad>/eval SONGCHARTER_GOLDEN=<scratchpad>/golden, plus SONGCHARTER_SCAN_CHART, SONGCHARTER_AUTOCHART=<scratchpad>/eval/tools/autochart and SONGCHARTER_ALLIN1_PYTHON=<scratchpad>/research/timing/venv2/bin/python. <scratchpad> is /tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad. Rebuilding it elsewhere: eval/README.md, 'Rebuilding the dev machine'.",
     "cost": "cold (a kept folder made, stems hard-linked): 474-1081 s a song, 80 min for the set, the guitar take most of it; warm: 44-76 s a song, 6.5 min for the set (CPU, 2 threads)",
-    "rebuilt_2026_11_05": "The dev machine was rebuilt (eval/README.md, 'Rebuilding the dev machine') and its cold golden base on main at fbd9751 (after M4-11) is in <dev>/golden/base: all 72 tracks of the six references are byte-identical to eval/baseline/summary.json, so M4-11 moved no note and the committed baseline stands. The test song's upload is another encode of the owner's file (separation key 063cc9c8..., not 13506d568d...), so its 12 tracks differ: the test song has a new baseline on this machine. 64 min for the set, cold."
+    "rebuilt_2026_11_05": "The dev machine was rebuilt (eval/README.md, 'Rebuilding the dev machine') and its cold golden base on main at fbd9751 (after M4-11) is in <dev>/golden/base: all 72 tracks of the six references are byte-identical to eval/baseline/summary.json, so M4-11 moved no note and the committed baseline stands. The test song's upload is another encode of the owner's file (separation key 063cc9c8..., not 13506d568d...), so its 12 tracks differ: the test song has a new baseline on this machine. 64 min for the set, cold.",
+    "stress": "The stress set (M5-09, merged 2026-11-05): eval/stress.json (troop, sooth, break; generic slots), built by eval/build_refs.sh --set stress from the package list $EVAL_DATA/stress.local.json (not committed, the owner keeps it), run with eval.golden --refs $EVAL_DATA/stress --work $SONGCHARTER_GOLDEN/stress-work and scored by eval/stress.py score (eval/README.md, Stress songs). The baseline: main at fbd9751, 1 CPU take, in eval/baseline/stress/ (the dev machine's run in $SONGCHARTER_GOLDEN/stress-base; cold 4000 s). An order on the charting path compares with it by stress.py compare (exit 1 when a primary F1@50 falls by more than 0.01)."
   },
   "in_flight": [
     {
@@ -100,25 +101,17 @@
       "then": "wave 0 is done (M4-11 merged, the reports committed); wave 1 is running (below), in the new session (docs/handoff.md)"
     },
     {
-      "order": "M5-09 stress set (wave 1)",
-      "branch": "m5-09-stress-eval",
-      "worktree": "wt/m5-09 beside the checkout (dev machine)",
-      "stage": "built (2026-11-05: suite 888 passed, CI green on 857fff3, the baseline in eval/baseline/stress/); in review",
-      "report": "<scratchpad>/briefs/m5-09.report.md, then docs/reports/M5-09-stress-eval.md",
-      "note": "the session's brief keeps song titles, artists and package md5s out of anything committed (the owner's instruction): the committed eval/stress.json holds generic ids and slots, and the list of packages is a local file outside the repository ($EVAL_DATA/stress.local.json) that the owner keeps"
-    },
-    {
       "order": "M5-01 fast grid (wave 2, started early in the free slot: stress-base exists)",
       "branch": "m5-01-fast-grid",
       "worktree": "wt/m5-01 beside the checkout (dev machine)",
-      "stage": "building (2026-11-05), from main at 8f57b88; reads stress.py from M5-09's branch and rebases at M5-09's merge",
+      "stage": "building (2026-11-05): the decisions on its questions applied (BACKBEAT_MIN 0.34 from the table, the half-beat test, the second pass keeps its hinted line, a doubled song's bass one slot level coarser); golden and stress runs; rebases on M5-09's merge",
       "report": "<scratchpad>/briefs/m5-01.report.md, then docs/reports/M5-01-fast-grid.md"
     },
     {
       "order": "M5-05 GPU retry (wave 1, the second slot after M5-06's merge)",
       "branch": "m5-05-gpu-retry",
       "worktree": "wt/m5-05 beside the checkout (dev machine)",
-      "stage": "building (2026-11-05), from main at 9651d58",
+      "stage": "built (CI green on 3e10f3b); review: one major (an engine killed by a signal, the driver's timeout or its stall kill exits the driver 1 and is retried on the CPU), with its skeptic",
       "report": "<scratchpad>/briefs/m5-05.report.md, then docs/reports/M5-05-gpu-retry.md"
     }
   ],
@@ -211,7 +204,10 @@
     "[M5-06] A file silent but for one click above -60 dBFS passes check_song's peak test and the librosa sections fallback still raises (exit 3); made by hand, not a realistic song.",
     "[M5-06] The page's Album placeholder (\"<name> - (Single)\") does not follow edits to the Title field (the chart's album does); the uploaded file is still stored under a name cut at 40.",
     "[M5-06] The file-name rule misreads \"3 Doors Down - X\" (the 3 taken as a track number) and \"01 - Title\" (artist \"01\"); DESIGN 2.13 lists both; the page's fields fix them. With an artist tag and no title tag, the whole stem stays the title (the order read literally).",
-    "[CLAUDE.md] The suite's command `uv run pytest ...` fails collecting tests/test_golden.py (it cannot import `eval`); `uv run python -m pytest ...`, as CI runs it, works. Fix the command (asked the owner)."
+    "[CLAUDE.md] The suite's command `uv run pytest ...` fails collecting tests/test_golden.py (it cannot import `eval`); `uv run python -m pytest ...`, as CI runs it, works. Fix the command (asked the owner).",
+    "[M5-09] Repeat consistency (the feel note's measure 4) was not built: M5-99 (M6) with its fix.",
+    "[M5-02] On the dev machine's 1-take CPU baseline the shred instrumental's guitar runs to 532 s of 545 (last two 30-s windows F1@100 0.78 and 0.65), unlike the owner's 4-take CUDA run (all takes stop at 498.6 s): M5-02's pass lines are restated against stress-base in its brief.",
+    "[M5-05] README's chart flags lack --no-cpu-retry (README is not in M5-05's files): added at its merge."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
   "how_work_is_run": "docs/PIPELINE.md. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices, /prompt-caching, /sub-agents, /settings",
