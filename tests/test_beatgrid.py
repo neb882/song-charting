@@ -427,6 +427,18 @@ def test_bpm_range_reaches_every_fold(fast):
         beat_grid(y, SR, features=f, bpm_range=(185.0, 85.0))
 
 
+def test_the_windows_estimate_inside_the_range():
+    """Pulses at 120 and 180 BPM at once: the best tempo in [85, 185) is 120, in [170, 370) 180, which no octave of
+    120 reaches. So a window folded into (170, 370) reads 180 against a 180 reference, not 240."""
+    fps = SR / 128
+    env = np.zeros(int(60 * fps))
+    env[np.round(np.arange(1, 59, 60 / 120) * fps).astype(int)] += 1.0
+    env[np.round(np.arange(1, 59, 60 / 180) * fps).astype(int)] += 0.7
+    assert estimate_tempo(env, fps) == pytest.approx(120.0, abs=0.3)
+    assert estimate_tempo(env, fps, DOUBLED) == pytest.approx(180.0, abs=0.3)
+    assert {round(b) for _, _, b, _ in window_tempi(env, fps, lambda s, e: 60 / 180, bpm_range=DOUBLED)} == {180}
+
+
 def test_the_default_range_changes_nothing(steady):
     """The default range is BPM_RANGE, and every result of the default path is the same as passing it."""
     _, y = steady

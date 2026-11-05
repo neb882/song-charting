@@ -348,7 +348,8 @@ def test_onsets_distinct_in_time_make_no_chord():
     notes = [TimedNote(at(tm, 4, -10), (0,)), TimedNote(at(tm, 4, 40), (1,)),            # the later is farther
              TimedNote(at(tm, 6, -40), (2,), tap=True), TimedNote(at(tm, 6, 10), (3,)),  # the earlier is farther
              TimedNote(at(tm, 8, -5), (0,)), TimedNote(at(tm, 8, 10), (2,)),             # 15 ms: a chord
-             TimedNote(at(tm, 10), (0,)), TimedNote(at(tm, 10, 15), (1,)), TimedNote(at(tm, 10, 30), (2,))]
+             # each within 20 ms of the one on the tick, 28 ms from each other: the nearer joins it, not both
+             TimedNote(at(tm, 10, -12), (0,)), TimedNote(at(tm, 10), (1,)), TimedNote(at(tm, 10, 16), (2,))]
     track, rep = quantize_part(part(notes), tm, PAD, offset=0.0)
     assert [(n.tick, n.frets, n.tap) for n in track.notes] == [
         (4 * RES, (0,), False), (6 * RES, (3,), False), (8 * RES, (0, 2), False), (10 * RES, (0, 1), False)]

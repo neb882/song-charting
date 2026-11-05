@@ -77,6 +77,7 @@ The config (JSON; relative paths are relative to the config file, keys starting 
      "stems": {"drums": "drums.wav", "bass": "bass.wav", "other": "other.wav", "vocals": "vocals.wav"},
      "beat_hints": {"bpm": 142.0009, "first_beat": 0.050},   (or null)
      "grid_mode": null,                                       ("free" or "click" overrides the choice)
+     "grid_octave": "auto",                                   (1 or 2 forces the octave pass's choice)
      "grid_secondary": null,                                  (a stem name, "mix" or "none"; null: guitar, other)
      "lead_in": 2.5,
      "parts": [{"instrument": "guitar", "source": "autochart/notes.chart"},
@@ -111,7 +112,8 @@ import numpy as np
 
 from . import audio as A
 from . import lyrics as L
-from .beatgrid import FREE_SHARE, BeatGrid, beat_grid
+from .beatgrid import (BPM_RANGE, FREE_SHARE, ONSET_TO_BEAT_MS, BeatGrid, OnsetFeatures, beat_grid, local_beats,
+                       onset_features)
 from .chart import DRUM_ACTIVATION, OPEN, STAR_POWER, Chart, DrumHit, FretNote, SongInfo, Track
 from .errors import InputError, ToolError
 from .importers import _chart_sections, _decode, read_chart, read_song
@@ -217,6 +219,8 @@ class AssembleConfig:
     bpm: float | None = None                       # beat hints for the start grid
     first_beat: float | None = None
     grid_mode: str | None = None                   # "free" or "click" overrides beat_grid's choice
+    grid_octave: str | int = "auto"                # "auto": doubled when the notes are too dense for the grid
+                                                   # (grid_octave, DESIGN.md 2.3); 1 or 2 forces it
     grid_source: str | None = None                 # a stem name or "mix" (default: the drum stem, else the mix)
     grid_secondary: str | None = None              # the stem drumless beats follow: a stem name, "mix", or "" for
                                                    # none (default: the guitar stem, else other; none from the mix)
@@ -231,8 +235,8 @@ class AssembleConfig:
     quality: float = 7.0                           # song.ogg Vorbis quality
 
 
-_CONFIG_KEYS = {"audio", "output", "parts", "metadata", "stems", "beat_hints", "grid_mode", "grid_source",
-                "grid_secondary", "lead_in", "tempo_tolerance", "sections", "solos", "levels", "album_art",
+_CONFIG_KEYS = {"audio", "output", "parts", "metadata", "stems", "beat_hints", "grid_mode", "grid_octave",
+                "grid_source", "grid_secondary", "lead_in", "tempo_tolerance", "sections", "solos", "levels", "album_art",
                 "background", "quality"}
 _PART_KEYS = {f.name for f in fields(PartConfig)}
 _METADATA_KEYS = {"name", "artist", "album", "genre", "year", "charter", "album_track", "preview_start_ms",
@@ -393,6 +397,11 @@ def parse_config(data: dict, base: Path | str = ".", output: Path | str | None =
         v = d.get(key, default)
         return None if v is None else _number(v, key, **bounds)
 
+    octave = d.get("grid_octave", "auto")
+    if isinstance(octave, str) and octave.strip().lower() == "auto":
+        octave = "auto"
+    elif isinstance(octave, bool) or not isinstance(octave, int) or octave not in (1, 2):
+        raise InputError(f"grid_octave is 'auto', 1 or 2, not {octave!r}")
     secondary = _string(d.get("grid_secondary"), "grid_secondary", True)
     if secondary is not None and secondary.strip().lower() == "none":
         secondary = ""  # no second stem: drumless beats follow the line
@@ -401,7 +410,8 @@ def parse_config(data: dict, base: Path | str = ".", output: Path | str | None =
         parts=parts, metadata=meta, stems={str(k): path(v, f"stems.{k}") for k, v in stems.items()},
         bpm=None if bpm is None else _number(bpm, "beat_hints.bpm", above=0),
         first_beat=None if first_beat is None else _number(first_beat, "beat_hints.first_beat", low=0),
-        grid_mode=d.get("grid_mode"), grid_source=_string(d.get("grid_source"), "grid_source", True),
+        grid_mode=d.get("grid_mode"), grid_octave=octave,
+        grid_source=_string(d.get("grid_source"), "grid_source", True),
         grid_secondary=secondary, lead_in=opt("lead_in", 2.5, low=LEAD_S),
         tempo_tolerance=opt("tempo_tolerance", TEMPO_TOLERANCE, above=0),
         sections=_string(d.get("sections"), "sections", True), solos=_solos(d.get("solos", "off")),
@@ -646,6 +656,120 @@ def clip_to_audio(tracks: dict[str, Track], tempo: TempoMap, audio_end: float, m
         out[d] = replace(tr, notes=notes) if dropped or clipped or removed else tr
         counts[d] = {"onsets_dropped": len(dropped), "sustains_clipped": clipped, "sustains_removed": removed}
     return out, counts
+
+
+# ------------------------------------------------------------------------------------------------ the grid's octave
+
+# DESIGN.md 2.3, the octave pass (doubling only): a grid whose 1/16 slots cannot hold the notes is an octave too slow
+OCTAVE_SHORT = 0.75        # an interval between onsets is short under this share of a 1/16 of its beat: the ones
+                           # the quantizer would merge, move or drop (its `separate` is 0.75 slot)
+OCTAVE_SHARE = 0.35        # the grid doubles when this share of the intervals, pooled over the parts, is short
+                           # (the geometric midpoint of 0.199, the most on a right grid, and 0.623 at half tempo) ...
+BACKBEAT_MIN = 0.8         # ... and the snare is not clearly on the beat lines (midpoints / lines at least this) ...
+OCTAVE_MAX_BPM = 300.0     # ... and the doubled tempo is at most Magma's 300 BPM ...
+OCTAVE_MIN_ONSETS = 200    # ... and the parts have this many distinct onsets in all
+BACKBEAT_WINDOW_S = 0.035  # the snare band's peak within this of a beat line or a beat's midpoint
+BACKBEAT_MIN_BEATS = 16    # confident beats the backbeat ratio needs (fewer: indeterminate)
+OCTAVE_EVIDENCE_MIN = 0.7  # the doubled grid is kept when its confident share is at least this times the first's
+                           # (PROVISIONAL, M5-01's open question: 0.5 is no evidence between the first grid's beats)
+
+
+@dataclass(frozen=True)
+class OctaveRules:
+    short: float = OCTAVE_SHORT
+    share: float = OCTAVE_SHARE
+    backbeat_min: float = BACKBEAT_MIN
+    max_bpm: float = OCTAVE_MAX_BPM
+    min_onsets: int = OCTAVE_MIN_ONSETS
+    window_s: float = BACKBEAT_WINDOW_S
+    min_beats: int = BACKBEAT_MIN_BEATS
+    evidence_min: float = OCTAVE_EVIDENCE_MIN
+
+
+OCTAVE_RULES = OctaveRules()
+
+
+def short_intervals(onsets, beats: np.ndarray, short: float = OCTAVE_SHORT) -> tuple[int, int]:
+    """(short, intervals): the intervals between consecutive distinct onsets, and how many are shorter than `short`
+    of a 1/16 of the beat the earlier onset falls in (the first or last beat's outside the grid)."""
+    t = np.unique(np.asarray(onsets, dtype=np.float64))
+    b = np.asarray(beats, dtype=np.float64)
+    if len(t) < 2 or len(b) < 2:
+        return 0, max(len(t) - 1, 0)
+    j = np.clip(np.searchsorted(b, t[:-1], "right") - 1, 0, len(b) - 2)
+    ibi = b[j + 1] - b[j]
+    return int(np.sum(np.diff(t) < short * ibi / 4)), int(len(t) - 1)
+
+
+def backbeat_ratio(features: OnsetFeatures, beats: np.ndarray, window_s: float = BACKBEAT_WINDOW_S,
+                   min_beats: int = BACKBEAT_MIN_BEATS, onset_to_beat_ms: float = ONSET_TO_BEAT_MS
+                   ) -> tuple[float | None, int]:
+    """(ratio, beats used): the snare band's peak power within +-window_s of each beat's midpoint (its 8th line)
+    over that of the beat line, as medians over the beats with confident drum evidence (beatgrid.local_beats). The
+    band powers are read at the beats' onset times (the beats minus onset_to_beat_ms), where beatgrid's bar phase
+    reads them. Over 1: the snare lands between the grid's beats (a grid at half the pulse); under 1: on them. None
+    with fewer than min_beats confident beats."""
+    u = np.asarray(beats, dtype=np.float64) - onset_to_beat_ms / 1000.0
+    if len(u) < 2:
+        return None, 0
+    fps, snare = features.fps, features.snare
+    hw = int(round(window_s * fps))
+
+    def peak(t: np.ndarray) -> np.ndarray:
+        c = np.round(t * fps).astype(int)
+        return np.array([snare[max(0, i - hw):max(0, min(len(snare), i + hw + 1))].max(initial=0.0) for i in c])
+
+    use = local_beats(features, u).confident[:-1]
+    if use.sum() < min_beats:
+        return None, int(use.sum())
+    lines, mids = peak(u[:-1][use]), peak(0.5 * (u[:-1] + u[1:])[use])
+    return float(np.median(mids) / max(float(np.median(lines)), 1e-12)), int(use.sum())
+
+
+def grid_octave(onsets_by_part: dict[str, Any], beats: np.ndarray, features: OnsetFeatures | None,
+                rules: OctaveRules = OCTAVE_RULES) -> tuple[int, dict]:
+    """(octave, stats): 2 when the grid is an octave too slow for the notes, else 1 (DESIGN.md 2.3; halving is not
+    built). onsets_by_part: each charted part's distinct Expert onset times (input seconds, before quantizing);
+    beats: the grid's beats (input seconds); features: the drum stem's OnsetFeatures, None without drums.
+
+    The density test: per part, the share of intervals between onsets shorter than `rules.short` of a 1/16 of
+    their beat (short_intervals), pooled weighted by the parts' onset counts. The backbeat test: backbeat_ratio
+    (None without drums or with too few confident beats: indeterminate). The octave is 2 when the pooled share is at
+    least `rules.share`, the backbeat ratio is None or at least `rules.backbeat_min`, the grid's median tempo
+    doubled is at most `rules.max_bpm` and the parts have at least `rules.min_onsets` onsets; stats["reason"] says
+    which test decided."""
+    parts, n_all, weighted = {}, 0, 0.0
+    for name, times in onsets_by_part.items():
+        n = len(np.unique(np.asarray(times, dtype=np.float64)))
+        short, intervals = short_intervals(times, beats, rules.short)
+        share = short / intervals if intervals else 0.0
+        parts[name] = {"onsets": n, "intervals": intervals, "short": short, "share": round(share, 4)}
+        n_all += n
+        weighted += n * share
+    pooled = weighted / n_all if n_all else 0.0
+    ratio, used = backbeat_ratio(features, beats, rules.window_s, rules.min_beats) if features is not None \
+        else (None, 0)
+    bpm = 60.0 / float(np.median(np.diff(beats))) if len(beats) > 1 else 0.0
+    why_not = []
+    if pooled < rules.share:
+        why_not.append(f"{pooled:.1%} of intervals under {rules.short} of a 16th (under {rules.share:.1%})")
+    if ratio is not None and ratio < rules.backbeat_min:
+        why_not.append(f"the snare is on the beat lines (backbeat {ratio:.2f}, under {rules.backbeat_min})")
+    if 2 * bpm > rules.max_bpm:
+        why_not.append(f"{2 * bpm:.1f} BPM doubled is over {rules.max_bpm:.0f}")
+    if n_all < rules.min_onsets:
+        why_not.append(f"{n_all} onsets (under {rules.min_onsets})")
+    octave = 1 if why_not else 2
+    backbeat = "no drums" if features is None else ("too few confident beats" if ratio is None
+                                                    else f"backbeat {ratio:.2f}")
+    reason = "; ".join(why_not) if why_not else (
+        f"{pooled:.1%} of intervals under {rules.short} of a 16th (at least {rules.share:.1%}), {backbeat}")
+    stats = {"octave": octave, "reason": reason, "parts": parts, "onsets": n_all, "pooled_share": round(pooled, 4),
+             "backbeat_ratio": None if ratio is None else round(ratio, 4), "backbeat_beats": used,
+             "bpm": round(bpm, 4), "thresholds": {"short": rules.short, "share": rules.share,
+                                                  "backbeat_min": rules.backbeat_min, "max_bpm": rules.max_bpm,
+                                                  "min_onsets": rules.min_onsets}}
+    return octave, stats
 
 
 # ------------------------------------------------------------------------------------------------ ratings
@@ -1257,6 +1381,57 @@ def _remove_build(folder: Path) -> None:
         folder.rmdir()
 
 
+def _grid_record(g: BeatGrid) -> dict:
+    ev = g.stats["evidence"]
+    return {"bpm_median": round(g.bpm, 4), "click_bpm": g.stats["click"]["bpm"], "mode": g.mode,
+            "confident_share": ev["confident_share"], "n_confident": ev["n_confident"], "n_beats": ev["n_beats"]}
+
+
+def _octave_pass(cfg: AssembleConfig, first: BeatGrid, onsets: dict[str, list[float]],
+                 drum_features: OnsetFeatures | None, second_pass) -> tuple[BeatGrid, int, dict, str, list[str]]:
+    """The grid's octave (DESIGN.md 2.3, doubling only): (grid, octave, stats, reason, warnings). grid_octave
+    decides on the first grid unless the config forces it; a 2 builds the grid again at twice the first grid's
+    click tempo, with the fold range doubled and no first-beat hint (`second_pass(bpm, bpm_range)`). The doubled
+    grid is kept when its confident share is at least OCTAVE_RULES.evidence_min times the first's (a doubled grid
+    has fewer drum hits per beat by nature), or when the config forces 2; otherwise the first stays, with a
+    warning."""
+    rules = OCTAVE_RULES
+    want, stats = grid_octave(onsets, first.beats, drum_features, rules)
+    stats["thresholds"]["evidence_min"] = rules.evidence_min
+    stats["first"] = _grid_record(first)
+    dense = f"{stats['pooled_share']:.0%} of intervals under a 16th"
+    forced = cfg.grid_octave != "auto"
+    if forced:
+        want = cfg.grid_octave
+        if want == 2 and 2 * first.bpm > rules.max_bpm:
+            raise InputError(f"grid_octave 2: the doubled tempo, {2 * first.bpm:.1f} BPM, passes "
+                             f"{rules.max_bpm:.0f} BPM")
+    if want == 1:
+        return first, 1, stats, ("forced: grid_octave 1" if forced else stats["reason"]), []
+    lo, hi = BPM_RANGE
+    try:
+        second = second_pass(2 * first.stats["click"]["bpm"], (2 * lo, 2 * hi))
+    except InputError:
+        if forced:
+            raise
+        second = None
+    s1 = first.stats["evidence"]["confident_share"]
+    s2 = second.stats["evidence"]["confident_share"] if second is not None else 0.0
+    ratio = s2 / s1 if s1 > 0 else (math.inf if s2 > 0 else 0.0)
+    stats["second"] = None if second is None else _grid_record(second)
+    stats["evidence_ratio"] = round(ratio, 4) if math.isfinite(ratio) else None
+    if forced or ratio >= rules.evidence_min:
+        why = "forced: grid_octave 2" if forced else (
+            f"{stats['reason']}; the doubled grid's confident share {s2:.2f} against {s1:.2f} (ratio {ratio:.2f}, "
+            f"at least {rules.evidence_min})")
+        return second, 2, stats, why, [f"tempo doubled to {second.bpm:.1f} BPM: " + (
+            "grid_octave 2" if forced else f"the notes are too dense for {first.bpm:.1f} BPM ({dense})")]
+    why = (f"{stats['reason']}; but the doubled grid's confident share {s2:.2f} against {s1:.2f} (ratio "
+           f"{ratio:.2f}, under {rules.evidence_min}): the first grid stays")
+    return first, 1, stats, why, [f"tempo: the notes are dense for {first.bpm:.1f} BPM ({dense}) but the drums give "
+                                  f"no evidence at {2 * first.bpm:.1f} BPM: check the tempo"]
+
+
 def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | None = None,
              art: dict | None = None) -> AssembleResult:
     """Build the song folder a config describes (the module docstring), write report.json into it and return the
@@ -1301,9 +1476,18 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
     sec = cfg.grid_secondary if cfg.grid_secondary is not None else (
         next((n for n in STEMS_FOR["guitar"] if n in stems and n != src), None) if src != "mix" else None)
     sec = sec or None
-    grid = beat_grid(mix if src == "mix" else stems[src], sr, duration=duration, bpm=cfg.bpm,
-                     first_beat=cfg.first_beat, mode=cfg.grid_mode,
-                     secondary=(mix if sec == "mix" else stems[sec]) if sec else None)
+    grid_audio = mix if src == "mix" else stems[src]
+    features = onset_features(grid_audio, sr)  # once, for both passes and the backbeat test
+    second_stem = (mix if sec == "mix" else stems[sec]) if sec else None
+    grid = beat_grid(grid_audio, sr, duration=duration, bpm=cfg.bpm, first_beat=cfg.first_beat, mode=cfg.grid_mode,
+                     secondary=second_stem, features=features)
+    onsets = {p.key: sorted({n.time for n in songs[p.key].parts[(p.from_instrument, "expert")].notes})
+              for p in cfg.parts}
+    grid, octave, octave_stats, octave_reason, warn = _octave_pass(
+        cfg, grid, onsets, features if src == "drums" else None,
+        lambda bpm, bpm_range: beat_grid(grid_audio, sr, duration=duration, bpm=bpm, mode=cfg.grid_mode,
+                                         secondary=second_stem, features=features, bpm_range=bpm_range))
+    warnings += warn
     lead = plan_lead_in(grid.beats, grid.downbeats, sr, min_lead=cfg.lead_in, duration=duration)
     tm = TempoMap.from_beats(lead.beats, bars=lead.bars, tolerance=cfg.tempo_tolerance)
     pad = lead.pad_seconds
@@ -1318,7 +1502,8 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
                       "downbeat_phase": grid.stats["downbeats"]["phase"],
                       "downbeat_margin": grid.stats["downbeats"]["margin"],
                       "downbeats_uncertain": grid.stats["downbeats"]["uncertain"],
-                      "drift_ms": grid.stats["drift_ms"], "stats": _jsonable(grid.stats)}
+                      "drift_ms": grid.stats["drift_ms"], "octave": octave, "octave_reason": octave_reason,
+                      "octave_stats": octave_stats, "stats": _jsonable(grid.stats)}
     if grid.stats["downbeats"]["uncertain"]:
         warnings.append(f"downbeats uncertain (bar-phase margin {grid.stats['downbeats']['margin']:.3f}): "
                         "check that beat 1 is on the kick")
