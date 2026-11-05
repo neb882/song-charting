@@ -735,6 +735,40 @@ sections, scored with `score.py` against the six human charts [here, takes exper
 - Three of the experiment's Creep builds failed the gate on `noteAfterAudio` (seed 303's last chord rings past the
   audio's end); assemble now clips it (§2.13).
 
+#### A take that fails on CUDA: run again on the CPU, once (M5-05)
+v0.1 ended a chart when a guitar take failed on CUDA, with advice (`pipeline.gpu_failed`: close programs that use
+the GPU, chart again, Guitar takes 1, Device CPU); the skeptic's option (b) on the advisor's finding 1 on the release
+candidate (`docs/reports/rc-advisor.md`) left the better fix to the next version. The friend's 4070 has about 9.5 GB
+free at idle and the takes peak near 9 GB on the owner's card, so a browser or Clone Hero left open can tip a take
+over; a retry costs about one CPU transcription (217 s for the 6:52 test song on the dev container; the friend's CPU
+is unmeasured) instead of a dead end.
+- **As built** (`pipeline.py`'s guitar stage) [code]: every take is a call of its own (`engines.guitar(..., [seed],
+  ...)`), its `take` event numbered among the stage's takes as before. A take on CUDA whose engine failed inside (a
+  positive exit code, as a GPU short of memory gives: `take_failed`'s `gpu_failed` class) runs again with device
+  "cpu" into the same folder, with a `take` event of the same index and `"device": "cpu"` (the page's take line
+  says "(on the CPU)"), a fallback record `take seed_N: the CUDA run failed (<the engine's first error line, at most
+  120 characters>); run again on the CPU` and a warning; the takes after it go back to CUDA. `pipeline.json`'s
+  `takes` gives each take's transcriber device (`devices`) and the seeds retried (`cpu_retries`). The CPU's take is
+  not reused by a later chart on CUDA (autochart's cache takes a take only when its transcriber ran on the device
+  asked for), so that chart runs it on CUDA again. When the CUDA default's first take is the one retried, the probe
+  rule above keeps it alone, with a warning that says why (more takes on a GPU that just failed one could fail too,
+  with the retry spent).
+- **The cap and what is not retried:** one take a chart (`CPU_RETRIES` = 1). Not retried, raised as in v0.1: an
+  engine killed by a signal (`stopped`: memory, most likely WSL's limit, where the CPU would not help), a timeout, an
+  exit 0 with no take, a second CUDA failure in the same chart (`gpu_failed`'s advice, saying one take was already
+  run again on the CPU), and anything with `cpu_retry` off (`songcharter chart --no-cpu-retry`; the page has no
+  control). A retry that fails raises through `take_failed` with the CPU named: "failed ... on the GPU and again on
+  the CPU" (the GPU's advice without Device CPU), or "The guitar's CPU run was stopped" for a signal.
+- **Decision** [decided by the owner, 2026-11-05]: `cpu_retry` on by default: the friend's PC has the memory
+  headroom the install set, and a dead end costs him more than a slow take.
+- **The risk, and the gate's check** [unmeasured]: the retry puts autochart's CPU engine beside this process's CUDA
+  context inside WSL's 12 GB (`memory=12GB` on a 16 GB PC, §4.7), and autochart's node engine was once seen at 12.8 GB
+  on the CPU. At the release gate on the owner's PC (M5-00's gate) M4-08's A23 provokes a failure under `memory=12GB`:
+  while take 2 runs, a program fills the GPU's memory; the chart must finish with take 2 on the CPU and the banner
+  showing the fallback, and the guitar stage's `min_available_ram_mb` and `max_swap_used_mb` in `pipeline.json`
+  are recorded. A retry killed for memory fails the chart with `stopped`'s advice, no worse than v0.1; if swap passes
+  4 GB during the retry, the default goes to `cpu_retry` off for WSL [decision at the gate, the owner's].
+
 #### Under-charted strumming: a detector, no fill
 The friend found a sparse stretch in the test song around 2:32–2:35 of the original song (his clarification; an
 earlier message gave 2:27–2:29 and was withdrawn). The research tried
