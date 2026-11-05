@@ -106,6 +106,13 @@
       "worktree": "wt/m5-02 beside the checkout (dev machine)",
       "stage": "building (2026-11-05), from main at e1ebc5a; its stress pass lines restated against stress-base (the shred song's 1-CPU take is cut by the 1,280-beat cap at about 532 s, not the token budget), and a failed piece takes the chart's one CPU retry",
       "report": "<scratchpad>/briefs/m5-02.report.md, then docs/reports/M5-02-long-songs.md"
+    },
+    {
+      "order": "M5-03 solos (wave 3)",
+      "branch": "m5-03-solos",
+      "worktree": "wt/m5-03 beside the checkout (dev machine)",
+      "stage": "building (2026-11-05), from main at 1ed6839 (after M5-01); compares with a stress run of its merge base",
+      "report": "<scratchpad>/briefs/m5-03.report.md, then docs/reports/M5-03-solos.md"
     }
   ],
   "next": [
