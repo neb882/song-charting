@@ -1340,13 +1340,24 @@ to detect, from the guitar's pick noise, where our chart is too sparse, and to f
      owner may want a tighter share for songs with vocals (M5-00 section 8).
   **The choice** [conventions: on an instrumental, the spans where the lead stands out]: the candidates with 4
   measures and 16 Expert onsets are ranked by onset density (Expert onsets per measure, ties to the earlier start)
-  and taken in that order, at most 3, skipping any that would take the solos' seconds (first to last onset) past
-  `max_share` of the first..last Expert onset's; the result is sorted by start. Two parts of one split run can both
-  be taken, back to back. A person's names (`--solos "Solo 1,Solo 2"`) are neither split nor share-capped: the
-  person's choice stands, within the minimums and the 3-solo cap. `report.json`'s `phrases.guitar` holds
-  `solo_rules` (the values used, and `capped`: false with names), `solo_details` (per solo: start, end, measures,
-  onsets, onsets per measure) and `solos_skipped_by_share`; the preview's overview draws each solo as a green band
-  under the star power's cyan one [code].
+  and taken in that order, at most 3, skipping any that starts within `min_gap_measures` (**4**) after a kept solo's
+  end or ends within 4 before a kept solo's start, and any that would take the solos' seconds (first to last onset)
+  past `max_share` of the first..last Expert onset's; the result is sorted by start. The gap rule [decision, the
+  orchestrator, 2026-11-05] keeps a split run from giving back-to-back markers while a long run can still give
+  separated solos (the shred song's alt chart has two, 4:30–6:06 and 6:56–8:33). A person's names (`--solos "Solo
+  1,Solo 2"`) are neither split, gapped nor share-capped: the person's choice stands, within the minimums and the
+  3-solo cap. `report.json`'s `phrases.guitar` holds `solo_rules` (the values used, and `capped`: false with names),
+  `solo_details` (per solo: start, end, measures, onsets, onsets per measure), `solos_skipped_by_gap` and
+  `solos_skipped_by_share`; the preview's overview draws each solo as a green band under the star power's cyan one
+  [code].
+  **On the owner's v0.1 charts** (4 CUDA takes; the rules rerun on their own notes and sections, numbers only;
+  input seconds, as report.json and the human charts) [here, M5-03]: the power-metal song's one solo 2:14.4–3:55.1
+  (101 s, share 0.34) becomes 2:14.4–3:35.9 (81 s, 34 measures, share 0.27): the run is split at the seconds cap
+  and the 19-s rest is skipped by the gap; it covers 0.60–0.65 of the three human charts' solo (about 2:55–4:01).
+  The shred song's 1:04.8–1:41.2 and 1:56.0–8:18.1 (share 0.84) become 1:04.8–1:41.2, 4:42.0–6:02.5 and
+  7:29.2–8:18.1 (share 0.33; two parts skipped by the gap, one by the share), covering 0.84 and 0.50 of the alt
+  chart's two human solos. Without the gap rule the shred song got 3:13.4–4:41.9 and 4:42.0–6:02.5 back to back,
+  and the power-metal song both parts of its run. The rock song is unchanged (1:46.6–2:15.3).
 - **Difficulties:** solos are written on every guitar difficulty. The reducer copies them down and keeps at least one note in each solo on every level (`reduce.py`) [code], so scan-chart's `emptySoloSection`, which it checks on every track, cannot fire.
 
 - **Not chosen:** imported star power (autochart has none; STRUM's 8 phrases placed on the densest Expert windows come out empty on Easy); chartgen's 19 phrases.

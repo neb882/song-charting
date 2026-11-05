@@ -410,12 +410,12 @@ def test_the_densest_solos_win():
     """Ranked by Expert onsets per measure, not by onsets: the long sparse run with the most onsets loses; a tie goes
     to the earlier start; the result is sorted by start."""
     tm = const_map()
-    runs = {"sparse": (11, 24, 4), "b": (41, 8, 8), "c": (51, 8, 12), "d": (61, 4, 16), "e": (71, 8, 6),
-            "f": (81, 8, 8)}                      # first measure, measures, notes a measure
-    ex = density({m: n for first, k, n in runs.values() for m in range(first, first + k)})
+    runs = {"sparse": (11, 24, 4), "b": (41, 8, 8), "c": (55, 8, 12), "d": (69, 4, 16), "e": (79, 8, 6),
+            "f": (93, 8, 8)}                      # first measure, measures, notes a measure; 6 measures apart
+    ex = density({m: n for first, k, n in runs.values() for m in range(first, first + k)}, measures=110)
     secs = runs_at(*((first, k) for first, k, _ in runs.values()))
     got = place_solos(ex, tm, secs, rules=SoloRules(max_share=1.0))
-    assert [a // M for a, _ in got] == [41, 51, 61]   # d (16), c (12), then b (8) before f (8)
+    assert [a // M for a, _ in got] == [41, 55, 69]   # d (16), c (12), then b (8) before f (8)
 
 
 def test_the_share_cap_skips_a_solo_and_takes_the_next_that_fits():
@@ -431,7 +431,8 @@ def test_the_share_cap_skips_a_solo_and_takes_the_next_that_fits():
     got = place_solos(ex, tm, secs, rules=rules, record=record)
     assert [a // M for a, _ in got] == [11, 31, 71]
     assert record["rules"] == {"min_measures": 4, "min_onsets": 16, "max_solos": 3, "max_measures": 56,
-                               "max_seconds": 100.0, "max_share": 0.25} and record["capped"]
+                               "max_seconds": 100.0, "max_share": 0.25, "min_gap_measures": 4.0}
+    assert record["capped"] and record["skipped_by_gap"] == []
     assert [(r["start"], r["end"], r["measures"], r["onsets"]) for r in record["solos"]] == [
         (a, b, k, k * n) for (a, b), (_, k, n) in zip(got, (runs[0], runs[1], runs[3]))]
     assert record["solos"][0]["per_measure"] == 16.0
@@ -445,13 +446,42 @@ def test_the_share_cap_skips_a_solo_and_takes_the_next_that_fits():
     assert place_solos(long, tm, named, rules=tight) == []                # no section named Solo
     record = {}
     got = place_solos(long, tm, named, names=["Lead A", "Lead B", "Lead C"], rules=tight, record=record)
-    assert got == [(21 * M, 81 * M - 96)] and not record["capped"] and record["skipped_by_share"] == []
+    assert got == [(21 * M, 81 * M - 96)] and not record["capped"]
+    assert record["skipped_by_share"] == record["skipped_by_gap"] == []
     # through place_phrases, on Expert lead guitar
     record = {}
     chart = Chart(SongInfo("t", "a"), tm, secs, [ex])
     assert place_phrases(chart, solos=True, solo_rules=rules, solo_record=record).tracks[0].solos == \
         place_solos(ex, tm, secs, rules=rules)
     assert len(record["solos"]) == 3 and len(record["skipped_by_share"]) == 1
+
+
+def test_the_parts_of_a_split_run_never_come_back_to_back():
+    """At 100 BPM (2.4 s a measure) a 34 + 8-measure run (100.8 s) is split at the seconds cap into 81.6 and 19.2 s:
+    only the denser part is kept, whichever side of the other it is on. Two runs 6 measures apart are both kept, 3
+    apart only the denser; a person's names are exempt."""
+    tm = TempoMap.from_beats(np.arange(1200) * 0.6)
+
+    def kept(lengths, dens, names=None, gap=None, record=None):
+        if gap is None:
+            secs = lettered(21, lengths, "Solo ")
+            parts = [(21, lengths[0]), (21 + lengths[0], lengths[1])]
+        else:   # two runs, `gap` measures of verse between them
+            secs = [(1 * M, "Intro"), (21 * M, "Solo 1"), ((21 + lengths[0]) * M, "Verse"),
+                    ((21 + lengths[0] + gap) * M, "Solo 2"), ((21 + lengths[0] + gap + lengths[1]) * M, "Outro")]
+            parts = [(21, lengths[0]), (21 + lengths[0] + gap, lengths[1])]
+        ex = density({m: n for (first, k), n in zip(parts, dens) for m in range(first, first + k)}, measures=120)
+        return [(a // M, round((b - a) / M)) for a, b in place_solos(ex, tm, secs, names=names, record=record)]
+
+    record = {}
+    assert kept([34, 8], [12, 8], record=record) == [(21, 34)]        # the later part starts right after it ends
+    assert [(r["start"] // M, r["measures"]) for r in record["skipped_by_gap"]] == [(55, 8)]
+    assert record["skipped_by_share"] == []
+    assert kept([34, 8], [8, 12]) == [(55, 8)]                         # the earlier part ends right before it starts
+    assert kept([20, 20], [12, 8], gap=6) == [(21, 20), (47, 20)]
+    assert kept([20, 20], [12, 8], gap=3) == [(21, 20)]
+    assert kept([20, 20], [8, 12], gap=3) == [(44, 20)]
+    assert kept([20, 20], [12, 8], gap=3, names=["Solo 1", "Solo 2"]) == [(21, 20), (44, 20)]
 
 
 def test_stem_confirm():

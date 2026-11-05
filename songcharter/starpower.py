@@ -71,9 +71,10 @@ write, and solos are a minority of the song (DESIGN 2.10; M5-03 measured 14 huma
     group stays within both caps, and a part over a cap on its own is cut at the measure line where the first cap is
     reached (the rest is its own candidate, cut again while it is over one). A run within both is one candidate.
   * Choosing: a candidate needs 4 measures and 16 Expert onsets; the densest (onsets per measure, ties to the
-    earlier) are taken, at most 3 a song (human median 1, p90 2-3), skipping any that would take the solos' seconds
-    past `max_share` (0.40) of the first..last Expert onset's. Two parts of one split run can both be taken, back to
-    back. A person's names (`names`) are neither split nor share-capped.
+    earlier) are taken, at most 3 a song (human median 1, p90 2-3), skipping any that starts or ends within
+    `min_gap_measures` (4) of a solo already taken (so a split run never gives back-to-back markers, while a long run
+    can still give separated solos) and any that would take the solos' seconds past `max_share` (0.40) of the
+    first..last Expert onset's. A person's names (`names`) are neither split, gapped nor share-capped.
 `E solo` sits on the candidate's first onset and `E soloend` on its last.
 
 Lower difficulties, `fit_phrases`: Expert's phrases on every level, as human charts have them, fitted to its notes:
@@ -141,6 +142,7 @@ class SoloRules:
                                     # to the next 10 s, in [30, 120]
     max_share: float = 0.40         # the solos' seconds against the first..last Expert onset's: the largest human
                                     # share rounded up to the next 0.05, at least 0.15
+    min_gap_measures: float = 4.0   # between two solos, so a split run never gives back-to-back markers
 
 
 SP_RULES = StarPowerRules()
@@ -483,6 +485,20 @@ class _Caps:
         """The measure lines in [a, b): a span from line to line has that many measures."""
         return bisect.bisect_left(self.starts, b) - bisect.bisect_left(self.starts, a)
 
+    def position(self, tick: int) -> float:
+        """The tick in measures from the first line, with the fraction of its measure."""
+        i = max(bisect.bisect_right(self.starts, tick) - 1, 0)
+        j = i + 1 if i + 1 < len(self.starts) else i - 1
+        return i + (tick - self.starts[i]) / max(abs(self.starts[j] - self.starts[i]), 1)
+
+    def near(self, c: "_Solo", kept: "_Solo") -> bool:
+        """Whether candidate c starts within min_gap_measures after the kept solo's end, or ends within them before
+        its start (candidates never overlap)."""
+        gap = self.rules.min_gap_measures
+        if c.start > kept.end:
+            return self.position(c.start) - self.position(kept.end) < gap
+        return self.position(kept.start) - self.position(c.end) < gap
+
     def within(self, a: int, b: int) -> bool:
         return (self.measures(a, b) <= self.rules.max_measures
                 and self.tempo.tick_to_sec(b) - self.tempo.tick_to_sec(a) <= self.rules.max_seconds + 1e-9)
@@ -539,21 +555,22 @@ def place_solos(expert: Track, tempo: TempoMap, sections: Sequence[tuple[int, st
                 rules: SoloRules = SOLO_RULES, record: dict | None = None) -> list[tuple[int, int]]:
     """Solos (first onset, last onset; Track.solos ends are inclusive) from the sections named as solos: the
     candidates of `solo_sections` with rules.min_onsets and rules.min_measures, the densest first (Expert onsets per
-    measure, ties to the earlier), at most rules.max_solos, skipping any that would take the solos' seconds past
-    rules.max_share of the first..last Expert onset's. Sorted by start.
+    measure, ties to the earlier), at most rules.max_solos, skipping any within rules.min_gap_measures of a solo
+    already taken (so the parts of a split run never come back to back) and any that would take the solos' seconds
+    past rules.max_share of the first..last Expert onset's. Sorted by start.
 
     confirm: a test of each solo section [start, end) in ticks, e.g. `stem_confirm` (the vocals stem is quiet).
              It rejects real solos with singing or bleed in the vocals stem: the test song's two confirmed solos
              and Kimochi Warui's (vocals active in 0.561, 0.863 and 0.905 of their frames).
     names:   the sections a person named as solos (exact section names), instead of the label and confirm. The
-             test song's player named "Solo 1" and "Solo 2", which the stem test rejects. Nothing is split and the
-             share is not capped; the 16-onset and 4-measure minimums and the 3-solo cap still apply.
+             test song's player named "Solo 1" and "Solo 2", which the stem test rejects. Nothing is split, and
+             neither the gap nor the share applies; the 16-onset and 4-measure minimums and the 3-solo cap do.
     record:  filled with what was used and why (report.json's phrases.guitar): "rules" (SoloRules' values),
              "capped" (False with names), "solos" (per solo: start and end ticks, measures, onsets, onsets per
-             measure) and "skipped_by_share" (the candidates the share cap skipped, the same fields).
+             measure), "skipped_by_gap" and "skipped_by_share" (the candidates each rule skipped, the same fields).
     """
     if record is not None:
-        record.update(rules=asdict(rules), capped=names is None, solos=[], skipped_by_share=[])
+        record.update(rules=asdict(rules), capped=names is None, solos=[], skipped_by_gap=[], skipped_by_share=[])
     onsets = _onsets(expert)
     if not onsets:
         return []
@@ -568,11 +585,15 @@ def place_solos(expert: Track, tempo: TempoMap, sections: Sequence[tuple[int, st
     sec = tempo.tick_to_sec
     budget = rules.max_share * (sec(onsets[-1]) - sec(onsets[0]))
     picked: list[_Solo] = []
+    near: list[_Solo] = []
     skipped: list[_Solo] = []
     total = 0.0
     for c in candidates:
         if len(picked) == rules.max_solos:
             break
+        if names is None and any(caps.near(c, k) for k in picked):
+            near.append(c)
+            continue
         length = sec(c.end) - sec(c.start)
         if names is None and total + length > budget + 1e-9:
             skipped.append(c)
@@ -581,7 +602,8 @@ def place_solos(expert: Track, tempo: TempoMap, sections: Sequence[tuple[int, st
         total += length
     picked.sort(key=lambda c: c.start)
     if record is not None:
-        record.update(solos=[c.row() for c in picked], skipped_by_share=[c.row() for c in skipped])
+        record.update(solos=[c.row() for c in picked], skipped_by_gap=[c.row() for c in near],
+                      skipped_by_share=[c.row() for c in skipped])
     return [(c.start, c.end) for c in picked]
 
 
