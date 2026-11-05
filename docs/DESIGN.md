@@ -1945,7 +1945,34 @@ soundfile's bundled libsndfile (LGPL) are the only non-permissive Python package
 
 ### 4.3 Windows install (Goal 2, built only after M1's Windows spike)
 **Superseded for v0.1:** the owner chose WSL2 (§9 Q4, 2026-11-03), so v0.1's install is
-`docs/work-orders/M4-03-install.md`; this native plan is kept for M4-99, as written before that decision. If native:
+`docs/work-orders/M4-03-install.md`; this native plan is kept for M4-99, as written before that decision.
+
+**What the WSL install prints** (M5-08; `packaging/linux/install.sh`, `songcharter/runtime.py`) [code]:
+- **Downloads.** songcharter's own (Node, autochart and its models, ADTOF's weights; at a chart's first song with
+  lyrics, the aligner's weights) go through `runtime.download_part`: `fetch <name>: <N> MB`, a line every 50 MB, and
+  `fetch <name>: done, <N> MB`. The hub's (htdemucs_6s, allin1's eight folds) get the same first and last lines, with
+  a name a person reads ("htdemucs_6s, file 2 of 2", "allin1 fold 3 of 8") and the size from the hub's dry run, in
+  place of the hub's bars (`HF_HUB_DISABLE_PROGRESS_BARS=1`; they were as wide as the terminal on the owner's PC). A
+  file already there says nothing, so a reinstall prints no `fetch` line (CI checks it).
+- **No warning that asks nothing of the person.** The hub's server sends "You are sending unauthenticated requests to
+  the HF Hub" in an `X-HF-Warning` header, which huggingface_hub 2.4.0 logs at warning level
+  (`utils/_http.py`): the hub's logger is at ERROR around the install's downloads, and the launcher's environment
+  sets `HF_HUB_VERBOSITY=error` (and the bars off) where the person has not. npm runs with
+  `npm_config_loglevel=error`, `--no-audit` and `--no-fund`: no "npm warn deprecated", and no npm-packlist
+  "gitignore-fallback" line, which npm says for each git dependency it packs (scan-chart has two). Errors still show
+  and still fail the step; npm's debug log in its cache still has every line. CI's `30-install.sh` fails on an install
+  log with "npm warn", "WARN", "Warning:", "unauthenticated", a carriage return or a bar character [CI].
+- **Not covered:** curl's meter for uv's tarball (step 6, `download`) and uv's own bars on a terminal (step 7).
+- **The closing summary** prints doctor.json as step 8 wrote it, before step 9 set WSL's memory, which applies once
+  WSL restarts. When step 9 wrote `.wslconfig` (its restart flag), the restart follows, so the summary leaves out
+  what doctor said of WSL's memory (the problem under 8 GB, the note under 11 GB, ".wslconfig asks for": the findings
+  `device.findings` gives only with the memory known, and "no .wslconfig" in the WSL line), ends with "WSL's memory is
+  measured again after the restart", and the exit status is the other problems' (1 with any). With no flag
+  (`.wslconfig` kept, a No, a rerun after an interrupted restart, plain Linux, CI) it is as it is, the memory problem
+  included: then no restart follows, and the problem is the next step. [The advisor's finding 7 on the release
+  candidate and its skeptic: `docs/reports/rc-advisor.md`.] doctor lists torchaudio among the components.
+
+If native:
 - **Shape:** one per-user Inno Setup `setup.exe` (no admin rights) wrapping a uv bootstrap, also shipped as a portable zip.
   - Contents: app source, a pinned `uv.exe`, `bootstrap.ps1` (PowerShell 5.1, ASCII only), `songcharter.cmd`, and `tools/scan-chart` with its `node_modules`.
 - **First launch** (`bootstrap.ps1`):
