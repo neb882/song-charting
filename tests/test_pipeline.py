@@ -950,7 +950,8 @@ def test_takes_follow_the_guitar_stages_device(charted, monkeypatch, capsys):
     takes, calls, devices, part, err = run("Cpu")
     assert takes == {"asked": None, "takes": 1, "auto": True, "seeds": [DEFAULT_SEED], "transcriber_moved_to": None,
                      "why": "the default on the cpu: 1 take (each one more is another transcription there, about "
-                            "3.6 min for a 7-min song)", "devices": ["cpu"], "cpu_retries": []}
+                            "3.6 min for a 7-min song)", "devices": ["cpu"], "cpu_retries": [],
+                     "cut_short": [None], "pieces": [0], "last_note_s": [None]}   # no take cut short (M5-02)
     assert calls == [(DEFAULT_SEED,)] and devices == {"cpu"} and part == []
     takes, calls, devices, part, err = run("Cuda", auto="cuda")
     assert takes["takes"] == 4 and takes["auto"] and takes["why"].startswith("the default on cuda: 4 takes")
@@ -973,7 +974,8 @@ def test_takes_follow_the_guitar_stages_device(charted, monkeypatch, capsys):
         assert "warning: guitar: autochart's transcriber" not in err, name
     takes, calls, devices, part, err = run("Asked", "--takes", "3", auto="cuda")
     assert takes == {"asked": 3, "takes": 3, "auto": False, "why": "3 asked for", "seeds": [DEFAULT_SEED, 101, 202],
-                     "transcriber_moved_to": None, "devices": ["cuda"] * 3, "cpu_retries": []}
+                     "transcriber_moved_to": None, "devices": ["cuda"] * 3, "cpu_retries": [],
+                     "cut_short": [None] * 3, "pieces": [0] * 3, "last_note_s": [None] * 3}
     assert calls == [(DEFAULT_SEED,), (101,), (202,)] and devices == {"cuda"} and part == others[:2]
     takes, calls, devices, part, err = run("One", "--takes", "1", auto="cuda", moved="cpu")
     assert (takes["takes"], takes["auto"], calls) == (1, False, [(DEFAULT_SEED,)])
