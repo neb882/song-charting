@@ -95,8 +95,8 @@
     },
     {
       "order": "M5 plan: the next version (the owner, 2026-11-05: start it with the improvements found that day)",
-      "stage": "the plan and its orders are written on branch m5-plan (docs/work-orders/M5-00-plan.md), reviewed by the advisor and amended (2026-11-05); the owner's questions are decided (M5-00 section 8); next the orchestrator merges the plan and runs the waves",
-      "then": "wave 0 merges M4-11 (album art and a background image, building on m4-11-art) and commits the conventions report and the feel note; wave 1 is M5-09 (the stress check, its baseline run first) beside M5-06 then M5-05; M5-01 (the fast grid) starts when M5-09's baseline run exists, beside M5-02"
+      "stage": "the plan is merged into main (2026-11-05): docs/work-orders/M5-00-plan.md and M5-01..M5-09, M5-99; reviewed by the advisor, three scope changes checked by skeptics, amended on all of them (docs/reports/m5-plan-review.md); the owner's questions decided (M5-00 section 8)",
+      "then": "wave 0: M4-11 merged (its review fixes in CI) and the reports committed (done: charting-conventions.md, feel.md); then the waves, run by the new session (docs/handoff.md)"
     }
   ],
   "next": [
