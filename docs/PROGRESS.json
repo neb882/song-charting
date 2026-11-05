@@ -78,6 +78,11 @@
       "order": "M4-08 part B: the friend's PC",
       "stage": "the owner sends the pre-release's link (2026-11-04), after part A's core set passed (docs/work-orders/M4-08-results.md)",
       "then": "the director reads the friend's diagnostics zip and notes, writes part B's results, and decides M4 done or the fix orders"
+    },
+    {
+      "order": "M5 plan: the next version (the owner, 2026-11-05: start it with the improvements found that day)",
+      "stage": "the planner (the most capable model, a fresh agent) writes the orders on branch m5-plan; then the advisor; then the waves",
+      "then": "M4-11 (album art and a background image) is building on m4-11-art meanwhile, and joins the same version"
     }
   ],
   "next": [
