@@ -26,6 +26,9 @@ ones then, but the CI runs they link still name the old ones.
 | `rc-advisor.md` | the advisor's review of the v0.1 release candidate as a whole, from the friend's side, and the three skeptics' reproductions |
 | `rc-fixes.md` | the release candidate's fixes (the guide's timings, the guitar's GPU-failure message, doctor's problems on the page, M4-08's release-first order and checks) and their review |
 | `release-gate.md` | the release gate for v0.1: the full review, the golden charts and the test song; the GPU smoke test on the owner's 5070; the gate's fixes and their second review |
+| `charting-conventions.md` | how 5-fret charts are supposed to be made (tempo maps, notes, chords, HOPOs, sustains, star power, solos, lyrics, the song folder), with sources, and songcharter's gaps (M5) |
+| `feel.md` | how a chart should feel to play: nine parts, each with a measure, revised after the advisor (M5) |
+| `m5-plan-review.md` | the advisor's review of the M5 plan and the three skeptics' verdicts |
 | `pipeline-review.md` | an advisor's review of how work is run (2026-11-04), finding by finding, with what was done |
 | `takes-experiment.md`, `takes-experiment-verifier.md` | spliced guitar takes against one take, and the verifier's corrections (which win where they differ) |
 | `strumming-research.json` | the pick-noise detector for sparse guitar stretches, and why no fill was built |
