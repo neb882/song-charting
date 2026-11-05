@@ -1,6 +1,6 @@
-// songcharter's page (M4-04, M4-06, M4-11): drop a song, choose the options (the lyrics and the pictures too), follow
-// the chart, cancel it; then the album art, the preview, the zip, the install into Clone Hero, and the diagnostics in
-// the footer. No framework, no build
+// songcharter's page (M4-04, M4-06, M4-11, M5-07): drop a song, choose the options (the lyrics and the pictures too),
+// follow the chart, cancel it; then the album art, the preview, the zip, the install into Clone Hero, and the
+// diagnostics in the footer; above it all, the update notice when a newer version is out. No framework, no build
 // step. Every request sends X-Songcharter: 1 (the server's guard for anything but a GET). The job's events come over
 // a streamed fetch of /api/jobs/current/events (Server-Sent Events), which can send that header too, and which
 // resumes after the last event it saw when the connection drops; a reload reattaches to the current job.
@@ -13,10 +13,13 @@ const LABELS = {
   sections: "Sections", lyrics: "Lyrics", guitar: "Guitar", assemble: "Build and check the chart", preview: "Preview",
 };
 const DISMISSED = "songcharter.dismissed";   // sessionStorage: the finished job "Chart another song" put away
+// the status asked again this long (ms) after the start while it has no `update`: the server's check starts once this
+// page is served, so the first status usually comes before its answer (one request, 5 s at most for each of two)
+const UPDATE_ASKS = [2000, 6000, 15000];
 
 const $ = (id) => document.getElementById(id);
 const state = { status: null, upload: null, job: null, stages: {}, offset: 0, ticker: null, follow: 0, ch: null,
-  images: { album_art: null, background: null }, sending: 0 };
+  images: { album_art: null, background: null }, sending: 0, version: null, update: null, later: false };
 // the pictures' pickers: the option each sets (an image upload's id) and what its line says when none is chosen
 const PICTURES = { album_art: "None chosen: the song file's own picture, if it has one", background: "None chosen" };
 
@@ -79,6 +82,71 @@ function renderStatus(st) {
   const notes = $("notes");
   notes.replaceChildren(...(st.notes || []).map((n) => make("li", null, n)));
   $("details").hidden = !(st.notes || []).length;
+}
+
+// ------------------------------------------------------------------------------------------------ the update notice
+
+// The status's `update` ({"version", "line", "url"}): the box under the header with the install line, a Copy button
+// and the release page; "Later" puts it away for this page load. It never stops anything else on the page.
+function renderUpdate(up, have) {
+  const box = $("update");
+  if (!up || state.later) { box.hidden = true; return; }
+  const yours = have ? ` (you have ${have})` : "";
+  if (up.line) {
+    text($("update-text"), `songcharter ${up.version} is out${yours}. To update: close this window, open Ubuntu from the Start menu, paste this line and press Enter:`);
+  } else {
+    text($("update-text"), `songcharter ${up.version} is out${yours}. Its release page has the line to paste in Ubuntu, and the steps:`);
+  }
+  $("update-copy-row").hidden = !up.line;
+  if ($("update-line").value !== (up.line || "")) {   // a new line: the Copy button starts again
+    $("update-line").value = up.line || "";
+    $("update-copied").hidden = true;
+    text($("update-copy"), "Copy");
+  }
+  const link = $("update-url");
+  link.hidden = !(typeof up.url === "string" && up.url.startsWith("https://"));
+  if (!link.hidden) link.href = up.url;
+  box.hidden = false;
+}
+
+async function showUpdate(up) {
+  state.update = up || null;
+  if (up && !state.later && state.version == null) {   // "you have": the version this server runs
+    try { state.version = (await api("GET", "/api/hello")).data.version || ""; } catch (e) { state.version = ""; }
+  }
+  renderUpdate(state.update, state.version);
+}
+
+// navigator.clipboard is there only in a secure context, which localhost is and the fallback address is not: there
+// the button selects the line for the person to copy
+async function copyLine() {
+  const line = $("update-line");
+  const said = $("update-copied");
+  const clip = typeof navigator !== "undefined" ? navigator.clipboard : undefined;
+  if (clip && typeof clip.writeText === "function") {
+    try {
+      await clip.writeText(line.value);
+      text($("update-copy"), "Copied");
+      text(said, "Copied. In the Ubuntu window, a right-click or Ctrl+V pastes it.").hidden = false;
+      return;
+    } catch (e) {
+      // refused: select it instead
+    }
+  }
+  line.focus();
+  line.select();
+  text($("update-copy"), "Select and copy");
+  text(said, "This browser does not let the page copy here: the line is selected, so press Ctrl+C to copy it.").hidden = false;
+}
+
+function later() {
+  state.later = true;
+  $("update").hidden = true;
+}
+
+function askForUpdate() {
+  if (state.update || state.later) return;
+  refreshStatus();
 }
 
 // ------------------------------------------------------------------------------------------------ drop and upload
@@ -466,6 +534,7 @@ async function refreshStatus() {
     if (r.status !== 200) return;
     state.status = r.data;
     renderStatus(r.data);
+    showUpdate(r.data.update);
   } catch (e) {
     // the server is gone: the next request says so
   }
@@ -688,6 +757,8 @@ async function start() {
   $("zip").addEventListener("click", exportZip);
   $("open-song").addEventListener("click", () => openFolder("song", $("open-msg")));
   $("open-exports").addEventListener("click", () => openFolder("exports", $("export-msg")));
+  $("update-copy").addEventListener("click", copyLine);
+  $("update-later").addEventListener("click", later);
   show("drop-screen");
   let st;
   try {
@@ -698,6 +769,8 @@ async function start() {
   }
   state.status = st;
   renderStatus(st);
+  showUpdate(st.update);
+  if (!st.update) for (const ms of UPDATE_ASKS) setTimeout(askForUpdate, ms);
   let dismissed = null;
   try { dismissed = sessionStorage.getItem(DISMISSED); } catch (e) { dismissed = null; }
   if (st.job && (st.job.state === "running" || st.job.job !== dismissed)) attach();

@@ -3,6 +3,7 @@ static files by exact name, uploads, one job at a time, the SSE stream, cancel, 
 fallback, and `songcharter ui` itself as a process. Jobs run a stand-in chart program (STANDIN); Windows' curl.exe
 is a stand-in function. Nothing here needs Windows or a model."""
 import hashlib
+import io
 import http.client
 import json
 import os
@@ -12,6 +13,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 from pathlib import Path
@@ -1568,3 +1570,282 @@ def test_the_page_uploads_the_pictures_and_shows_the_album_art(tmp_path):
         assert f'<input id="{key}-file" type="file" accept=".jpg,.jpeg,.png,.webp" hidden>' in html
     assert '<img id="album-art" class="album-art" alt="The album art">' in html
     assert html.index('id="art"') < html.index('id="lyrics-line"') < html.index('id="preview"')
+
+
+# ------------------------------------------------------------------------------------------------ the update notice
+
+SUMS_999 = "https://github.com/neb882/song-charting/releases/download/v9.9.9/SHA256SUMS"
+SHA_999 = "0123456789abcdef" * 4   # made up
+RELEASES_999 = [{"tag_name": "v9.9.9", "draft": False, "prerelease": True,
+                 "html_url": "https://github.com/neb882/song-charting/releases/tag/v9.9.9",
+                 "assets": [{"name": "SHA256SUMS", "browser_download_url": SUMS_999}]}]
+
+
+def wait_for(what, timeout=15.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        got = what()
+        if got:
+            return got
+        time.sleep(0.02)
+    raise AssertionError(f"waited {timeout} s in vain")
+
+
+def test_the_update_check_runs_once_after_the_first_page_and_status_carries_it(tmp_path, monkeypatch):
+    """M5-07: the server's update check (updates.check, with a stand-in opener) runs on a thread of its own once the
+    first page (index.html) has been served: not before, not for the API or the page's other files, and once for the
+    server's life; the page is answered while it waits on the network. /api/status's `update` is null until it has
+    an answer, then {"version", "line", "url"}; the log says what it found, in one line."""
+    from songcharter import updates
+    monkeypatch.delenv("SONGCHARTER_RELEASES_URL", raising=False)
+    monkeypatch.delenv("SONGCHARTER_OFFLINE", raising=False)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "doctor.json").write_text(json.dumps(DOCTOR), encoding="utf-8")
+    asked, answer, threads = [], threading.Event(), set()
+
+    def opener(request, timeout=None):
+        asked.append(request.full_url)
+        threads.add((threading.current_thread().name, threading.current_thread().daemon))
+        assert answer.wait(15)
+        if request.full_url == updates.RELEASES_URL:
+            return io.BytesIO(json.dumps(RELEASES_999).encode())
+        return io.BytesIO(f"{SHA_999}  install.sh\n".encode())
+
+    log = S.Log(home / "ui.log", console=lambda t: None)
+    app = S.App(home, log=log, report=lambda: pytest.fail("doctor.json is there: no quick report"),
+                updates=lambda say: updates.check(home, "0.1.0", opener=opener, say=say))
+    servers = S.bind(app, [0])
+    port = servers[0].server_address[1]
+
+    def update():
+        return json.loads(call(port, "GET", "/api/status")[2])["update"]
+
+    try:
+        for path in ("/api/hello", "/api/status", "/app.js", "/app.css", "/nope", "/api/clonehero"):
+            call(port, "GET", path)
+        time.sleep(0.3)
+        assert asked == [] and update() is None
+        status, _, body = call(port, "GET", "/")   # answered at once: the check waits on its own thread
+        assert status == 200 and body == app.static["index.html"]
+        wait_for(lambda: asked == [updates.RELEASES_URL])
+        assert update() is None   # no answer yet
+        call(port, "GET", "/")
+        call(port, "GET", "/index.html")
+        answer.set()
+        got = wait_for(update)
+        assert got == {"version": "9.9.9", "line": updates.install_line("9.9.9", SHA_999),
+                       "url": "https://github.com/neb882/song-charting/releases/tag/v9.9.9"}
+        time.sleep(0.3)
+        assert asked == [updates.RELEASES_URL, SUMS_999]   # one check for this server
+        assert threads == {("songcharter-updates", True)}   # on a daemon thread of its own, not a request's
+        said = [x for x in (home / "ui.log").read_text(encoding="utf-8").splitlines() if "update check" in x]
+        assert len(said) == 1 and said[0].endswith(
+            "update check: songcharter 9.9.9 is out (this is 0.1.0): "
+            "https://github.com/neb882/song-charting/releases/tag/v9.9.9"), said
+    finally:
+        for s in servers:
+            s.shutdown()
+            s.server_close()
+
+
+def test_a_failing_update_check_leaves_no_notice_and_the_server_up(tmp_path):
+    """A check that raises (a bug) or finds nothing: no notice, a line in the log, and the page goes on."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "doctor.json").write_text(json.dumps(DOCTOR), encoding="utf-8")
+    for check in (lambda say: 1 / 0, lambda say: None, lambda say: {"latest": "9.9.9", "line": None, "url": None}):
+        lines = []
+        app = S.App(home, log=S.Log(home / "ui.log", console=lines.append),
+                    report=lambda: pytest.fail("no quick report"), updates=check)
+        servers = S.bind(app, [0])
+        port = servers[0].server_address[1]
+        try:
+            assert call(port, "GET", "/")[0] == 200
+            time.sleep(0.3)
+            status, _, body = call(port, "GET", "/api/status")
+            assert status == 200 and json.loads(body)["update"] is None
+            assert call(port, "GET", "/api/hello")[0] == 200
+        finally:
+            for s in servers:
+                s.shutdown()
+                s.server_close()
+    assert "update check: internal error:" in (home / "ui.log").read_text(encoding="utf-8") and lines == []
+
+
+UPDATE_DRIVER = r'''
+import io, json, sys, urllib.error, urllib.request
+from pathlib import Path
+from songcharter.ui import server as S
+home, port, record, sums = Path(sys.argv[1]), int(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]
+releases = json.loads(sys.argv[5])
+real = urllib.request.urlopen
+
+
+def urlopen(request, *args, **kwargs):   # every request of the process: our own server's go through, others are kept
+    url = request if isinstance(request, str) else request.full_url
+    if url.startswith(f"http://127.0.0.1:{port}/"):   # find_running's /api/hello
+        return real(request, *args, **kwargs)
+    with record.open("a", encoding="utf-8") as f:
+        f.write(url + "\n")
+    if url == "http://releases.invalid/releases.json":
+        return io.BytesIO(json.dumps(releases).encode())
+    if url == sums:
+        return io.BytesIO(("ab" * 32 + "  install.sh\n").encode())
+    raise urllib.error.URLError("no network in the tests")
+
+
+urllib.request.urlopen = urlopen
+sys.exit(S.main(port=port, browser=False, home=home))
+'''
+
+
+def test_songcharter_ui_asks_nothing_on_its_startup_path(tmp_path):
+    """`songcharter ui` itself (S.main, with urllib's urlopen recording every request but those to its own port):
+    starting it, its doctor thread and /api/status make no request; the first page starts the check, which asks
+    $SONGCHARTER_RELEASES_URL and the release's SHA256SUMS; the next pages ask nothing; the page's status carries
+    the update."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "doctor.json").write_text(json.dumps(DOCTOR), encoding="utf-8")
+    record = tmp_path / "asked.txt"
+    driver = tmp_path / "driver.py"
+    driver.write_text(UPDATE_DRIVER, encoding="utf-8")
+    port = free_ports(1)[0]
+    root = Path(songcharter.__file__).resolve().parents[1]
+    env = {**os.environ, "SONGCHARTER_HOME": str(home), "PYTHONPATH": str(root),
+           "SONGCHARTER_RELEASES_URL": "http://releases.invalid/releases.json"}
+    for key in ("WSL_DISTRO_NAME", "SONGCHARTER_OFFLINE"):
+        env.pop(key, None)
+    server = subprocess.Popen([sys.executable, str(driver), str(home), str(port), str(record), SUMS_999,
+                               json.dumps(RELEASES_999)], env=env, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, cwd=tmp_path)
+    try:
+        wait_for(lambda: server.poll() is not None or S.hello(port) is not None, 30)
+        assert server.poll() is None, server.stdout.read().decode()
+        time.sleep(1.0)
+        assert json.loads(call(port, "GET", "/api/status")[2])["update"] is None
+        assert not record.exists()   # the startup path asked nothing
+        assert call(port, "GET", "/")[0] == 200
+        got = wait_for(lambda: json.loads(call(port, "GET", "/api/status")[2])["update"])
+        assert got["version"] == "9.9.9" and got["line"].startswith(
+            "curl -fsSLO https://github.com/neb882/song-charting/releases/download/v9.9.9/install.sh && echo \"abab")
+        assert call(port, "GET", "/")[0] == 200
+        time.sleep(0.5)
+        assert record.read_text(encoding="utf-8").splitlines() == ["http://releases.invalid/releases.json", SUMS_999]
+        server.send_signal(signal.SIGTERM)
+        assert server.wait(10) == 0
+    finally:
+        if server.poll() is None:
+            server.kill()
+    log = next((home / "logs").glob("ui-*.log")).read_text(encoding="utf-8")
+    said = [x for x in log.splitlines() if "update check" in x]
+    assert len(said) == 1 and f"update check: songcharter 9.9.9 is out (this is {songcharter.__version__}): " in said[0]
+    assert "update check" not in server.stdout.read().decode()   # the log file's, not the console window's
+    assert json.loads((home / "state" / "update.json").read_text(encoding="utf-8"))["latest"] == "9.9.9"
+
+
+UPDATE_PAGE = r"""
+const vm = require("vm"), fs = require("fs");
+const els = {};
+const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [], value: "",
+  on: {}, replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); },
+  addEventListener(kind, f) { this.on[kind] = f; }, classList: { add() {}, remove() {} },
+  focus() { this.focused = true; }, select() { this.selected = true; } });
+const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node,
+  addEventListener() {} };
+els.options = Object.assign(node("form"), { elements: { solos: node("select") } });
+const asked = [];
+const status = { device: { chosen: "cpu", reason: "r" }, problems: [], notes: [], job: null, update: null };
+const fetch = async (path) => { asked.push(path);
+  return { status: 200, json: async () => (path === "/api/hello" ? { app: "songcharter", version: "0.1.0" }
+                                                                  : JSON.parse(JSON.stringify(status))) }; };
+const copied = [];
+const navigator = { clipboard: { writeText: async (t) => { copied.push(t); } } };
+const timers = [];
+const ctx = { document, window: { addEventListener() {} }, XMLHttpRequest: class {}, encodeURIComponent, console,
+  fetch, navigator, setInterval() {}, clearInterval() {}, setTimeout(f, ms) { timers.push([ms, f]); },
+  sessionStorage: { getItem() { return null; } } };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(process.argv[2], "utf8"), ctx);
+const settle = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
+const box = () => ({ hidden: els.update.hidden, text: els["update-text"].textContent, line: els["update-line"].value,
+  row: els["update-copy-row"].hidden, href: els["update-url"].href, link: els["update-url"].hidden,
+  button: els["update-copy"].textContent, said: els["update-copied"].hidden ? null : els["update-copied"].textContent,
+  selected: !!els["update-line"].selected });
+const up = JSON.parse(process.argv[3]);
+const out = {};
+(async () => {
+  await ctx.start();
+  await settle();
+  out.none = { box: els.update.hidden, asked: asked.slice(), timers: timers.map((t) => t[0]) };
+  status.update = up;
+  timers[0][1]();   // the status asked again, 2 s on: the check has its answer now
+  await settle();
+  out.shown = { ...box(), asked: asked.slice() };
+  await els["update-copy"].on.click();
+  await settle();
+  out.copied = { ...box(), copied: copied.slice() };
+  timers[1][1](); timers[2][1]();   // the later asks: nothing more to ask
+  await settle();
+  out.asked = asked.slice();
+  navigator.clipboard = undefined;   // the fallback address: not a secure context
+  await els["update-copy"].on.click();
+  out.fallback = box();
+  els["update-line"].selected = false;
+  navigator.clipboard = { writeText: async () => { throw new Error("NotAllowedError"); } };
+  await els["update-copy"].on.click();
+  out.refused = box();
+  els["update-later"].on.click();
+  out.later = els.update.hidden;
+  await ctx.refreshStatus();   // "Chart another song" asks again: Later holds for this page load
+  await settle();
+  out.after = els.update.hidden;
+  vm.runInContext("state.later = false", ctx);
+  await ctx.showUpdate({ version: "9.9.9", line: null, url: "javascript:alert(1)" });
+  out.noline = box();
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_page_shows_the_update_notice_copies_the_line_and_later_hides_it(tmp_path):
+    """The page (app.js in node with a stand-in DOM and clipboard): no box while the status has no update, and the
+    status asked again at 2, 6 and 15 s; once it has one, the box under the header says what is out and what this is
+    (from /api/hello), with the line in its read-only box and the release page's link; Copy writes the line to the
+    clipboard; with no clipboard (the fallback address) or a refused one, it selects the line and says to copy it;
+    Later hides the box for this page load. With no line, the box links the release page only; a link that is not
+    https is not shown."""
+    from songcharter import updates
+    up = {"version": "9.9.9", "line": updates.install_line("9.9.9", SHA_999),
+          "url": "https://github.com/neb882/song-charting/releases/tag/v9.9.9"}
+    files = S.static_files()
+    script = tmp_path / "update.cjs"
+    script.write_text(UPDATE_PAGE, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(files["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js), json.dumps(up)], capture_output=True, text=True,
+                          timeout=60)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["none"] == {"box": True, "asked": ["/api/status"], "timers": [2000, 6000, 15000]}
+    text = ("songcharter 9.9.9 is out (you have 0.1.0). To update: close this window, open Ubuntu from the Start "
+            "menu, paste this line and press Enter:")
+    assert out["shown"] == {"hidden": False, "text": text, "line": up["line"], "row": False, "href": up["url"],
+                            "link": False, "button": "Copy", "said": None, "selected": False,
+                            "asked": ["/api/status", "/api/status", "/api/hello"]}
+    assert out["copied"]["copied"] == [up["line"]] and out["copied"]["button"] == "Copied"
+    assert out["copied"]["said"] == "Copied. In the Ubuntu window, a right-click or Ctrl+V pastes it."
+    assert out["asked"] == ["/api/status", "/api/status", "/api/hello"]   # the later asks asked nothing
+    select = "This browser does not let the page copy here: the line is selected, so press Ctrl+C to copy it."
+    for case in ("fallback", "refused"):
+        assert out[case]["selected"] is True and out[case]["button"] == "Select and copy", case
+        assert out[case]["said"] == select and out[case]["hidden"] is False, case
+    assert out["later"] is True and out["after"] is True
+    assert out["noline"]["hidden"] is False and out["noline"]["row"] is True and out["noline"]["link"] is True
+    assert out["noline"]["text"] == ("songcharter 9.9.9 is out (you have 0.1.0). Its release page has the line to "
+                                     "paste in Ubuntu, and the steps:")
+    html = files["index.html"].decode()
+    assert '<input id="update-line" type="text" readonly spellcheck="false" aria-label="The install line">' in html
+    assert html.index("</header>") < html.index('<section id="update" hidden>') < html.index('id="drop-screen"')

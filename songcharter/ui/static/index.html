@@ -21,6 +21,16 @@
 </header>
 
 <main>
+  <section id="update" hidden>
+    <p id="update-text"></p>
+    <p id="update-copy-row" class="update-copy">
+      <input id="update-line" type="text" readonly spellcheck="false" aria-label="The install line">
+      <button type="button" id="update-copy">Copy</button>
+    </p>
+    <p id="update-copied" class="small" hidden></p>
+    <p class="actions"><a id="update-url" target="_blank" rel="noopener">The release page</a> <button type="button" id="update-later" class="plain">Later</button></p>
+  </section>
+
   <section id="drop-screen">
     <h2>1. Your song</h2>
     <div id="drop" class="drop" tabindex="0">

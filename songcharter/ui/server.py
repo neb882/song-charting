@@ -27,6 +27,12 @@ one chart runs at a time as a child process group (jobs.py). In WSL the Windows 
   6. **Stops** on SIGHUP or SIGTERM (the window closes) and Ctrl+C: a running job's tree is killed first. A page
      that closes does not stop it.
 
+**The update notice** (M5-07): once the first page (index.html) has been served, never before (nothing on the
+startup path waits on the network, or asks it), a daemon thread runs updates.check once per server process: at most
+one request a day to GitHub's releases, kept in $SONGCHARTER_HOME/state/update.json. Its one line goes to the log
+file, and /api/status carries what it found; the page shows the notice with the install line and a Copy button.
+Nothing is downloaded or installed; charting never waits for it.
+
 **Guards:**
   * The Host header must be one of the allowed hosts (127.0.0.1:<port>, localhost:<port>, and the fallback address
     when used); else 403. This stops DNS rebinding: a page on another name that resolves here sends its own Host.
@@ -40,7 +46,8 @@ one chart runs at a time as a child process group (jobs.py). In WSL the Windows 
   * GET /api/hello: {"app", "version", "token", "url"}.
   * GET /api/status: the doctor summary ({"device", "gpu", "guitar_device", "guitar_reason", "notes", "ok", "source"}:
     $SONGCHARTER_HOME/doctor.json, else device.report(full=False) made once, at startup), the current job (no
-    events), and the defaults with threads_default.
+    events), the defaults with threads_default, and `update`: {"version", "line", "url"} once the update check found
+    a newer release (`line` null when its SHA256SUMS could not be read), else null (before the check has run too).
   * POST /api/upload: the raw file as the body, X-Filename its name (percent-encoded). An extension not in AUDIO: 415;
     over 1 GB: 413; no Content-Length: 411. Streamed to uploads/<16 hex of its SHA-256>/<cache.safe_name(stem)><ext>,
     with upload.json beside it; answers {"id", "name", "bytes", "tags", "origin"}: the song.ini values the chart
@@ -118,7 +125,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Iterable
 from urllib.parse import quote, unquote, urlsplit
 
-from .. import __version__, cache, clonehero, device, diagnostics, wsl
+from .. import __version__, cache, clonehero, device, diagnostics, updates, wsl
 from .. import art as ART
 from ..errors import InputError, ToolError
 from ..timed import DIFFICULTIES, INSTRUMENTS
@@ -188,10 +195,12 @@ def static_files() -> dict[str, bytes]:
 
 
 class App:
-    """What every request shares: the home, this instance's token, the allowed hosts, the jobs, the status."""
+    """What every request shares: the home, this instance's token, the allowed hosts, the jobs, the status, and the
+    update check (`updates`: called once, with the log, after the first page; None: no check, as in the tests)."""
 
     def __init__(self, home: Path, jobs: Jobs | None = None, log: Log | None = None,
-                 report: Callable[[], dict] = lambda: device.report(full=False)):
+                 report: Callable[[], dict] = lambda: device.report(full=False),
+                 updates: Callable[[Callable[[str], None]], dict | None] | None = None):
         self.home = Path(home)
         self.log = log or Log()
         self.jobs = jobs or Jobs(self.home, log=self.log)
@@ -208,6 +217,28 @@ class App:
         self.installed: Path | None = None     # the song folder the last install put into Clone Hero's Songs
         self._documents: tuple[Path | None] | None = None
         self._documents_lock = threading.Lock()
+        self._updates = updates
+        self._update_asked = False
+        self.update: dict | None = None        # what the update check found: {"version", "line", "url"}
+
+    # --- the update notice (M5-07)
+    def page_served(self) -> None:
+        """After a page (index.html) is served: the first one starts the update check, on a daemon thread, once for
+        this process."""
+        with self._lock:
+            if self._updates is None or self._update_asked:
+                return
+            self._update_asked = True
+        threading.Thread(target=self._check_updates, name="songcharter-updates", daemon=True).start()
+
+    def _check_updates(self) -> None:
+        try:
+            r = self._updates(lambda line: self.log(line, console=False))
+        except Exception:  # noqa: BLE001  a bug in the check: logged; the page goes on without a notice
+            self.log(f"update check: internal error:\n{traceback.format_exc()}", console=False)
+            return
+        if isinstance(r, dict) and r.get("latest") and r.get("url"):
+            self.update = {"version": r["latest"], "line": r.get("line"), "url": r["url"]}
 
     # --- Clone Hero
     def documents(self) -> Path | None:
@@ -283,6 +314,7 @@ class App:
         return {**{k: r.get(k) for k in ("device", "gpu", "guitar_device", "guitar_reason", "problems", "notes", "ok",
                                           "source", "error")},
                 "job": job.snapshot(events=False) if job is not None else None,
+                "update": dict(self.update) if self.update else None,
                 "defaults": {"instruments": list(INSTRUMENTS), "levels": ["expert"], "solos": "labels", "takes": None,
                              "device": "auto", "preview": True, "threads": None, "threads_default": threads,
                              "all_levels": list(DIFFICULTIES)}}
@@ -493,7 +525,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._diagnostics()
         name = "index.html" if path == "/" else path[1:]
         if name in app.static:   # an exact name: no path is joined from the request
-            return self._send(200, app.static[name], STATIC_TYPES.get(Path(name).suffix, "application/octet-stream"))
+            self._send(200, app.static[name], STATIC_TYPES.get(Path(name).suffix, "application/octet-stream"))
+            if name == "index.html":
+                app.page_served()   # the update check, after the first page: never on the startup path
+            return None
         return self._refuse(404, "not found")
 
     def _post(self, path: str) -> None:
@@ -1084,7 +1119,7 @@ def _main(port: int | None, browser: bool, from_shortcut: bool, home: Path | Non
     gone = prune_uploads(root)
     if gone:
         log(f"uploads older than {UPLOAD_DAYS} days deleted: {len(gone)}")
-    app = App(root, log=log)
+    app = App(root, log=log, updates=lambda say: updates.check(root, __version__, say=say))
     threading.Thread(target=app.doctor, name="songcharter-doctor", daemon=True).start()   # the header, in advance
     check = windows_check(app) if in_wsl and wsl.interop_ok() else None
 
