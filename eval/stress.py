@@ -587,6 +587,12 @@ def cmd_lyrics(a) -> int:
 PATH = re.compile(r"(?<![\w<>~.])/(?:[\w.@+-]+/)*([\w.@+-]+)")
 
 
+def _secret(x: str) -> re.Pattern:
+    """A value of the local list as a whole word, any case (never inside a longer run of letters and digits, such
+    as a track's hash)."""
+    return re.compile(r"(?<![A-Za-z0-9])" + re.escape(x) + r"(?![A-Za-z0-9])", re.IGNORECASE)
+
+
 def scrub(obj, secrets: list[str]):
     """Every string with its absolute paths cut to "<path>/<last part>" and each secret replaced by "<redacted>"."""
     if isinstance(obj, dict):
@@ -596,7 +602,7 @@ def scrub(obj, secrets: list[str]):
     if isinstance(obj, str):
         s = PATH.sub(lambda m: "<path>/" + m.group(1), obj)
         for x in secrets:
-            s = re.sub(re.escape(x), "<redacted>", s, flags=re.IGNORECASE)
+            s = _secret(x).sub("<redacted>", s)
         return s
     return obj
 
@@ -623,8 +629,8 @@ def cmd_baseline(a) -> int:
     for name in ("summary.json", "stress_scores.json"):
         data = scrub(read_json(run_dir / name), secrets)
         text = json.dumps(data, indent=1, ensure_ascii=False) + "\n"
-        left = [x for x in secrets if x.lower() in text.lower()] + [p for p in ("/home/", "/tmp/", "/dev/shm/",
-                                                                               "/root/") if p in text]
+        left = [x for x in secrets if _secret(x).search(text)] + [p for p in ("/home/", "/tmp/", "/dev/shm/", "/root/")
+                                                                   if p in text]
         if left:
             raise Refused(f"{name}: {len(left)} value(s) of the local list or a path left after scrubbing")
         (dest / name).write_text(text, encoding="utf-8")
