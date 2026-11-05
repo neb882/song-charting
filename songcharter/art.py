@@ -14,9 +14,10 @@
     .jpeg) in its folder when Settings > Gameplay > "Use Song Backgrounds" is on (the Clone Hero wiki, Guides and
     Tutorials, Custom Content: "Adding Song-specific Content"; it recommends 1920x1080 for backgrounds).
   * **Checks.** A given image must be a JPEG, PNG or WebP by its content (ALLOWED; the extension is not trusted), at
-    most MAX_BYTES (20 MB) and MAX_PIXELS (64 megapixels, about 192 MB once decoded), and decode whole: anything else
-    is an InputError naming the limit, raised before any audio work. The embedded picture failing the same checks is
-    a warning and no album art: a picture never fails a chart.
+    most MAX_BYTES (20 MB) and MAX_PIXELS (64 megapixels: at that size, making both pictures from one image peaks at
+    0.3 to 0.9 GB, 1.1 GB for a WebP; DESIGN 2.16), and decode whole: anything else is an InputError naming the limit,
+    raised before any audio work. The embedded picture failing the same checks is a warning and no album art: a
+    picture never fails a chart.
   * **No metadata survives.** Every image is decoded and encoded again from its pixels alone, as a new image, with
     fixed settings (JPEG_SETTINGS), so no EXIF (a phone photo's can hold its GPS position), XMP, ICC profile or
     comment reaches the song folder. EXIF's orientation is applied first, so a phone photo stands as it is shown.
@@ -46,7 +47,7 @@ BACKGROUND = "background.jpg"       # the background's (Clone Hero's song-specif
 ALBUM_SIZE = 512                    # pixels a side: scan-chart's albumArtSize
 BACKGROUND_FIT = (1920, 1080)       # the background fits inside this, scaled down only
 MAX_BYTES = 20 * 10 ** 6            # 20 MB (10^6 bytes, the project's unit): a given image's file
-MAX_PIXELS = 64 * 10 ** 6           # 64 megapixels: a 48 MP phone photo fits; decoded, about 192 MB of RGB
+MAX_PIXELS = 64 * 10 ** 6           # 64 megapixels: a 48 MP phone photo fits; at 64 MP, a peak of 0.3-0.9 GB (WebP 1.1)
 ALLOWED = ("JPEG", "PNG", "WEBP")   # Pillow's names of the formats taken
 FORMATS = "JPEG, PNG or WebP"
 EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")   # the page's picker and upload (the content decides, all the same)
@@ -112,7 +113,7 @@ def decode(data: bytes, what: str):
     except Exception as e:  # noqa: BLE001  truncated or corrupt data
         raise InputError(f"the {what} could not be decoded ({type(e).__name__})") from None
     try:
-        img = ImageOps.exif_transpose(img)   # the EXIF orientation, before the EXIF goes
+        ImageOps.exif_transpose(img, in_place=True)   # the EXIF orientation, before the EXIF goes (upright: no copy)
     except Exception:  # noqa: BLE001  an EXIF block Pillow cannot read: the picture as it is stored
         pass
     try:
@@ -123,14 +124,20 @@ def decode(data: bytes, what: str):
 
 
 def _rgb(img, Image):
-    """8-bit RGB: transparency onto black, 16-bit and 32-bit greys scaled to 8 bits."""
-    if img.mode in ("I", "F") or img.mode.startswith("I;16"):
+    """8-bit RGB: transparency onto black, 16-bit and 32-bit greys scaled to 8 bits. The greys are scaled in integers
+    by Pillow's table and an RGBA image is not copied, so a 64 MP picture stays near its decoded size (as float64
+    arrays, a 16-bit grey took 2 GB)."""
+    if img.mode.startswith("I;16") or img.mode == "I":
+        i32 = img if img.mode == "I" else img.convert("I")
+        img = i32.point([(x + 128) // 257 for x in range(65536)], "L")   # round(x / 257); outside 0..65535 clipped
+        del i32   # before the RGB below
+    elif img.mode == "F":
         import numpy as np
-        a = np.asarray(img, dtype=np.float64)
-        a = a / 257.0 if img.mode != "F" else a
-        img = Image.fromarray(np.clip(np.rint(a), 0, 255).astype(np.uint8), "L")
+        a = np.rint(np.asarray(img))   # float32, changed in place
+        np.clip(a, 0, 255, out=a)
+        img = Image.fromarray(a.astype(np.uint8), "L")
     if img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info):
-        rgba = img.convert("RGBA")
+        rgba = img if img.mode == "RGBA" else img.convert("RGBA")
         base = Image.new("RGB", rgba.size, (0, 0, 0))
         base.paste(rgba, mask=rgba.getchannel("A"))
         return base
@@ -211,19 +218,23 @@ def prepare(song: Path | str, album_art: Path | str | None = None, background: P
     that fails its checks is an InputError (Pillow missing: a ToolError); the embedded picture failing is a warning."""
     out = Pictures()
     if album_art is not None:
-        img, source = decode(check_file(album_art, WHAT["album_art"]), f"{WHAT['album_art']} {Path(album_art).name}")
-        out.files[ALBUM] = album_jpeg(img)
+        out.files[ALBUM], source = _given(album_art, "album_art", album_jpeg)
         out.record["album_art"] = _made(ALBUM, out.files[ALBUM], source, "given")
     else:
         out.record["album_art"] = _embedded(song, ffmpeg, out)
     if background is not None:
-        img, source = decode(check_file(background, WHAT["background"]), f"{WHAT['background']} "
-                             f"{Path(background).name}")
-        out.files[BACKGROUND] = background_jpeg(img)
+        out.files[BACKGROUND], source = _given(background, "background", background_jpeg)
         out.record["background"] = _made(BACKGROUND, out.files[BACKGROUND], source, "given")
     else:
         out.record["background"] = {"added": False, "from": None, "why": "none given"}
     return out
+
+
+def _given(path: Path | str, key: str, make) -> tuple[bytes, dict]:
+    """A given image's JPEG (`make` of its decoded pixels) and its source. Its decoded image goes when this returns,
+    so the next one is never decoded beside it."""
+    img, source = decode(check_file(path, WHAT[key]), f"{WHAT[key]} {Path(path).name}")
+    return make(img), source
 
 
 def _embedded(song: Path | str, ffmpeg: str | None, out: Pictures) -> dict:

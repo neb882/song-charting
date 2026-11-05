@@ -9,6 +9,7 @@ import io
 import json
 import subprocess
 import sys
+import tracemalloc
 from pathlib import Path
 
 import numpy as np
@@ -228,15 +229,43 @@ def test_no_metadata_survives_and_the_orientation_is_applied(tmp_path):
     assert not any(m in blob for blob in got.files.values() for m in NO_METADATA)
 
 
+def as_png(img: Image.Image, **save) -> bytes:
+    out = io.BytesIO()
+    img.save(out, "PNG", **save)
+    return out.getvalue()
+
+
 def test_transparency_goes_on_black_and_16_bit_greys_are_scaled(tmp_path):
-    clear = io.BytesIO()
-    Image.new("RGBA", (64, 64), (255, 255, 255, 0)).save(clear, "PNG")
-    img, _ = ART.decode(clear.getvalue(), "test picture")
-    assert img.getpixel((5, 5)) == (0, 0, 0)
-    grey = io.BytesIO()
-    Image.fromarray(np.full((64, 64), 32896, dtype=np.uint16)).save(grey, "PNG")   # mid-grey in 16 bits
-    img, source = ART.decode(grey.getvalue(), "test picture")
-    assert source["format"] == "PNG" and all(abs(c - 128) <= 1 for c in img.getpixel((5, 5)))
+    """RGBA, LA and a palette with a transparent entry (tRNS) go onto black, their opaque halves as they are; a 16-bit
+    grey is rounded to 8 bits exactly, round(x / 257), at the edges of the rounding too."""
+    rgba = Image.new("RGBA", (64, 64), (255, 255, 255, 0))
+    rgba.paste((*RED, 255), (32, 0, 64, 64))
+    la = Image.new("LA", (64, 64), (255, 0))
+    la.paste((200, 255), (32, 0, 64, 64))
+    palette = Image.new("P", (64, 64), 0)
+    palette.putpalette([255, 255, 255, *RED])   # entry 0 white and transparent, entry 1 red
+    palette.paste(1, (32, 0, 64, 64))
+    for img, opaque, save in ((rgba, RED, {}), (la, (200, 200, 200), {}), (palette, RED, {"transparency": 0})):
+        got, _ = ART.decode(as_png(img, **save), "test picture")
+        assert got.mode == "RGB" and got.getpixel((5, 5)) == (0, 0, 0) and got.getpixel((40, 5)) == opaque, img.mode
+    values = [0, 128, 129, 32896, 65406, 65407, 65535]   # 128/257 rounds down, 129/257 up; 65407/257 is 254.502
+    grey = Image.fromarray(np.repeat(np.array([values], dtype=np.uint16), 4, axis=0))
+    got, source = ART.decode(as_png(grey), "test picture")
+    assert source["format"] == "PNG" and [got.getpixel((x, 2)) for x in range(len(values))] == [
+        (v, v, v) for v in (0, 0, 1, 128, 254, 255, 255)]
+
+
+def test_a_16_bit_grey_is_scaled_without_big_arrays():
+    """As float64 arrays, a 64 MP 16-bit grey took 2 GB; scaled by Pillow's table it takes none. tracemalloc sees
+    numpy's arrays and Python's objects (not Pillow's own image memory): under a byte a pixel here."""
+    data = as_png(Image.fromarray(np.full((2000, 2000), 32896, dtype=np.uint16)))
+    tracemalloc.start()
+    try:
+        img, _ = ART.decode(data, "test picture")
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert img.getpixel((5, 5)) == (128, 128, 128) and peak < 2000 * 2000, peak
 
 
 def test_the_same_inputs_give_byte_identical_files(tmp_path):

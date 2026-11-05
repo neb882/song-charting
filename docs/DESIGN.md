@@ -1396,9 +1396,16 @@ cannot move (no file in `eval/golden.py`'s `ENGINE_FILES` changed).
   2026-11-05]. The same wiki recommends 1920x1080 or 4K for backgrounds and says they can be any size [doc, ibid.
   and "Other Custom Content" in the manual]. Video backgrounds (`video.*`) and highway images are not in this order.
 - **Checks:** a given image must be a JPEG, PNG or WebP by its content (Pillow is asked to open only those three), at
-  most 20 MB and 64 megapixels (a 48 MP phone photo fits; decoded it is about 192 MB of RGB), and must decode whole;
-  else an `InputError` (exit 2) naming the limit and the file by its name only, raised before any audio work. The
-  embedded picture failing the same checks is a warning and no album art: a picture never fails a chart.
+  most 20 MB and 64 megapixels (a 48 MP phone photo fits), and must decode whole; else an `InputError` (exit 2) naming
+  the limit and the file by its name only, raised before any audio work. The embedded picture failing the same checks
+  is a warning and no album art: a picture never fails a chart.
+- **Memory:** at 64 MP, making both pictures from one image (`art.prepare`; the page's upload check decodes it the same
+  way) peaks at about 0.3 GB for RGB (Pillow holds it at 4 bytes a pixel, 256 MB), 0.5 GB for a 16-bit grey, 0.6 GB for
+  RGBA, 0.9 GB for grey with alpha (LA, whose RGBA copy is kept: pasting it straight onto black changes its bytes) and
+  1.1 GB for a WebP, of which Pillow's WebP decoding alone takes 1.0 GB [here, ru_maxrss in a fresh process, M4-11's
+  review fixes]. Before those fixes a 16-bit grey peaked at 2.1 GB (float64 arrays): its greys are now scaled by
+  Pillow's integer table, an RGBA image and an upright one are no longer copied, and the album art's image is gone
+  before the background's is decoded. The output is byte for byte the same [here].
 - **No metadata, the same bytes:** every image is decoded and encoded again from its pixels alone (a new image, as
   Pillow's resize keeps the source's comment otherwise [here]), as a baseline JPEG at quality 90 with 4:2:0, so no
   EXIF (a phone photo's can hold its GPS position), XMP, ICC profile or comment survives. EXIF's orientation is
