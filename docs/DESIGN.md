@@ -1404,6 +1404,14 @@ snapping helps within 50 ms, and costs on Kimochi Warui, whose words the aligner
 human ones). One phrase was split at a rest (Drunk Drivers). The network took 105 to 134 s a song on 2 threads of
 the busy CPU (load 5–6), the alignment 0.1 s, the weights' load and hash check 9 s.
 
+**On the power-metal stress song** [here, M5-09: `eval/stress.py lyrics troop --run` on the stress baseline's kept
+folder, the package's audio; the words from its human chart's lyric events, read in memory]: 320 of 320 words
+paired by index; median error 7.0 ms (signed +0.1); 0.681 / 0.756 / **0.953** within 50 / 100 / 250 ms; 8 of 51
+phrase starts over 500 ms off; the gate OK; the median confidence 0.18, so the pipeline warned that the alignment
+is unsure, which the timings do not bear out. Its counterpart, the owner's 2026-11-05 run on his own file with a
+pasted text (PROGRESS, M5-04): 0.68 / 0.77 / 0.96, median 9 ms, no phrase start over 500 ms, the same warning
+(median 0.214). 207 s on 2 threads, the weights' first download (1.26 GB) included.
+
 **Not measured:** Clone Hero itself showing them (M4-08 looks); the aligner on CUDA (it runs there when the chart's
 device is CUDA); songs not in English; duets and harmonies (one line of text, timed to whoever sings it loudest).
 
@@ -1520,6 +1528,21 @@ v1's absolute targets, kept as information only:
   - Take Me Out, All the Small Things, Lucretia and Creep (Harmonix; all four difficulties).
 
   Guitar is scored on 6 songs, bass and drums on 5, lower difficulties on the 4 Harmonix songs. The research job also downloaded Shadowplay, Ya (No) Se Que Hacer and Fondue los Muertos; they are not in the harness yet.
+- **The stress set** [code, M5-09], beside the reference set and apart from the golden set: the songs that show
+  what the reference set misses, each with every human chart Chorus Encore has of it (`eval/stress.json`, by generic
+  id; the packages' md5s, titles and charters are the owner's list outside the repository, never committed):
+  - `troop`, a 198 BPM power-metal song: 3 charts; the primary has guitar, bass, drums and vocals with lyric events
+    (its four stem files are 135-byte stubs: the build skips them and uses the full mix);
+  - `sooth`, a 9-minute shred instrumental: 2 charts; the primary has guitar and bass;
+  - `break`, an ordinary rock song, the guard against making normal songs worse: 4 charts, of which two have only a
+    6-fret and a rhythm part (listed, not scored); the owner's own file of it aligns with the packages' audio
+    (`stress.py align`: +81.5 ms, 9 of 9 windows at 0.3 or more, the lags' MAD 0.00 ms), so his chart and play test
+    of it are comparable with the set's numbers.
+
+  The primary of each is the chart with the most parts (ties: more Expert guitar notes), counted by a script that
+  prints counts only. Our chart is scored against every human chart, and the others against the primary: the
+  humans' agreement is the ceiling of every measure (§3.6, the stress set). A song is one entry in
+  `eval/stress.json`, its md5s in the local list, and `eval/build_refs.sh --set stress`.
 - **Target:** ≥ 20 songs in M2, with a plan to reach about 50.
   - Split: development, a frozen test set (fixed by SHA-256, used only at milestones, every use logged), and a stress set (§5, M5).
   - The test song has no ground truth. It is judged by gates, proxies, a playtest and optionally the Songsterr tab (§9).
@@ -1650,6 +1673,25 @@ v1's absolute targets, kept as information only:
     separation included). The kept folders were unchanged both times.
   - **Disk:** 0.71 GB in all, nearly all of it the kept decodes (59–139 MB a song); the stems are links to the
     separation cache.
+- **The stress set** [code, M5-09]: the same run on the stress set (§3.3) with `--refs $EVAL_DATA/stress`, its kept
+  folders in `$SONGCHARTER_GOLDEN/stress-work` (the default for a `--refs` folder named `stress`), apart from the
+  golden set's. `eval/stress.py score RUN` scores our charts against every human chart of each song and the other
+  human charts against the primary (the ceiling), with the feel report (`docs/reports/feel.md`'s measures: timing
+  error, chord share, 1-s density peak, contour, jump sizes and big fast jumps, HOPO/tap/sustain shares and per-note
+  state agreement, notes in silence and gaps, star power per minute, solo share, beat, octave-tolerant and downbeat
+  F1, the lowest 30-s window); `compare OLD NEW` is the stress check: exit 1 when a part's F1@50 against the primary
+  falls by more than 0.01, or is gone. Repeat consistency (the feel note's 4) is not measured yet (M5-99).
+  - **The baseline** [here, M5-09]: `main` at fbd9751 (wave 1's, after M4-11), one CPU take, 2 threads, cold:
+    4000 s for the three songs (kept folders made in 1371, 2046 and 410 s: the guitar take 943, 1277 and 160 s, the
+    separation 226, 419 and 118 s, allin1 126, 205 and 88 s; then 28 to 80 s a build), 2.5 GB of kept folders (the
+    stems separated into them) and 0.57 GB for the built set; `eval/baseline/stress/`. Every gate OK. Expert F1@50
+    against the primary (the other human charts against it beside): the power-metal song's guitar 0.614 (0.917,
+    0.925), bass 0.702, drums 0.851; the shred instrumental's guitar 0.651 (0.712), bass 0.692; the rock song's
+    guitar 0.832 (0.951). Beat F1 0.302, 0.644 and 0.994 (octave-tolerant 0.399, 0.963, 0.994; downbeat 0.070,
+    0.278, 0.988). The power-metal guitar's matched notes sit 69 ms after the primary's (bass −2.6, drums +0.1 ms),
+    its chord share 0.33 against the humans' 0.03–0.05, its 1-s density peak 7 against their 27. On this CPU take
+    the shred instrumental's guitar runs to 532 s of its 546 (its last two 30-s windows F1@100 0.78 and 0.65), and
+    its chart marks 0.80 of its span as solos (the humans 0 and 0.36).
 - **Limits:** Linux or WSL only (`fcntl` locks, hard links). One CPU take: the CUDA default of 4 spliced takes is not
   covered. The kept engine outputs are the code of whichever commit made them; a change to an engine's code without
   `--rerun` compares that old output on both sides, which `report.md` shows as "kept folders made by".

@@ -26,8 +26,10 @@ scan-chart, the parser Chorus Encore uses. Per instrument and difficulty, the sc
 - chord, HOPO, tap and sustain shares,
 - lane-direction agreement (whether the frets move up or down when the human chart's do),
 - per-pad F1 for drums,
-- beat F1 of the tempo map,
-- scan-chart issues.
+- beat F1 of the tempo map, and the downbeat F1 of its measure lines,
+- scan-chart issues,
+- the feel measures (`docs/reports/feel.md`): the 1-s density peak, per-note strum/HOPO/tap agreement, lane jumps,
+  star power phrases per minute and the solo share, and with `--windows N` the F1@100 of every N-second window.
 
 `scorecard.py` summarizes everything as markdown.
 
@@ -96,6 +98,77 @@ solo would move.
   (beside the new summary unless `--out` says otherwise) give a table per song (status, onsets old → new, F1@50 old →
   new), the F1 pooled over the songs per part and difficulty, and which engines ran. Exit 0, or 1 when anything is
   UNEXPECTED, or 2 when the summaries cannot be compared.
+
+## Stress songs (`stress.py`)
+
+The stress set is a repeatable check beside the golden set, on the songs that show what the reference set misses
+(`docs/DESIGN.md` 3.3; `docs/work-orders/M5-09-stress-eval.md`). Each song has every human chart Chorus Encore has
+of it: our chart is scored against each, and the other human charts against the first (the humans' agreement, the
+ceiling of every measure). `eval/stress.json` names the songs by generic ids:
+
+| id | slot | human charts | the primary (the one with the most parts) |
+|---|---|---|---|
+| troop | a 198 BPM power-metal song | 3 | guitar, bass, drums and vocals (lyric events: the lyrics check) |
+| sooth | a 9-minute shred instrumental | 2 | guitar and bass |
+| break | an ordinary rock song, the guard against making normal songs worse | 4 | guitar (two other charts have only a 6-fret and a rhythm part, and are listed but not scored) |
+
+The packages' md5s, titles and charters are not committed, the owner keeps the list: `$EVAL_DATA/stress.local.json`
+(`refs.json`'s shape, each entry with `alts`, the other charts' `md5` and `charter`). The packages are other
+people's work: downloaded into `$EVAL_DATA/sng/`, never committed.
+
+```sh
+export EVAL_DATA=... SONGCHARTER_GOLDEN=...                      # as for the golden charts, and the same engines:
+export SONGCHARTER_AUTOCHART=... SONGCHARTER_ALLIN1_PYTHON=... SONGCHARTER_SCAN_CHART=...
+eval/build_refs.sh --set stress                                  # $EVAL_DATA/stress/<id>/ and <id>/alt/<md5>/
+python -m eval.golden run --refs $EVAL_DATA/stress --work $SONGCHARTER_GOLDEN/stress-work \
+    --out $SONGCHARTER_GOLDEN/stress-new --threads 2             # add --code CHECKOUT for another commit
+python eval/stress.py score $SONGCHARTER_GOLDEN/stress-new       # stress_scores.json and the feel report
+python eval/stress.py compare eval/baseline/stress $SONGCHARTER_GOLDEN/stress-new   # exit 1 on a regression
+python eval/stress.py lyrics troop --run $SONGCHARTER_GOLDEN/stress-new            # the lyrics timing check
+python eval/stress.py align break /path/to/a/file/of/the/song.mp3                  # does that file align?
+```
+
+- **`build_refs.sh --set stress`** builds the primary chart of each song into `$EVAL_DATA/stress/<id>/` as a
+  reference is built (input.wav from the package's audio, the stems summed; `ref/` with vocals and lyrics stripped;
+  ref_notes.json; offset_check.json), every other chart into `<id>/alt/<md5>/`, then `stress/songs.json`. A stem
+  ffmpeg cannot open, or one with no samples (the power-metal primary's four 135-byte stubs), is skipped and named
+  in `build_meta.json`'s `stems_skipped`. The unpacked packages are deleted once built.
+- **The run** is `eval.golden`'s (the module's docstring and the section above): kept folders in
+  `$SONGCHARTER_GOLDEN/stress-work`, apart from the golden set's (the default when `--refs` is a folder named
+  `stress`), the heavy-job lock, `summary.json` with the onsets, hashes and the primary chart's F1s; `golden diff`
+  compares two stress runs as it compares two golden runs.
+- **`stress.py score RUN_DIR`** runs `scorer/score.py --windows 30` for each song: ours against every human chart,
+  and each other human chart against the primary. It writes `stress_scores.json` (numbers only) and
+  `stress_report.md` beside the summary, and prints the feel report (`docs/reports/feel.md`): per song, part and
+  chart, F1@50 and F1@100, the notes ratio and the lowest 30-s window; the matched notes' median timing error; chord
+  share and the 1-s density peak; contour agreement, the jump-size distance and big fast jumps; HOPO, tap and
+  sustain shares and the per-note state agreement; star power phrases per minute and the solo share; then the beat,
+  octave-tolerant beat and downbeat F1, and the notes in silence and gaps while the stem plays (report.json's
+  `silent_onsets`, and `songcharter.preview`'s flags with the kept folder's stems). Repeat consistency (the feel
+  note's 4) is not measured yet (M5-99).
+- **`stress.py compare OLD NEW`** (stress_scores.json files or the run folders holding them) puts every number of
+  ours side by side and exits 1 when any part's F1@50 against the primary chart falls by more than 0.01 or is gone:
+  the stress check of `docs/work-orders/M5-00-plan.md` section 7.
+- **`stress.py lyrics ID [--run RUN_DIR]`** reads the words of the primary package's lyric events in memory, charts
+  the song's input.wav with them through `songcharter.pipeline` in process (1 take, CPU, no preview) into a temporary
+  folder, the work folder under it too (with `--run`, a copy of that run's kept folder, so only assemble and the
+  aligner run), compares the lyric timings word by word (`lyrics_timing.py`), prints the numbers and deletes the
+  folder whole. No word is printed, logged or saved (`docs/work-orders/M4-10-lyrics.md`'s rule).
+- **`stress.py align ID FILE`** cross-correlates a file against the song's input.wav as score.py aligns: aligned
+  (exit 0) when most windows peak at 0.3 or more and the lags' MAD is under 2 ms.
+- **The baseline** is `eval/baseline/stress/`: `stress.py baseline RUN_DIR eval/baseline/stress` copies the run's
+  `summary.json` and `stress_scores.json` with every path cut to its last part, and checks that no md5, title,
+  artist or charter of the local list is left.
+
+**Cost** [measured on the dev machine, 4 cores, CPU, 2 threads]: the build, under a minute a chart (3 minutes for
+the nine), 0.57 GB; the first run, which makes the kept folders (the separation runs in them: no separation cache
+holds these songs), 67 minutes (23, 34 and 7 minutes a song, the guitar take most of it) and 2.5 GB; a run after that
+builds each song from its kept folder in 28 to 80 s (as the first run's builds did); `score`, 2 minutes. Refuse to
+start a first run under 10 GB free.
+
+**A song is added** with one entry in `eval/stress.json` (an id, its slot, its chart count, what its primary holds)
+and its md5s in the local list, then `build_refs.sh --set stress` (it builds only what is missing) and a new
+baseline run. Nothing of the set is committed but `stress.json` and the baseline's numbers.
 
 ## The tools under test
 
@@ -340,6 +413,7 @@ Later runs cost about 6.5 minutes for the set (the kept folders are only read). 
 | `SONGCHARTER_AUTOCHART` | the autochart install, `eval/tools/autochart` after `setup.sh` (step 6); `run` uses the checkout's when unset |
 | `SONGCHARTER_ALLIN1_PYTHON` | the `python` of allin1's own environment (step 4); unset means the librosa fallback and golden exits 2 |
 | `SONGCHARTER_SCAN_CHART` | `scan.cjs` of `tools/scan-chart` (step 2); unset means the checkout's |
+| `STRESS_LOCAL` | the owner's list of the stress set's packages (Stress songs, above); default `$EVAL_DATA/stress.local.json` |
 
 All the container's values pointed into its scratch folder. A rebuilt machine's golden baseline is a new baseline:
 its onsets and hashes need not equal the container's, kept in `eval/baseline/summary.json` (different torch build,

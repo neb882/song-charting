@@ -1,0 +1,20 @@
+[
+ {
+  "id": "troop",
+  "slot": "a 198 BPM power-metal song",
+  "charts": 3,
+  "primary": "guitar, bass, drums and vocals (lyric events: the lyrics check's song)"
+ },
+ {
+  "id": "sooth",
+  "slot": "a 9-minute shred instrumental",
+  "charts": 2,
+  "primary": "guitar and bass"
+ },
+ {
+  "id": "break",
+  "slot": "an ordinary rock song (the guard against making normal songs worse)",
+  "charts": 4,
+  "primary": "guitar (and a 6-fret part); two of the other charts have only a 6-fret and a rhythm part"
+ }
+]

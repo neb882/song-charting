@@ -3,13 +3,17 @@
 
 usage:
   python score.py --ref <eval/refs/ID> --cand <candidate song folder> --input <audio file the tool was given> --out <json>
+                  [--windows N] [--cand-audio FILE]
 
 What it does
   1. Alignment. The candidate's audio (every audio file in its folder except crowd/preview, summed) is
      cross-correlated against <ref>/input.wav in ~9 one-second windows taken at the loudest spots
      (FFT normalised cross-correlation over +-max_shift s, parabolic peak fit); the median lag is used.
      lag > 0  means a sound at input.wav time t is at time t+lag in the candidate's audio.
-     If the folder has no usable audio (none, silent, or < 5 s), lag = 0 and the output says so.
+     If the folder has no usable audio (none, silent, or < 5 s), lag = 0 and the output says so. An audio file
+     ffmpeg cannot open (a package's stub stem) is skipped with a warning, the candidate's, --input or input.wav.
+     --cand-audio FILE aligns that file instead of the folder's audio (a human chart's folder, whose audio is
+     elsewhere).
      The chart's own delay is applied too: song.ini `delay` (ms, higher = later notes) if non-zero,
      otherwise the .chart [Song] Offset (s); this is how YARG / scan-chart read them.
         note time in input.wav timeline = scan-chart msTime + delay - lag
@@ -23,12 +27,23 @@ What it does
        on matched onsets (both with the +-100 ms matching), and for drums per-pad F1 at +-50 ms and
        cymbal-vs-tom agreement on matched yellow/blue/green hits.
      Tempo map: quarter-note beat times of both tempo maps over the ref span, beat F1 at +-70 ms and the median
-     absolute error from each ref beat to the nearest candidate beat (plus an octave-tolerant F1 for information).
+     absolute error from each ref beat to the nearest candidate beat (plus an octave-tolerant F1 for information);
+     the downbeat F1 (the measure lines from each chart's time signatures, the same +-70 ms).
      Candidate scan-chart playable flag and issue counts.
-  4. Writes JSON to --out and prints a one-line summary.
+     Also per track, the feel measures (docs/reports/feel.md), ours ("cand") and the ref's:
+       density_peak_1s: the most onsets in any one-second window;
+       state_agreement (guitar, bass): per matched onset (+-100 ms), the share whose played state as scan-chart
+         resolves it (tap, else HOPO, else strum) is the same in both charts, and the confusion counts;
+       jumps (guitar, bass): the lanes between consecutive single notes (a histogram of 0..5 lanes), the share of
+         big fast jumps (3 or more lanes under 100 ms) and the earth mover's distance between the two histograms;
+       star_power_per_min and solo_share: phrases per minute and the share of the time under a solo, each chart
+         over its own charted span (first note to last note end).
+     --windows N: per track, F1@100 and its counts in each N-second window over the ref span (a matched pair
+     counts in its ref onset's window), and the lowest window; one more line of the summary.
+  4. Writes JSON to --out and prints a one-line summary (and the windows' line).
 No lyrics, vocals or section names are read into the output.
 """
-import argparse, json, os, subprocess, sys
+import argparse, json, os, shutil, subprocess, sys
 from collections import Counter
 import numpy as np
 
@@ -90,14 +105,43 @@ def audio_files(folder):
     return out
 
 
+def ffmpeg_exe():
+    """ffmpeg from $FFMPEG, then PATH, then the imageio-ffmpeg wheel (songcharter.audio.ffmpeg_exe's order)."""
+    exe = os.environ.get('FFMPEG') or shutil.which('ffmpeg')
+    if exe:
+        return exe
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        return 'ffmpeg'
+
+
 def decode(path, sr=SR):
-    raw = subprocess.run(['ffmpeg', '-v', 'error', '-nostdin', '-i', path, '-vn', '-ac', '1', '-ar', str(sr),
+    raw = subprocess.run([ffmpeg_exe(), '-v', 'error', '-nostdin', '-i', path, '-vn', '-ac', '1', '-ar', str(sr),
                           '-f', 'f32le', '-'], capture_output=True, check=True).stdout
     return np.frombuffer(raw, dtype=np.float32).astype(np.float64)
 
 
-def load_mix(folder, files):
-    sigs = [decode(os.path.join(folder, f)) for f in files]
+def try_decode(path, warns):
+    """decode(path), or None with a warning when ffmpeg cannot open it or it holds no samples (a stub stem)."""
+    try:
+        y = decode(path)
+    except subprocess.CalledProcessError:
+        warns.append('skipped %s: ffmpeg cannot open it (%d bytes)' % (os.path.basename(path), os.path.getsize(path)))
+        return None
+    if not len(y):
+        warns.append('skipped %s: no samples' % os.path.basename(path))
+        return None
+    return y
+
+
+def load_mix(folder, files, warns=None):
+    """The files summed; an unopenable or empty one skipped with a warning (None when none is left)."""
+    warns = [] if warns is None else warns
+    sigs = [y for y in (try_decode(os.path.join(folder, f), warns) for f in files) if y is not None]
+    if not sigs:
+        return None
     n = max(len(s) for s in sigs)
     mix = np.zeros(n)
     for s in sigs:
@@ -179,6 +223,12 @@ def tracks_by_key(sc):
     return out
 
 
+def phrases_by_key(sc):
+    """(instrument, difficulty) -> {'starPower': [...], 'solos': [...]} (scan_notes.cjs: tick, length, ms, msLength)."""
+    return {(t['instrument'], t['difficulty']): {'starPower': t.get('starPower') or [], 'solos': t.get('solos') or []}
+            for t in sc.get('tracks') or [] if t['instrument'] in INSTRUMENTS and t['difficulty'] in DIFFS}
+
+
 def onsets(notes, shift_ms, instrument):
     """Group notes by tick -> list of onset dicts sorted by time (s, in input.wav timeline)."""
     lanes_map = DRUM_LANE if instrument == 'drums' else GUITAR_LANE
@@ -235,7 +285,9 @@ def n_cand_eff(pairs, ct, span):
     return len(mj) + sum(1 for j, t in enumerate(ct) if j not in mj and span[0] <= t <= span[1])
 
 
-def track_metrics(ro, co, instrument, span, ref_pro, cand_pro):
+def track_metrics(ro, co, instrument, span, ref_pro, cand_pro, windows=None, phrases=None):
+    """Every metric of one track (the module docstring); `windows` (s) adds windows_100ms; `phrases` is
+    {'ref': (notes, phrases, shift_ms), 'cand': (...)} for star_power_per_min and solo_share."""
     rt = np.array([o['t'] for o in ro])
     ct = np.array([o['t'] for o in co])
     span_dur = span[1] - span[0]
@@ -301,7 +353,114 @@ def track_metrics(ro, co, instrument, span, ref_pro, cand_pro):
             'value': round(cym_all['agree'] / cym_all['n'], 4) if cym_all['n'] else None, 'n_matched': cym_all['n'],
             'ref_pro_drums': ref_pro, 'cand_pro_drums': cand_pro,
             'note': None if cand_pro else 'candidate is not pro drums: all its Y/B/G hits count as toms'}
+    feel_metrics(m, ro, co, co_in, pairs, instrument, span, windows, phrases)
     return m
+
+
+# ----------------------------------------------------------------------------------------------- the feel measures
+BIG_JUMP, FAST_S = 3, 0.100      # a big fast jump: 3 or more lanes between single notes under 100 ms apart
+JUMP_BINS = 6                    # 0..5 lanes (open to orange is 5)
+
+
+def density_peak(times, width=1.0):
+    """The most onsets in any window [t, t + width) and its start (s), or (0, None)."""
+    t = np.sort(np.asarray(times, dtype=float))
+    if not len(t):
+        return 0, None
+    counts = np.searchsorted(t, t + width - 1e-9, side='left') - np.arange(len(t))
+    k = int(np.argmax(counts))
+    return int(counts[k]), round(float(t[k]), 3)
+
+
+def played_state(o):
+    return 'tap' if 'tap' in o['flags'] else 'hopo' if 'hopo' in o['flags'] else 'strum'
+
+
+def state_agreement(ro, co, pairs):
+    conf = Counter('%s/%s' % (played_state(ro[i]), played_state(co[j])) for i, j in pairs)
+    same = sum(v for k, v in conf.items() if k.split('/')[0] == k.split('/')[1])
+    return {'value': round(same / len(pairs), 4) if pairs else None, 'n_matched': len(pairs),
+            'confusion_ref/cand': dict(sorted(conf.items()))}
+
+
+def jump_stats(ons, minutes):
+    """Lanes between consecutive single notes: the histogram (shares of 0..5 lanes) and the big fast jumps."""
+    sizes, fast = [], 0
+    for a, b in zip(ons, ons[1:]):
+        if len(set(a['lanes'])) != 1 or len(set(b['lanes'])) != 1:
+            continue
+        d = abs(b['lanes'][0] - a['lanes'][0])
+        sizes.append(d)
+        fast += d >= BIG_JUMP and b['t'] - a['t'] < FAST_S
+    n = len(sizes)
+    hist = np.bincount(np.minimum(sizes, JUMP_BINS - 1), minlength=JUMP_BINS) / n if n else np.zeros(JUMP_BINS)
+    return {'n_pairs': n, 'hist': [round(float(x), 4) for x in hist], 'big_fast': int(fast),
+            'big_fast_share': round(fast / n, 4) if n else None,
+            'big_fast_per_min': round(fast / minutes, 3) if minutes > 0 else None}
+
+
+def window_scores(rt, ct, pairs, span, width):
+    """F1@100 in each `width`-s window over the ref span: a matched pair counts in its ref onset's window, an unmatched
+    candidate onset in its own (one outside the span in none), as n_cand_eff counts them."""
+    n = max(1, int(np.ceil((span[1] - span[0]) / width - 1e-9)))
+    k_of = lambda t: min(n - 1, int((t - span[0]) // width))
+    nr, nc, nm = np.zeros(n, int), np.zeros(n, int), np.zeros(n, int)
+    for t in rt:
+        if span[0] <= t <= span[1]:
+            nr[k_of(t)] += 1
+    mj = {j for _, j in pairs}
+    for i, j in pairs:
+        k = k_of(min(max(rt[i], span[0]), span[1]))
+        nm[k] += 1
+        nc[k] += 1
+    for j, t in enumerate(ct):
+        if j not in mj and span[0] <= t <= span[1]:
+            nc[k_of(t)] += 1
+    rows = []
+    for k in range(n):
+        f = 2 * nm[k] / (nr[k] + nc[k]) if nr[k] + nc[k] else None
+        rows.append({'start_s': round(span[0] + k * width, 3), 'f1': None if f is None else round(f, 4),
+                     'matched': int(nm[k]), 'n_ref': int(nr[k]), 'n_cand': int(nc[k])})
+    scored = [r for r in rows if r['f1'] is not None]
+    low = min(scored, key=lambda r: r['f1']) if scored else None
+    return {'window_s': width, 'windows': rows,
+            'lowest': None if low is None else {'start_s': low['start_s'], 'f1': low['f1']}}
+
+
+def phrase_rates(notes, phr):
+    """Star power phrases per minute and the solo share of a track, over its own charted span."""
+    if not notes:
+        return None, None
+    a = min(n['ms'] for n in notes)
+    b = max(n['ms'] + (n.get('msLength') or 0) for n in notes)
+    if b <= a:
+        return None, None
+    sp = len(phr['starPower']) / ((b - a) / 60000.0)
+    solo = sum(max(0.0, min(b, x['ms'] + (x.get('msLength') or 0)) - max(a, x['ms'])) for x in phr['solos'])
+    return round(sp, 3), round(solo / (b - a), 4)
+
+
+def feel_metrics(m, ro, co, co_in, pairs, instrument, span, windows, phrases):
+    minutes = (span[1] - span[0]) / 60.0
+    rp, rat = density_peak([o['t'] for o in ro])
+    cp, cat = density_peak([o['t'] for o in co_in])
+    m['density_peak_1s'] = {'ref': rp, 'cand': cp, 'ref_at_s': rat, 'cand_at_s': cat}
+    if instrument != 'drums':
+        m['state_agreement'] = state_agreement(ro, co, pairs)
+        jr, jc = jump_stats(ro, minutes), jump_stats(co_in, minutes)
+        emd = (round(float(np.sum(np.abs(np.cumsum(np.array(jr['hist']) - np.array(jc['hist']))))), 4)
+               if jr['n_pairs'] and jc['n_pairs'] else None)
+        m['jumps'] = {'ref': jr, 'cand': jc, 'emd_lanes': emd,
+                      'note': 'consecutive single notes; big fast: %d+ lanes under %d ms' % (BIG_JUMP, FAST_S * 1000)}
+    if phrases:
+        r = phrase_rates(*phrases['ref'])
+        c = phrase_rates(*phrases['cand'])
+        m['star_power_per_min'] = {'ref': r[0], 'cand': c[0]}
+        m['solo_share'] = {'ref': r[1], 'cand': c[1]}
+    if windows:
+        rt = np.array([o['t'] for o in ro])
+        ct = np.array([o['t'] for o in co])
+        m['windows_100ms'] = window_scores(rt, ct, pairs, span, windows)
 
 
 def beat_times(sc, t0, t1, shift_ms):
@@ -331,6 +490,35 @@ def beat_times(sc, t0, t1, shift_ms):
     return np.array(out)
 
 
+def downbeat_times(sc, t0, t1, shift_ms):
+    """Every measure line's time (s, input.wav timeline) within [t0, t1]: from each time signature's tick, one
+    measure (numerator x 4 / denominator quarter notes) after another until the next one; 4/4 from tick 0 when the
+    chart has none."""
+    res = sc.get('resolution')
+    tempos = sorted(sc.get('tempos') or [], key=lambda x: x['tick'])
+    if not res or not tempos:
+        return np.array([])
+    sigs = sorted(sc.get('timeSignatures') or [], key=lambda x: x['tick']) or [
+        {'tick': 0, 'numerator': 4, 'denominator': 4}]
+    def ticks_ms(tick):
+        tp = next((x for x in reversed(tempos) if x['tick'] <= tick), tempos[0])
+        return tp['msTime'] + (tick - tp['tick']) * 60000.0 / (tp['beatsPerMinute'] * res)
+    out = []
+    for k, ts in enumerate(sigs):
+        step = ts['numerator'] * res * 4.0 / ts['denominator']
+        stop = sigs[k + 1]['tick'] if k + 1 < len(sigs) else None
+        tick, n = float(ts['tick']), 0
+        while (stop is None or tick < stop) and step > 0 and n < 100000:
+            t = (ticks_ms(tick) + shift_ms) / 1000.0
+            if t > t1:
+                break
+            if t >= t0:
+                out.append(t)
+            tick += step
+            n += 1
+    return np.array(sorted(out))
+
+
 def tempo_metrics(rsc, csc, span, ref_shift, cand_shift):
     rb = beat_times(rsc, span[0], span[1], ref_shift)
     cb = beat_times(csc, span[0] - BEAT_TOL, span[1] + BEAT_TOL, cand_shift)
@@ -357,6 +545,13 @@ def tempo_metrics(rsc, csc, span, ref_shift, cand_shift):
                 for k, v in variants.items()),
                key=lambda x: x[1])
     out['beat_f1_70ms_octave_tolerant'] = {'f1': best[1], 'variant': best[0]}
+    rd = downbeat_times(rsc, span[0], span[1], ref_shift)
+    cd = downbeat_times(csc, span[0] - BEAT_TOL, span[1] + BEAT_TOL, cand_shift)
+    if len(rd) and len(cd):
+        dp = match(rd, cd, BEAT_TOL)
+        out['downbeat_f1_70ms'] = prf(len(dp), len(rd), n_cand_eff(dp, cd, span))
+    else:
+        out['downbeat_f1_70ms'] = None
     return out
 
 
@@ -377,7 +572,11 @@ def main(argv=None):
     ap.add_argument('--input', required=True, help='the audio file the tool was given')
     ap.add_argument('--out', required=True)
     ap.add_argument('--max-shift', type=float, default=30.0, help='alignment search range, s (default 30)')
+    ap.add_argument('--windows', type=float, metavar='N', help='F1@100 per N-second window over the ref span')
+    ap.add_argument('--cand-audio', metavar='FILE', help="align this file instead of the candidate folder's audio")
     a = ap.parse_args(argv)
+    if a.windows is not None and a.windows <= 0:
+        ap.error('--windows takes a length in seconds above 0')
     warns = []
     ref_dir = os.path.abspath(a.ref)
     ref_wav = os.path.join(ref_dir, 'input.wav')
@@ -390,11 +589,22 @@ def main(argv=None):
         warns.append('candidate chart failed to parse: %s' % csc['parseError'])
 
     # ---- alignment
-    x = decode(ref_wav)
-    al = {'cand_audio_files': audio_files(cand_dir)}
+    x = try_decode(ref_wav, warns)
+    if a.cand_audio:
+        p = os.path.abspath(a.cand_audio)
+        al = {'cand_audio_files': [p]}
+        c = load_mix(os.path.dirname(p), [os.path.basename(p)], warns) if os.path.isfile(p) else None
+    else:
+        al = {'cand_audio_files': audio_files(cand_dir)}
+        c = load_mix(cand_dir, al['cand_audio_files'], warns) if al['cand_audio_files'] else None
     lag_ms = 0.0
-    if al['cand_audio_files']:
-        c = load_mix(cand_dir, al['cand_audio_files'])
+    if x is None:
+        al['method'] = 'none: the reference audio cannot be read, lag assumed 0'
+        warns.append(al['method'])
+    elif al['cand_audio_files'] and c is None:
+        al['method'] = 'none: no candidate audio file could be read, lag assumed 0'
+        warns.append(al['method'])
+    elif al['cand_audio_files']:
         if len(c) < 5 * SR or np.sqrt(np.mean(c ** 2)) < 1e-5:
             al['method'] = 'none: candidate audio is silent or shorter than 5 s, lag assumed 0'
             warns.append(al['method'])
@@ -414,7 +624,8 @@ def main(argv=None):
     al['lag_ms'] = lag_ms
     inp = os.path.abspath(a.input)
     if os.path.realpath(inp) != os.path.realpath(ref_wav) and os.path.exists(inp):
-        r2 = align(x, decode(inp), max_shift_s=min(a.max_shift, 5.0))
+        y = try_decode(inp, warns) if x is not None else None
+        r2 = align(x, y, max_shift_s=min(a.max_shift, 5.0)) if y is not None else None
         al['input_vs_inputwav_lag_ms'] = r2 and r2['lag_ms']
     else:
         al['input_vs_inputwav_lag_ms'] = 0.0 if os.path.exists(inp) else None
@@ -430,6 +641,9 @@ def main(argv=None):
 
     # ---- tracks
     rtr, ctr = tracks_by_key(rsc), tracks_by_key(csc)
+    rph, cph = phrases_by_key(rsc), phrases_by_key(csc)
+    if not rtr:
+        raise SystemExit('the reference chart in %s has no guitar, bass or drums notes to score against' % ref_dir)
     starts, ends = [], []
     for (ins, dif), notes in rtr.items():
         starts.append(min(n['ms'] for n in notes))
@@ -449,7 +663,9 @@ def main(argv=None):
             ro = onsets(rtr[k], ref_shift, ins)
             co = [o for o in onsets(ctr[k], cand_shift, ins) if lo <= o['t'] <= hi]
             n_out = len(onsets(ctr[k], cand_shift, ins)) - len(co)
-            tm = track_metrics(ro, co, ins, span, ref_pro, cand_pro)
+            ph = {'ref': (rtr[k], rph.get(k) or {'starPower': [], 'solos': []}),
+                  'cand': (ctr[k], cph.get(k) or {'starPower': [], 'solos': []})}
+            tm = track_metrics(ro, co, ins, span, ref_pro, cand_pro, windows=a.windows, phrases=ph)
             tm['cand_onsets_outside_ref_span_dropped'] = n_out
             tracks['%s/%s' % k] = tm
     missing = sorted('%s/%s' % k for k in rtr if k not in ctr)
@@ -489,10 +705,19 @@ def main(argv=None):
     if missing:
         parts.append('missing %s' % ','.join(missing))
     out['summary'] = ' | '.join(parts)
+    if a.windows:
+        low = []
+        for key in sorted(tracks, key=lambda s: (INSTRUMENTS.index(s.split('/')[0]), DIFFS.index(s.split('/')[1]))):
+            lw = tracks[key]['windows_100ms']['lowest']
+            if key.split('/')[1] == 'expert' and lw:
+                low.append('%s %.3f at %d:%04.1f' % (key, lw['f1'], lw['start_s'] // 60, lw['start_s'] % 60))
+        out['summary_windows'] = 'lowest %g-s window F1@100: %s' % (a.windows, ', '.join(low) or 'none')
     os.makedirs(os.path.dirname(os.path.abspath(a.out)) or '.', exist_ok=True)
     with open(a.out, 'w') as f:
         json.dump(out, f, indent=1, default=float)
     print(out['summary'])
+    if a.windows:
+        print(out['summary_windows'])
     return out
 
 

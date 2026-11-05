@@ -1,0 +1,940 @@
+{
+ "stress": 1,
+ "about": "eval/stress.py score: our charts against every human chart of each stress song, and the other human charts against the primary (the humans' agreement), Expert; numbers only.",
+ "code": {
+  "commit": "fbd975145d2d35085d0e2fa6217a7f5abf7bf4c5",
+  "dirty": []
+ },
+ "window_s": 30.0,
+ "songs": {
+  "troop": {
+   "slot": "a 198 BPM power-metal song",
+   "charts": 3,
+   "gate_ok": true,
+   "refs": [
+    "primary",
+    "alt1",
+    "alt2"
+   ],
+   "unscored": {},
+   "ours": {
+    "primary": {
+     "tempo": {
+      "beat_f1": 0.3022,
+      "beat_f1_octave": 0.3992,
+      "downbeat_f1": 0.0697,
+      "lag_ms": 4778.141
+     },
+     "parts": {
+      "guitar": {
+       "f1_50": 0.614,
+       "f1_100": 0.6374,
+       "onsets": [
+        1416,
+        2613
+       ],
+       "notes_ratio": 0.697,
+       "lowest_window": {
+        "start_s": 64.8,
+        "f1": 0.4819
+       },
+       "timing_err_ms": 69.3,
+       "chord_share": [
+        0.327,
+        0.0459
+       ],
+       "density_peak_1s": [
+        7,
+        27
+       ],
+       "contour": 0.5996,
+       "contour_trivial": 0.3182,
+       "star_power_per_min": [
+        2.422,
+        3.431
+       ],
+       "solo_share": [
+        0.3058,
+        0.2139
+       ],
+       "hopo_share": [
+        0.2895,
+        0.5086
+       ],
+       "tap_share": [
+        0.0381,
+        0.0
+       ],
+       "sustain_share": [
+        0.0424,
+        0.0402
+       ],
+       "state_agreement": 0.4875,
+       "jump_emd": 0.3823,
+       "big_fast_per_min": [
+        0.0,
+        27.44
+       ]
+      },
+      "bass": {
+       "f1_50": 0.7016,
+       "f1_100": 0.7361,
+       "onsets": [
+        1452,
+        1852
+       ],
+       "notes_ratio": 0.8191,
+       "lowest_window": {
+        "start_s": 4.8,
+        "f1": 0.2111
+       },
+       "timing_err_ms": -2.56,
+       "chord_share": [
+        0.0448,
+        0.0
+       ],
+       "density_peak_1s": [
+        8,
+        14
+       ],
+       "contour": 0.7914,
+       "contour_trivial": 0.8024,
+       "star_power_per_min": [
+        2.533,
+        3.228
+       ],
+       "solo_share": [
+        0.0,
+        0.0
+       ],
+       "hopo_share": [
+        0.2087,
+        0.1161
+       ],
+       "tap_share": [
+        0.0,
+        0.0
+       ],
+       "sustain_share": [
+        0.0124,
+        0.0308
+       ],
+       "state_agreement": 0.7837,
+       "jump_emd": 0.0352,
+       "big_fast_per_min": [
+        0.0,
+        3.834
+       ]
+      },
+      "drums": {
+       "f1_50": 0.8511,
+       "f1_100": 0.8715,
+       "onsets": [
+        1692,
+        2136
+       ],
+       "notes_ratio": 0.9017,
+       "lowest_window": {
+        "start_s": 214.8,
+        "f1": 0.8276
+       },
+       "timing_err_ms": 0.05,
+       "chord_share": [
+        0.7825,
+        0.6255
+       ],
+       "density_peak_1s": [
+        8,
+        14
+       ],
+       "contour": 0.7565,
+       "contour_trivial": 0.2655,
+       "star_power_per_min": [
+        2.427,
+        3.236
+       ],
+       "solo_share": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "missing": []
+    },
+    "alt1": {
+     "tempo": {
+      "beat_f1": 0.3022,
+      "beat_f1_octave": 0.3992,
+      "downbeat_f1": 0.0697,
+      "lag_ms": 4871.882
+     },
+     "parts": {
+      "guitar": {
+       "f1_50": 0.6234,
+       "f1_100": 0.6443,
+       "onsets": [
+        1416,
+        2495
+       ],
+       "notes_ratio": 0.7371,
+       "lowest_window": {
+        "start_s": 274.706,
+        "f1": 0.5275
+       },
+       "timing_err_ms": 66.48,
+       "chord_share": [
+        0.327,
+        0.0381
+       ],
+       "density_peak_1s": [
+        7,
+        27
+       ],
+       "contour": 0.5984,
+       "contour_trivial": 0.3402,
+       "star_power_per_min": [
+        2.422,
+        3.027
+       ],
+       "solo_share": [
+        0.3058,
+        0.2472
+       ],
+       "hopo_share": [
+        0.2895,
+        0.214
+       ],
+       "tap_share": [
+        0.0381,
+        0.2148
+       ],
+       "sustain_share": [
+        0.0424,
+        0.0649
+       ],
+       "state_agreement": 0.5056,
+       "jump_emd": 0.4109,
+       "big_fast_per_min": [
+        0.0,
+        29.667
+       ]
+      }
+     },
+     "missing": []
+    },
+    "alt2": {
+     "tempo": {
+      "beat_f1": 0.3009,
+      "beat_f1_octave": 0.3927,
+      "downbeat_f1": 0.0643,
+      "lag_ms": 7598.007
+     },
+     "parts": {
+      "guitar": {
+       "f1_50": 0.6321,
+       "f1_100": 0.6517,
+       "onsets": [
+        1416,
+        2678
+       ],
+       "notes_ratio": 0.6864,
+       "lowest_window": {
+        "start_s": 61.989,
+        "f1": 0.5425
+       },
+       "timing_err_ms": 62.34,
+       "chord_share": [
+        0.327,
+        0.034
+       ],
+       "density_peak_1s": [
+        7,
+        27
+       ],
+       "contour": 0.5743,
+       "contour_trivial": 0.2658,
+       "star_power_per_min": [
+        2.422,
+        4.44
+       ],
+       "solo_share": [
+        0.3058,
+        0.3113
+       ],
+       "hopo_share": [
+        0.2895,
+        0.2883
+       ],
+       "tap_share": [
+        0.0381,
+        0.1565
+       ],
+       "sustain_share": [
+        0.0424,
+        0.0489
+       ],
+       "state_agreement": 0.506,
+       "jump_emd": 0.4612,
+       "big_fast_per_min": [
+        0.0,
+        42.381
+       ]
+      }
+     },
+     "missing": []
+    }
+   },
+   "humans": {
+    "alt1": {
+     "tempo": {
+      "beat_f1": 1.0,
+      "beat_f1_octave": 1.0,
+      "downbeat_f1": 1.0,
+      "lag_ms": -93.742
+     },
+     "parts": {
+      "guitar": {
+       "f1_50": 0.9252,
+       "f1_100": 0.9346,
+       "onsets": [
+        2495,
+        2613
+       ],
+       "notes_ratio": 0.9449,
+       "lowest_window": {
+        "start_s": 154.8,
+        "f1": 0.8562
+       },
+       "timing_err_ms": -0.38,
+       "chord_share": [
+        0.0381,
+        0.0459
+       ],
+       "density_peak_1s": [
+        27,
+        27
+       ],
+       "contour": 0.6803,
+       "contour_trivial": 0.2931,
+       "star_power_per_min": [
+        3.027,
+        3.431
+       ],
+       "solo_share": [
+        0.2472,
+        0.2139
+       ],
+       "hopo_share": [
+        0.214,
+        0.5086
+       ],
+       "tap_share": [
+        0.2148,
+        0.0
+       ],
+       "sustain_share": [
+        0.0649,
+        0.0402
+       ],
+       "state_agreement": 0.6376,
+       "jump_emd": 0.0358,
+       "big_fast_per_min": [
+        29.458,
+        27.44
+       ]
+      }
+     },
+     "missing": [
+      "bass/expert",
+      "drums/expert"
+     ]
+    },
+    "alt2": {
+     "tempo": {
+      "beat_f1": 1.0,
+      "beat_f1_octave": 1.0,
+      "downbeat_f1": 1.0,
+      "lag_ms": -2819.867
+     },
+     "parts": {
+      "guitar": {
+       "f1_50": 0.9174,
+       "f1_100": 0.9261,
+       "onsets": [
+        2678,
+        2613
+       ],
+       "notes_ratio": 1.0153,
+       "lowest_window": {
+        "start_s": 4.8,
+        "f1": 0.7628
+       },
+       "timing_err_ms": 8.83,
+       "chord_share": [
+        0.034,
+        0.0459
+       ],
+       "density_peak_1s": [
+        27,
+        27
+       ],
+       "contour": 0.708,
+       "contour_trivial": 0.2886,
+       "star_power_per_min": [
+        4.44,
+        3.431
+       ],
+       "solo_share": [
+        0.3113,
+        0.2139
+       ],
+       "hopo_share": [
+        0.2883,
+        0.5086
+       ],
+       "tap_share": [
+        0.1565,
+        0.0
+       ],
+       "sustain_share": [
+        0.0489,
+        0.0402
+       ],
+       "state_agreement": 0.6841,
+       "jump_emd": 0.0865,
+       "big_fast_per_min": [
+        42.371,
+        27.44
+       ]
+      }
+     },
+     "missing": [
+      "bass/expert",
+      "drums/expert"
+     ]
+    }
+   },
+   "shape": {
+    "guitar": {
+     "silent_onsets": 0,
+     "flags": {},
+     "judged": true
+    },
+    "bass": {
+     "silent_onsets": 0,
+     "flags": {},
+     "judged": true
+    },
+    "drums": {
+     "silent_onsets": 5,
+     "flags": {},
+     "judged": true
+    }
+   }
+  },
+  "sooth": {
+   "slot": "a 9-minute shred instrumental",
+   "charts": 2,
+   "gate_ok": true,
+   "refs": [
+    "primary",
+    "alt1"
+   ],
+   "unscored": {},
+   "ours": {
+    "primary": {
+     "tempo": {
+      "beat_f1": 0.6442,
+      "beat_f1_octave": 0.9625,
+      "downbeat_f1": 0.2775,
+      "lag_ms": 4032.902
+     },
+     "parts": {
+      "guitar": {
+       "f1_50": 0.6513,
+       "f1_100": 0.7895,
+       "onsets": [
+        2149,
+        2236
+       ],
+       "notes_ratio": 0.9449,
+       "lowest_window": {
+        "start_s": 246.37,
+        "f1": 0.5
+       },
+       "timing_err_ms": 39.87,
+       "chord_share": [
+        0.0782,
+        0.0626
+       ],
+       "density_peak_1s": [
+        11,
+        17
+       ],
+       "contour": 0.6669,
+       "contour_trivial": 0.2399,
+       "star_power_per_min": [
+        3.879,
+        2.335
+       ],
+       "solo_share": [
+        0.8005,
+        0.0
+       ],
+       "hopo_share": [
+        0.342,
+        0.5501
+       ],
+       "tap_share": [
+        0.1456,
+        0.0
+       ],
+       "sustain_share": [
+        0.1396,
+        0.072
+       ],
+       "state_agreement": 0.5552,
+       "jump_emd": 0.0975,
+       "big_fast_per_min": [
+        1.89,
+        2.446
+       ]
+      },
+      "bass": {
+       "f1_50": 0.6924,
+       "f1_100": 0.7341,
+       "onsets": [
+        1988,
+        1559
+       ],
+       "notes_ratio": 1.2828,
+       "lowest_window": {
+        "start_s": 156.37,
+        "f1": 0.5362
+       },
+       "timing_err_ms": 27.18,
+       "chord_share": [
+        0.0086,
+        0.0026
+       ],
+       "density_peak_1s": [
+        11,
+        7
+       ],
+       "contour": 0.7441,
+       "contour_trivial": 0.6811,
+       "star_power_per_min": [
+        3.774,
+        2.403
+       ],
+       "solo_share": [
+        0.0,
+        0.0
+       ],
+       "hopo_share": [
+        0.1087,
+        0.1199
+       ],
+       "tap_share": [
+        0.0,
+        0.0
+       ],
+       "sustain_share": [
+        0.1549,
+        0.1462
+       ],
+       "state_agreement": 0.9163,
+       "jump_emd": 0.1645,
+       "big_fast_per_min": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "missing": []
+    },
+    "alt1": {
+     "tempo": {
+      "beat_f1": 0.6538,
+      "beat_f1_octave": 0.9784,
+      "downbeat_f1": 0.2813,
+      "lag_ms": 8391.754
+     },
+     "parts": {
+      "guitar": {
+       "f1_50": 0.765,
+       "f1_100": 0.7897,
+       "onsets": [
+        2149,
+        2382
+       ],
+       "notes_ratio": 0.9316,
+       "lowest_window": {
+        "start_s": 242.052,
+        "f1": 0.5455
+       },
+       "timing_err_ms": 8.31,
+       "chord_share": [
+        0.0782,
+        0.0437
+       ],
+       "density_peak_1s": [
+        11,
+        16
+       ],
+       "contour": 0.6758,
+       "contour_trivial": 0.2189,
+       "star_power_per_min": [
+        3.879,
+        3.225
+       ],
+       "solo_share": [
+        0.8005,
+        0.3575
+       ],
+       "hopo_share": [
+        0.342,
+        0.3946
+       ],
+       "tap_share": [
+        0.1456,
+        0.0659
+       ],
+       "sustain_share": [
+        0.1396,
+        0.1377
+       ],
+       "state_agreement": 0.6635,
+       "jump_emd": 0.1218,
+       "big_fast_per_min": [
+        1.891,
+        2.447
+       ]
+      }
+     },
+     "missing": []
+    }
+   },
+   "humans": {
+    "alt1": {
+     "tempo": {
+      "beat_f1": 1.0,
+      "beat_f1_octave": 1.0,
+      "downbeat_f1": 1.0,
+      "lag_ms": -4370.467
+     },
+     "parts": {
+      "guitar": {
+       "f1_50": 0.712,
+       "f1_100": 0.9337,
+       "onsets": [
+        2382,
+        2236
+       ],
+       "notes_ratio": 1.0139,
+       "lowest_window": {
+        "start_s": 216.37,
+        "f1": 0.8676
+       },
+       "timing_err_ms": 48.23,
+       "chord_share": [
+        0.0437,
+        0.0626
+       ],
+       "density_peak_1s": [
+        16,
+        17
+       ],
+       "contour": 0.794,
+       "contour_trivial": 0.2194,
+       "star_power_per_min": [
+        3.225,
+        2.335
+       ],
+       "solo_share": [
+        0.3575,
+        0.0
+       ],
+       "hopo_share": [
+        0.3946,
+        0.5501
+       ],
+       "tap_share": [
+        0.0659,
+        0.0
+       ],
+       "sustain_share": [
+        0.1377,
+        0.072
+       ],
+       "state_agreement": 0.7412,
+       "jump_emd": 0.0735,
+       "big_fast_per_min": [
+        2.446,
+        2.446
+       ]
+      }
+     },
+     "missing": [
+      "bass/expert"
+     ]
+    }
+   },
+   "shape": {
+    "guitar": {
+     "silent_onsets": 146,
+     "flags": {
+      "gap": {
+       "stretches": 1,
+       "measures": 9
+      }
+     },
+     "judged": true
+    },
+    "bass": {
+     "silent_onsets": 0,
+     "flags": {
+      "rings past its sustain": {
+       "stretches": 1,
+       "measures": 1
+      }
+     },
+     "judged": true
+    },
+    "drums": {
+     "silent_onsets": 29,
+     "flags": {},
+     "judged": true
+    }
+   }
+  },
+  "break": {
+   "slot": "an ordinary rock song (the guard against making normal songs worse)",
+   "charts": 4,
+   "gate_ok": true,
+   "refs": [
+    "primary",
+    "alt1",
+    "alt2",
+    "alt3"
+   ],
+   "unscored": {
+    "alt2": "no guitar, bass or drums notes",
+    "alt3": "no guitar, bass or drums notes"
+   },
+   "ours": {
+    "primary": {
+     "tempo": {
+      "beat_f1": 0.9939,
+      "beat_f1_octave": 0.9939,
+      "downbeat_f1": 0.9878,
+      "lag_ms": 3602.88
+     },
+     "parts": {
+      "guitar": {
+       "f1_50": 0.8315,
+       "f1_100": 0.8553,
+       "onsets": [
+        483,
+        443
+       ],
+       "notes_ratio": 1.1824,
+       "lowest_window": {
+        "start_s": 161.198,
+        "f1": 0.3333
+       },
+       "timing_err_ms": 5.66,
+       "chord_share": [
+        0.8054,
+        0.6704
+       ],
+       "density_peak_1s": [
+        8,
+        6
+       ],
+       "contour": 0.5501,
+       "contour_trivial": 0.3469,
+       "star_power_per_min": [
+        2.756,
+        2.462
+       ],
+       "solo_share": [
+        0.1656,
+        0.1584
+       ],
+       "hopo_share": [
+        0.0476,
+        0.0993
+       ],
+       "tap_share": [
+        0.0,
+        0.0
+       ],
+       "sustain_share": [
+        0.0828,
+        0.237
+       ],
+       "state_agreement": 0.9192,
+       "jump_emd": 0.2141,
+       "big_fast_per_min": [
+        0.0,
+        0.352
+       ]
+      }
+     },
+     "missing": []
+    },
+    "alt1": {
+     "tempo": {
+      "beat_f1": 1.0,
+      "beat_f1_octave": 1.0,
+      "downbeat_f1": 1.0,
+      "lag_ms": 2414.513
+     },
+     "parts": {
+      "guitar": {
+       "f1_50": 0.8411,
+       "f1_100": 0.8497,
+       "onsets": [
+        483,
+        442
+       ],
+       "notes_ratio": 1.2041,
+       "lowest_window": {
+        "start_s": 162.397,
+        "f1": 0.3551
+       },
+       "timing_err_ms": -3.97,
+       "chord_share": [
+        0.8054,
+        0.6403
+       ],
+       "density_peak_1s": [
+        8,
+        11
+       ],
+       "contour": 0.5504,
+       "contour_trivial": 0.3569,
+       "star_power_per_min": [
+        2.756,
+        2.103
+       ],
+       "solo_share": [
+        0.1656,
+        0.1457
+       ],
+       "hopo_share": [
+        0.0476,
+        0.1131
+       ],
+       "tap_share": [
+        0.0,
+        0.0
+       ],
+       "sustain_share": [
+        0.0828,
+        0.2127
+       ],
+       "state_agreement": 0.9262,
+       "jump_emd": 0.1183,
+       "big_fast_per_min": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "missing": []
+    }
+   },
+   "humans": {
+    "alt1": {
+     "tempo": {
+      "beat_f1": 1.0,
+      "beat_f1_octave": 1.0,
+      "downbeat_f1": 1.0,
+      "lag_ms": 1188.367
+     },
+     "parts": {
+      "guitar": {
+       "f1_50": 0.9514,
+       "f1_100": 0.9718,
+       "onsets": [
+        442,
+        443
+       ],
+       "notes_ratio": 0.9797,
+       "lowest_window": {
+        "start_s": 101.198,
+        "f1": 0.9324
+       },
+       "timing_err_ms": 9.69,
+       "chord_share": [
+        0.6403,
+        0.6704
+       ],
+       "density_peak_1s": [
+        11,
+        6
+       ],
+       "contour": 0.9402,
+       "contour_trivial": 0.3397,
+       "star_power_per_min": [
+        2.103,
+        2.462
+       ],
+       "solo_share": [
+        0.1457,
+        0.1584
+       ],
+       "hopo_share": [
+        0.1131,
+        0.0993
+       ],
+       "tap_share": [
+        0.0,
+        0.0
+       ],
+       "sustain_share": [
+        0.2127,
+        0.237
+       ],
+       "state_agreement": 0.993,
+       "jump_emd": 0.1234,
+       "big_fast_per_min": [
+        0.0,
+        0.352
+       ]
+      }
+     },
+     "missing": []
+    }
+   },
+   "shape": {
+    "guitar": {
+     "silent_onsets": 0,
+     "flags": {
+      "gap": {
+       "stretches": 1,
+       "measures": 2
+      },
+      "rings past its sustain": {
+       "stretches": 1,
+       "measures": 1
+      }
+     },
+     "judged": true
+    },
+    "bass": {
+     "silent_onsets": 0,
+     "flags": {},
+     "judged": true
+    },
+    "drums": {
+     "silent_onsets": 1,
+     "flags": {},
+     "judged": true
+    }
+   }
+  }
+ }
+}
