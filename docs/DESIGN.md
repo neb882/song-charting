@@ -375,6 +375,63 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
    - Marker count is cosmetic: a few ms of jitter does not move notes [here, comparison claims audit].
 - **Cost:** onset features 4.4 s for the test song's drum stem; `beat_grid` itself 0.6–1.1 s [here, beatgrid run].
 
+7. **The octave pass** (M5-01; doubling only) [code]. The first pass still folds into [85, 185) BPM
+   (`BPM_RANGE`). After it, `assemble.grid_octave` asks whether the grid is an octave too slow for the notes, and
+   if so the grid is built again at twice the first grid's click tempo. That pass doubles the fold range
+   (`beat_grid(bpm_range=(170, 370))`, which reaches every fold), drops the first-beat hint and runs the half-beat
+   test (`half_beat=True`). The tempo map, lead-in, downbeats, sections, star power and the HOPO threshold follow
+   the chosen grid. Halving is not built: a pulse under 85 BPM stays at double, as on the shred instrumental; its
+   statistics are in M5-99.
+   - **Why the fold is wrong** (the charting-conventions report, section 11 item 1): charters chart the musical
+     tempo, anywhere in Magma's 40–300 BPM, and then force the HOPO states. Every rule songcharter counts in beats
+     or ticks only comes out right at that pulse: the HOPO threshold, the 1/16 slots, the sustain floors, star
+     power, fills, sections, solos and the lyric snap.
+   - **The two tests** (decided 2026-11-05 on this table):
+     - Density: the share of intervals between distinct Expert onsets shorter than 0.75 of a 1/16 of their beat,
+       pooled over the parts by onset count.
+     - Backbeat: the drum stem's snare band at the beats' midpoints over that at the beat lines, on confident
+       beats.
+     - Octave 2 needs a share ≥ `OCTAVE_SHARE` = 0.35, a backbeat ratio ≥ `BACKBEAT_MIN` = 0.34 (or none without
+       drums), the doubled tempo ≤ 300 BPM and ≥ 200 onsets.
+     - Each threshold is the geometric midpoint between the right grids and the one song at half tempo: margins ×3.14
+       and ×3.95. That rests on one positive example.
+
+     | song (engine charts, drum stem) | first grid BPM | guitar / bass / drums share | pooled | backbeat |
+     |---|---|---|---|---|
+     | power-metal stress song (half tempo) | 100.01 | 0.758 / 0.449 / 0.632 | **0.623** | **0.682** |
+     | test song | 142.00 | 0.003 / 0.087 / 0.003 | 0.025 | 0.002 |
+     | All the Small Things | 147.62 | 0.000 / 0.189 / 0.007 | 0.085 | 0.172 |
+     | Creep | 92.34 | 0.000 / 0.403 / 0.023 | 0.154 | 0.007 |
+     | Drunk Drivers | 117.00 | 0.038 / 0.118 / 0.000 | 0.049 | 0.004 |
+     | Kimochi Warui | 107.00 | 0.000 / 0.011 / 0.000 | 0.001 | 0.038 |
+     | Lucretia | 98.23 | 0.233 / 0.311 / 0.009 | **0.199** | 0.003 |
+     | Take Me Out | 105.34 | 0.013 / 0.014 / 0.001 | 0.009 | 0.001 |
+     | shred stress song (at double) | 153.97 | 0.059 / 0.121 / 0.000 | 0.062 | 0.003 |
+     | ordinary rock stress song | 115.50 | 0.000 / 0.307 / 0.009 | 0.151 | 0.012 |
+
+     The right grids' shares come mostly from the bass engine's close double onsets. The plan's fixed
+     `BACKBEAT_MIN` of 0.8 vetoed the power-metal song. Its first grid sits on the off-beats, so the snare is on
+     neither its lines nor its midpoints; on the doubled grid the ratio is 0.021, the snare on the lines.
+   - **The guard** keeps the doubled grid when its confident share is at least `OCTAVE_EVIDENCE_MIN` = 0.7 times
+     the first grid's.
+     - A ratio, not a difference: both shares scale with how much of the song the drums play.
+     - **Provisional until the 20-song set** (M5-99). The only real doubling keeps 0.997; the doublings of right
+       grids keep 0.63–0.94, because their hats play the 8ths. A doubled grid with evidence only on the first
+       grid's beats keeps 0.5. A guard set too high only falls back to v0.1's grid, with a warning.
+
+     | song | first → second confident share | ratio |
+     |---|---|---|
+     | power-metal | 0.819 → 0.817 | 0.997 |
+     | the nine others (doublings never chosen) | 0.659–0.910 → 0.512–0.752 | 0.631–0.936 |
+
+   - **The half-beat test** (`beatgrid.half_beat_phase`): the second grid's lines move half a beat later when the
+     midpoints between them carry more kick than the lines, as `bar_phase` puts beat 1 on the kick. On the
+     power-metal song's drum stem, the comb and the tracker lock onto the snare's 8ths, a kick on every beat under
+     a snare on every "and". The second grid was half a beat off the human beats: plain beat F1 0.446, median beat
+     error 134 ms. The test fires there (2.24 times the kick on the midpoints), but the second grid is the
+     tracker's, which flips phase over parts of the song; shifted whole it reaches only 0.549 [here, M5-01 probe;
+     open].
+
 **Whole-song runs tonight** [here, beatgrid run].
 
 Test song, against the guitar audit's 800 local drum beats (rising-edge picker, found within ±60 ms of the rigid grid):
@@ -411,7 +468,7 @@ Four Harmonix references: summed original drum stems, no hints, no Beat This sta
 **Goal 2:** Beat This! proposes and `beatgrid` refines.
 1. **Activations.** Beat This! 1.1.0 `final0` (MIT, 81 MB) on the whole mix, giving 50 fps beat and downbeat logits. Use CUDA with float16 if available; on CPU, process 40 s windows.
 2. **Peaks.** A logit > 0 that is the maximum within ±3 frames, refined to sub-frame time with a parabola.
-3. **One metrical level.** Fold inter-beat intervals to the octave of the median, then into [85, 185) BPM. The natural-HOPO threshold is in ticks (65/192 of a beat), so a 71 BPM map turns 142 BPM 8ths into HOPOs [here]. The UI offers ×2 and ÷2.
+3. **One metrical level, the musical pulse.** Fold inter-beat intervals to the octave of the median. Then choose the octave whose beat is the pulse, as Goal 1's step 7 does: a fold into a fixed range has no basis in charting practice (the charting-conventions report, section 11 item 1). Charters chart the musical tempo (Magma's 40–300 BPM) and force the HOPO states; every rule counted in beats or ticks only comes out right at that pulse. The UI offers ×2 and ÷2.
 4. **Octave control** (comparison): one global metrical level, and rejection of runs at half or double the global period, measured against the global period. A 9-beat local median of raw intervals, which is what autochart compares against, fails inside long runs. The downbeat is not set here: the Viterbi owns it (§2.4).
 5. **DP decoder:** v1's, the one behind the F 0.989 below.
    - Score = activation − 100·log2(gap / local period)²; predecessors searched 0.6–1.6 periods back; edges with activation < 0.2 trimmed.
@@ -606,14 +663,68 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
    - a note snaps to the nearer slot, with a cost weighted by log-priors from the Harmonix Expert grid mix (1/4 41 %, 1/8 33 %, 1/16 17 %, 1/12 5.3 %) [here, v1], so the coarser line wins near the midpoint;
    - straight and triplet mix within a beat in only 1.4 % of Harmonix beats [here, v1];
    - v1's 1/32 and 1/24 burst grids are not used: drums snap to 1/16 plus triplets, the sources barely write them, and
-     a 1/32 level would keep the rounding of a source on a 1/32 grid. Spacing is not the reason: a 1/32 is under the
-     55 ms HOPO spacing only above 136 BPM (80 ms strums: 94 BPM), a 1/24 above 182 BPM (125) [code]. Whether they
-     come back for imported sources is open (§9, Q16);
+     a 1/32 level would keep the rounding of a source on a 1/32 grid. Spacing is not the reason: with the 20 ms floor
+     (step 3) a 1/32 falls under it only above 375 BPM [code]. Whether they come back for imported sources is open
+     (§9, Q16); burst slots for fast songs are M5-99's, with the `dropped_distinct` figures of step 3;
    - a note on an odd 1/32 of a source on a 1/32 grid takes the coarser of its two slots when within 1/4 slot of their
      midpoint and the source has no onset on that coarser line (`odd_32nds`). A source counts as on a 1/32 grid when at
      least 95 % of its onsets lie within 0.05 of a 1/32 of its own 1/32 lines (STRUM 0.97–1.00; autochart 0.92–1.00;
      ADTOF 0.11–0.12, chance). On the test song STRUM drums go from 32 to 15 notes a 16th off the stem's hit [code].
-3. **Clean up.** Merge onsets on the same tick (the union of their frets), then apply the difficulty's chord limits. Onsets at least ¾ of a slot apart are not merged: one moves to its free neighbouring slot. An onset closer to the previous one than the minimum spacing (strums 80 ms, HOPOs and taps 55 ms) is dropped, so `brokenNote` (≤ 15 ms) cannot occur.
+3. **Clean up.** Merge onsets on the same tick (the union of their frets), then apply the difficulty's chord limits. Onsets at least ¾ of a slot apart are not merged: one moves to its free neighbouring slot (`_separate`). An onset closer to the previous one than the minimum spacing (20 ms before a strum, a HOPO or a tap alike) is dropped, so `brokenNote` (≤ 15 ms) cannot occur [code, M5-01].
+   - **No chord of notes distinct in time** (M5-01) [conventions report 2c: a chord is notes that sound together, a
+     run of single notes is never written as a chord, and dropping a note is better than making such a chord].
+     Onsets left on one tick that lie more than 20 ms apart in the source (`MERGE_MAX_S`) are not merged: the onset
+     nearest the tick stays, with every other onset within 20 ms of all those kept, and the rest are dropped, counted
+     in `QuantizeReport.dropped_distinct` (report.json's `parts.*.quantize`). A strummed chord's notes come at one time
+     from every source songcharter reads, and a flam is under 20 ms. Nearest, not earliest: on the shred song's bass a
+     "the later one moves" rule pushed on-tick notes a full slot. Nothing moves in this band, and `_separate` keeps
+     its own rule (its moves, 47–168 ms on the references, are recorded for M5-99). The plan's first draft moved the
+     later onset to the next slot when that slot was free; against it, on the references' engine charts: of the 118
+     notes it would move, 117 are ghost notes or split chords and 1 a real second note, and moving lowered F1@50 by
+     0.001–0.028 on every part it touched [here, M5 plan review]. Drums are not changed: hits on one tick are several
+     pads, not a chord. The human charts themselves, each through `quantize_part` on its own map as a perfect engine,
+     lose 5.4–6.4 % of their guitar notes to this rule on the power-metal stress song (its 37.5 ms 32nds and 50 ms
+     sextuplets, which no 1/16 grid holds), 22–24 % on the shred instrumental (charted at half our tempo, so its runs
+     are 32nds and sextuplets of their map), 0.9–1.8 % on the ordinary rock song and 0.05 % on the power-metal bass
+     [here, M5-01]: burst slots (1/32, 1/24) are M5-99's next step, with these numbers.
+   - **The floors, 20 ms** (M5-01; until then 80 ms before a strum and 55 ms before a HOPO or a tap, which deleted
+     strummed 16ths above 187.5 BPM) [conventions report 2g]. `brokenNote` at 15 ms is the only spacing the games or
+     the lints require, and the floors' only job is that it cannot fire; 20 ms is that plus a margin. Human charts
+     reach 17 notes a second (about 59 ms), so a floor of 80 ms before a strum deletes real notes, and on a grid at or
+     under 300 BPM any floor above about 50 ms (two 1/16 slots apart) can only delete real notes. On today's slots the
+     floor is dormant: two distinct 1/16 ticks are at least 50 ms apart at 300 BPM and 40.5 ms at the second grid
+     pass's 370 BPM cap (§2.3), so it is insurance for exact-tick sources (step 5) and for burst slots. The evidence,
+     not a setting (nothing reads the human charts to set it) [here, M5 plan review]:
+     - the gaps between consecutive Expert note groups in 11 human charts (the six references, three power-metal and
+       two shred charts), by the second note's played state as scan-chart resolves it:
+
+       | charts | state | gaps | min (ms) | 1st percentile (ms) | gaps under 80 ms |
+       |---|---|---|---|---|---|
+       | 6 references | strum | 6,167 | 74.7 | 104.3 | 2 |
+       | 6 references | HOPO | 1,977 | 37.0 | 70.2 | 154 |
+       | power-metal, three guitar charts | strum | 1,283–1,486 | 37.5–50 | 75.0 each | 759–1,051 |
+       | power-metal bass | strum | 1,636 | 75.0 | 75.0 | 392 |
+       | shred, two guitar charts | strum | 1,005–1,284 | 60.9–62.5 | 62.5–65.0 | 17–120 |
+       | pooled, 11 charts | strum | 15,656 | 37.5 | 75.0 | 20.6 % |
+       | pooled | HOPO / tap | 7,184 / 1,191 | 37.0 / 37.5 | 37.5 / 37.5 | — |
+
+       The pooled 1st percentile was the plan's first rule; it lands on the power-metal song's mass point of 3,092
+       strummed 16ths at exactly 75.0 ms (200 BPM), 37 % of the pooled strum gaps;
+     - notes dropped from the power-metal song's first guitar chart (2,495 notes) through `quantize_part` as a perfect
+       engine, by floor (strum/HOPO, ms):
+
+       | grid | 80/55 (until M5-01) | 75/37 (the percentile rule) | 74/37 | 20/20 |
+       |---|---|---|---|---|
+       | the human map (200.000 BPM) | 485 (19.4 %) | 339 (13.6 %): float rounding at exactly 75.0 | 0 | 0 |
+       | the human map at tempo ×1.0001 / ×0.9999 | 485 / 485 | 485 / 0 | 0 / 0 | 0 / 0 |
+       | the human map with beat-position noise, sd 4 ms (periods ±2.3 %) | 483–485 | 216–279 | 68–73 (2.7–2.9 %) | 0 |
+       | a real second grid pass on the mix, click mode (199.9991 BPM) | 485 | 0 (by 0.4 µs) | 0 | 0 |
+       | the same pass, free mode (16ths at 74.47–75.02 ms) | 485 | 85 (3.4 %) | 0 | 0 |
+       | the six references, guitar and bass | 0 | 0 | 0 | 0 |
+
+       So the percentile rule is a coin toss on tempo errors of 0.0005 %, 74 ms survives clean grids but breaks at
+       drum-like jitter, and 20 ms drops nothing anywhere. The other power-metal charts lost 23.5–26.0 % of their
+       guitar notes (and 11.4 % of the bass) to the old floors on their own maps.
    - A merge takes the union of frets, so a single-note source gains chords: on the bass engine 69–172 onsets per
      song merged on All the Small Things, Lucretia and Creep (Expert chord share after quantizing up to 0.074). The
      human bass charts: 0 on Take Me Out, Lucretia, Creep and Kimochi Warui; 0.41 on All the Small Things Expert and
@@ -2245,7 +2356,7 @@ Omit `delay`, `song_length`, `hopo_frequency`, `eighthnote_hopo` and `sustain_cu
 
 | gap | what happens today | plan |
 |---|---|---|
-| Songs above 185 BPM; picked 16ths (critique G1) | The level fold halves the tempo. Model sources keep their HOPO/strum intent (§2.6), but rule engines (`hopo=None`) turn 8th strums at a halved level into natural HOPOs. | M5: choose the metrical level together with note density (prefer the level where typical strums are ≥ 96 ticks apart); a forced-strum rule for rule engines; HOPO κ, natural vs source intent, in M2. |
+| Songs above 185 BPM; picked 16ths (critique G1) | M5-01: a grid too slow for its notes is doubled (§2.3 step 7: note density and the backbeat), no chord is made of notes distinct in time and the spacing floors are 20 ms (§2.6 step 3). Not built: halving (a pulse under 85 BPM stays at double); the second grid's beat phase on a drum stem whose loudest 8ths are the off-beats (§2.3 step 7, open). | The second grid's beat phase (M5-01, open); halving, burst slots, the HOPO-state mode and the guard on the 20-song set (M5-99); a forced-strum rule for rule engines. |
 | Compound meters and shuffles (G2) | Only octave moves, x/4 only (`TempoMap.from_beats` writes denominator 4); a 6/8 ballad's 16ths land 64 ticks apart. | M5: ternary-level test (inter-beat-interval ratios near 1.5), `TS 6 3` / `TS 12 3` and denominators in `tempo.py`; 6/8 and shuffle songs in the stress set. Until then, flag "check time signature". |
 | Drumless songs (G3) | Designed (refine on bass/guitar onsets; a low-evidence flag instead of `beat_grid`'s `ValueError`; gate ADTOF mix hits by stem energy; omit absent parts). Built: the ADTOF engine's hat gate (G3, §2.9; untested on a drumless song), and the pipeline leaves out a part whose engine finds no note [code]. The rest is unimplemented and without thresholds. Inside a drummed song, drumless beats now follow a second stem calibrated on the same song (§2.3); a song with no drums at all still cannot calibrate the second stem. The −22 ms phase offset is calibrated on drums only. | Implement in M3; calibrate the offset for bass and guitar onsets; set thresholds on drumless stress songs in M5. |
 | Fretformer driving (G5) | Level mismatch with autochart's grid untested; descriptor knobs (chords, HOPOs, speed) and the Fill-in model unused; a section that fails its checks is only flagged. | M2: ×1 vs ×2 level test, and 1 knob-conditioned take vs seeded takes. M5: regenerate failed windows. |

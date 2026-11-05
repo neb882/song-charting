@@ -74,6 +74,15 @@ A halving rule needs its own statistic (the share of onsets on beat lines, the b
 every song, the HOPO shares: ours 0.40 against the humans' 0.55 there) and a check that the natural HOPO threshold
 (in ticks) still reads right; measure on the stress set first. Half a day to measure, a day to build.
 
+## The octave pass's guard, provisional (M5-01)
+
+`OCTAVE_EVIDENCE_MIN` = 0.7, the doubled grid's confident share against the first grid's, is provisional until the
+20-song set. On M5-01's table the one real doubling (the power-metal song) keeps 0.997; the second passes of nine
+right grids keep 0.63-0.94, because their hats play the 8ths; a doubled grid with evidence only on the first
+grid's beats keeps 0.5 by construction. The density test (margin x3.14) and the backbeat test (x3.95) carry the
+decision; a guard set too high only falls back to v0.1's grid, with a warning (DESIGN 2.3 step 7). Both tests'
+thresholds rest on one song at half tempo: re-measure them with every fast song the set gains.
+
 ## The reference set at 20 or more songs, with human-charted solos
 
 PROGRESS `next`. M5-09 makes adding a song one entry in `stress.json` and a build; the cost on the dev machine is
