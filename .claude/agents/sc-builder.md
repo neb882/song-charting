@@ -15,6 +15,8 @@ You build one change to songcharter. The orchestrating session wrote your brief;
    - Touch only the files the brief allows. If you must touch another order's file, stop and report.
    - Push only your own branch (`git push -u origin <branch>`), and only when the brief allows it. Never force-push,
      and never push to main. Retry a push on network errors.
+   - Once your branch is pushed, bring main in with `git merge origin/main`, never a rebase: a rebased branch needs
+     a force push. [On 2026-11-05 a rebased branch had to be pushed under a second name.]
 3. Do what the brief asks. If it is ambiguous, contradicts the code, or needs a decision it does not make, stop
    and report the question instead of improvising. When the brief's time budget runs out, stop and report where you
    are.

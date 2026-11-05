@@ -5,21 +5,24 @@ import io
 import json
 import shutil
 import sys
+from dataclasses import replace
 
 import numpy as np
 import pytest
 
 import songcharter.assemble as assemble_module
 from songcharter import audio as A
-from songcharter.assemble import (CLIP_MARGIN_S, HOPO_RULES, GateIssue, active_span, assemble, check_inputs,
-                                  clip_to_audio, difficulty_rating, failed_folder, find_scan_chart, last_tick_by,
-                                  load_config, parse_config, run_scan_chart,
-                                  scan_chart_issues, scan_chart_song, scan_rules, self_check, silent_onsets,
-                                  stem_alignment, trim_silent_edges, verify_folder)
+from songcharter.assemble import (BACKBEAT_MIN, CLIP_MARGIN_S, HOPO_RULES, OCTAVE_MAX_BPM, OCTAVE_MIN_ONSETS,
+                                  OCTAVE_SHARE, OCTAVE_SHORT, GateIssue, OctaveRules, active_span, assemble,
+                                  backbeat_ratio, check_inputs, clip_to_audio, difficulty_rating, failed_folder,
+                                  find_scan_chart, grid_octave, last_tick_by, load_config, parse_config,
+                                  run_scan_chart, scan_chart_issues, scan_chart_song, scan_rules, self_check,
+                                  short_intervals, silent_onsets, stem_alignment, trim_silent_edges, verify_folder)
+from songcharter.beatgrid import ONSET_TO_BEAT_MS, BeatGrid, OnsetFeatures
 from songcharter.chart import (DRUM_ACTIVATION, STAR_POWER, Chart, DrumHit, FretNote, Phrase, SongInfo, Track,
                                write_chart)
 from songcharter.cli import main
-from songcharter.errors import ToolError
+from songcharter.errors import InputError, ToolError
 from songcharter.importers import read_chart, read_song
 from songcharter.quantize import play_states, quantize_part
 from songcharter.tempo import Tempo, TempoMap
@@ -331,6 +334,10 @@ def test_report_matches_the_written_chart(built):
     assert {"odd_32nds", "moved_25ms", "moved_signed_median"} <= set(q)
     assert report["config"]["parts"][0]["hopo"] == "forced"
     assert report["grid"]["secondary_source"] is None  # the fixture has no guitar or other stem
+    assert report["config"]["grid_octave"] == "auto" and report["grid"]["octave"] == 1  # 8ths and 16ths at 120
+    stats = report["grid"]["octave_stats"]
+    assert stats["pooled_share"] < 0.05 and report["grid"]["octave_reason"] == stats["reason"]
+    assert stats["first"]["bpm_median"] == report["grid"]["bpm_median"] and "second" not in stats
     assert 0.0 <= report["phrases"]["drums"]["fill_crash_share"] <= 1.0
 
 
@@ -829,6 +836,9 @@ def test_config_parsing_and_errors(tmp_path):
         ({"parts": [{**CONFIG["parts"][0], "hopo": "maybe"}]}, "hopo"),
         ({"sections": "from:keys"}, "no part is named"),
         ({"grid_mode": "loose"}, "grid_mode"),
+        ({"grid_octave": 3}, "grid_octave is 'auto', 1 or 2, not 3"),
+        ({"grid_octave": True}, "grid_octave is 'auto', 1 or 2, not True"),
+        ({"grid_octave": "double"}, "grid_octave is 'auto', 1 or 2"),
         ({"metadata": {"name": "x"}}, "artist"),
         ({"beat_hints": {"tempo": 120}}, "unknown key"),
         ({"output": "strum"}, "would be overwritten"),
@@ -1116,3 +1126,301 @@ def test_notes_past_the_end_of_the_audio_are_clipped(built, monkeypatch):
     assert not unclipped.ok
     assert {(i.difficulty, i.kind) for i in unclipped.issues if i.error and i.instrument == "guitar"} == {
         (d, "noteAfterAudio") for d in ("expert", "hard", "medium", "easy")}
+
+
+# ------------------------------------------------------------------------------------------------ the grid's octave
+
+def snare_features(beats, on, fps=200.0, duration=None, mid_level=1.0):
+    """OnsetFeatures with a clear drum peak at every beat (so every beat has confident evidence) and the snare band's
+    power at `on`: "lines" (the beats), "mids" (their midpoints) or "both"; beats as a grid gives them (the band
+    powers sit at the onset times, ONSET_TO_BEAT_MS after the beats)."""
+    beats = np.asarray(beats)
+    n = int(((duration or beats[-1] + 1.0)) * fps)
+    env, snare = np.zeros(n), np.full(n, 0.01)
+    u = beats - ONSET_TO_BEAT_MS / 1000
+    env[np.round(u * fps).astype(int)] = 1.0
+    if on in ("lines", "both"):
+        snare[np.round(u * fps).astype(int)] = 1.0
+    if on in ("mids", "both"):
+        snare[np.round(0.5 * (u[:-1] + u[1:]) * fps).astype(int)] = mid_level
+    return OnsetFeatures(fps, env, np.zeros(n), np.zeros(n), snare)
+
+
+FAST_BEAT = 60 / 198
+SLOW_GRID = 1.0 + np.arange(150) * 2 * FAST_BEAT  # a 99 BPM grid under a 198 BPM song: 90 s
+
+
+def sixteenths(step=0.25, n=600, start=1.0):
+    """Onsets every `step` of the 198 BPM beat (0.25: its 16ths, 76 ms apart; 0.5: its 8ths)."""
+    return start + np.arange(n) * step * FAST_BEAT
+
+
+def test_short_intervals_counts_against_the_local_beat():
+    beats = np.array([0.0, 1.0, 2.0, 2.5, 3.0])  # a 1/16 is 0.25 s, then 0.125 s in the last two beats
+    onsets = [0.0, 0.1, 0.5, 2.0, 2.05, 2.1, 2.2, 3.5]  # 0.1 < 0.1875; 0.4 no; 1.5 no; 0.05, 0.05 < 0.09375; 0.1 no
+    assert short_intervals(onsets, beats) == (3, 7)
+    assert short_intervals([0.5, 0.5, 0.6], beats) == (1, 1)  # distinct onsets only
+    assert short_intervals([1.0], beats) == (0, 0) and OCTAVE_SHORT == 0.75
+    # an interval is judged by the beat its earlier onset falls in: 0.15 s is short in the 1 s beat (0.1875), not
+    # in the 0.5 s beat its later onset falls in (0.094)
+    assert short_intervals([1.9, 2.05], beats) == (1, 1)
+
+
+def test_grid_octave_doubles_a_grid_too_slow_for_the_notes():
+    """16ths of a 198 BPM song on a 99 BPM grid: every interval is a 1/32 of the grid, so it doubles; the stats give
+    every part's share, the pooled share, the backbeat and the thresholds. 8ths of the song (16ths of the grid)
+    keep it."""
+    snare = snare_features(SLOW_GRID, "mids")
+    octave, stats = grid_octave({"guitar": sixteenths(), "bass": sixteenths(0.5, 300)}, SLOW_GRID, snare)
+    assert octave == 2 and stats["octave"] == 2
+    assert stats["parts"]["guitar"] == {"onsets": 600, "intervals": 599, "short": 599, "share": 1.0}
+    assert stats["parts"]["bass"]["share"] == 0.0 and stats["onsets"] == 900
+    assert stats["pooled_share"] == pytest.approx(600 / 900, abs=1e-3)  # weighted by the onset counts
+    assert stats["backbeat_ratio"] > 10 and stats["backbeat_beats"] == len(SLOW_GRID) - 1
+    assert stats["bpm"] == pytest.approx(99.0, abs=0.01)
+    assert stats["thresholds"] == {"short": OCTAVE_SHORT, "share": OCTAVE_SHARE, "backbeat_min": BACKBEAT_MIN,
+                                   "max_bpm": OCTAVE_MAX_BPM, "min_onsets": OCTAVE_MIN_ONSETS}
+    assert stats["reason"].startswith("66.7% of intervals under 0.75 of a 16th")
+    octave, stats = grid_octave({"guitar": sixteenths(0.5)}, SLOW_GRID, snare)
+    assert octave == 1 and stats["pooled_share"] == 0.0 and "under 0.75 of a 16th (under" in stats["reason"]
+
+
+def test_grid_octave_needs_enough_onsets_and_room_under_300_bpm():
+    snare = snare_features(SLOW_GRID, "mids")
+    few = sixteenths(n=OCTAVE_MIN_ONSETS - 1)
+    octave, stats = grid_octave({"guitar": few}, SLOW_GRID, snare)
+    assert octave == 1 and stats["reason"] == f"{OCTAVE_MIN_ONSETS - 1} onsets (under {OCTAVE_MIN_ONSETS})"
+    assert grid_octave({"guitar": few, "bass": few[:1] + 0.01}, SLOW_GRID, snare)[0] == 2  # the parts count together
+    fast_grid = 1.0 + np.arange(250) * 60 / 160  # 160 BPM: 320 doubled
+    octave, stats = grid_octave({"guitar": 1.0 + np.arange(900) * 60 / 160 / 8}, fast_grid, snare_features(
+        fast_grid, "mids"))
+    assert octave == 1 and stats["reason"] == "320.0 BPM doubled is over 300"
+    assert grid_octave({"guitar": 1.0 + np.arange(900) * 60 / 160 / 8}, fast_grid, None,
+                       OctaveRules(max_bpm=320.0))[0] == 2
+
+
+def test_the_backbeat_vetoes_or_lets_it_double():
+    """A snare on the grid's beat lines says the grid is the pulse or faster: it keeps 1 although the density says
+    2. On the midpoints it lets it double; without drum features the test is indeterminate (None) and the density
+    decides; a snare on both is about 1, which does not contradict."""
+    notes = {"guitar": sixteenths()}
+    octave, stats = grid_octave(notes, SLOW_GRID, snare_features(SLOW_GRID, "lines"))
+    assert octave == 1 and stats["backbeat_ratio"] < BACKBEAT_MIN
+    assert stats["reason"].startswith(f"the snare is on the beat lines (backbeat 0.01, under {BACKBEAT_MIN})")
+    assert grid_octave(notes, SLOW_GRID, snare_features(SLOW_GRID, "mids"))[0] == 2
+    octave, stats = grid_octave(notes, SLOW_GRID, None)
+    assert octave == 2 and stats["backbeat_ratio"] is None and stats["reason"].endswith(", no drums")
+    ratio, used = backbeat_ratio(snare_features(SLOW_GRID, "both"), SLOW_GRID)
+    assert ratio == pytest.approx(1.0) and used == len(SLOW_GRID) - 1
+    # the power-metal song's case: a first grid half a beat off, the snare on neither (ratio 0.68 there); the
+    # measured BACKBEAT_MIN (0.34, the right grids reaching 0.17) lets it double, the plan's 0.8 did not
+    half_on = snare_features(SLOW_GRID, "both", mid_level=0.5)
+    assert backbeat_ratio(half_on, SLOW_GRID)[0] == pytest.approx(0.5) and grid_octave(notes, SLOW_GRID, half_on)[0] == 2
+    assert grid_octave(notes, SLOW_GRID, snare_features(SLOW_GRID, "both", mid_level=0.2))[0] == 1
+    # only the beats with confident drum evidence count: the second half (no envelope peak) has the snare between
+    # the beats, which would make the ratio about 1
+    half = len(SLOW_GRID) // 2
+    mixed = snare_features(SLOW_GRID, "lines")
+    late = SLOW_GRID[half:] - ONSET_TO_BEAT_MS / 1000
+    mixed.env[np.round(late * mixed.fps).astype(int)] = 0.0
+    mixed.snare[np.round(late * mixed.fps).astype(int)] = 0.01
+    mixed.snare[np.round((late[:-1] + 0.5 * np.diff(late)) * mixed.fps).astype(int)] = 1.0
+    ratio, used = backbeat_ratio(mixed, SLOW_GRID)
+    assert ratio < 0.05 and used == half
+    # too few confident beats: indeterminate
+    assert backbeat_ratio(snare_features(SLOW_GRID[:10], "lines"), SLOW_GRID[:10]) == (None, 9)
+
+
+FAST_FIRST, FAST_SECONDS = 0.5, 40.0
+FAST_NOTES = int((FAST_SECONDS - 2.0) / (FAST_BEAT / 4))  # 16ths of the 198 BPM beat to 38.5 s: 500
+
+
+def fast_drums(seed=0) -> np.ndarray:
+    """198 BPM from FAST_FIRST: a kick and a crash on every other beat, a snare on the beats between (the backbeat
+    at the pulse). The first pass folds the tempo into [85, 185): 99 BPM, its lines on the kicks."""
+    rng = np.random.default_rng(seed)
+    y = np.zeros(int(FAST_SECONDS * SR))
+    t = np.arange(int(0.25 * SR)) / SR
+    kick = np.sin(2 * np.pi * 55 * t) * np.exp(-t / 0.08)
+    crash = np.diff(np.diff(rng.standard_normal(len(t) + 2))) * np.exp(-t / 0.05)
+    snare = 0.5 * (0.5 * np.sin(2 * np.pi * 190 * t) + 0.6 * rng.standard_normal(len(t))) * np.exp(-t / 0.06)
+    for k in range(int((FAST_SECONDS - 1.0) / FAST_BEAT)):
+        i = int(round((FAST_FIRST + k * FAST_BEAT) * SR))
+        y[i:i + len(t)] += (kick + crash) if k % 2 == 0 else snare
+    y += rng.standard_normal(len(y)) * 1e-3
+    y = (0.4 * y).astype(np.float32)
+    return np.stack([y, y])
+
+
+@pytest.fixture(scope="module")
+def fast_song(tmp_path_factory):
+    """A 198 BPM song: the drums above, and a guitar tool chart of straight 16ths (76 ms apart) on its own 198 BPM
+    map, four frets round."""
+    root = tmp_path_factory.mktemp("fast")
+    drums = fast_drums()
+    times = FAST_FIRST + np.arange(FAST_NOTES) * FAST_BEAT / 4
+    tone = np.zeros(drums.shape[1], dtype=np.float32)
+    for t in times:
+        i = int(t * SR)
+        tone[i:i + 2000] += (0.05 * np.sin(2 * np.pi * 330 * np.arange(2000) / SR)).astype(np.float32)
+    A.write_wav(drums + tone, root / "mix.wav")
+    A.write_wav(drums, root / "drums.wav")
+    tm = TempoMap(480, [Tempo(0, 198000)])
+    notes = [FretNote(round(tm.sec_to_tick(t)), ((0, 1, 2, 1)[q % 4],)) for q, t in enumerate(times)]
+    (root / "tool").mkdir()
+    (root / "tool" / "notes.chart").write_text(write_chart(Chart(SongInfo("tool", "tool"), tm, [], [
+        Track("Expert", "Single", notes)])), encoding="utf-8", newline="")
+    # a bass at the song's 8ths, 45 ms late: past half the doubled grid's 1/16 (38 ms), and no beat line aligned,
+    # so no run reads as triplets
+    bass = [FretNote(round(tm.sec_to_tick(FAST_FIRST + q * FAST_BEAT / 2 + 0.045)), (q % 3,))
+            for q in range(FAST_NOTES // 2)]
+    (root / "tool" / "bass.chart").write_text(write_chart(Chart(SongInfo("tool", "tool"), tm, [], [
+        Track("Expert", "DoubleBass", bass)])), encoding="utf-8", newline="")
+    segments = [[0.0, 0.5, "start"], [0.5, 20.0, "verse"], [20.0, FAST_SECONDS, "chorus"]]
+    (root / "allin1.json").write_text(json.dumps({"segments": segments}), encoding="utf-8")
+    config = {"audio": "mix.wav", "stems": {"drums": "drums.wav"}, "lead_in": 2.5, "sections": "allin1.json",
+              "parts": [{"instrument": "guitar", "source": "tool/notes.chart"}], "levels": ["expert"],
+              "metadata": {**CONFIG["metadata"], "name": "Fast Song"}, "output": "out/fast"}
+    return root, config
+
+
+def test_a_grid_too_slow_for_its_notes_is_doubled(fast_song, monkeypatch):
+    """The first pass gives 99 BPM; the notes are 1/32s of it, so the second pass builds the grid at twice its click
+    tempo with the fold range doubled and no first-beat hint, on the same features, computed once. The doubled
+    grid's evidence holds up, so it stays: every 16th keeps its own tick, the tempo map is at 198 BPM, and the
+    build says so once."""
+    root, config = fast_song
+    real_features, real_grid = assemble_module.onset_features, assemble_module.beat_grid
+    seen: dict = {"features": [], "grids": []}
+
+    def features(*args, **kwargs):
+        seen["features"].append(real_features(*args, **kwargs))
+        return seen["features"][-1]
+
+    def grid(*args, **kwargs):
+        seen["grids"].append(kwargs)
+        return real_grid(*args, **kwargs)
+
+    monkeypatch.setattr(assemble_module, "onset_features", features)
+    monkeypatch.setattr(assemble_module, "beat_grid", grid)
+    result = assemble(parse_config(config, root))
+    assert result.ok, [i for i in result.issues if i.error]
+    g = result.report["grid"]
+    assert g["octave"] == 2 and g["bpm_median"] == pytest.approx(198.0, abs=0.2)
+    stats = g["octave_stats"]
+    assert stats["first"]["bpm_median"] == pytest.approx(99.0, abs=0.1)
+    assert stats["second"]["bpm_median"] == g["bpm_median"] and stats["evidence_ratio"] >= 0.9
+    assert stats["parts"]["guitar"]["share"] == 1.0 and stats["backbeat_ratio"] > 2
+    assert stats["thresholds"]["evidence_min"] == assemble_module.OCTAVE_EVIDENCE_MIN
+    assert g["octave_reason"].startswith("100.0% of intervals under 0.75 of a 16th")
+    doubled = [w for w in result.report["warnings"] if w.startswith("tempo doubled")]
+    assert doubled == [f"tempo doubled to {g['bpm_median']:.1f} BPM: the notes are too dense for "
+                       f"{stats['first']['bpm_median']:.1f} BPM (100% of intervals under a 16th)"]
+    assert np.median([t.bpm for t in result.chart.tempo.tempos]) == pytest.approx(198.0, abs=1.0)
+    # the features once, to both passes; the second at twice the first's click tempo, the range doubled
+    assert len(seen["features"]) == 1 and len(seen["grids"]) == 2
+    assert all(k["features"] is seen["features"][0] for k in seen["grids"])
+    first, second = seen["grids"]
+    assert second["bpm"] == pytest.approx(2 * stats["first"]["click_bpm"]) and second["bpm_range"] == (170.0, 370.0)
+    assert second.get("first_beat") is None and second["mode"] == first["mode"] is None
+    assert second["half_beat"] is True and not first.get("half_beat")  # the half-beat test, on the second pass only
+    assert second["keep_line"] is True and not first.get("keep_line")  # and its hinted line stays
+    assert stats["second"]["half_beat"]["shifted"] is False  # the kicks are on its lines already
+    q = result.report["parts"]["guitar"]["quantize"]["expert"]
+    assert q["notes_out"] == FAST_NOTES and q["merged"] == q["dropped_distinct"] == q["dropped"] == 0
+
+
+def test_grid_octave_forces_the_first_grid_and_the_guard_keeps_it(fast_song, monkeypatch):
+    """grid_octave 1 keeps the first grid (the notes then crowd its 1/16 slots: what the second pass is for). With
+    a guard the doubled grid's evidence cannot meet, auto keeps the first grid too and warns to check the tempo."""
+    root, config = fast_song
+    one = assemble(parse_config({**config, "grid_octave": 1, "output": "out/one"}, root)).report
+    assert one["grid"]["octave"] == 1 and one["grid"]["octave_reason"] == "forced: grid_octave 1"
+    assert one["grid"]["bpm_median"] == pytest.approx(99.0, abs=0.1) and "second" not in one["grid"]["octave_stats"]
+    assert not any(w.startswith("tempo") for w in one["warnings"])
+    assert one["parts"]["guitar"]["quantize"]["expert"]["notes_out"] < FAST_NOTES * 0.6
+    monkeypatch.setattr(assemble_module, "OCTAVE_RULES", replace(assemble_module.OCTAVE_RULES, evidence_min=2.0))
+    kept = assemble(parse_config({**config, "output": "out/guard"}, root)).report
+    g = kept["grid"]
+    assert g["octave"] == 1 and g["bpm_median"] == pytest.approx(99.0, abs=0.1)
+    assert g["octave_stats"]["second"]["bpm_median"] == pytest.approx(198.0, abs=0.2)
+    assert g["octave_stats"]["thresholds"]["evidence_min"] == 2.0 and "under 2.0): the first grid stays" in \
+        g["octave_reason"]
+    first = g["octave_stats"]["first"]["bpm_median"]
+    assert [w for w in kept["warnings"] if w.startswith("tempo")] == [
+        f"tempo: the notes are dense for {first:.1f} BPM (100% of intervals under a 16th) but the drums give no "
+        f"evidence at {2 * first:.1f} BPM: check the tempo"]
+
+
+def test_grid_octave_2_past_300_bpm_is_bad_input(built, monkeypatch):
+    """Forcing the doubled grid where it would pass the ceiling is an InputError (exit 2), before any folder is
+    written; here the ceiling is lowered under the 120 BPM song's 240."""
+    root, _, _ = built
+    monkeypatch.setattr(assemble_module, "OCTAVE_RULES", replace(assemble_module.OCTAVE_RULES, max_bpm=200.0))
+    with pytest.raises(InputError, match=r"grid_octave 2: the doubled tempo, 240.0 BPM, passes 200 BPM"):
+        assemble(parse_config({**CONFIG, "grid_octave": 2, "output": "out/past"}, root))
+    assert not (root / "out" / "past").exists()
+
+
+def test_on_a_doubled_grid_the_bass_snaps_to_8ths(fast_song):
+    """On a doubled grid the bass gets the grid's 8ths and their triplets (the first grid's 16ths), so its late
+    8ths (its offset fixed at 0 here) stay on 8th lines instead of the 1/16 after them; the guitar keeps 1/16s.
+    Undoubled, nothing changes."""
+    root, config = fast_song
+    parts = config["parts"] + [{"instrument": "bass", "source": "tool/bass.chart", "offset": 0.0}]
+    result = assemble(parse_config({**config, "parts": parts, "output": "out/bass"}, root))
+    assert result.ok and result.report["grid"]["octave"] == 2
+    assert result.report["parts"]["bass"]["slots"] == {"straight": 2, "triplet": 3}
+    assert result.report["parts"]["guitar"]["slots"] == {"straight": 4, "triplet": 3}
+    res = result.chart.tempo.resolution
+    bass = next(t for t in result.chart.tracks if t.name == "ExpertDoubleBass")
+    assert len(bass.notes) == FAST_NOTES // 2 and all(n.tick % (res // 2) == 0 for n in bass.notes)
+    one = assemble(parse_config({**config, "parts": parts, "grid_octave": 1, "output": "out/bass1"}, root))
+    assert one.report["parts"]["bass"]["slots"] == {"straight": 4, "triplet": 3}
+
+
+def _fake_grid(bpm, share, half_beat=None):
+    beats = 1.0 + np.arange(300) * 60 / bpm
+    stats = {"click": {"bpm": bpm}, "evidence": {"confident_share": share, "n_confident": int(share * 300),
+                                                  "n_beats": 300}}
+    if half_beat is not None:
+        stats["half_beat"] = half_beat
+    return BeatGrid(beats, np.arange(0, 300, 4), "free", stats)
+
+
+def test_the_octave_pass_forced_2_keeps_the_doubled_grid_and_flags_an_unsure_phase(tmp_path):
+    """A forced grid_octave 2 keeps the doubled grid however little evidence it has (auto falls back to the first);
+    a doubled grid whose half-beat test was unsure warns."""
+    first = _fake_grid(99.0, 0.8)
+    onsets = {"guitar": sixteenths()}
+    weak = _fake_grid(198.0, 0.4, {"ratio": 1.02, "shifted": False, "unsure": True})  # ratio 0.5, under 0.7
+    cfg = parse_config(CONFIG, tmp_path)
+    grid, octave, stats, reason, warn = assemble_module._octave_pass(cfg, first, onsets, None, lambda bpm, r: weak)
+    assert octave == 1 and grid is first and stats["evidence_ratio"] == 0.5 and warn[0].startswith("tempo: ")
+    cfg.grid_octave = 2
+    grid, octave, stats, reason, warn = assemble_module._octave_pass(cfg, first, onsets, None, lambda bpm, r: weak)
+    assert octave == 2 and grid is weak and reason == "forced: grid_octave 2"
+    assert warn == ["tempo doubled to 198.0 BPM: grid_octave 2", "beat phase unsure: the kick is about as strong "
+                    "between the beats as on them (ratio 1.02): check that the beat lines are on the kick"]
+    cfg.grid_octave = "auto"
+    sure = _fake_grid(198.0, 0.8, {"ratio": 2.2, "shifted": True, "unsure": False})
+    grid, octave, _, _, warn = assemble_module._octave_pass(cfg, first, onsets, None, lambda bpm, r: sure)
+    assert octave == 2 and len(warn) == 1 and warn[0].startswith("tempo doubled")
+
+
+def test_the_backbeat_test_gets_the_drum_stem_only(fast_song, monkeypatch):
+    """grid_octave is given the grid's features when the grid comes from the drum stem, and none from the mix (its
+    snare band holds the other instruments too)."""
+    root, config = fast_song
+    seen = []
+
+    def octave(onsets, beats, features, rules):
+        seen.append(features)
+        raise _Stop
+
+    monkeypatch.setattr(assemble_module, "grid_octave", octave)
+    for change in ({}, {"grid_source": "mix"}):
+        with pytest.raises(_Stop):
+            assemble(parse_config({**config, **change}, root))
+    assert isinstance(seen[0], OnsetFeatures) and seen[1] is None
+

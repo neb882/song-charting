@@ -4,7 +4,8 @@ Every chart is timed by its tempo map, and the tempo map is built from these bea
 lands. The grid comes from the drum stem (or the mix when the song has no drums) in four steps:
 
   1. **Start grid.** A straight line of beats: the (bpm, first beat) hints if given, otherwise the tempo from the onset
-     envelope's autocorrelation folded into [85, 185) BPM and the phase from a comb fit. A beat tracker (dynamic
+     envelope's autocorrelation folded into [85, 185) BPM (`bpm_range`; assemble's second pass at twice the tempo
+     gives [170, 370)) and the phase from a comb fit. A beat tracker (dynamic
      programming on the same envelope, Ellis-style) runs as well, and when its beats find clearly more drum evidence
      than the line, no straight line fits the song (a band without a click) and the tracker's beats are the start.
      The tracker prefers the line's period except in 20-s windows whose own autocorrelation tempo clearly differs
@@ -51,7 +52,7 @@ REF_HOP = 128              # ~5.8 ms hop
 N_MELS = 128
 KICK_BAND = (40.0, 160.0)
 SNARE_BAND = (150.0, 400.0)
-BPM_RANGE = (85.0, 185.0)  # one metrical level: CH's auto-HOPO threshold is in ticks, so a 71 BPM map breaks HOPOs
+BPM_RANGE = (85.0, 185.0)  # the first pass's fold, one octave; assemble doubles a grid too slow for its notes (2.3)
 ONSET_TO_BEAT_MS = -22.0   # human beat lines sit this far from the envelope peaks (see the module docstring)
 SEARCH_S = 0.060           # local beats: a peak within this distance of the grid beat
 MIN_CONFIDENCE = 0.5       # confident local evidence
@@ -64,6 +65,8 @@ LOCAL_TEMPO_HOP_S = 5.0    # ... every 5 s, ...
 LOCAL_TEMPO_CHANGE = 0.10  # ... kept where it differs from the global tempo by more than 10 % ...
 LOCAL_TEMPO_MARGIN = 0.5   # ... and scores this much higher than the global period there
 DOWNBEAT_MIN_MARGIN = 0.15  # below this bar-phase margin the downbeats are flagged for review
+HALF_BEAT_SHIFT = 1.25     # the beats move half a beat when the midpoints carry more than this x the lines' kick;
+HALF_BEAT_UNSURE = 0.8     # from this ratio up to the shift the beat phase is unsure (no shift, flagged)
 SECONDARY_DELTA = 0.12     # a second stem's onsets: peaks this far above the normalised envelope's local mean
 SECONDARY_HALF_WIDTH = 4   # their 8th and 16th phase is measured over +-4 beats around each beat, ...
 SECONDARY_MIN_ONSETS = 8   # ... from at least 8 onsets, ...
@@ -265,15 +268,16 @@ def estimate_tempo(env: np.ndarray, fps: float, bpm_range: tuple[float, float] =
 
 
 def window_tempi(env: np.ndarray, fps: float, reference, window_s: float = LOCAL_TEMPO_WINDOW_S,
-                 hop_s: float = LOCAL_TEMPO_HOP_S) -> list[tuple[int, int, float, float]]:
+                 hop_s: float = LOCAL_TEMPO_HOP_S, bpm_range: tuple[float, float] = BPM_RANGE
+                 ) -> list[tuple[int, int, float, float]]:
     """(first frame, end frame, bpm, margin) of the autocorrelation tempo (estimate_tempo) of each window_s window,
     every hop_s, against a reference period.
 
-    reference(first, end) gives the reference beat period (s) of a window. The bpm is the octave inside BPM_RANGE
+    reference(first, end) gives the reference beat period (s) of a window. The bpm is the octave inside bpm_range
     nearest the reference tempo, so a 150 BPM section stays at 150 against 104.6 and a half-time window never leaves
-    the reference level; the margin is the window's best tempo score minus the reference period's.
+    the reference level; the margin is the window's best tempo score in bpm_range minus the reference period's.
     """
-    lo, hi = BPM_RANGE
+    lo, hi = bpm_range
     n = len(env)
     w, h = int(round(window_s * fps)), int(round(hop_s * fps))
     out = []
@@ -281,7 +285,7 @@ def window_tempi(env: np.ndarray, fps: float, reference, window_s: float = LOCAL
         e = min(n, s + w)
         ref = float(reference(s, e))
         ac = _autocorrelation(env[s:e], fps, int(4.5 * 60 * fps / lo))
-        bpm = estimate_tempo(env[s:e], fps)
+        bpm = estimate_tempo(env[s:e], fps, bpm_range)
         octaves = [bpm * 2.0 ** k for k in range(-2, 3) if lo <= bpm * 2.0 ** k < hi]
         bpm = min(octaves, key=lambda b: abs(np.log(b * ref / 60.0)))
         margin = float(_tempo_score(ac, 60.0 * fps / np.arange(lo, hi, 0.05)).max() - _tempo_score(ac, ref * fps))
@@ -289,7 +293,8 @@ def window_tempi(env: np.ndarray, fps: float, reference, window_s: float = LOCAL
     return out
 
 
-def local_periods(env: np.ndarray, fps: float, period: float) -> tuple[float | np.ndarray, list[tuple]]:
+def local_periods(env: np.ndarray, fps: float, period: float, bpm_range: tuple[float, float] = BPM_RANGE
+                  ) -> tuple[float | np.ndarray, list[tuple]]:
     """The tracker's beat period per frame (s): the global period, except where the song clearly changes tempo.
 
     A window of window_tempi keeps its own tempo when it differs from the global one by more than LOCAL_TEMPO_CHANGE
@@ -297,9 +302,9 @@ def local_periods(env: np.ndarray, fps: float, period: float) -> tuple[float | n
     song: 0.9-1.3 against -0.3). A neighbour of a kept window joins it on any positive margin when its tempo is
     within 5 % of the kept one's, so a slowing into the new tempo is followed too. Between window centres the period
     runs on a log scale. Returns the global period itself when no window changes it, and the kept windows as
-    (start s, end s, bpm).
+    (start s, end s, bpm). The windows' tempi are folded into bpm_range (window_tempi).
     """
-    wins = window_tempi(env, fps, lambda s, e: period)
+    wins = window_tempi(env, fps, lambda s, e: period, bpm_range=bpm_range)
     bpms = np.array([b for _, _, b, _ in wins])
     margins = np.array([m for _, _, _, m in wins])
     differs = np.abs(np.log(bpms * period / 60.0)) > np.log(1 + LOCAL_TEMPO_CHANGE)
@@ -319,19 +324,21 @@ def local_periods(env: np.ndarray, fps: float, period: float) -> tuple[float | n
     return np.exp(np.interp(np.arange(len(env)), centres, log_p)), changed
 
 
-def missed_tempo_changes(features: OnsetFeatures, beats: np.ndarray) -> list[tuple[float, float, float, float]]:
+def missed_tempo_changes(features: OnsetFeatures, beats: np.ndarray, bpm_range: tuple[float, float] = BPM_RANGE
+                         ) -> list[tuple[float, float, float, float]]:
     """The windows of window_tempi whose autocorrelation tempo the grid's beats do not follow, as (start s, end s,
     window bpm, grid bpm): it scores LOCAL_TEMPO_MARGIN above the grid's median period there and lies more than
     LOCAL_TEMPO_CHANGE outside the grid's tempi in the window (10th to 90th percentile), so a ritardando the grid
     follows is not flagged. A non-empty list is a tempo change the grid missed (Take Me Out's intro before the
-    local periods)."""
+    local periods). The windows' tempi are folded into bpm_range, the grid's own range."""
     fps = features.fps
 
     def ibis(s: int, e: int) -> np.ndarray:
         b = beats[(beats >= s / fps) & (beats < e / fps)]
         return np.diff(b) if len(b) > 2 else np.diff(beats)
     out = []
-    for s, e, bpm, margin in window_tempi(features.env, fps, lambda s, e: float(np.median(ibis(s, e)))):
+    for s, e, bpm, margin in window_tempi(features.env, fps, lambda s, e: float(np.median(ibis(s, e))),
+                                          bpm_range=bpm_range):
         slow, fast = 60.0 / np.percentile(ibis(s, e), [90, 10]) * np.array([1 / (1 + LOCAL_TEMPO_CHANGE),
                                                                              1 + LOCAL_TEMPO_CHANGE])
         if margin >= LOCAL_TEMPO_MARGIN and not slow <= bpm <= fast:
@@ -367,8 +374,10 @@ def fit_comb(env: np.ndarray, fps: float, duration: float, period: float, phase_
 
 
 def start_line(features: OnsetFeatures, duration: float, bpm: float | None = None,
-               first_beat: float | None = None) -> tuple[float, float, str]:
-    """(period, first beat, source) of the start grid: refined hints, or autocorrelation tempo and comb phase.
+               first_beat: float | None = None, bpm_range: tuple[float, float] = BPM_RANGE
+               ) -> tuple[float, float, str]:
+    """(period, first beat, source) of the start grid: refined hints, or autocorrelation tempo (folded into
+    bpm_range) and comb phase.
 
     A bpm hint is trusted to 0.5 % and a first-beat hint to +-60 ms; both are refined on the envelope, since a
     straight line has to stay within the local search window for the whole song. The first beat is the earliest
@@ -378,7 +387,7 @@ def start_line(features: OnsetFeatures, duration: float, bpm: float | None = Non
     if bpm:
         period, rel = 60.0 / bpm, 0.005
     else:
-        period, rel = 60.0 / estimate_tempo(features.env, features.fps), 0.004
+        period, rel = 60.0 / estimate_tempo(features.env, features.fps, bpm_range), 0.004
     if first_beat is not None:
         phases = (first_beat - SEARCH_S, first_beat + SEARCH_S)
     else:
@@ -693,12 +702,55 @@ def bar_phase(features: OnsetFeatures, beats: np.ndarray, use: np.ndarray, beats
     return int(order[0]), float(scores[order[0]] - scores[order[1]]), [round(float(s), 4) for s in scores]
 
 
+def half_beat_phase(features: OnsetFeatures, beats: np.ndarray, use: np.ndarray,
+                    half_window: float = 0.035) -> tuple[bool, dict]:
+    """(shift, stats): whether the beat lines belong half a beat later, on the midpoints between these beats.
+
+    The kick band's (KICK_BAND) peak within +-half_window of each beat and of each beat's midpoint, as medians over
+    the beats in `use`: the lines that carry more kick are the beat, as bar_phase puts beat 1 on the kick. A grid at
+    twice the tempo can lock onto the 8ths the drums hit hardest, a snare on every "and" over a kick on every beat
+    (a fast power-metal beat), which puts its lines on the off-beats; this finds that. The midpoints must carry more
+    than HALF_BEAT_SHIFT times the lines' kick, as bar_phase wants a margin: from HALF_BEAT_UNSURE to there (a double
+    kick on every 8th) nothing moves and stats["unsure"] says so. stats: the two medians, their ratio (midpoints /
+    lines), the beats used, shifted, unsure."""
+    fps, kick = features.fps, features.kick
+    hw = int(round(half_window * fps))
+
+    def peak(t: np.ndarray) -> np.ndarray:
+        c = np.round(t * fps).astype(int)
+        return np.array([kick[max(0, i - hw):max(0, min(len(kick), i + hw + 1))].max(initial=0.0) for i in c])
+
+    b = np.asarray(beats, dtype=np.float64)
+    if len(b) < 2 or not use[:-1].any():
+        return False, {"lines": None, "midpoints": None, "ratio": None, "beats": 0, "shifted": False, "unsure": False}
+    u = use[:-1]
+    lines, mids = float(np.median(peak(b[:-1][u]))), float(np.median(peak(0.5 * (b[:-1] + b[1:])[u])))
+    ratio = mids / lines if lines > 0 else (np.inf if mids > 0 else 1.0)
+    shift = bool(ratio > HALF_BEAT_SHIFT)
+    return shift, {"lines": round(lines, 6), "midpoints": round(mids, 6),
+                   "ratio": round(float(ratio), 4) if np.isfinite(ratio) else None, "beats": int(u.sum()),
+                   "shifted": shift, "unsure": bool(HALF_BEAT_UNSURE <= ratio <= HALF_BEAT_SHIFT)}
+
+
+def shift_half_beat(beats: np.ndarray, duration: float) -> np.ndarray:
+    """The beats moved half a beat later: each beat's midpoint with the next, and one more half a beat before the
+    first where it stays at or after 0 s (the last beat's next midpoint is past it, and falls when it passes the
+    duration)."""
+    b = np.asarray(beats, dtype=np.float64)
+    mids = 0.5 * (b[:-1] + b[1:])
+    after = b[-1] + 0.5 * (b[-1] - b[-2])
+    before = b[0] - 0.5 * (b[1] - b[0])
+    return np.concatenate([[before] if before >= 0 else [], mids, [after] if after <= duration else []])
+
+
 # ---------------------------------------------------------------------------------------------------- the grid
 
 def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None = None, bpm: float | None = None,
               first_beat: float | None = None, mode: str | None = None, onset_to_beat_ms: float = ONSET_TO_BEAT_MS,
               start: np.ndarray | None = None, features: OnsetFeatures | None = None,
-              secondary: np.ndarray | None = None, secondary_features: OnsetFeatures | None = None) -> BeatGrid:
+              secondary: np.ndarray | None = None, secondary_features: OnsetFeatures | None = None,
+              bpm_range: tuple[float, float] = BPM_RANGE, half_beat: bool = False, keep_line: bool = False
+              ) -> BeatGrid:
     """The beat grid of a song from its drum stem (or its mix when it has no drums).
 
     audio:      shape (channels, samples) or (samples,), at sample_rate. May be None when `features` is given.
@@ -711,6 +763,16 @@ def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None
     secondary:  a second stem (the guitar or "other" stem, else the bass), or its `secondary_features`. In free
                 mode the beats the drums leave without evidence follow its onsets where they hold a clear 8th/16th
                 phase (onset_phase), in the drums' convention; elsewhere they stay on the line.
+    bpm_range:  the octave every tempo estimate folds into, [lo, hi) BPM: the start line's autocorrelation tempo,
+                the tracker's local windows and the tempo check. The default is one metrical level, BPM_RANGE;
+                assemble's second pass (a grid at twice the tempo, DESIGN.md 2.3) gives (2 lo, 2 hi), so a 198 BPM
+                hint is not folded back to 99 by the windows.
+    half_beat:  test the beat phase (half_beat_phase): when the midpoints between the beats carry more kick than
+                the beats, the beats move half a beat later, before the downbeats are found. assemble's second pass
+                turns it on (stats["half_beat"]); evidence, click and drift stats stay those of the grid found.
+    keep_line:  the straight start line is never replaced by the tracker's beats (it still runs, for its stats).
+                assemble's second pass sets it: its hint is the first grid's tempo doubled, and on a fast drum stem
+                the tracker flips between the beats and their "and"s over parts of the song (DESIGN.md 2.3 step 7).
 
     The start grid is the straight line unless a tracker's beats find clearly more evidence (TRACKER_MARGIN more
     of the beats confident): then no straight line fits the song, the fill for beats without evidence follows the
@@ -718,6 +780,8 @@ def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None
     """
     if mode not in (None, "free", "click"):
         raise ValueError(f"unknown mode {mode!r}")
+    if not 0 < bpm_range[0] < bpm_range[1]:
+        raise ValueError(f"bpm_range must be (lo, hi) with 0 < lo < hi, not {bpm_range!r}")
     f = features if features is not None else onset_features(audio, sample_rate)
     dur = float(duration) if duration is not None else f.duration
     stats: dict = {}
@@ -729,17 +793,18 @@ def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None
             raise ValueError("start beats must be strictly increasing, with at least 8 inside the audio")
         stats["start"] = {"source": "external", "n_beats": int(len(tracker))}
     else:
-        period, first, source = start_line(f, dur, bpm, first_beat)
+        period, first, source = start_line(f, dur, bpm, first_beat, bpm_range)
         line = first + np.arange(int(np.floor((dur - first) / period)) + 1) * period
         line_ev = local_beats(f, line)
-        periods, changes = local_periods(f.env, f.fps, period)
+        periods, changes = local_periods(f.env, f.fps, period, bpm_range)
         tracker = track_beats(f.env, f.fps, periods)
         tracker = tracker[(tracker <= dur) & (tracker >= (first_beat - SEARCH_S if first_beat is not None else 0))]
         stats["start"] = {"source": source, "bpm": round(60.0 / period, 4), "first_beat": round(first, 4),
                           "line_confident_share": round(float(line_ev.confident.mean()), 4),
                           "tracker_tempo_changes": changes}
     trk_ev = local_beats(f, tracker)
-    use_tracker = line_ev is None or trk_ev.confident.mean() >= line_ev.confident.mean() + TRACKER_MARGIN
+    use_tracker = line_ev is None or (not keep_line and
+                                      trk_ev.confident.mean() >= line_ev.confident.mean() + TRACKER_MARGIN)
     stats["start"]["tracker_confident_share"] = round(float(trk_ev.confident.mean()), 4)
     stats["start"]["grid"] = "tracker" if use_tracker else "line"
 
@@ -802,10 +867,16 @@ def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None
         d2 = np.diff(free_dev, 2) / np.diff(base)[:-1]
         stats["free"] = {"tempo_step_max": round(float(np.max(np.abs(d2))), 5) if len(d2) else 0.0,
                          "tempo_step_repair_iterations": repairs}
-    stats["tempo_check"] = missed_tempo_changes(f, onset_beats)
+    stats["tempo_check"] = missed_tempo_changes(f, onset_beats, bpm_range)
     follow = (ev.times - onset_beats)[confident]
     stats["evidence"]["local_minus_grid_ms"] = {"median_abs": round(float(np.median(np.abs(follow))) * 1000, 2),
                                                 "p95_abs": round(float(np.percentile(np.abs(follow), 95)) * 1000, 2)}
+    if half_beat:
+        shift, stats["half_beat"] = half_beat_phase(f, onset_beats, confident)
+        if shift:
+            onset_beats = shift_half_beat(onset_beats, dur - onset_to_beat_ms / 1000.0)
+            confident = local_beats(f, onset_beats).confident
+        stats["half_beat"]["confident_after"] = round(float(confident.mean()), 4)  # the mask the downbeats use
 
     # downbeats on the onset-time beats (also per 16 bars, to show where the bar phase disagrees), then the
     # convention shift, then trim to the audio

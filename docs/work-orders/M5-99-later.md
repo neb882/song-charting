@@ -34,7 +34,18 @@ Its ranked gaps 1-3, 5 and 6 are M5-01, M5-02 and M5-03; part of 9 and 10 are M5
   themselves: 0.21, 0.51 and 0.29 on the power-metal song's three charts, 0.55 on the shred song) and the per-note
   state agreement M5-09 adds to `score.py`. DESIGN C10 chose "forced" because autochart's own map can be at the wrong
   octave too; the owner decides at the gate if the numbers are clear (M5-00 section 8), else here. A day to build
-  with the bass engine's state rule in time rather than ticks.
+  with the bass engine's state rule in time rather than ticks. M5-01's numbers (1 CPU take, after the octave fix;
+  HOPO share ours / the humans', per-note state agreement; the F1s are the same under both):
+
+  | song, part | HOPO share: before, forced / source (humans) | state agreement: before / forced / source |
+  |---|---|---|
+  | power-metal guitar, 3 charts | 0.29, 0.24 / 0.25 (0.51, 0.21, 0.29) | 0.49-0.51 / 0.65-0.68 / 0.66-0.70 |
+  | power-metal bass | 0.21, 0.03 / 0.17 (0.12) | 0.78 / 0.95 / 0.82 |
+  | shred guitar, 2 charts | 0.34, 0.34 / 0.42 (0.55, 0.39) | 0.56, 0.66 / 0.56, 0.67 / 0.60, 0.68 |
+  | shred bass | 0.11, 0.11 / 0.12 (0.12) | 0.92 / 0.91 / 0.91 |
+
+  "source" helps the guitar a little and hurts the rule-engine bass (its states are its own 120 BPM map's), so a
+  mode per part, not one switch, is the likely answer.
 - **1/32 and 1/24 burst slots** (gap 2's second half): M5-01 drops a distinct note rather than make a chord of two
   onsets on one tick more than 20 ms apart, keeping the one nearest the tick, and counts the rest
   (`dropped_distinct`). The human charts themselves lose 5.4-6.4 % of the power-metal song's notes that way when
@@ -42,7 +53,12 @@ Its ranked gaps 1-3, 5 and 6 are M5-01, M5-02 and M5-03; part of 9 and 10 are M5
   holds), so that figure is the plan working as intended, and M5-01 reports ours beside it. The finer levels would
   recover those notes: a day, with the slot priors re-measured (DESIGN 2.6). Also recorded by M5-01: `_separate`'s
   moves of 47-168 ms on the references (an onset 0.75 slot or more from its neighbour moves to the next free slot),
-  for a look at whether they should drop instead.
+  for a look at whether they should drop instead. M5-01's stress run, `dropped_distinct` (and `separated`) per
+  part: power-metal guitar 17 of 2,193 (0.8 %; 0), bass 316 of 1,821 (17.4 %, the engine's double onsets on the
+  doubled grid's 8ths; 19), drums untouched; shred guitar 52 (2.4 %; 0), bass 81 (3.9 %; 29); rock bass 142 of 968
+  (14.7 %; 11). The human charts as a perfect engine: power-metal guitar 5.4-6.4 %, shred guitar 22-24 % (on their
+  own map, half our tempo), rock guitar 0.9-1.8 %. Our guitar is under the humans' figure: the engine does not
+  catch the bursts yet, so finer slots wait for an engine that does.
 - **Fret-quality metrics and repeat consistency** (gap 7, section 2b): exact fret agreement (16-27 %, humans 46 %
   with each other) is the wrong target. M5-09's feel report scores contour (`lane_direction_agreement`), jump sizes
   and big fast jumps against the humans, and repeat consistency (repeated-label sections' fret-sequence similarity,
@@ -71,8 +87,36 @@ M5-01 doubles a grid that is too slow and never halves one: this version builds 
 first pass still folds into 85-185 BPM, so a pulse under 85 stays at double with its effects on the HOPO states,
 the star-power count (about twice the phrases) and the solo measures (M5-03 caps solos in seconds for that reason).
 A halving rule needs its own statistic (the share of onsets on beat lines, the backbeat ratio M5-01 records for
-every song, the HOPO shares: ours 0.40 against the humans' 0.55 there) and a check that the natural HOPO threshold
-(in ticks) still reads right; measure on the stress set first. Half a day to measure, a day to build.
+every song, the HOPO shares) and a check that the natural HOPO threshold (in ticks) still reads right; measure on
+the stress set first. Half a day to measure, a day to build. M5-01's statistics for the shred song on its first
+grid (153.97 BPM, twice the humans'): density shares guitar 0.059, bass 0.121, drums 0.000 (pooled 0.062, the
+right grids' range); backbeat ratio 0.003, the snare on the lines as at the pulse. So neither of M5-01's tests sees
+a grid that is too fast, and halving needs another (the snare on every other line, the onsets on odd 8ths). HOPO
+share ours 0.34 against the humans' 0.55 and 0.39; star power 3.88 phrases a minute against 2.33 and 3.23.
+
+## Star power on a doubled grid
+
+The phrase rule counts beats (`starpower.py`, about one phrase per 40 beats), so a doubled grid about doubles the
+phrases: the power-metal song went from 2.42 to 5.04 a minute against the humans' 3.03-4.44 (M5-01's stress run).
+A rule in seconds or in measures at the pulse is the fix; the reviewer looks at it before the gate.
+
+## Downbeats when the kick is on every beat (M5-01's follow-up)
+
+`beatgrid.bar_phase` puts beat 1 where the kick band most outweighs the snare band. With a kick on every beat, as on
+the power-metal stress song's fast beat (the snare on every "and"), it has no margin: 0.013 on the doubled grid,
+which is flagged uncertain, and downbeat F1 0.000 against all three human charts while the beats are at 1.000
+(M5-01's probe, 1 CPU take). Measures, sections, star power and solos all start on the wrong beat there. A
+candidate: the crash or the snare pattern over 4 bars (a crash on beat 1 after a fill, the longest kick or the bass's
+note changes), measured on the stress set. Downbeat F1 is reported, not a pass line. Half a day to measure.
+
+## The octave pass's guard, provisional (M5-01)
+
+`OCTAVE_EVIDENCE_MIN` = 0.7, the doubled grid's confident share against the first grid's, is provisional until the
+20-song set. On M5-01's table the one real doubling (the power-metal song) keeps 0.997; the second passes of nine
+right grids keep 0.63-0.94, because their hats play the 8ths; a doubled grid with evidence only on the first
+grid's beats keeps 0.5 by construction. The density test (margin x3.14) and the backbeat test (x3.95) carry the
+decision; a guard set too high only falls back to v0.1's grid, with a warning (DESIGN 2.3 step 7). Both tests'
+thresholds rest on one song at half tempo: re-measure them with every fast song the set gains.
 
 ## The reference set at 20 or more songs, with human-charted solos
 

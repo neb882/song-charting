@@ -50,8 +50,11 @@ reviewed, merged work then found 3 real issues, none of them major.]
   is saved as `.claude/workflows/full-review.js`, and runs once over an integrated release before its hardware test.
   It routes findings as an order's review does (step 4 below): the minor ones and the test gaps go to the fixer
   unverified.
-- Before a big run, read the usage meter (`mcp__usage-meter__usage`, when that mod is loaded), and give a workflow a
-  token budget.
+- **Usage.** Read the usage meter (`mcp__usage-meter__usage`) before each wave, before starting any builder and before
+  a big run, and give a workflow a token budget. The owner's limit for unattended work: pause new work at 70 % of the
+  weekly usage, and never draw on usage credits. The meter is a mod whose source is `.claude/mods/usage-meter/`: a
+  new session installs it as that folder's README says (a mod is not loaded from the repository). [On 2026-11-05 a
+  new session had no way to read the usage until the owner relayed the mod from the old one.]
 
 ## An order, from brief to merge
 
@@ -87,10 +90,15 @@ reviewed, merged work then found 3 real issues, none of them major.]
 5. **The inspection** is CI on GitHub: a fresh checkout on a clean runner, reporting pass or fail. Read its log to
    make sure the order's own hook ran and wasn't skipped. Golden charts run locally, by the builder or by
    `sc-inspector`, when the charting path changed, since CI can't run them.
-6. **The merge** is `--no-ff`, with a message that says what the order did and how it was checked. Then:
-   - **The report:** copy the builder's report into `docs/reports/<order>.md`, after scanning it for personal details
-     and lyrics. [Reports left in the session's scratch folder vanish with the container; DESIGN.md once cited
-     evidence nobody could re-check.]
+6. **The merge** is `--no-ff`, with a message that says what the order did and how it was checked. Before it, read
+   the CI run on the branch's head commit yourself (its conclusion and head SHA), not only the builder's word. Then:
+   - **The report:** copy the builder's report (and the review's, and a skeptic's) into `docs/reports/<order>.md`,
+     after scanning it for personal details and lyrics. Replace the machine's paths with placeholders (`<scratchpad>`,
+     `$DEV`, `<wt>`), and the stress set's package md5s (or their prefixes) and song titles with `<primary>` / `<alt>`
+     and the songs' ids: the package list stays outside the repository. Check for lyrics by counting, never printing,
+     the matches of a few distinctive words of the owner's lyrics text. [Reports left in the session's scratch folder
+     vanish with the container; DESIGN.md once cited evidence nobody could re-check. On 2026-11-05 a builder's
+     report named the packages by md5 prefix.]
    - Update PROGRESS (the order leaves `in_flight`), and append to the later orders anything this one deferred to
      them.
    - Remove the worktree, and delete the order's scratch and `/dev/shm` folders; note `df -h /` in the merge's
@@ -135,9 +143,20 @@ reviewed, merged work then found 3 real issues, none of them major.]
   it, and refuses to start with under 5 GB of disk free. [A golden run's guitar engine was killed for memory while two
   suites ran beside it on this 4-core, 15 GB machine.]
 - **Parallel builds** only for orders whose files don't overlap, each in its own worktree, and at most two at once.
+  A builder resumed to fix its review's findings counts as one of the two; reviewers, skeptics and measurers don't.
+  An order waiting for a slot waits: its review fixes go first when the slot frees.
+- **The orchestrator's own commits** (PROGRESS, reports, merges) are made in a worktree of its own, detached at
+  `origin/main` and pushed with `git push origin HEAD:main`, never in the checkout a golden run may be reading.
+- **A pushed branch is never rebased**: bring main in by a merge (a rebase needs a force push, which is forbidden). A
+  branch already rebased is pushed under a new name, and the owner deletes the stale one.
 - **Stalls:** a stall is 20 minutes with no commit, no new line in the agent's output and no heavy job running. Check
   the job with `cat /dev/shm/songcharter-heavy.lock.who` and `pgrep -af 'pytest|eval.golden|songcharter.cli'`; a long
   command alone isn't one. [A verifier hung for an hour on 2026-11-03. Twice, a quiet log during a long golden run
   was a false alarm.]
 - Resume from the failure instead of starting over. [A message sent while a workflow ran stopped its agents.]
-- Check in at least every 55 minutes. [The prompt cache lasts about an hour; a later check-in costs far more.]
+- Check in at least every 55 minutes. [The prompt cache lasts about an hour; a later check-in costs far more.] While
+  agents run, schedule the next check-in yourself (a one-shot message to this session about 50 minutes ahead) with
+  what to look at: the usage, the lock's holder, the progress logs, what to do when each agent reports. Agents'
+  completions wake the session anyway; the check-in catches a stall.
+- **Messages between sessions** may be refused (a cloud session cannot always message another; on 2026-11-05 a reply
+  to the earlier session needed a trusted device). Then the owner relays them; don't wait on a reply.

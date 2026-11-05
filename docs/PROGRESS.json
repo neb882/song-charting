@@ -87,7 +87,8 @@
     "baseline": "main at 072ed20 (--rerun guitar): eval/baseline/summary.json, committed (hashes and F1s, no audio); the first, at 77b2afd, in <scratchpad>/golden/base. The kept work folders are in <scratchpad>/golden/work, made at 77b2afd, so the guitar is rerun on both sides since M4-02 changed engines/autochart.py. Environment in the dev container: EVAL_DATA=<scratchpad>/eval SONGCHARTER_GOLDEN=<scratchpad>/golden, plus SONGCHARTER_SCAN_CHART, SONGCHARTER_AUTOCHART=<scratchpad>/eval/tools/autochart and SONGCHARTER_ALLIN1_PYTHON=<scratchpad>/research/timing/venv2/bin/python. <scratchpad> is /tmp/claude-0/-home-user/5307d417-c453-5e74-8f13-b43b2df06ab1/scratchpad. Rebuilding it elsewhere: eval/README.md, 'Rebuilding the dev machine'.",
     "cost": "cold (a kept folder made, stems hard-linked): 474-1081 s a song, 80 min for the set, the guitar take most of it; warm: 44-76 s a song, 6.5 min for the set (CPU, 2 threads)",
     "rebuilt_2026_11_05": "The dev machine was rebuilt (eval/README.md, 'Rebuilding the dev machine') and its cold golden base on main at fbd9751 (after M4-11) is in <dev>/golden/base: all 72 tracks of the six references are byte-identical to eval/baseline/summary.json, so M4-11 moved no note and the committed baseline stands. The test song's upload is another encode of the owner's file (separation key 063cc9c8..., not 13506d568d...), so its 12 tracks differ: the test song has a new baseline on this machine. 64 min for the set, cold.",
-    "stress": "The stress set (M5-09, merged 2026-11-05): eval/stress.json (troop, sooth, break; generic slots), built by eval/build_refs.sh --set stress from the package list $EVAL_DATA/stress.local.json (not committed, the owner keeps it), run with eval.golden --refs $EVAL_DATA/stress --work $SONGCHARTER_GOLDEN/stress-work and scored by eval/stress.py score (eval/README.md, Stress songs). The baseline: main at fbd9751, 1 CPU take, in eval/baseline/stress/ (the dev machine's run in $SONGCHARTER_GOLDEN/stress-base; cold 4000 s). An order on the charting path compares with it by stress.py compare (exit 1 when a primary F1@50 falls by more than 0.01)."
+    "stress": "The stress set (M5-09, merged 2026-11-05): eval/stress.json (troop, sooth, break; generic slots), built by eval/build_refs.sh --set stress from the package list $EVAL_DATA/stress.local.json (not committed, the owner keeps it), run with eval.golden --refs $EVAL_DATA/stress --work $SONGCHARTER_GOLDEN/stress-work and scored by eval/stress.py score (eval/README.md, Stress songs). The baseline: main at fbd9751, 1 CPU take, in eval/baseline/stress/ (the dev machine's run in $SONGCHARTER_GOLDEN/stress-base; cold 4000 s). An order on the charting path compares with it by stress.py compare (exit 1 when a primary F1@50 falls by more than 0.01).",
+    "kept_drums": "The kept folders (golden work/ and stress-work/) hold drums made at fbd9751, before M5-01 changed beatgrid.py (ENGINE_FILES['drums']); a --rerun run does not refresh them. Until they are remade at a later main, every golden or stress run of code after M5-01 passes --rerun drums on both sides (eval.golden diff refuses otherwise)."
   },
   "in_flight": [
     {
@@ -101,14 +102,36 @@
       "then": "wave 0 is done (M4-11 merged, the reports committed); wave 1 is running (below), in the new session (docs/handoff.md)"
     },
     {
-      "order": "M5-01 fast grid (wave 2, started early in the free slot: stress-base exists)",
-      "branch": "m5-01-fast-grid-rebased (rebased on e24b1b7; the stale m5-01-fast-grid is for the owner to delete)",
-      "worktree": "wt/m5-01 beside the checkout (dev machine)",
-      "stage": "built (2026-11-05): every pass line met on the power-metal song (grid 200 BPM, guitar F1@50 0.78-0.81, beat F1 1.000), golden no UNEXPECTED, CI green on efd2d8d; in review",
-      "report": "<scratchpad>/briefs/m5-01.report.md, then docs/reports/M5-01-fast-grid.md"
+      "order": "M5-02 long songs (wave 2)",
+      "branch": "m5-02-long-songs",
+      "worktree": "wt/m5-02 beside the checkout (dev machine)",
+      "stage": "built; review: one major (a take that uses its whole token budget is killed by the driver's own cap first, so it is never continued; only the beat-cap path works), with its skeptic; three minor test gaps; the fix waits for a builder slot",
+      "report": "<scratchpad>/briefs/m5-02.report.md, then docs/reports/M5-02-long-songs.md"
+    },
+    {
+      "order": "M5-03 solos (wave 3)",
+      "branch": "m5-03-solos",
+      "worktree": "wt/m5-03 beside the checkout (dev machine)",
+      "stage": "built; its stress lines failed one of the order's (troop's solo overlaps the human solo 0.43 < 0.5: grouping from the run's start on the doubled grid leaves a dense tail, and the gap rule drops the rest); fixing: the densest window that fits the caps; then review",
+      "report": "<scratchpad>/briefs/m5-03.report.md, then docs/reports/M5-03-solos.md"
+    },
+    {
+      "order": "M5-04 lyrics warning (wave 3)",
+      "branch": "m5-04-lyrics-warning",
+      "worktree": "wt/m5-04 beside the checkout (dev machine)",
+      "stage": "built (2026-11-05): the warning on the share of weak words (score < 0.05) over 0.108, margin 1.65x on 14 runs; quiet on the power-metal song with the human chart's text and the owner's pasted text; golden --expect none exit 0; CI green on fbb9c1f; in review",
+      "report": "<scratchpad>/briefs/m5-04.report.md, then docs/reports/M5-04-lyrics-warning.md"
+    },
+    {
+      "order": "M5-08 install polish (wave 4, started early in a free slot: no overlap with wave 3)",
+      "branch": "m5-08-install-polish",
+      "worktree": "wt/m5-08 beside the checkout (dev machine)",
+      "stage": "building (2026-11-05), from main at 8ac38dc",
+      "report": "<scratchpad>/briefs/m5-08.report.md, then docs/reports/M5-08-install-polish.md"
     }
   ],
   "next": [
+    "M5-10 (new, after M5-03's merge; assemble.py): on a doubled grid the lyrics snap one level coarser, as M5-01 did for the bass. M5-04 measured the regression: the power-metal song's lyric timing on the chart went from a median 7 ms (0.68 within 50 ms) on the old grid to 67 ms (0.46) on M5-01's 200 BPM grid, the aligner's words 38-75 ms early now snapping a 1/16 (75 ms) before the human's.",
     "M4: M4-08 part B, the friend's PC: he follows the guide alone, charts the test song with 1 take and with the defaults, charts a song of his own, installs it into Clone Hero and plays it, and sends the diagnostics zip saved after his last chart.",
     "M5: the plan on branch m5-plan (docs/work-orders/M5-00-plan.md) is reviewed, amended and decided; next wave 0 (M4-11 merged, the two reports committed) and the waves of its section 3. The next version's release gate is M5-00 section 7: PIPELINE's, plus the stress check with the feel report, CI's update path (0.1.0 installed, then the new line over it), the owner's PC and the play test (the owner on three songs, the friend on his own).",
     "The update notice with a Copy button for the new line is M5-07 (decided over a one-click updater on 2026-11-05: M5-00 section 8).",
@@ -197,10 +220,13 @@
     "[M5-06] A file silent but for one click above -60 dBFS passes check_song's peak test and the librosa sections fallback still raises (exit 3); made by hand, not a realistic song.",
     "[M5-06] The page's Album placeholder (\"<name> - (Single)\") does not follow edits to the Title field (the chart's album does); the uploaded file is still stored under a name cut at 40.",
     "[M5-06] The file-name rule misreads \"3 Doors Down - X\" (the 3 taken as a track number) and \"01 - Title\" (artist \"01\"); DESIGN 2.13 lists both; the page's fields fix them. With an artist tag and no title tag, the whole stem stays the title (the order read literally).",
-    "[CLAUDE.md] The suite's command `uv run pytest ...` fails collecting tests/test_golden.py (it cannot import `eval`); `uv run python -m pytest ...`, as CI runs it, works. Fix the command (asked the owner).",
     "[M5-09] Repeat consistency (the feel note's measure 4) was not built: M5-99 (M6) with its fix.",
     "[M5-02] On the dev machine's 1-take CPU baseline the shred instrumental's guitar runs to 532 s of 545 (last two 30-s windows F1@100 0.78 and 0.65), unlike the owner's 4-take CUDA run (all takes stop at 498.6 s): M5-02's pass lines are restated against stress-base in its brief.",
-    "[M5-05] Release gate: the provoked GPU failure under memory=12GB on the owner's PC (M4-08's A23): the chart must finish with the take on the CPU and the banner, with the guitar stage's memory samples; swap past 4 GB during the retry turns cpu_retry off for WSL (the owner's decision)."
+    "[M5-05] Release gate: the provoked GPU failure under memory=12GB on the owner's PC (M4-08's A23): the chart must finish with the take on the CPU and the banner, with the guitar stage's memory samples; swap past 4 GB during the retry turns cpu_retry off for WSL (the owner's decision).",
+    "[M5-01, for the gate] Chord shares on two references move away from the humans' (Lucretia guitar E/H/M 0.18 -> 0.08 against 0.14-0.20; All the Small Things bass E/H 0.007 -> 0 against 0.41): the dropped onsets are 50-101 ms from the kept one, distinct notes the old quantizer merged into chords the engine never heard; F1 unchanged. The order's 'toward the humans' or stay' line read by its intent (DESIGN 2.6): the owner confirms at the gate.",
+    "[M5-01, for the gate] Star power on a doubled grid: 5.04 phrases a minute on the power-metal song (base 2.42, the humans 3.03-4.44); the phrase rule is unchanged (M5-99). Bass dropped_distinct 15-17 % (the bass engine's double onsets 60-100 ms apart, merged into chords before; Creep's bass 19 %): whether the order's '+2 points' line applies to the bass is the gate's call.",
+    "[M5-01] The octave thresholds rest on one positive song (OCTAVE_SHARE 0.35, BACKBEAT_MIN 0.34, the guard 0.7 provisional, the power-metal song at 0.828): revisit with the 20-song set. The downbeat on a doubled grid with a kick on every beat is a guess (bar_phase margin 0.013, downbeat F1 0.000): M5-99.",
+    "[owner] The remote branch m5-01-fast-grid is stale (its rebase was pushed as m5-01-fast-grid-rebased and merged): the owner deletes it."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
   "how_work_is_run": "docs/PIPELINE.md. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices, /prompt-caching, /sub-agents, /settings",
@@ -213,6 +239,7 @@
     "2026-11-04, M4-10: the reference charts in the dev container have their lyrics stripped, so the builder fetched the original packages again (the same Chorus Encore URLs) into memory to read the lyric events' timings, under the owner's exception; nothing with word text was written to disk, and a scan after the build found none. The review's F2 (non-Latin lyrics all at 0:00) was a major finding sent straight to the fixer, who reproduced it before fixing: the reviewer had shown it with the real engine and the fix cost less than a skeptic.",
     "2026-11-04: the dry run of .claude/workflows/full-review.js on one small fix (41630fa, npm's cache): 4 lens agents, 9 minutes; no major finding, so no skeptic ran, and every finding went to the fixer as PIPELINE routes them. All four lenses found the same real defect (a failed npm ci deleted npm's own log and the downloaded tarballs), fixed in 80f811b; the tests lens also found autochart's npm ci untested. The workflow is ready for the release gate.",
     "2026-11-04: the history was rewritten at the owner's request (git filter-repo, every commit re-signed, a force push of every branch but m4-rc-fixes, which is rebased at its merge) to remove the friend's installed software, both PCs' driver versions, a Windows build and the owner's folder layout; every commit's hash changed, and the hashes cited in the docs were mapped to the new ones. A clone made before then must be cloned again. GitHub may keep serving the old commits by hash until its support purges them (the owner's call).",
-    "2026-11-04: a cloud session's git proxy refuses a tag push (HTTP 403, a policy denial: not retried or routed around), so the owner makes the tag and the release on GitHub. For v0.1.0 a session built the four files from a clean clone at main's f8ac008 (CI green at 40938b9, f8ac008 changed PROGRESS only) and sent them to the owner, who creates the release with the tag v0.1.0 at that commit (published 2026-11-04; its assets checked against the guide's hashes), marked a pre-release."
+    "2026-11-04: a cloud session's git proxy refuses a tag push (HTTP 403, a policy denial: not retried or routed around), so the owner makes the tag and the release on GitHub. For v0.1.0 a session built the four files from a clean clone at main's f8ac008 (CI green at 40938b9, f8ac008 changed PROGRESS only) and sent them to the owner, who creates the release with the tag v0.1.0 at that commit (published 2026-11-04; its assets checked against the guide's hashes), marked a pre-release.",
+    "2026-11-05: a new session rebuilt the dev machine from eval/README.md (the six references' golden charts byte-identical to the committed baseline) and ran M5's waves. Learned and written into PIPELINE.md, CLAUDE.md, sc-builder.md and handoff.md: the usage meter is a mod kept in .claude/mods/usage-meter/ (a new session had none); a resumed fixer counts as a builder; the orchestrator commits from its own detached worktree; a pushed branch is merged with main, never rebased (one rebase had to be pushed under a second name); the session schedules its own check-ins; CI on the head commit is read before a merge; reports are scrubbed of package md5s and paths and checked for lyrics by counts; messages to another session may be refused and the owner relays; the suite runs as python -m pytest."
   ]
 }
