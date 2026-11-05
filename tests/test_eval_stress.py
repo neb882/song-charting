@@ -551,6 +551,36 @@ def test_the_lyrics_check_prints_numbers_only_and_leaves_nothing(lyric_song, tmp
         assert not any(w in text for w in WORDS)
 
 
+def test_the_lyrics_check_from_a_runs_kept_folder_works_beside_it_and_leaves_it_as_it_was(lyric_song, tmp_path,
+                                                                                          monkeypatch):
+    from songcharter import pipeline as P
+    work = tmp_path / "work"
+    kept = work / "aaa"
+    (kept / "stems" / "k").mkdir(parents=True)
+    (kept / "decode.wav").write_bytes(b"made up")
+    (kept / "stems" / "k" / "vocals.wav").write_bytes(b"made up")
+    (kept / "drums").mkdir()
+    (kept / "drums" / "notes.chart").write_text("made up")
+    (kept / G.KEPT).write_text(json.dumps({"golden": G.KEPT_FORMAT}))
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "summary.json").write_text(json.dumps({"songs": {}, "run": {"work": str(work)}}))
+    before, seen = G.manifest(kept), {}
+
+    def chart(audio, out, options, **kw):
+        w = Path(options.work)
+        seen.update(work=w, linked=os.path.samefile(w / "decode.wav", kept / "decode.wav"),
+                    copied=(w / "drums" / "notes.chart").read_text())
+        raise OSError("stands in for a failed build")
+
+    monkeypatch.setattr(P, "chart", chart)
+    lines = []
+    assert S.lyrics_check("aaa", lyric_song / "stress", lyric_song / "sng", run_dir=run, out=lines.append) == 2
+    assert lines == ["aaa: the lyrics chart failed (OSError)"]
+    assert seen["work"].parent.parent == work / G.RUNS and seen["linked"] and seen["copied"] == "made up"
+    assert list((work / G.RUNS).iterdir()) == [] and G.manifest(kept) == before
+
+
 def test_the_lyrics_check_says_so_for_a_song_with_no_lyrics(lyric_song, tmp_path):
     root = tmp_path / "x"
     shutil.copytree(lyric_song / "stress", root / "stress")

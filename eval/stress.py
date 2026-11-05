@@ -39,7 +39,8 @@ windows peak at 0.3 or more and the lags' MAD is under 2 ms (exit 0), else exit 
 songcharter's pipeline in process, charts the song's input.wav into a temporary folder (the song folder and the work
 folder both under it; with --run, the work folder starts as a copy of that run's kept folder, so only assemble and
 the aligner run), compares the chart's lyric timings with the human chart's word by word (eval/lyrics_timing.py),
-prints the numbers and deletes the temporary folder whole, a gate's <out>.failed included. Under the lyrics rule
+prints the numbers and deletes the temporary folder whole, a gate's <out>.failed included (with --run it is
+under the kept folders' .runs/, on their file system, since the work folder hard-links their decode and stems). Under the lyrics rule
 (M4-10, extended by M5-09) no word is printed, logged, saved or returned: errors are printed as their type. A song
 with no lyric events says so and exits 0.
 
@@ -541,7 +542,13 @@ def lyrics_check(sid: str, refs: Path, sng_dir: Path, tmp_root: Path | None = No
         kept = work / sid
         if G.finished(kept) is None:
             raise Refused(f"{kept} is not a finished kept folder of that run")
-    tmp = Path(tempfile.mkdtemp(prefix="stress-lyrics-", dir=str(tmp_root) if tmp_root else None))
+        # the work folder hard-links the kept decode and stems, so it must be on their file system: under the kept
+        # folders' own .runs/, named as golden names a run's folder (<pid>-<hex>: a golden run clears only the dead)
+        tmp_root = tmp_root or work / G.RUNS
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        if os.stat(tmp_root).st_dev != os.stat(kept).st_dev:
+            raise Refused(f"--tmp {tmp_root} is not on the file system of {kept}: the work folder links its files")
+    tmp = Path(tempfile.mkdtemp(prefix=f"{os.getpid()}-lyrics-", dir=str(tmp_root) if tmp_root else None))
     try:
         work_dir, song_dir = tmp / "work", tmp / "song"
         if kept is not None:
@@ -665,7 +672,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--run", help="a stress run whose kept folder the chart starts from")
     s.add_argument("--refs", help="the built set (default $EVAL_DATA/stress)")
     s.add_argument("--sng", help="the packages (default $EVAL_DATA/sng)")
-    s.add_argument("--tmp", help="where the temporary folder goes (default the system's)")
+    s.add_argument("--tmp", help="where the temporary folder goes (default the system's; with --run, the kept "
+                                 "folders' .runs/, on their file system)")
     s.add_argument("--threads", type=int, default=2)
     s = sub.add_parser("baseline", help="a run's summary and scores, scrubbed, for eval/baseline/stress/")
     s.add_argument("run_dir")
