@@ -18,10 +18,11 @@
     as its .part, which the next song with lyrics resumes) and checked whenever they are loaded, then loaded with
     torch.load(weights_only=True). SONGCHARTER_OFFLINE=1 forbids the download.
   * **Confidence** (info["confidence"]): per word, the mean probability of its characters on the path; the median
-    over the song, its 10th percentile, and the share of words under LOW_SCORE (on the six references' stems a word
-    under 0.05 is off by more than 250 ms in 0.19 of cases, the others in 0.08). A median under LOW_MEDIAN (0.25) is
-    warned about: the stems' song medians were 0.31 to 0.89 (0.874 to 0.983 of their words within 250 ms), the full
-    mixes', where the alignment collapsed, 0.09 to 0.18.
+    over the song, its 10th percentile, and the share of words under LOW_SCORE, the weak words (on the six
+    references' stems a word under 0.05 is off by more than 250 ms in 0.19 of cases, the others in 0.08). A share of
+    weak words over UNSURE_SHARE is warned about (`unsure`, chosen in DESIGN.md 2.15 on the alignments that timed
+    well and the ones that collapsed): every run that timed well had at most 0.084 of them, every one that
+    collapsed at least 0.139. The median it replaced fired on a fast, dense vocal that timed well (0.18).
   * **Cache.** out/lyrics.json holds the key (the stem's samples, the text's SHA-256, every setting, the weights'
     SHA-256 and the libraries' versions) and the times by syllable index, never the text: a hit is a file with this
     key and as many syllables as the text parses into.
@@ -59,7 +60,8 @@ SAMPLE_RATE = A.SAMPLE_RATE
 RATE = 16000             # the bundles' sample rate
 HOP = 320                # samples per frame: 20 ms
 LOW_SCORE = 0.05         # a word whose characters average under this on the path is a weak one
-LOW_MEDIAN = 0.25        # a song whose words' median is under this is warned about
+UNSURE_SHARE = 0.108     # a song with more than this share of weak words is warned about: the midpoint, on a log
+                         # scale, of 0.084 and 0.139 (DESIGN.md 2.15)
 NOTHING_SPELLED = ("none of the {n} words has a letter the aligner spells (it aligns the letters a-z, and does not "
                    "romanize other scripts)")
 
@@ -395,7 +397,8 @@ def align(text: str, vocals: np.ndarray, out: Path | str, settings: Settings = S
     key = cache_key(vocals, text, settings, libs)
     path = Path(out) / "lyrics.json"
     done = _done(path, key, n)
-    if done is not None:
+    if done is not None:   # judged again: a file made under an older rule warns by this one
+        done = {**done, "confidence": unsure(done.get("confidence") or {})}
         return Result(lyrics, tuple(done["times"]["starts"]), tuple(done["times"]["ends"]), path, True, done)
     starts, ends, char_scores, run = aligner.run(lyrics, vocals, settings)
     spelled = sum(1 for x in starts if x is not None)
@@ -427,14 +430,27 @@ def _unspelled_words(lyrics: Lyrics) -> int:
 
 def confidence(lyrics: Lyrics, char_scores: list[list[float]]) -> dict:
     """Per word the mean probability of its characters on the path; the median over the song, its 10th
-    percentile, the share of words under LOW_SCORE, and whether the median is under LOW_MEDIAN (numbers only)."""
+    percentile and the share of words under LOW_SCORE, judged by `unsure` (numbers only)."""
     words: dict[int, list[float]] = {}
     for s, sc in zip(lyrics.syllables, char_scores):
         words.setdefault(s.word, []).extend(sc)
     scores = np.array([np.mean(v) for v in words.values() if v])
     if not len(scores):
-        return {"words_scored": 0, "median": None, "p10": None, "low_share": None, "low": True}
-    median = float(np.median(scores))
-    return {"words_scored": int(len(scores)), "median": round(median, 3),
-            "p10": round(float(np.percentile(scores, 10)), 3),
-            "low_share": round(float(np.mean(scores < LOW_SCORE)), 3), "low": median < LOW_MEDIAN}
+        return unsure({"words_scored": 0, "median": None, "p10": None, "low_share": None})
+    return unsure({"words_scored": int(len(scores)), "median": round(float(np.median(scores)), 3),
+                   "p10": round(float(np.percentile(scores, 10)), 3),
+                   "low_share": round(float(np.mean(scores < LOW_SCORE)), 3)})
+
+
+def unsure(conf: dict) -> dict:
+    """The confidence `conf` with the warning's verdict: the statistic it reads (low_share, the share of weak words,
+    as recorded, to 3 places) and its threshold (UNSURE_SHARE); `low` when that share is over it or no word was
+    scored; `why`, one clause saying which."""
+    out = {k: v for k, v in conf.items() if k not in ("statistic", "threshold", "low", "why")}
+    out.update(statistic="low_share", threshold=UNSURE_SHARE)
+    share = conf.get("low_share")
+    if not conf.get("words_scored") or not isinstance(share, (int, float)):
+        return {**out, "low": True, "why": "no word was scored"}
+    low = share > UNSURE_SHARE
+    return {**out, "low": low, "why": f"share of weak words (score under {LOW_SCORE}) {share:.3f}, "
+                                      f"{'over' if low else 'not over'} {UNSURE_SHARE}"}

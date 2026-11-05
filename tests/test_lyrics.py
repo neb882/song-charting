@@ -583,13 +583,59 @@ def test_lyrics_with_nothing_to_spell_are_left_out_with_why(song, tmp_path, monk
     assert "lyric" not in (result.folder / "notes.chart").read_text(encoding="utf-8")
 
 
+def test_the_confidence_warns_on_the_share_of_weak_words():
+    """The warning reads the share of weak words (DESIGN.md 2.15): over UNSURE_SHARE is unsure, whatever the median.
+    One weak word in nine (0.111) is warned about, one in ten (0.100) is not, though their median of 0.06 is far
+    under the 0.25 the median rule warned at; a weak word in three is, though the median is 0.9; no scored word is."""
+    words = "zorp blen dak quiv fim wob dree smee plin tako"
+    weak = [[0.01, 0.02]] + [[0.06]] * 9       # one word averaging 0.015, nine at 0.06
+    c = E.confidence(L.parse(words), weak)
+    assert (c["words_scored"], c["low_share"], c["median"], c["statistic"]) == (10, 0.1, 0.06, "low_share")
+    assert c["threshold"] == E.UNSURE_SHARE and c["low"] is False
+    assert c["why"] == "share of weak words (score under 0.05) 0.100, not over 0.108"
+    c = E.confidence(L.parse(words.rsplit(" ", 1)[0]), weak[:9])
+    assert c["low_share"] == 0.111 and c["low"] is True
+    assert c["why"] == "share of weak words (score under 0.05) 0.111, over 0.108"
+    c = E.confidence(L.parse("zorp blen-dak quiv"), [[0.01, 0.04], [0.9], [0.95], [0.9]])
+    assert c["words_scored"] == 3 and c["median"] == 0.9 and c["low_share"] == 0.333 and c["low"] is True
+    c = E.confidence(L.parse("zorp blen"), [[], []])
+    assert c == {"words_scored": 0, "median": None, "p10": None, "low_share": None, "statistic": "low_share",
+                 "threshold": E.UNSURE_SHARE, "low": True, "why": "no word was scored"}
+
+
+def test_a_cached_confidence_is_judged_again(tmp_path):
+    """A cache hit judges the cached confidence by today's rule: a lyrics.json made when the median rule warned
+    (its low True, no why) is not unsure by the share of weak words, and says why."""
+    stem = vocal_stem()
+    first = E.align(TEXT, stem, tmp_path, aligner=Aligner(score=0.2))
+    assert first.info["confidence"]["low"] is False
+    path = tmp_path / "lyrics.json"
+    info = json.loads(path.read_text(encoding="utf-8"))
+    info["confidence"] = {"words_scored": 13, "median": 0.2, "p10": 0.2, "low_share": 0.0, "low": True}
+    path.write_text(json.dumps(info), encoding="utf-8")
+    again = E.align(TEXT, stem, tmp_path, aligner=Aligner(score=0.2))
+    assert again.cached and again.info["confidence"]["low"] is False
+    assert again.info["confidence"]["why"] == "share of weak words (score under 0.05) 0.000, not over 0.108"
+    info["confidence"] = {"words_scored": 13, "median": 0.6, "p10": 0.01, "low_share": 0.154, "low": False}
+    path.write_text(json.dumps(info), encoding="utf-8")
+    assert E.align(TEXT, stem, tmp_path, aligner=Aligner(score=0.2)).info["confidence"]["low"] is True
+
+
 def test_an_unsure_alignment_is_warned_about(song, tmp_path, monkeypatch):
-    conf = E.confidence(L.parse("zorp blen dak"), [[0.3, 0.2], [0.24], [0.26]])
-    assert conf["median"] == 0.25 and conf["low"] is False and conf["low_share"] == 0.0
-    assert E.confidence(L.parse("zorp blen"), [[0.01], [0.24]])["low"] is True
-    result, report, _ = run(song, tmp_path, monkeypatch, with_lyrics(aligner=Aligner(score=0.2))())
-    assert result.ok and report["lyrics"]["added"] and report["lyrics"]["confidence"]["low"] is True
-    assert any(w.startswith("lyrics: the alignment is unsure (median word score 0.2)") for w in result.warnings)
+    """The pipeline's warning carries confidence's why, and pipeline.json keeps every field of the confidence: every
+    word weak (characters at 0.01) is warned about; a median of 0.2 (the median rule warned under 0.25) is not."""
+    result, report, _ = run(song, tmp_path, monkeypatch, with_lyrics(aligner=Aligner(score=0.01))())
+    conf = report["lyrics"]["confidence"]
+    assert result.ok and report["lyrics"]["added"] and conf["low"] is True
+    assert conf == {"words_scored": 13, "median": 0.01, "p10": 0.01, "low_share": 1.0, "statistic": "low_share",
+                    "threshold": 0.108, "low": True, "why": "share of weak words (score under 0.05) 1.000, over 0.108"}
+    assert ("lyrics: the alignment is unsure (share of weak words (score under 0.05) 1.000, over 0.108): check the "
+            "lyrics' timing") in result.warnings
+    result, report, _ = run(song, tmp_path, monkeypatch, with_lyrics(aligner=Aligner(score=0.2, version="2"))(),
+                            name="out2")
+    conf = report["lyrics"]["confidence"]
+    assert result.ok and not report["lyrics"]["cached"] and conf["median"] == 0.2 and conf["low"] is False
+    assert not any("unsure" in w for w in result.warnings)
 
 
 def test_without_lyrics_nothing_changes(song, tmp_path, monkeypatch):
