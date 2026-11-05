@@ -32,6 +32,8 @@ machine", rebuilds it):
 - `<dev>/owner_v01`: the owner's v0.1 song folders of the stress songs (charts and report.json; the rock song's
   chart carries lyric events: numbers-only scripts).
 The environment variables are eval/README.md's step 9; every brief names them.
+The kept folders' drums are fbd9751's (before M5-01's beatgrid change): every golden or stress run of later code passes
+`--rerun drums` on both sides until they are remade (PROGRESS, golden).
 
 ## Only in the session
 
