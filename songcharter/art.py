@@ -90,12 +90,10 @@ def check_file(path: Path | str, what: str) -> bytes:
 
 
 def decode(data: bytes, what: str):
-    """The image in `data` as an 8-bit RGB Pillow image, upright, with no metadata, and its source ({"format",
-    "width", "height"}); an InputError when it is not a JPEG, PNG or WebP, is over MAX_BYTES or MAX_PIXELS, or does
-    not decode whole."""
+    """The image in `data` as an 8-bit RGB Pillow image, upright (its metadata goes in `encode`), and its source
+    ({"format", "width", "height"}); an InputError when it is not a JPEG, PNG or WebP, is over MAX_PIXELS, or does not
+    decode whole. Its bytes are limited where they come in (check_file, the page's upload)."""
     Image, ImageOps = _pil()
-    if len(data) > MAX_BYTES:
-        raise InputError(f"the {what} is {len(data) / 10 ** 6:.1f} MB, over the limit of {MAX_BYTES // 10 ** 6} MB")
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", Image.DecompressionBombWarning)   # MAX_PIXELS is the limit here
@@ -121,7 +119,7 @@ def decode(data: bytes, what: str):
         img = _rgb(img, Image)
     except Exception as e:  # noqa: BLE001  a mode Pillow cannot turn into RGB
         raise InputError(f"the {what} could not be decoded ({type(e).__name__}: mode {img.mode})") from None
-    return Image.frombytes("RGB", img.size, img.tobytes()), source   # a new image: nothing of the file's info
+    return img, source
 
 
 def _rgb(img, Image):
@@ -160,7 +158,7 @@ def album_jpeg(img) -> bytes:
 
 def background_size(w: int, h: int, fit: tuple[int, int] = BACKGROUND_FIT) -> tuple[int, int]:
     """The background's size: (w, h) scaled down to fit inside `fit`, its shape kept; never scaled up."""
-    scale = min(fit[0] / w, fit[1] / h, 1.0)
+    scale = min(fit[0] / w, fit[1] / h)
     return (w, h) if scale >= 1.0 else (max(1, round(w * scale)), max(1, round(h * scale)))
 
 
