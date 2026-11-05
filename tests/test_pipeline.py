@@ -1153,7 +1153,8 @@ class Autochart:
     {seed: [s, ...]} cuts that seed's takes short as the engine's budget does (M5-02): its whole-song run (0) and
     then each piece of its continuation (k, its --out piece_<k>: the decode's tail, its start the decode's length
     less its own) chart the song's notes from their audio's start up to stops[k] (absolute seconds; past the list,
-    to the end), and report nTokens 8192 when that is before the last note. `piece`: the piece of the `fail` seeds
+    to the end), and report nTokens 8192 when that is before the last note (-s: notes to s, under the budget: the
+    engine found nothing more). `piece`: the piece of the `fail` seeds
     that fails (by `how`) instead of their whole-song run. `ran`: the seeds it ran; `on`: the (seed, device) of
     each run; `pieces`: the (seed, device, k) of each run."""
 
@@ -1187,10 +1188,10 @@ class Autochart:
         stops = self.stops.get(seed) or []
         stop = stops[k] if k < len(stops) else None
         notes = [(t, lane) for j, (t, lane) in enumerate(guitar_times())
-                 if j != 40 * miss and t >= start - 1e-9 and (stop is None or t <= stop + 1e-9)]
+                 if j != 40 * miss and t >= start - 1e-9 and (stop is None or t <= abs(stop) + 1e-9)]
         _write(folder / "notes.chart", Track("Expert", "Single", [FretNote(tick(t - start), (lane,))
                                                                    for t, lane in notes]))
-        cut = stop is not None and stop < guitar_times()[-1][0]
+        cut = stop is not None and 0 < stop < guitar_times()[-1][0]   # a stop below 0: its notes end there, uncut
         (folder / "autochart_run").mkdir(parents=True, exist_ok=True)
         (folder / "autochart_run" / "summary.json").write_text(json.dumps({
             "inputSha256": AC.sha256(audio), "seed": seed, "difficulties": ["expert"],
@@ -1507,7 +1508,8 @@ def test_a_guitar_take_cut_short_is_warned_about_and_recorded(charted, tmp_path,
 def test_a_continuation_that_stops_short_says_where_the_guitar_ends(charted, tmp_path, monkeypatch, capsys):
     """M5-02: a piece cut short again 15 s on ends the continuation (the 20-s rule) at 45 s while the guitar stem
     plays to about 61 s: "the guitar ends at 0:45". Not when the stitched take ends within 10 s of the stem's end,
-    nor when the last piece ran to the end of the song."""
+    nor when the last piece ran to the end of the song (in two pieces), nor when it was not cut short but found
+    nothing after 40 s (the engine's own end of the guitar)."""
     root, result, _, _ = charted
     chart_it, driver = real_guitar(root, tmp_path, monkeypatch, capsys)
     assert P.playing_until(next((result.work / "stems").rglob("guitar.wav"))) == pytest.approx(60.9, abs=0.15)
@@ -1519,12 +1521,25 @@ def test_a_continuation_that_stops_short_says_where_the_guitar_ends(charted, tmp
     assert (code, len(ran), guitar[1:]) == (0, 2, [ends])
     assert guitar[0].endswith("(8192 tokens); the rest was transcribed in 1 more piece, to 0:45")
     assert report["takes"]["last_note_s"] == [45.0]
-    for stops in ([45.0, 55.0], [30.0, 55.0]):   # stalled 6 s before the stem stops; or on to the end in 2 pieces
-        code, last, report, ran, takes = chart_it(warm_work(result, tmp_path, f"b{stops[0]:.0f}"), auto="cpu",
+    for stops in ([30.0, -40.0], [45.0, 55.0], [30.0, 55.0]):   # not cut short; stalled 6 s before the stem stops;
+                                                                    # or on to the end in 2 pieces
+        code, last, report, ran, takes = chart_it(warm_work(result, tmp_path, f"b{stops}"), auto="cpu",
                                                   stops={DEFAULT_SEED: stops})
         guitar = [w for w in report["warnings"] if w.startswith("guitar")]
         assert (code, len(guitar)) == (0, 1) and "the guitar ends" not in driver["err"], stops
     assert report["takes"]["pieces"] == [2] and guitar[0].endswith("in 2 more pieces, to 1:00")
+
+
+def test_where_a_stem_stops_playing(tmp_path):
+    """playing_until: the end of the last 0.1-s frame within 15 dB of the stem's P95 level (preview's playing): a
+    loud part to 30 s, then 30 dB down to 50 s, then silence, plays until 30 s; a silent stem or none, None."""
+    rate = 8000
+    t = np.arange(60 * rate) / rate
+    y = np.sin(2 * np.pi * 220 * t) * np.where(t < 30, 1.0, np.where(t < 50, 10 ** (-30 / 20), 0.0))
+    A.write_wav(np.stack([y, y]).astype(np.float32), tmp_path / "guitar.wav", rate)
+    assert P.playing_until(tmp_path / "guitar.wav") == pytest.approx(30.0)
+    A.write_wav(np.zeros((2, rate), dtype=np.float32), tmp_path / "silent.wav", rate)
+    assert P.playing_until(tmp_path / "silent.wav") is None and P.playing_until(tmp_path / "none.wav") is None
 
 
 def test_a_piece_that_fails_on_cuda_takes_the_charts_cpu_retry(charted, tmp_path, monkeypatch, capsys):

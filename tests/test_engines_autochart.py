@@ -416,6 +416,32 @@ def test_a_failed_piece_raises_naming_the_seed_and_leaves_no_take(tmp_path):
     assert {p.name for p in folder.iterdir()} == {"notes.chart", "autochart_run", AC.TAKE, AC.CUT, "piece_1"}
 
 
+def test_a_take_run_again_starts_from_the_drivers_files_only(tmp_path):
+    """A stitched take run again (its key changed: here the driver was updated) or a continuation cut off after the
+    engine's output moved: what the earlier continuation left (cut_short/, piece_<k>/) goes before the run, so the
+    new take has only its own pieces."""
+    root = install(tmp_path)
+    inst = find_install(root, node="node")
+    audio = song_wav(tmp_path / "decode.wav")
+    out, folder = tmp_path / "out", tmp_path / "out" / "seed_7"
+    generate(inst, audio, out, (7,), run=CutDriver(stops=[40.0, 70.0]))
+    assert {p.name for p in folder.iterdir()} >= {"piece_1", "piece_2", AC.CUT}
+    (root / "ac_headless.cjs").write_text("// driver B", encoding="utf-8")
+    inst = find_install(root, node="node")
+    drv = CutDriver(stops=[60.0])
+    generate(inst, audio, out, (7,), run=drv)
+    assert len(drv.calls) == 2 and {p.name for p in folder.iterdir()} == {"notes.chart", "autochart_run", AC.TAKE,
+                                                                          AC.CUT, "piece_1"}
+    assert stitched_times(folder / AC.CUT / "notes.chart")[-1] == 60.0
+    # cut off after the move: the engine's output in cut_short/, no notes.chart, no take.json
+    (folder / AC.TAKE).unlink()
+    (folder / "notes.chart").unlink()
+    drv = CutDriver(stops=[50.0])
+    generate(inst, audio, out, (7,), run=drv)
+    assert len(drv.calls) == 2 and stitched_times(folder / AC.CUT / "notes.chart")[-1] == 50.0
+    assert stitched_times(folder / "notes.chart") == song_notes()
+
+
 def test_a_take_under_both_caps_is_left_as_the_engine_wrote_it(tmp_path):
     """One run, and the folder exactly as the driver left it (its listing and notes.chart byte for byte) plus
     take.json, as before M5-02."""
