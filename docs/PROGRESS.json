@@ -83,7 +83,6 @@
   "next": [
     "M4: M4-08 part B, the friend's PC: he follows the guide alone, charts the test song with 1 take and with the defaults, charts a song of his own, installs it into Clone Hero and plays it, and sends the diagnostics zip saved after his last chart.",
     "From M5: the plan by the most capable model, as a fresh agent that reads only the repository, reviewed by a different model (docs/PIPELINE.md, Gates).",
-    "Owner: delete the merged remote branches ci-test-gaps, m4-01-lanes, m4-02-device, m4-03-install and m4-05a-ci-skeleton (a session can't).",
     "Before the next quality decision: grow the reference set to 20 or more human charts, with human-charted solos among them."
   ],
   "dead_ends": [
