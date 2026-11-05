@@ -1575,9 +1575,10 @@ bundle's are 378 MB for 0.046 less within 250 ms. Its limits: it spells English 
 out, other scripts not romanized: such a word is spread between its neighbours, and a text with no letter it spells
 at all, a song pasted in its own script, gets no lyrics and a warning saying so, as no syllable has a time to spread
 the others from), and a vocal stem as poor as a full
-mix makes it collapse. The confidence shows that: each word's mean character probability on the path; the stems'
-song medians were 0.31 to 0.89, the full mixes' 0.09 to 0.18, so a median under 0.25 is warned about. A word under
-0.05 is off by more than 250 ms in 0.19 of cases, the others in 0.08.
+mix makes it collapse. The confidence shows that: each word's mean character probability on the path. A word under
+0.05 (a weak word) is off by more than 250 ms in 0.19 of cases, the others in 0.08, and a song with more than 0.108
+of its words weak is warned about (the warning, calibrated, below: M4-10's rule, a median under 0.25, fired on a
+fast song that timed well).
 
 **On the chart** (`lyrics.place`): each syllable start is snapped onto our grid as the notes are (SnapGrid over the
 syllables' own ticks); phrases are the lines, also split where the next syllable starts more than 3.0 s after the
@@ -1598,9 +1599,65 @@ the busy CPU (load 5–6), the alignment 0.1 s, the weights' load and hash check
 folder, the package's audio; the words from its human chart's lyric events, read in memory]: 320 of 320 words
 paired by index; median error 7.0 ms (signed +0.1); 0.681 / 0.756 / **0.953** within 50 / 100 / 250 ms; 8 of 51
 phrase starts over 500 ms off; the gate OK; the median confidence 0.18, so the pipeline warned that the alignment
-is unsure, which the timings do not bear out. Its counterpart, the owner's 2026-11-05 run on his own file with a
+is unsure, which the timings do not bear out (M5-04 replaced that rule: below). Its counterpart, the owner's 2026-11-05 run on his own file with a
 pasted text (PROGRESS, M5-04): 0.68 / 0.77 / 0.96, median 9 ms, no phrase start over 500 ms, the same warning
 (median 0.214). 207 s on 2 threads, the weights' first download (1.26 GB) included.
+
+**The warning, calibrated** [here, M5-04: each song's words from its package's lyric events, read in memory, aligned
+by the engine to its seeded vocal stem and to its full mix, 14 runs; numbers only]. A run timed well when at least
+0.85 of its words start within 250 ms of the human chart's, badly under 0.60; the timing decides, not the audio.
+Every stem timed well and every full mix but one collapsed (Drunk Drivers' mix, 0.752, is between and left out of the
+choice). The candidates are what `align` has: the median word score (M4-10's rule, under 0.25), its 10th percentile
+and the share of weak words (under 0.05); the share of words longer than 2 s; the share of word starts where the
+audio `align` is given stays more than 30 dB under its P95 over [-0.05, +0.20] s (assemble's silent-onset test); the
+share of lines spanning more than 3x the song's median line.
+
+| run | timing | within 250 / 50 ms | median error | median score | 10th percentile | weak words | words over 2 s | starts in quiet | long lines |
+|---|---|---|---|---|---|---|---|---|---|
+| Kimochi Warui, stem | good | 0.908 / 0.249 | 98 ms | 0.882 | 0.105 | 0.066 | 0.004 | 0 | 0 |
+| Kimochi Warui, full mix | bad | 0.198 / 0.044 | 2.4 s | 0.118 | 0.042 | 0.139 | 0 | 0 | 0.024 |
+| Drunk Drivers, stem | good | 0.929 / 0.539 | 43 ms | 0.844 | 0.133 | 0.025 | 0 | 0 | 0 |
+| Drunk Drivers, full mix | between | 0.752 / 0.433 | 62 ms | 0.180 | 0.048 | 0.113 | 0 | 0 | 0 |
+| Take Me Out, stem | good | 0.875 / 0.571 | 39 ms | 0.827 | 0.144 | 0.039 | 0 | 0 | 0 |
+| Take Me Out, full mix | bad | 0.355 / 0.156 | 718 ms | 0.099 | 0.042 | 0.160 | 0 | 0 | 0 |
+| All the Small Things, stem | good | 0.912 / 0.473 | 55 ms | 0.634 | 0.252 | 0.024 | 0.005 | 0 | 0 |
+| All the Small Things, full mix | bad | 0.561 / 0.229 | 200 ms | 0.123 | 0.038 | 0.161 | 0.005 | 0 | 0 |
+| Lucretia, stem | good | 0.983 / 0.420 | 57 ms | 0.307 | 0.107 | 0.025 | 0 | 0 | 0 |
+| Lucretia, full mix | bad | 0 / 0 | 37.8 s | 0.094 | 0.045 | 0.151 | 0 | 0 | 0 |
+| Creep, stem | good | 0.928 / 0.503 | 49 ms | 0.638 | 0.092 | 0.054 | 0.012 | 0 | 0 |
+| Creep, full mix | bad | 0.563 / 0.317 | 175 ms | 0.125 | 0.030 | 0.246 | 0 | 0 | 0 |
+| the power-metal stress song, stem | good | 0.950 / 0.550 | 40 ms | 0.183 | 0.060 | 0.084 | 0 | 0.006 | 0 |
+| the power-metal stress song, full mix | bad | 0.331 / 0.172 | 1.9 s | 0.069 | 0.027 | 0.312 | 0 | 0 | 0 |
+
+A statistic's margin is the ratio of the worst good run to the best bad one, a log scale: the share of weak words
+**1.65x** (0.084, the power-metal stem, against 0.139, Kimochi Warui's mix), the median 1.46x (0.183 against 0.125),
+the 10th percentile 1.33x; the other three do not separate the runs (a collapsed alignment puts the words in the
+wrong place without stretching them, and a full mix is never quiet). The best OR of two, weak words or long lines, is
+1.72x, not twice the best single one. So the warning reads the share of weak words, over **0.108**, the two runs'
+midpoint on a log scale (`engines/lyrics.py` UNSURE_SHARE, `unsure`): it fires on every bad run and on no good one,
+and on the between run (0.113). The margin rests on two runs: without any one song the threshold moves within 0.096
+to 0.113 and no good or bad run changes side. Its `why` names the statistic, "share of weak words (score under 0.05)
+0.139, over 0.108", and the pipeline's warning prints it. The cache key is unchanged: a cached confidence is judged
+again on every hit.
+
+Through the pipeline [`eval/stress.py lyrics`, and the same check with the owner's text or the full mix given in
+place of the stem; each chart's SyncTrack is the golden run's of this commit, M5-01's grid]: the power-metal song
+0.953 within 250 ms and no warning (weak words 0.084); Take Me Out 0.870 and Kimochi Warui 0.850, no warning, nor on
+the other four references; the full mix in place of the stem warns on the power-metal song (0.312), Take Me Out
+(0.160) and Kimochi Warui (0.139). The owner's pasted text of the power-metal song, the friend's real use (307 words,
+read in memory, paired with the human chart's by their text): 302 of its 320 words paired (0.944), median error 65
+ms, 0.467 / 0.858 / 0.967 within 50 / 100 / 250 ms, 2 of 43 paired phrase starts over 500 ms off, no warning (weak
+words 0.088); the human chart's own text gives 0.463 / 0.856 / 0.953, median 67 ms.
+
+**The 50 ms share after M5-01** [here, M5-04]. The engine's own word starts: on the references pooled 0.457 / 0.703 /
+0.917 within 50 / 100 / 250 ms, M4-10's exactly; on the power-metal stem 0.550 / 0.841 / 0.950 (median 40 ms). On the
+chart, snapped to the grid: the references 0.505 / 0.612 / 0.901, M4-10's (M5-01 left their grids as they were); the
+power-metal song 0.463 / 0.856 / 0.953, median 67 ms, where M5-09 measured 0.681 within 50 ms (median 7 ms) on the
+half-tempo map; the humans agree 94 % with each other at 50 ms. M5-01's 200 BPM map halves the 1/16 snap to 75 ms. On
+the old map's 150 ms slots a word the aligner put up to 75 ms early still snapped onto the human's slot; now one put
+38 to 75 ms early (0.29 of this song's words: the aligner runs early here, median -20 ms) snaps to the slot before,
+and a quarter of the words land 72 to 75 ms early. This order changes the warning only: snapping lyrics to 8th lines
+on a fast map, or correcting the aligner's lead, would be a later order's, measured against the humans.
 
 **Not measured:** Clone Hero itself showing them (M4-08 looks); the aligner on CUDA (it runs there when the chart's
 device is CUDA); songs not in English; duets and harmonies (one line of text, timed to whoever sings it loudest).
