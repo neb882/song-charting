@@ -26,6 +26,7 @@ ones then, but the CI runs they link still name the old ones.
 | `M4-11-art.md` | album art from the song's cover and a given background image, re-encoded with no metadata; the review and its fixes |
 | `rc-advisor.md` | the advisor's review of the v0.1 release candidate as a whole, from the friend's side, and the three skeptics' reproductions |
 | `rc-fixes.md` | the release candidate's fixes (the guide's timings, the guitar's GPU-failure message, doctor's problems on the page, M4-08's release-first order and checks) and their review |
+| `v0.2.0-gate.md` | the release gate for v0.2.0: the full review, the golden charts and the stress check on the candidate, the test song, the advisor; the owner's checks and decisions left |
 | `release-gate.md` | the release gate for v0.1: the full review, the golden charts and the test song; the GPU smoke test on the owner's 5070; the gate's fixes and their second review |
 | `charting-conventions.md` | how 5-fret charts are supposed to be made (tempo maps, notes, chords, HOPOs, sustains, star power, solos, lyrics, the song folder), with sources, and songcharter's gaps (M5) |
 | `M5-01-fast-grid.md` | the grid's tempo octave doubled on dense songs, no chord of notes distinct in time, the 20 ms floors; the four decisions and the review |
