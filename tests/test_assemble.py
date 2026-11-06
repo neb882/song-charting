@@ -1274,7 +1274,7 @@ def test_a_dense_song_on_its_right_grid_stays():
     """A 140 BPM song on its own grid, in 16ths, with a bass engine's close double onsets (40 ms apart) on its 8ths:
     the right grids' shares come mostly from those (DESIGN.md 2.3), here pooled 0.25, under 0.35, so the grid
     stays, whatever the snare says (on the midpoints, as at half tempo, too). The threshold: a share of 0.34 stays,
-    0.36 doubles."""
+    0.35 and 0.36 double."""
     grid = 1.0 + np.arange(200) * 60 / 140
     sixteenth = 60 / 140 / 4
     guitar = 1.0 + np.arange(700) * sixteenth
@@ -1294,6 +1294,8 @@ def test_a_dense_song_on_its_right_grid_stays():
     assert under == 1 and stats["pooled_share"] == pytest.approx(0.34)
     over, stats = grid_octave({"guitar": shares(180)}, SLOW_GRID, snare)
     assert over == 2 and stats["pooled_share"] == pytest.approx(0.36)
+    at, stats = grid_octave({"guitar": shares(175)}, SLOW_GRID, snare)   # "at least": exactly 0.35 doubles
+    assert at == 2 and stats["pooled_share"] == pytest.approx(0.35)
 
 
 def test_the_backbeat_ratio_counts_confident_beats_only():
