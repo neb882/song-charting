@@ -15,7 +15,10 @@
     the work folder anywhere, as before.
   * **<key>** is the first 16 hex characters of the song file's SHA-256 (`file_key`), so the same file reuses its
     caches whatever --out is. **<name>** is the file's stem made safe for Windows (`safe_name`), so a person can
-    tell the folders apart.
+    tell the folders apart. When no folder has that name, an existing work/<other name>-<key> whose MARKER holds
+    the key is the song's (`work_folder`, M5-12): v0.1 cut a long stem inside a word where M5-06 cuts at a space,
+    and its caches (the separation, the guitar takes) are kept, not made again under the new name. A renamed copy
+    of the file finds the same folder.
   * **Path length.** Windows refuses a path of more than 259 characters (MAX_PATH less its NUL) unless long paths
     are turned on, which nothing here can assume. The deepest files a run leaves (`DEEPEST`, with Windows
     separators):
@@ -160,8 +163,31 @@ def safe_name(stem: str, limit: int = NAME_MAX) -> str:
 
 
 def work_folder(root: Path, stem: str, key: str) -> Path:
-    """A song's default work folder: root/work/<safe_name(stem)>-<key>."""
-    return root / "work" / f"{safe_name(stem)}-{key}"
+    """A song's default work folder: root/work/<safe_name(stem)>-<key> when it exists or no other folder holds the
+    song's caches; else the existing root/work/<another name>-<key> whose MARKER holds that key (`by_key`): the same
+    file under a name safe_name cut otherwise (v0.1 cut inside a word, before M5-06's WORD_BACK), or a renamed copy.
+    So an older version's caches of the song (the separation, the sections, the guitar takes) are found, not made
+    again beside them (M5-12)."""
+    folder = root / "work" / f"{safe_name(stem)}-{key}"
+    if folder.exists() or folder.is_symlink():
+        return folder
+    found = by_key(root, key)
+    return found if found is not None else folder
+
+
+def by_key(root: Path, key: str) -> Path | None:
+    """The folder under root/work named <name>-<key> whose MARKER holds `key`, the most recently used when there are
+    several (then the first by name), or None. A folder without our marker, with another key in it, or a link is
+    not one."""
+    work = root / "work"
+    found = []
+    for folder in sorted(work.glob(f"*-{key}")) if work.is_dir() else []:
+        if not folder.is_dir() or folder.is_symlink():
+            continue
+        m = read_marker(folder)
+        if m is not None and m.get("key") == key:
+            found.append((-_used(m), folder.name, folder))
+    return min(found)[2] if found else None
 
 
 def scratch_folder(root: Path, key: str) -> Path:

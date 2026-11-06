@@ -106,6 +106,43 @@ def test_the_key_and_the_folders(tmp_path):
     assert cache.scratch_folder(tmp_path, key) == tmp_path / "ac" / key[:8]
 
 
+def test_an_older_versions_work_folder_of_the_same_file_is_found(tmp_path):
+    """v0.1 cut a long stem inside a word where safe_name now goes back to a space (M5-06), so the same file's work
+    folder had another name. With no folder of today's name, the work/*-<key> whose marker holds the key is the
+    song's, and its caches are reused (M5-12); a folder with that suffix but another key in its marker, or none, or
+    a link, is not; today's name is used when it exists, and when nothing else holds the key."""
+    stem, key = "Imaginary Band Name - A Made Up Song Title (Live)", "0123456789abcdef"
+    today = tmp_path / "work" / f"Imaginary Band Name - A Made Up Song-{key}"
+    assert cache.work_folder(tmp_path, stem, key) == today and not (tmp_path / "work").exists()   # no folder at all
+    old = tmp_path / "work" / f"Imaginary Band Name - A Made Up Song Tit-{key}"   # v0.1.0's cut of the same stem
+    for name, holds in (("Another Made Up Name", "fedcba9876543210"), ("Unmarked", None), ("Not ours", "x")):
+        folder = tmp_path / "work" / f"{name}-{key}"
+        folder.mkdir(parents=True)
+        if holds == "x":
+            (folder / cache.MARKER).write_text(json.dumps({"key": key}), encoding="utf-8")   # no "songcharter"
+        elif holds is not None:
+            cache.mark(folder, Path("other.flac"), holds, None, now=NOW)
+    (tmp_path / "elsewhere").mkdir()
+    cache.mark(tmp_path / "elsewhere", Path("x.flac"), key, None, now=NOW + 9)
+    (tmp_path / "work" / f"Made Up Link-{key}").symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+    (tmp_path / "work" / f"Made Up File-{key}").write_text("not a folder", encoding="utf-8")
+    assert cache.work_folder(tmp_path, stem, key) == today and cache.by_key(tmp_path, key) is None
+    old.mkdir()
+    cache.mark(old, Path("/made/up/Imaginary Band Name - A Made Up Song Title (Live).flac"), key, None, now=NOW)
+    assert cache.work_folder(tmp_path, stem, key) == old == cache.by_key(tmp_path, key)
+    assert cache.work_folder(tmp_path, "A Renamed Copy", key) == old   # the same bytes under another name
+    assert cache.work_folder(tmp_path, stem, "fedcba9876543210") == (
+        tmp_path / "work" / "Imaginary Band Name - A Made Up Song-fedcba9876543210")   # its suffix is not that key
+    newer = tmp_path / "work" / f"Made Up Newer-{key}"   # of two, the one used last
+    newer.mkdir()
+    cache.mark(newer, Path("y.flac"), key, None, now=NOW + 1)
+    assert cache.work_folder(tmp_path, stem, key) == newer
+    cache.mark(old, Path("z.flac"), key, None, now=NOW + 2)
+    assert cache.work_folder(tmp_path, stem, key) == old
+    today.mkdir()   # today's name, when it is there, as before
+    assert cache.work_folder(tmp_path, stem, key) == today
+
+
 def test_windows_paths_stay_under_260_characters(monkeypatch):
     """The deepest files a run leaves (cache.DEEPEST: a take's report in the work folder, autochart's mel tables in
     its scratch folder) stay within Windows' 259 characters with a long but real profile, C:\\Users\\<20

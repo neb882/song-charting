@@ -8,14 +8,16 @@
 #      has it but for https://github.com/ becoming the server, and $SONGCHARTER_RELEASE_URL naming it for the tarball;
 #      the notice's line for the new version (updates.install_line) is GUIDE.md's own;
 #   2. 0.1.0 installed with its line (Enter at the licence prompt), and CI's clip charted with `songcharter chart`
-#      (its work folder noted);
+#      (its work folder noted), under a made-up long name that v0.1.0 cuts inside a word and M5-06's safe_name at a
+#      space, so the two versions name its work folder differently (M5-12);
 #   3. the new line pasted over it: "songcharter <new>: in .../app/<new>", app/0.1.0 gone, and only install.sh and
 #      the tarball fetched from the server for it (SHA256SUMS too may be), each once; nothing else downloaded (no line
 #      of runtime.py's fetch, uv's downloads, install.sh's own but the app's tarball, or uv's Python install: the
 #      runtime is kept); `songcharter doctor` exits 0 with "doctor: OK" and HEAD's __version__, which must be newer
 #      than 0.1.0 (M5-12: build.sh builds only HEAD's; the new code is also proven by runtime.json's app and by the
 #      install's Python importing songcharter.updates, which 0.1.0 has not); the clip charted again into the same work
-#      folder, with separate, drums, bass, sections and guitar "(cached)", and check_gate.py passes on it;
+#      folder (v0.1.0's name, found by the key in its marker, not today's), with separate, drums, bass, sections and
+#      guitar "(cached)", and check_gate.py passes on it;
 #   4. the notice: `songcharter` (the page, as the guide starts it) with $SONGCHARTER_RELEASES_URL naming a JSON file
 #      on the server; /api/status before the page has no update and makes no request, then the page, then (once the
 #      check's line is in the log) /api/status again: with a release v9.9.9 whose assets are on the server, with a
@@ -146,12 +148,15 @@ echo "75-update: the notice for v9.9.9 should be $expect_999"
 docker run -d --init --name "$name" --network host -v "$PWD/packaging/ci:/ci:ro" ubuntu:26.04 sleep infinity >/dev/null
 docker exec -e DEBIAN_FRONTEND=noninteractive "$name" bash -euo pipefail -c \
   'apt-get update -qq && apt-get install -y -qq curl ca-certificates git xz-utils >/dev/null && useradd -m friend'
-docker exec -i -u friend -e HOME=/home/friend "$name" sh -c 'mkdir -p ~/clips && cat >~/clips/clip.wav' <"$CI_CLIP"
+clip_stem="Imaginary Band Name - A Made Up Song Title (Live)"   # made up; v0.1.0 cuts it at "Tit", M5-06 at "Song"
+docker exec -i -u friend -e HOME=/home/friend -e STEM="$clip_stem" "$name" sh -c 'mkdir -p ~/clips && cat >~/clips/"$STEM.wav"' \
+  <"$CI_CLIP"
 
 # helpers in friend's scripts
 PRELUDE='
 home=$HOME/.local/share/songcharter
 py=$home/runtime/env/bin/python
+clip=$HOME/clips/$STEM.wav
 die() { echo "75-update: $*"; exit 1; }
 run() {   # LOG COMMAND...: its output into LOG; when it fails, the last lines and its exit status
   local log=$1 code=0
@@ -235,7 +240,8 @@ friend() {   # NAME SCRIPT: SCRIPT as friend, in a login shell (a new Ubuntu win
   echo "-- $1"
   docker exec -u friend -e HOME=/home/friend -w /home/friend -e OLD="$old" -e NEW="$new" -e HEAD_VERSION="$head_version" \
     -e OLD_LINE="$local_old" -e NEW_LINE="$local_new" -e OLD_URL="$url$base/v$old" -e NEW_URL="$url$base/v$new" \
-    -e SERVER="$url" -e CLOSED="http://127.0.0.1:$closed/releases.json" -e EXPECT_999="$expect_999" "$name" \
+    -e SERVER="$url" -e CLOSED="http://127.0.0.1:$closed/releases.json" -e EXPECT_999="$expect_999" \
+    -e STEM="$clip_stem" "$name" \
     bash -lc "set -euo pipefail
 $PRELUDE
 $2"
@@ -267,7 +273,7 @@ grep -q "^songcharter $OLD is installed (lane cpu" /tmp/install-old.log || die "
 keep /tmp/install-old.log
 friend "the clip, charted by $old" '
 mkdir -p ~/Songs
-run /tmp/chart-old.log songcharter chart ~/clips/clip.wav --out ~/Songs/Clip
+run /tmp/chart-old.log songcharter chart "$clip" --out ~/Songs/Clip
 tail -n 3 /tmp/chart-old.log
 sed -n "s/^work folder: \(.*\) (.*$/\1/p" /tmp/chart-old.log | head -n 1 >/tmp/work-old.txt
 [ -d "$(cat /tmp/work-old.txt)" ] || die "no work folder in /tmp/chart-old.log"
@@ -297,10 +303,15 @@ grep -qx "doctor: OK" /tmp/doctor.log || die "doctor found a problem"
 keep /tmp/doctor.log
 
 friend "the clip again, by the new version: the work cache reused" '
-run /tmp/chart-new.log songcharter chart ~/clips/clip.wav --out ~/Songs/"Clip after the update"
+run /tmp/chart-new.log songcharter chart "$clip" --out ~/Songs/"Clip after the update"
 grep -E "^\[[0-9]+/[0-9]+\] " /tmp/chart-new.log
 work=$(sed -n "s/^work folder: \(.*\) (.*$/\1/p" /tmp/chart-new.log | head -n 1)
 [ "$work" = "$(cat /tmp/work-old.txt)" ] || die "the work folder is $work, not $(cat /tmp/work-old.txt)"
+today=$("$py" -P -c "import sys; from songcharter import cache; print(cache.safe_name(sys.argv[1]))" "$STEM")
+case $(basename "$work") in
+  "$today"-*) die "the work folder $work has the new version'"'"'s name ($today): the lookup by key is not tested" ;;
+esac
+echo "the work folder of v$OLD'"'"'s name, $(basename "$work"), not today'"'"'s ($today), with its caches"
 for stage in separate drums bass sections guitar; do
   grep -qE "^\[[0-9]+/[0-9]+\] $stage: .* \(cached\), [0-9.]+ s$" /tmp/chart-new.log || die "$stage was not cached"
 done
