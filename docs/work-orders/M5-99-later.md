@@ -174,10 +174,12 @@ cfc7d5d against the branch):
   phase either way, pm2's margin 0.125 -> 0.014). The octave guard reads the grid the second pass returns, so a
   start from allin1 could keep a doubling the line would have dropped (a song at the first level with a tempo change
   and dense notes; no measured song shows it, the review's).
-- **The guitar's chord share** is 0.112 on the doubled grid (0.119 on the first; `troop` 0.09; the humans
-  0.02-0.04). The quantizer merged none on either grid, so these are the engine's own chords: a rule on the
-  engine's chords (which to split into single notes in a fast run) is the guitar engine's work, measured against
-  the humans' chord shares.
+- **The guitar's chord share**, narrowed by M6-04 (DESIGN 2.6 step 3): a chord with both neighbours under 120 ms
+  is now its top note, which takes `pm2` 0.112 -> 0.065 and `troop` 0.086 -> 0.079 (the humans 0.02-0.05). What
+  is left is not in fast runs: `pm2`'s chords at 140-160 ms (ours 0.10 of those onsets, the humans 0.07) and
+  `troop`'s in slow passages (both neighbours 300 ms or more away: ours 0.51, the humans 0.22; 85 of its 171
+  chords). The humans chord there too, so a rule needs more than speed: the stem (a chord needs simultaneous
+  pitches, the feel note's measure) or the engine's own confidence. Measure against the stem first; half a day.
 - **The timing measure.** score.py's `timing_err_ms_matched100` median pairs notes a 1/16 apart in dense runs (its
   greedy matching maximizes the count): on `pm2` it reads 10.9-39.4 ms where the 50-ms matches read 3.6 ms against
   the primary and that plus each chart's own offset against the others. `stress.py`'s feel report should give the

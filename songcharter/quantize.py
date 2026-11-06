@@ -26,6 +26,8 @@ It follows DESIGN.md §2.6 with the critique's corrections (CRITIQUE.json):
      at one time from every source; a flam is under 20 ms) and dropping a note is better than a chord of a run. An
      onset closer to the previous one than the minimum spacing (20 ms, strums, HOPOs and taps alike: brokenNote's 15
      ms and a margin) is dropped, so brokenNote cannot fire; on 1/16 slots the floor never binds up to 750 BPM.
+     With `QuantizeRules.run_chord_s` (the guitar's, RUN_CHORD_S: 120 ms), a chord whose neighbouring onsets both lie
+     closer than that becomes its top note (`run_chords`): the human charts chord almost never in such runs.
   4. **Sustains.** The end snaps to the grid and stops max(85 ms, a 1/16) before the next note on Expert and Hard (a
      1/8 on Medium, a 1/4 on Easy). A sustain shorter than max(200 ms, 0.75 beat) on Expert and Hard (1 beat on
      Medium, 2 on Easy) is dropped. So badSustainGap (40 ms) and babySustain (100 ms) cannot fire either.
@@ -96,6 +98,8 @@ STRUM_SPACING_S = 0.020    # minimum onset spacing before a strummed note (DESIG
 HOPO_SPACING_S = 0.020     # margin) and before a HOPO or a tap; human charts reach 17 notes a second (59 ms)
 MERGE_MAX_S = 0.020        # source onsets on one tick further apart than this are no chord (_frets: the farther go)
 MAX_HANDS = 2              # drum pads other than the kick on one tick
+RUN_CHORD_S = 0.120        # the guitar's run_chord_s (assemble passes it): a chord with both neighbouring onsets
+                           # closer than this becomes one note, its top (DESIGN.md 2.6 step 3, M6-04)
 TOM_MOVES = {2: (3, 4), 3: (2, 4), 4: (2, 3)}  # where a tom that collides with a cymbal goes, in order of preference
 
 
@@ -119,6 +123,9 @@ class QuantizeRules:
     source_hopo: bool = True            # reproduce the source's HOPO/strum states (False: natural HOPOs only)
     forced_only: bool = False           # with source_hopo, only the states the source forced (TimedNote.hopo_forced)
     taps: bool = True                   # keep taps
+    run_chord_s: float = 0.0            # a chord whose previous and next onsets both lie closer than this (seconds
+                                        # on our grid) becomes its top note (`run_chords`); 0 = off, the guitar's
+                                        # is RUN_CHORD_S
 
     def applies(self, offset: float, concentration: float, n_onsets: int) -> bool:
         """Whether a measured offset is trustworthy enough to shift a part by.
@@ -151,6 +158,8 @@ class QuantizeReport:
     dropped_distinct: int = 0     # left out of a tick an onset nearer it holds, more than MERGE_MAX_S apart in the
                                   # source (no chord of notes distinct in time; 5-fret parts only)
     limited: int = 0              # changed by the difficulty's limits (chord shape, a tom moved off a cymbal)
+    run_chord_s: float = 0.0      # the rule on chords in fast runs (QuantizeRules.run_chord_s; 0 = off) ...
+    run_chords: int = 0           # ... and the chords it made one note, their top (5-fret parts only)
     triplet_notes: int = 0        # written on a triplet slot that is not a 1/16 line
     odd_32nds: int = 0            # on an odd 1/32 of a source on a 1/32 grid (odd_32nds): near the midpoint
                                   # between two slots, the coarser one takes it
@@ -408,6 +417,26 @@ def limit_chord(frets, difficulty: str) -> tuple[int, ...]:
     return tuple(fr)
 
 
+def run_chords(times, frets, max_gap_s: float) -> list[tuple[int, ...]]:
+    """The onsets' frets with every chord inside a fast run made one note: a chord whose previous and next onsets
+    (times in seconds, sorted; frets as limit_chord leaves them, so no chord holds an open note) both lie less than
+    `max_gap_s` away becomes its top fret. A chord at a run's start or end, a chord in a slower passage and a strum
+    section of chords at least `max_gap_s` apart stay; so do the first and last onsets. 0 or less: nothing changes.
+
+    The guitar's 120 ms (RUN_CHORD_S, DESIGN.md 2.6 step 3) is where the human charts start chording: in the 18
+    Expert guitar charts of the six references and the four stress songs, 16 of the 22,153 onsets with both
+    neighbours under 120 ms are chords (0.07 %), against 184 of 384 at 120-140 ms (the rock songs' strummed 16ths
+    and 8ths). At our chords that the rule makes one note the humans have a single note (740 of 747), which is the
+    chord's top 0.31 of the time, its bottom 0.17 and the fret nearest the neighbours' lanes 0.18.
+    """
+    out = [tuple(f) for f in frets]
+    for i in range(1, len(out) - 1):
+        if (len(out[i]) > 1 and times[i] - times[i - 1] < max_gap_s - 1e-9
+                and times[i + 1] - times[i] < max_gap_s - 1e-9):
+            out[i] = (max(out[i]),)
+    return out
+
+
 def sustain_kept(tm: TempoMap, tick: int, end: int, difficulty: str) -> bool:
     """Whether a sustain from `tick` to `end` is long enough to keep on the difficulty: SUSTAIN_MIN_BEATS beats and
     SUSTAIN_MIN_S seconds (shorter ones become plain notes)."""
@@ -609,6 +638,13 @@ def _frets(notes: list[TimedNote], groups: dict[int, list[int]], grid: SnapGrid,
         rep.limited += frets != union
         ends = [notes[i].end for i in idx if notes[i].end is not None]
         kept.append(_Onset(k, frets, max(ends) if ends else None, want, tap, idx))
+    if rules.run_chord_s > 0:
+        rep.run_chord_s = rules.run_chord_s
+        for n, frets in zip(kept, run_chords([tm.tick_to_sec(n.tick) for n in kept], [n.frets for n in kept],
+                                             rules.run_chord_s)):
+            if frets != n.frets:
+                n.frets = frets
+                rep.run_chords += 1
     out, src_tick, prev = [], [None] * len(notes), None
     for n, nxt in zip(kept, kept[1:] + [None]):
         length = 0

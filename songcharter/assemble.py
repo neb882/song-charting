@@ -123,8 +123,8 @@ from .chart import DRUM_ACTIVATION, OPEN, STAR_POWER, Chart, DrumHit, FretNote, 
 from .errors import InputError, ToolError
 from .importers import _chart_sections, _decode, read_chart, read_song
 from .package import PackageResult, build_song_folder
-from .quantize import (RULES, TRACK_DIFFICULTY, TRACK_INSTRUMENT, QuantizeReport, QuantizeRules, estimate_offset,
-                       quantize_part, sustain_kept)
+from .quantize import (RULES, RUN_CHORD_S, TRACK_DIFFICULTY, TRACK_INSTRUMENT, QuantizeReport, QuantizeRules,
+                       estimate_offset, quantize_part, sustain_kept)
 from .reduce import LEVELS, Issue, check_reductions, hopo_states, reduce_level
 from .sections import read_allin1, read_allin1_beats, sections_from_chart, sections_from_segments
 from .starpower import check_phrases, fill_crash_share, fit_chart, place_phrases, stem_confirm
@@ -1399,9 +1399,11 @@ def lyric_rules(octave: int = 1) -> QuantizeRules:
 def _quantize(part: PartConfig, song: TimedSong, tempo: TempoMap, pad: float, offset: float, octave: int = 1
               ) -> dict[str, tuple[Track, QuantizeReport]]:
     """The part's taken difficulties on our grid, every one moved by the part's offset (_offset), with its rules
-    (part_rules)."""
+    (part_rules); on the guitar a chord inside a fast run becomes one note (quantize.run_chords, DESIGN.md 2.6)."""
     levels = {d: p for (i, d), p in song.parts.items() if i == part.from_instrument}
     rules = part_rules(part, octave)
+    if part.instrument == "guitar":
+        rules = replace(rules, run_chord_s=RUN_CHORD_S)
     take = ["expert"] if part.take_difficulties == "expert" else [d for d in DIFFICULTIES if d in levels]
     out = {}
     for d in take:
