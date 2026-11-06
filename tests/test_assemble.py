@@ -1593,6 +1593,33 @@ def test_the_octave_pass_forced_2_keeps_the_doubled_grid_and_flags_an_unsure_pha
     assert octave == 2 and len(warn) == 1 and warn[0].startswith("tempo doubled")
 
 
+def test_the_octave_pass_when_the_doubled_pass_finds_no_beats(tmp_path):
+    """The doubled pass can raise an InputError (beatgrid: no confident drum evidence, under 3 confident beats on the
+    doubled line). Under auto the first grid stays, with an evidence ratio of 0 and the "check the tempo" warning,
+    and the chart goes on; a forced grid_octave 2 is that InputError (exit 2), never an AttributeError on the grid
+    it did not get (exit 3, a bug)."""
+    first = _fake_grid(99.0, 0.8)
+    onsets = {"guitar": sixteenths()}
+    asked = []
+
+    def nothing(bpm, bpm_range):
+        asked.append((bpm, bpm_range))
+        raise InputError("no confident drum evidence on the made-up doubled line")
+
+    cfg = parse_config(CONFIG, tmp_path)
+    grid, octave, stats, reason, warn = assemble_module._octave_pass(cfg, first, onsets, None, nothing)
+    assert asked == [(198.0, (2 * assemble_module.BPM_RANGE[0], 2 * assemble_module.BPM_RANGE[1]))]
+    assert grid is first and octave == 1 and stats["second"] is None and stats["evidence_ratio"] == 0.0
+    assert reason.endswith("the doubled grid's confident share 0.00 against 0.80 (ratio 0.00, under 0.7): the "
+                           "first grid stays")
+    assert len(warn) == 1 and warn[0].startswith("tempo: the notes are dense for 99.0 BPM (") and warn[0].endswith(
+        ") but the drums give no evidence at 198.0 BPM: check the tempo")
+    cfg.grid_octave = 2
+    with pytest.raises(InputError, match="no confident drum evidence on the made-up doubled line"):
+        assemble_module._octave_pass(cfg, first, onsets, None, nothing)
+    assert len(asked) == 2
+
+
 def test_the_backbeat_test_gets_the_drum_stem_only(fast_song, monkeypatch):
     """grid_octave is given the grid's features when the grid comes from the drum stem, and none from the mix (its
     snare band holds the other instruments too)."""

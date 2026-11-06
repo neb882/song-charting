@@ -666,3 +666,43 @@ def test_the_baseline_copy_cuts_the_paths_and_the_local_lists_values(tmp_path, m
     monkeypatch.setattr(S, "scrub", lambda obj, secrets: obj)
     assert S.main(["baseline", str(run), str(tmp_path / "out2"), "--local", str(tmp_path / "local.json")]) == 2
     assert "left after scrubbing" in capsys.readouterr().err and not (tmp_path / "out2" / "summary.json").exists()
+
+
+def test_the_baseline_scrub_covers_the_alts_any_case_the_keys_and_the_leftover_paths(tmp_path, monkeypatch, capsys):
+    """Each part of the scrub, which a review broke one at a time with every test still passing (M5-12): the alts'
+    md5s and charters are the local list's as the primary's are; a value matches in any case; a dict's keys are
+    scrubbed as its values are; and a path the scrub left under /home/, /tmp/, /dev/shm/ or /root/ stops the copy,
+    as a value of the list does, with nothing written."""
+    import re
+    songs = json.loads(S.SET_JSON.read_text(encoding="utf-8"))
+    local = local_for(songs)
+    (tmp_path / "local.json").write_text(json.dumps(local))
+    alts = [a for s in local for a in s["alts"]]
+    assert len(alts) >= 4 and all(a["charter"] in S.secrets_of(local) and a["md5"] in S.secrets_of(local)
+                                  for a in alts)
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "summary.json").write_text(json.dumps({"golden": 1, "songs": {
+        "pm2": {"alts": [f"{a['md5']} by {a['charter']}" for a in alts], "loud": "MADE UP BAND - made up SONG 3",
+                "by": "MadeUpCharter"},
+        alts[0]["md5"]: {"f1": 0.5}, "made up band, live": {"f1": 0.25}},
+        "files": {"/made/up/run/x.json": 1}}))
+    (run / "stress_scores.json").write_text(json.dumps({"stress": 1, "songs": {"pm2": {"lag_ms": 1.5}}}))
+    assert S.main(["baseline", str(run), str(tmp_path / "out"), "--local", str(tmp_path / "local.json")]) == 0
+    capsys.readouterr()
+    s = json.loads((tmp_path / "out" / "summary.json").read_text())
+    assert s["songs"]["pm2"] == {"alts": ["<redacted> by <redacted>"] * len(alts),
+                                 "loud": "<redacted> - <redacted>", "by": "<redacted>"}
+    assert s["songs"]["<redacted>"] == {"f1": 0.5} and s["songs"]["<redacted>, live"] == {"f1": 0.25}
+    assert s["files"] == {"<path>/x.json": 1}
+    text = (tmp_path / "out" / "summary.json").read_text().lower()
+    assert "made up" not in text and "madeupcharter" not in text
+    assert not any(a["md5"] in text or a["charter"] in text for a in alts)
+    # a path the scrub did not cut (its path rule broken here): refused, nothing written
+    monkeypatch.setattr(S, "PATH", re.compile(r"(?!)"))
+    for i, prefix in enumerate(("/home/", "/tmp/", "/dev/shm/", "/root/")):
+        (run / "summary.json").write_text(json.dumps({"golden": 1, "run": {"out": f"{prefix}made-up/stress-run"}}))
+        out = tmp_path / f"refused{i}"
+        assert S.main(["baseline", str(run), str(out), "--local", str(tmp_path / "local.json")]) == 2, prefix
+        assert "1 value(s) of the local list or a path left after scrubbing" in capsys.readouterr().err, prefix
+        assert not (out / "summary.json").exists(), prefix
