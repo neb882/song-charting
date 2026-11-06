@@ -248,7 +248,7 @@ def test_running_ui_finds_songcharters_server_and_nothing_else(tmp_path):
             p = sourced(tmp_path, f'UI_PORTS="{ports}"; UI_TIMEOUT_S=1; running_ui || echo "none: $?"')
             assert p.stdout == "none: 1\n" and time.monotonic() - start < 10, (p.stdout, p.stderr)
             port = real[0].server_address[1]
-            p = sourced(tmp_path, f'UI_PORTS="{ports} {port}"; UI_TIMEOUT_S=1; running_ui')
+            p = sourced(tmp_path, f'UI_PORTS="{ports} {port} {closed_port()}"; UI_TIMEOUT_S=1; running_ui')   # not last
             assert p.returncode == 0 and p.stdout == f"{port} {__version__}\n", (p.stdout, p.stderr)
     finally:
         silent.close()
@@ -265,7 +265,7 @@ def test_a_running_songcharter_stops_the_install_with_the_line(tmp_path, version
     runs. With nothing running it returns."""
     hello = {"app": "songcharter", "token": "0" * 16, **({"version": version} if version else {})}
     with stand_in_server(hello) as port:
-        p = sourced(tmp_path, f'UI_PORTS="{closed_port()} {port}"; refuse_if_running; echo went on')
+        p = sourced(tmp_path, f'UI_PORTS="{closed_port()} {port} {closed_port()}"; refuse_if_running; echo went on')
     assert p.returncode == 2 and "went on" not in p.stdout and p.stderr.splitlines() == [
         f"songcharter: {said} is still running (port {port}): close the songcharter window first, then paste the "
         "line again. Nothing was changed."]
@@ -575,7 +575,7 @@ def test_a_release_installs_with_stand_ins(tmp_path):
     assert i.run("--from", str(i.dist)).returncode == 0 and len(i.log("curl.log")) == 1
 
 
-UI_RANGE = range(8784, 8764, -1)   # songcharter ui's ports, from the last: the whole range is asked
+UI_RANGE = range(8765, 8785)   # songcharter ui's ports from the first, the one the friend's page takes
 
 
 def tree(*roots: Path) -> dict:
