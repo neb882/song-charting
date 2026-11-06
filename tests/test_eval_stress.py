@@ -269,6 +269,33 @@ def test_strip_mid_drops_the_vocal_tracks_and_lyrics_events_and_changes_no_other
     assert not any(w.encode() in dst.read_bytes() for w in WORDS) and b"VOCALS" not in dst.read_bytes()
 
 
+def test_strip_mid_drops_every_vocal_track_name_and_keeps_every_other_event(tmp_path):
+    """The privacy rule pinned: a track goes when any of its name events names a vocal track (PART VOCALS, HARM1-3,
+    PART HARM*, in any case and spacing; the name not the track's first event), and nothing else goes: the EVENTS
+    track's text and marker events, a channel pressure (0xD, one data byte) in its own status and in running status,
+    an F7 escape event and a header longer than six bytes are copied byte for byte, and a lyric after them still
+    goes (a misread event length would shift the walk off it)."""
+    from eval.refs import strip_lyrics as SL
+    vocal = [mid_track(mid_meta(0, 3, n.encode()), mid_meta(0, 5, WORDS[i].encode()), mid_meta(0, 0x2F))
+             for i, n in enumerate(["HARM2", "HARM3", "PART HARM3", " part vocals ", "Harm1"])]
+    vocal.append(mid_track(mid_meta(0, 1, b"[idle]"), mid_meta(0, 3, b"PART VOCALS"),
+                           mid_meta(0, 5, WORDS[5].encode()), mid_meta(0, 0x2F)))   # the name after another event
+    vocal.append(mid_track(mid_meta(0, 3, b"PART GUITAR"), mid_meta(0, 3, b"PART VOCALS"),
+                           mid_meta(0, 5, WORDS[6].encode()), mid_meta(0, 0x2F)))   # a second name, vocal
+    events = mid_track(mid_meta(0, 3, b"EVENTS"), mid_meta(0, 1, b"[section intro]"), mid_meta(480, 6, b"verse"),
+                       mid_meta(0, 0x2F))
+    pressure = [mid_meta(0, 3, b"PART DRUMS"), vlq(0) + b"\xd9\x40", vlq(10) + b"\x41"]   # 0xD: one data byte
+    tail = [vlq(60) + b"\x24\x00", vlq(0) + b"\xf7\x02\x01\x02", vlq(0) + b"\x24\x64", mid_meta(0, 0x2F)]
+    drums = mid_track(*pressure, mid_meta(5, 5, WORDS[7].encode()), vlq(0) + b"\x99\x24\x64", *tail)
+    keep = [MID_TEMPO, events, mid_track(*pressure, vlq(5) + b"\x99\x24\x64", *tail)]   # the lyric's 5 ticks carried
+    head = b"MThd" + struct.pack(">IHHH", 8, 1, len(keep) + len(vocal), 480) + b"\x00\x00"
+    src, dst = tmp_path / "in.mid", tmp_path / "out.mid"
+    src.write_bytes(head + b"".join(keep[:2] + vocal[:4] + [drums] + vocal[4:]))
+    assert SL.strip_mid(str(src), str(dst)) == (len(vocal), 1)
+    assert dst.read_bytes() == b"MThd" + struct.pack(">IHHH", 8, 1, len(keep), 480) + b"\x00\x00" + b"".join(keep)
+    assert not any(w.encode() in dst.read_bytes() for w in WORDS)
+
+
 def test_strip_mid_gives_scan_chart_the_same_notes_and_taps_as_the_original(tmp_path, scan_env):
     from eval.refs import strip_lyrics as SL
     whole = mid_folder(tmp_path / "whole", MID_WITH_WORDS)

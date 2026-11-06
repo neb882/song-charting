@@ -6,7 +6,10 @@
        as "all"), and a channel event in running status straight after a sysex (mido keeps the sysex as the running
        status and reads the next bytes as a sysex: EOFError). The walk follows midi-file's rules, the parser behind
        scan-chart: the running status is kept across sysex and meta events, the header's track count bounds the
-       tracks read, and what follows the last track is not read.
+       tracks read, and what follows the last track is not read. It is stricter than midi-file on a broken file:
+       a truncated event or a variable-length number that runs past its track raises ValueError, where midi-file
+       reads on (no package of the stress set or the 20-song set has one). A track is vocal when any of its name
+       events names a vocal track (mido's track.name is the first, scan-chart's the last at tick 0).
 .chart: drops [Events] lines  E "lyric ..." / E "phrase_start" / E "phrase_end".
 usage: python -I strip_lyrics.py <in> <out>   -> prints counts only"""
 import sys, re, struct
@@ -27,7 +30,7 @@ def _is_vocal(name):
     return name in VOCAL_TRACKS or name.startswith('PART HARM')
 def strip_track(body):
     """One MTrk's bytes -> (the bytes without its lyrics events, how many were dropped), or None for a vocal track."""
-    out = bytearray(); q = 0; last = None; carry = 0; dropped = 0; named = False
+    out = bytearray(); q = 0; last = None; carry = 0; dropped = 0
     while q < len(body):
         start = q
         delta, q = _vlq(body, q)
@@ -46,9 +49,8 @@ def strip_track(body):
             if last is None: raise ValueError('MIDI: running status before any status byte')
             end = q + (1 if last >> 4 in (0xC, 0xD) else 2)
         if end > len(body): raise ValueError('MIDI: an event runs past its track')
-        if kind == 0x03 and not named:          # the track's name (mido's track.name is the first one too)
-            named = True
-            if _is_vocal(body[data:end].decode('latin-1')): return None
+        if kind == 0x03 and _is_vocal(body[data:end].decode('latin-1')):   # any of the track's names
+            return None
         if kind == 0x05:                        # lyrics: its delta goes to the next event
             carry += delta; dropped += 1
         else:
