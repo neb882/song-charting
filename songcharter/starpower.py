@@ -10,7 +10,7 @@ Star power (every 5-fret part and drums), `place_star_power`:
   1. Count: K = round(span / 40 beats), the span running from the first to the last Expert onset (Harmonix: one
      phrase per 41 beats, median 11 a song; about 24 on the 6:52 test song), its beats counted at most at 160 BPM
      (`StarPowerRules.max_bpm`), so at most one phrase per 15 s: the human charts of the two 200-BPM stress songs
-     write about 0.82 times the slower songs' phrases per beat, and far more a minute than the slower songs' (M6-01,
+     write about 0.84 times the slower songs' phrases per beat, and far more a minute than the slower songs' (M6-01,
      DESIGN.md 2.10). Drums may get fewer, since their fills are placed first (the critique: Encore does not ask for
      drum star power).
   2. Shape: one measure. A phrase starts on the measure's first Expert onset (Harmonix 92 %, customs 98 % start on a
@@ -113,7 +113,7 @@ Bonus = Callable[[int, int], float]  # (phrase start tick, end tick) -> extra sc
 class StarPowerRules:
     beats_per_phrase: float = 40.0  # K = round(span in beats / this)
     max_bpm: float = 160.0          # the span's beats counted at most at this tempo (its average over the span): on
-                                    # 200-BPM songs the humans write 0.82 times the slower songs' phrases per beat
+                                    # 200-BPM songs the humans write 0.84 times the slower songs' phrases per beat
                                     # (M6-01); 160 is the middle of the fit's plateau (150-165), at most 1 per 15 s
     min_start_gap: float = 24.0     # beats between two phrase starts
     lead_measures: int = 4          # no phrase in the first measures from the first onset's

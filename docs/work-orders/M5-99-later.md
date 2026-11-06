@@ -85,7 +85,8 @@ Its ranked gaps 1-3, 5 and 6 are M5-01, M5-02 and M5-03; part of 9 and 10 are M5
 The shred instrumental's grid came out at twice the human charts' tempo (octave-tolerant beat F1 0.94-0.96).
 M5-01 doubles a grid that is too slow and never halves one: this version builds the doubling pass only, and the
 first pass still folds into 85-185 BPM, so a pulse under 85 stays at double with its effects on the HOPO states,
-the star-power count (about twice the phrases) and the solo measures (M5-03 caps solos in seconds for that reason).
+the star-power count (about twice the phrases; M6-01's ceiling at 160 BPM does not reach a 154-BPM grid) and the
+solo measures (M5-03 caps solos in seconds for that reason).
 A halving rule needs its own statistic (the share of onsets on beat lines, the backbeat ratio M5-01 records for
 every song, the HOPO shares) and a check that the natural HOPO threshold (in ticks) still reads right; measure on
 the stress set first. Half a day to measure, a day to build. M5-01's statistics for the shred song on its first
@@ -94,11 +95,14 @@ right grids' range); backbeat ratio 0.003, the snare on the lines as at the puls
 a grid that is too fast, and halving needs another (the snare on every other line, the onsets on odd 8ths). HOPO
 share ours 0.34 against the humans' 0.55 and 0.39; star power 3.88 phrases a minute against 2.33 and 3.23.
 
-## Star power on a doubled grid
+## Star power on a doubled grid (closed by M6-01)
 
 The phrase rule counts beats (`starpower.py`, about one phrase per 40 beats), so a doubled grid about doubles the
 phrases: the power-metal song went from 2.42 to 5.04 a minute against the humans' 3.03-4.44 (M5-01's stress run).
-A rule in seconds or in measures at the pulse is the fix; the reviewer looks at it before the gate.
+**M6-01:** measured on every human chart, the rate follows the beats (a count in seconds fits worse), a little under
+them at 200 BPM (0.84 times); the span's beats are now counted at most at 160 BPM (DESIGN 2.10). Left: the 160 rests on
+two 200-BPM power-metal songs (the 20-song set measures it again), and a grid at twice the humans' tempo under 160 BPM
+(the shred song's, 154) keeps its doubled count until a halving rule (above).
 
 ## Downbeats when the kick is on every beat (M5-01's follow-up)
 
@@ -155,9 +159,12 @@ cfc7d5d against the branch):
   greedy matching maximizes the count): on `pm2` it reads 10.9-39.4 ms where the 50-ms matches read 3.6 ms against
   the primary and that plus each chart's own offset against the others. `stress.py`'s feel report should give the
   median of the 50-ms matches (or of the nearest neighbours) beside it; an hour with its test.
-- **Solos in measures on a doubled grid.** M5-03's caps count measures, which halve in length when the grid
-  doubles: `pm2`'s long middle solo (267-365 s on the first grid) is capped at 56 measures, 67 s (303-370 s), and
-  the solo share falls 0.33 -> 0.26 (the humans 0.12-0.35). Weigh it with the star-power rule below.
+- **Solos in measures on a doubled grid (closed by M6-01: no change).** M5-03's caps count measures, which halve
+  in length when the grid doubles: `pm2`'s long middle solo (267-365 s on the first grid) is capped at 56 measures,
+  67 s (303-370 s), and the solo share falls 0.33 -> 0.26 (the humans 0.12-0.35). M6-01 measured the humans' own: on
+  both 200-BPM songs their maps are at the doubled grid's tempo and their long solos are 53-58 of those measures
+  (pm2's 67-70 s at 303-373 s), which the capped solo covers by 0.96-1.00; a longer cap would pass every human chart
+  (DESIGN 2.10).
 
 ## The reference set at 20 or more songs, with human-charted solos
 
