@@ -541,7 +541,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
        | `pm2` (tempo check: 10 windows, 235–300 s, 170 against 200 BPM) | 0.598 → **0.987** | 22 → 4 of 45 | 11.5 → 7.9 ms | 0.803 → 0.807 / 0.777 → 0.785 / 0.973 → 0.973 |
        | `troop` (doubled, tempo check empty) | 1.000 → 1.000 | 2 → 2 | 1.8 → 1.8 ms | every track hash identical |
        | `sooth`, `break` (octave 1: no second pass) | 0.644, 0.994 | — | — | every track hash identical |
-       | the seven references (octave 1) | GOLDEN | — | — | GOLDEN |
+       | the seven references (octave 1: no second pass, empty tempo checks) | identical | — | — | identical (the golden diff, `--expect none`, `--rerun bass,sections`, against main 8a93698: every hash, count and score) |
 
        On `pm2` the stretch and everything after it go from 0.00–0.46 to 0.97–1.02 per window, 2–12 ms off. The
        entry into the stretch stays weaker: 230–240 s 1.01 → 0.85, 240–250 s 0.74 → 0.55 (44 ms; the tempo map dips
