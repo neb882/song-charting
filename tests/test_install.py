@@ -290,17 +290,19 @@ def test_build_refuses_a_version_that_is_not_heads(tmp_path):
                           check=True).stdout.strip()
     subprocess.run(["git", "clone", "-q", "--no-hardlinks", "--no-checkout", str(ROOT), str(clone)], check=True)
     subprocess.run(["git", "-C", str(clone), "checkout", "-q", "--detach", head], check=True)
+    script = clone / "packaging" / "release" / "build.sh"
+    script.write_bytes(BUILD.read_bytes())   # the build.sh under test (HEAD's, unless it is being changed)
     init = clone / "songcharter" / "__init__.py"
     init.write_text(init.read_text(encoding="utf-8").replace(f'"{v}"', '"9.9.9"'), encoding="utf-8")
-    p = build(clone / "packaging" / "release" / "build.sh", "9.9.9", out)
+    p = build(script, "9.9.9", out)
     assert p.returncode == 2 and f"its songcharter/__init__.py says '{v}'" in p.stderr and not out.exists()
     subprocess.run(["git", "-C", str(clone), "checkout", "-q", "--", "songcharter/__init__.py"], check=True)
     project = clone / "pyproject.toml"
     project.write_text(project.read_text(encoding="utf-8").replace(f'\nversion = "{v}"\n', '\nversion = "0.0.1"\n', 1),
                        encoding="utf-8")
     subprocess.run(["git", "-C", str(clone), "-c", "user.name=Made Up", "-c", "user.email=made-up@example.invalid",
-                    "commit", "-q", "-am", "a made-up pyproject.toml that disagrees"], check=True)
-    p = build(clone / "packaging" / "release" / "build.sh", f"{v}-ci-abc1234", out)
+                    "commit", "-q", "-m", "a made-up pyproject.toml that disagrees", "pyproject.toml"], check=True)
+    p = build(script, f"{v}-ci-abc1234", out)
     assert p.returncode == 2 and f"says '{v}' and its pyproject.toml '0.0.1'" in p.stderr and not out.exists()
 
 
