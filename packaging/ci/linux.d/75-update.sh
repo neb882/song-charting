@@ -11,7 +11,7 @@
 #      (its work folder noted);
 #   3. the new line pasted over it: "songcharter <new>: in .../app/<new>", app/0.1.0 gone, and only install.sh and
 #      the tarball fetched from the server for it (SHA256SUMS too may be), each once; nothing else downloaded (no line
-#      of runtime.py's fetch, uv's downloads, install.sh's own or uv's Python install, as e2e.sh's no_download: the
+#      of runtime.py's fetch, uv's downloads, install.sh's own but the app's tarball, or uv's Python install: the
 #      runtime is kept); `songcharter doctor` exits 0 with "doctor: OK" and HEAD's __version__ (the same as 0.1.0's
 #      until the release changes it, so the new code is also proven by runtime.json's app and by the install's Python
 #      importing songcharter.updates, which 0.1.0 has not); the clip charted again into the same work folder, with
@@ -162,14 +162,18 @@ line() {   # LOG URL LINE: the guide line LINE, with $SONGCHARTER_RELEASE_URL=UR
   tail -n 6 "$log"
   grep -qx "install.sh: OK" "$log" || die "no \"install.sh: OK\" in $log"
 }
-no_download() {   # LOG: the install downloaded nothing (e2e.sh'"'"'s no_download, and uv'"'"'s Python install)
-  local found=0
+no_download() {   # LOG: the install downloaded nothing but the app'"'"'s tarball, from the server (e2e.sh'"'"'s
+  # no_download, and uv'"'"'s Python install)
+  local found=0 app="downloading $NEW_URL/songcharter-$NEW.tar.gz"
   if grep -nE "^fetch " "$1"; then echo "75-update: runtime.py fetched (above)"; found=1; fi
   if grep -nE "Download(ing|ed) " "$1"; then echo "75-update: uv downloaded (above)"; found=1; fi
-  if grep -nE "^downloading " "$1"; then echo "75-update: install.sh downloaded (above)"; found=1; fi
+  if grep -E "^downloading " "$1" | grep -vxF "$app"; then
+    echo "75-update: install.sh downloaded more than the app (above)"; found=1
+  fi
+  grep -qxF "$app" "$1" || { echo "75-update: no \"$app\" line"; found=1; }
   if grep -nE "^Installed Python" "$1"; then echo "75-update: uv installed Python (above)"; found=1; fi
   [ $found -eq 0 ] || exit 1
-  echo "nothing downloaded"
+  echo "nothing downloaded but the app (install.sh'"'"'s line: $app)"
 }
 installed_new() {   # LOG: the new version is in app/<new>, alone, and its install ended well
   grep -qx "songcharter $NEW: in $home/app/$NEW" "$1" || die "no \"songcharter $NEW: in $home/app/$NEW\" in $1"
