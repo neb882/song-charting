@@ -1934,7 +1934,8 @@ cannot move (no file in `eval/golden.py`'s `ENGINE_FILES` changed).
   record holds a path of the person's. A later build without a picture removes the earlier one (they are among
   assemble's `OUTPUT_FILES`). The diagnostics bundle refuses JPEG and WebP as it refuses PNG, by name and first bytes.
 - **A background of the person's** (M5-12) [code: `assemble._ours`]: a `background.*` in an output folder is the
-  build's own only when the earlier build's report.json says, in `art`, that it added that file. v0.1 wrote none,
+  build's own only when the earlier build's report.json says, in `art`, that it added that file, and the file there
+  still has the size it recorded (a picture the person put in its place under the same name is theirs). v0.1 wrote none,
   so one in a folder it made is the person's (a Clone Hero player can drop one into a song folder): the output
   check refuses that folder ("holds what a build does not write"), as v0.1.0 did, and nothing deletes the file. A
   background a build recorded is replaced by the next one's, or removed by a build without one. (Album art was

@@ -915,7 +915,7 @@ def test_a_running_server_of_another_version_is_not_reused(tmp_path, monkeypatch
             hello.clear()
             hello.update({"app": "songcharter", "token": "0" * 16, "url": url},
                          **({} if theirs is None else {"version": theirs}))
-            assert S.main(port=port, home=home) == 2, theirs
+            assert S.main(port=port, home=home, browser=theirs != 7) == 2, theirs   # --no-browser too
             got = capsys.readouterr()
             assert got.out == "" and got.err == (
                 f"songcharter: error: {who} is still running ({url}), and this is songcharter {this}: close the "

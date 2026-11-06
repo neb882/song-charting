@@ -474,12 +474,18 @@ def failed_folder(output: Path) -> Path:
 
 def _ours(folder: Path) -> set[str]:
     """The names (lower case) an earlier build in `folder` may have left there: OUTPUT_FILES but the backgrounds, and
-    the background its report.json's `art` says it added. A background nothing recorded is the person's."""
+    the background its report.json's `art` says it added, while the file there still has the size it recorded (a
+    picture the person put in its place under the same name is theirs). A background nothing recorded is the
+    person's."""
     names = OUTPUT_FILES - BACKGROUNDS
     try:
         record = json.loads((folder / "report.json").read_text(encoding="utf-8"))["art"]["background"]
-        if record.get("added") is True and str(record.get("file")).lower() in BACKGROUNDS:
-            names |= {record["file"].lower()}
+        name = str(record.get("file")).lower()
+        if record.get("added") is True and name in BACKGROUNDS:
+            size = record.get("bytes")
+            there = [p for p in folder.iterdir() if p.is_file() and p.name.lower() == name]
+            if not isinstance(size, int) or all(p.stat().st_size == size for p in there):
+                names |= {name}
     except (OSError, ValueError, KeyError, TypeError, AttributeError):   # no record, or not one of ours
         pass
     return names

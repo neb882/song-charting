@@ -932,14 +932,16 @@ def test_check_inputs(tmp_path):
         check_inputs(cfg)
 
 
-def _earlier_build(folder, background=None, report=None):
+def _earlier_build(folder, background=None, report=None, size=None):
     """A folder an earlier build made: its four files, with report.json's `art` saying it added `background` (a file
-    name) or none (`report`: report.json's text instead)."""
+    name; `size`: the bytes it recorded) or none (`report`: report.json's text instead)."""
     folder.mkdir(parents=True, exist_ok=True)
     for name in ("notes.chart", "song.ini", "song.ogg"):
         (folder / name).write_bytes(b"earlier")
     record = ({"added": True, "file": background, "from": "given"} if background else
               {"added": False, "file": None, "from": None})
+    if size is not None:
+        record["bytes"] = size
     (folder / "report.json").write_text(report if report is not None else json.dumps(
         {"gate": {"ok": True}, "art": {"album_art": {"added": False, "file": None, "from": None},
                                        "background": record}}), encoding="utf-8")
@@ -992,6 +994,16 @@ def test_a_persons_background_in_an_earlier_builds_folder_is_kept(tmp_path):
         assert (out / "background.jpg").read_bytes() == b"new" and not (out / "BACKGROUND.JPG").exists()
         assemble_module._install(_staged(tmp_path), out)
         assert sorted(p.name for p in out.iterdir()) == ["notes.chart", "report.json", "song.ini", "song.ogg"]
+    # a background the build wrote, then replaced by the person under the same name: theirs (its size is not the
+    # recorded one), so the folder is refused and the picture stays; the recorded size: the build's, as above
+    out = _earlier_build(tmp_path / "Replaced", background="background.jpg", size=len(b"ours"))
+    (out / "Background.JPG").write_bytes(mine)
+    with pytest.raises(InputError, match=r"holds what a build does not write \(Background.JPG\)"):
+        assemble_module.check_output(out)
+    (out / "Background.JPG").write_bytes(b"ours")
+    assemble_module.check_output(out)
+    assemble_module._install(_staged(tmp_path), out)
+    assert sorted(p.name for p in out.iterdir()) == ["notes.chart", "report.json", "song.ini", "song.ogg"]
     # an earlier failed build: its own background goes with it, a person's stays and so does the folder
     failed = _earlier_build(tmp_path / "Failed.failed", background="background.png")
     (failed / "background.png").write_bytes(b"ours")

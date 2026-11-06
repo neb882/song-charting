@@ -304,6 +304,14 @@ def test_build_refuses_a_version_that_is_not_heads(tmp_path):
                     "commit", "-q", "-m", "a made-up pyproject.toml that disagrees", "pyproject.toml"], check=True)
     p = build(script, f"{v}-ci-abc1234", out)
     assert p.returncode == 2 and f"says '{v}' and its pyproject.toml '0.0.1'" in p.stderr and not out.exists()
+    # a committed __init__.py that disagrees while pyproject.toml is HEAD's stops it too: the app would call itself
+    # another version than the release (the order's defect)
+    subprocess.run(["git", "-C", str(clone), "checkout", "-q", "--detach", head], check=True)
+    init.write_text(init.read_text(encoding="utf-8").replace(f'"{v}"', '"9.9.9"'), encoding="utf-8")
+    subprocess.run(["git", "-C", str(clone), "-c", "user.name=Made Up", "-c", "user.email=made-up@example.invalid",
+                    "commit", "-q", "-m", "a made-up __init__.py that disagrees", "songcharter/__init__.py"], check=True)
+    p = build(script, v, out)
+    assert p.returncode == 2 and f"says '9.9.9' and its pyproject.toml '{v}'" in p.stderr and not out.exists()
 
 
 # ------------------------------------------------------------------------------------------------ the whole install
