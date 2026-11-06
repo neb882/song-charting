@@ -528,6 +528,30 @@ def test_a_song_never_loses_its_only_solo_to_the_share_cap():
     assert record["solos"][0]["measures"] == 47 and record["skipped_by_share"] == []
 
 
+def test_the_rest_before_a_window_at_the_run_end_is_split_again():
+    """A 150-measure run (300 s) whose densest 50 measures are at its end: the window is those 50 (100 s, the seconds
+    cap) and the 100 measures before it, over both caps, are split again."""
+    tm = const_map()
+    ex = density({m: (12 if m >= 109 else 4) for m in range(9, 159)}, measures=170)
+    onsets = sorted({n.tick for n in ex.notes})
+    got = solo_sections(lettered(9, [150], "Solo "), onsets[-1] + 1, tempo=tm, onsets=onsets)
+    assert spans(got) == [(9, 50), (59, 50), (109, 50)]
+
+
+def test_a_trimmed_window_under_16_onsets_is_skipped():
+    """max_share 0.25 of the 199-s span leaves 10 s after the two densest: the sparse third (2 notes a measure) would
+    be cut to a 5-measure window of 10 onsets, under the 16-onset minimum though over the 4-measure one: skipped."""
+    tm = const_map()
+    runs = [(11, 10, 16), (31, 10, 14), (51, 12, 2)]                  # first measure, measures, notes a measure
+    ex = density({m: n for first, k, n in runs for m in range(first, first + k)})
+    record = {}
+    got = place_solos(ex, tm, runs_at(*((first, k) for first, k, _ in runs)), rules=SoloRules(max_share=0.25),
+                      record=record)
+    assert [a // M for a, _ in got] == [11, 31]
+    assert [(r["start"] // M, r["measures"], r["onsets"]) for r in record["skipped_by_share"]] == [(51, 12, 24)]
+    assert record["trimmed_by_share"] == []
+
+
 def test_stem_confirm():
     tm = const_map()
     pad = 1.0
