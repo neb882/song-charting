@@ -26,7 +26,7 @@ from songcharter.chart import (DRUM_ACTIVATION, STAR_POWER, Chart, DrumHit, Fret
 from songcharter.cli import main
 from songcharter.errors import InputError, ToolError
 from songcharter.importers import read_chart, read_song
-from songcharter.quantize import play_states, quantize_part
+from songcharter.quantize import RUN_CHORD_S, play_states, quantize_part
 from songcharter.starpower import SOLO_RULES, SP_RULES
 from songcharter.tempo import Tempo, TempoMap
 from songcharter.timed import TimedHit, TimedNote, TimedPart, TimedSong, TimedSpan
@@ -242,6 +242,16 @@ def test_notes_land_on_our_grid(built):
     song = read_chart(result.folder / "notes.chart")
     assert len(song.parts[("drums", "expert")].notes) == len(tool["drums"])  # the STRAYS trimmed
     assert all(h.cymbal for h in song.parts[("drums", "expert")].notes if h.pad == 2)  # pro_drums from song.ini
+
+
+def test_the_guitar_part_makes_chords_in_fast_runs_one_note(built):
+    """The guitar part is quantized with the rule on chords in fast runs (quantize.run_chords, RUN_CHORD_S), and
+    report.json records it with the chords it changed, per level; the bass and the drums go without it."""
+    _, result, _ = built
+    q = {k: p["quantize"] for k, p in result.report["parts"].items()}
+    assert {d: r["run_chord_s"] for d, r in q["guitar"].items()} == {"expert": RUN_CHORD_S, "hard": RUN_CHORD_S}
+    assert all(type(r["run_chords"]) is int for r in q["guitar"].values())
+    assert all(r["run_chord_s"] == 0 and r["run_chords"] == 0 for k in ("bass", "drums") for r in q[k].values())
 
 
 def test_onsets_in_the_silence_around_a_stem_are_trimmed(built):

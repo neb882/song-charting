@@ -771,6 +771,69 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
      611) [here, M5-01 review]. They are distinct fast notes the old quantizer merged into chords the engine never
      heard, not split strums. The order's line ("the chord shares toward the humans' or stay") is read by its intent,
      a chord is notes that sound together, and the owner decides at the gate.
+   - **No chord inside a fast run** (M6-04, the guitar) [the feel note, docs/reports/feel.md part 2: a chord appears
+     only where a chord rings]. A guitar chord whose previous and next onsets both lie under 120 ms away
+     (`RUN_CHORD_S`, measured on our grid) becomes one note, its top fret (`quantize.run_chords`, after the chord
+     limits; its HOPO state then comes as any single note's, by the guitar's "forced" rule the natural one: a HOPO
+     after another fret). A chord at a run's start or
+     end, a chord in a slower passage and a strum section of chords 120 ms or more apart stay, and so do the part's
+     first and last onsets. Only the guitar part passes it (`assemble._quantize`); the bass and the drums do not. Our
+     lower levels follow Expert (reduce.py takes each chord's shape from the level above); a tool's own lower levels
+     (`take_difficulties: "all"`) are each read against their own neighbouring onsets, so a Hard chord stays where
+     Hard's own notes are slower than Expert's. report.json's `parts.guitar.quantize.<level>` has `run_chord_s` (the
+     rule; 0 = off) and `run_chords` (the chords it changed).
+     - **The humans** [here, M6-04: the 18 Expert guitar charts of the six references and the four stress songs,
+       read through score.py's scan_notes.cjs; ours the release candidate's runs, gate-rc and gate-rc-stress]. Each
+       onset by the larger of its two gaps to the neighbouring onsets:
+
+       | both neighbours within | human onsets | chords | share | our onsets | chords | share |
+       |---|---|---|---|---|---|---|
+       | under 80 ms | 18,896 | 14 | 0.07 % | 2,568 | 151 | 5.9 % |
+       | 80–100 ms | 2,392 | 1 | 0.04 % | 658 | 8 | 1.2 % |
+       | 100–120 ms | 865 | 1 | 0.1 % | 166 | 13 | 7.8 % |
+       | 120–140 ms | 384 | 184 | 48 % | 347 | 122 | 35 % |
+       | 140–160 ms | 4,971 | 482 | 9.7 % | 3,107 | 294 | 9.5 % |
+       | 160–200 ms | 1,864 | 81 | 4.3 % | 1,253 | 189 | 15 % |
+       | 200–300 ms | 3,590 | 1,391 | 39 % | 2,588 | 1,434 | 55 % |
+       | 300 ms or more | 4,354 | 1,239 | 28 % | 2,238 | 693 | 31 % |
+
+       In beats the humans chord 3 of their 5,469 onsets whose neighbours both lie under a 16th, 2,190 of 27,277
+       between a 16th and an 8th and 1,200 of 4,570 slower; our grid writes nothing under a 16th, so beats cannot
+       tell our fast runs (a 16th at 200 BPM, 75 ms) from our strums (a 16th at 110 BPM, 136 ms), and the rule is in
+       ms. Ours and theirs part under 120 ms: 172 of our chords there (pm2 139, troop 17, sooth 14, All the Small
+       Things 2), where the humans have 16 in all. From 120 ms the humans strum chords (the rock stress song and Take
+       Me Out: 181 of the 236 onsets at 120–140 ms), and our extra chords at 160–300 ms are the references' strum
+       parts (Creep, Take Me Out), which the order keeps. pm2's fast chords are two runs of 90 chords in a row, so a
+       rule that kept every chord with a chord beside it (a "strum section" by shape) would keep all of them: the
+       strum section is told by its speed.
+     - **Which note** [here, M6-04]: at the 172 chords the rule changes the humans have 747 onsets within 50 ms, 740
+       of them single notes. That note is the chord's top 231 times (0.31), its bottom 124 (0.17) and the fret
+       nearest the mean of the neighbours' lanes 136 (0.18); pm2's 695 decide it (216 / 111 / 122), troop's 41 agree
+       (15 / 13 / 14). Simulated on the release candidate's charts, every choice lowers pm2's contour a little,
+       the top note least (0.003 on each chart against 0.006 for the other two), and all three narrow its jump-size
+       distance about alike.
+     - **Golden** [here, M6-04: main before the order against the branch, `--rerun bass`, `--expect guitar`]: no
+       UNEXPECTED change, every pooled F1@50 unchanged. Only All the Small Things' Expert guitar (2 chords; chord
+       share 0.788 → 0.785, the human 0.766) and the test song's guitar (20 chords, all four levels) move; the
+       other five references keep their charts.
+     - **The stress set** [here, M6-04: the same two commits, both runs scored together]: every F1@50 and F1@100
+       unchanged; the
+       rock song (`break`) unchanged. Our Expert guitar against each human chart:
+
+       | song | chords made one note | chord share | the humans | contour | jump-size distance | big fast jumps / min (the humans) |
+       |---|---|---|---|---|---|---|
+       | troop | 17 | 0.086 → 0.079 | 0.034–0.046 | 0.521–0.524, unchanged | 0.323–0.402 → 0.321–0.400 | 10.5 → 10.7 (27–42) |
+       | sooth | 14 | 0.053 → 0.047 | 0.044–0.063 | 0.674–0.679 → 0.675–0.681 | 0.090–0.128, unchanged | 2.1, unchanged (2.4) |
+       | break | 0 | 0.805, unchanged | 0.640–0.670 | unchanged | unchanged | 0 (0–0.4) |
+       | pm2 | 139 | 0.112 → 0.065 | 0.021–0.038 | 0.520–0.561 → 0.516–0.558 | 0.189–0.252 → 0.177–0.227 | 8.9 → 9.2 (42–55) |
+
+       Both fast songs move toward the humans, pm2 by 0.047 and troop by 0.008, neither into their range. pm2's
+       contour falls 0.003 on each of its five charts (7 of 2,062 pairs against the primary: score.py reads a chord
+       by its mean lane, and a single note in its place turns some "same" steps into steps up or down), the one
+       measure that moves away; its per-note HOPO agreement falls 0.003–0.006 (the new single notes follow the
+       natural rule). troop's remaining extra chords are not in fast runs: of its 171 chords left, 85 sit where both
+       neighbours are 300 ms or more away (ours 0.51 of those onsets, the humans 0.22) and 81 at 140–160 ms (ours
+       0.16, the humans 0.13), where a speed rule cannot tell them from the humans' chords (M5-99).
    - **The floors, 20 ms** (M5-01; until then 80 ms before a strum and 55 ms before a HOPO or a tap, which deleted
      strummed 16ths above 187.5 BPM) [conventions report 2g]. `brokenNote` at 15 ms is the only spacing the games or
      the lints require, and the floors' only job is that it cannot fire; 20 ms is that plus a margin. Human charts
