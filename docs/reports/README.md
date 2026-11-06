@@ -44,6 +44,7 @@ ones then, but the CI runs they link still name the old ones.
 | `M5-13-advisor-fixes.md` | the gate advisor's two findings: an older chart of ours for the same song is the one an install replaces; no update under a running songcharter |
 | `M6-01-fast-star-power-solos.md` | star power counted at most at 160 BPM on fast songs, from 34 human parts; solo caps kept; the review |
 | `M6-02-doubled-bass-triplets.md` | the bass on a doubled grid snaps to its 8ths only, no triplet slots (troop's and pm2's bass F1@50 up); the review |
+| `M6-04-fast-run-chords.md` | a guitar chord inside a fast run (both neighbours under 120 ms) becomes its top note, from 18 human charts; the review and its two test fixes |
 | `feel.md` | how a chart should feel to play: nine parts, each with a measure, revised after the advisor (M5) |
 | `m5-plan-review.md` | the advisor's review of the M5 plan and the three skeptics' verdicts |
 | `pipeline-review.md` | an advisor's review of how work is run (2026-11-04), finding by finding, with what was done |
