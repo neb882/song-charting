@@ -1,12 +1,14 @@
 # The stress set's baseline
 
 `summary.json` is `python -m eval.golden run`'s summary of the stress set (`eval/stress.json`, `eval/README.md`
-"Stress songs"), built on the dev machine on 2026-11-05 from `main` at fbd9751 (wave 1's `main`, after M4-11):
-every level, one guitar take, CPU, 2 threads, the kept folders made cold. `stress_scores.json` is `eval/stress.py
-score`'s scoring of that run: our charts against every human chart of each song, and the other human charts against
-the primary, with the feel measures. Both hold counts, hashes and scores only: no audio, chart or lyric, and no
-md5, title, artist or charter of the packages (`eval/stress.py baseline` cut every path to its last part and checked
-that none of the local list's values is left).
+"Stress songs": four songs since M5-11 added `pm2`), built on the dev machine on 2026-11-06 from `main` at cfc7d5d
+(after M5-10, M5-11's merge base): every level, one guitar take, CPU, 2 threads, warm from the kept folders made
+cold at 8ba3cbd (every engine cached). The first baseline, three songs from `main` at fbd9751 (2026-11-05), is in
+the history. `stress_scores.json` is `eval/stress.py score`'s scoring of that run: our charts against every human
+chart of each song, and the other human charts against the primary, with the feel measures. Both hold counts,
+hashes and scores only: no audio, chart or lyric, and no md5, title, artist or charter of the packages
+(`eval/stress.py baseline` cut every path to its last part and checked that none of the local list's values is
+left).
 
 The stress check of a later change is `python eval/stress.py compare eval/baseline/stress <its run>`: exit 1 when a
 part's F1@50 against the primary chart falls by more than 0.01. From wave 3 on, an order compares with a stress run

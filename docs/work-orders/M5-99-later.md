@@ -109,14 +109,51 @@ which is flagged uncertain, and downbeat F1 0.000 against all three human charts
 candidate: the crash or the snare pattern over 4 bars (a crash on beat 1 after a fill, the longest kick or the bass's
 note changes), measured on the stress set. Downbeat F1 is reported, not a pass line. Half a day to measure.
 
-## The octave pass's guard, provisional (M5-01)
+## The octave pass's threshold and guard, provisional (M5-01, M5-11)
 
-`OCTAVE_EVIDENCE_MIN` = 0.7, the doubled grid's confident share against the first grid's, is provisional until the
-20-song set. On M5-01's table the one real doubling (the power-metal song) keeps 0.997; the second passes of nine
-right grids keep 0.63-0.94, because their hats play the 8ths; a doubled grid with evidence only on the first
-grid's beats keeps 0.5 by construction. The density test (margin x3.14) and the backbeat test (x3.95) carry the
-decision; a guard set too high only falls back to v0.1's grid, with a warning (DESIGN 2.3 step 7). Both tests'
-thresholds rest on one song at half tempo: re-measure them with every fast song the set gains.
+Since M5-11 the octave rests on the note density alone: `OCTAVE_SHARE` = 0.35, with the doubled tempo at most 300
+BPM and 200 onsets; the backbeat ratio is recorded in every report, not a test (DESIGN 2.3 step 7). The threshold
+rests on two songs that need doubling, the two power-metal stress songs (pooled 0.623 and 0.527), against nine right
+grids (0.001-0.199): margins x1.76 over the right grids and x1.51 under the nearer of the two. The 20-song set
+measures it again, with every fast song it gains and the backbeat ratio beside it (a halving rule may want it).
+
+`OCTAVE_EVIDENCE_MIN` = 0.7, the doubled grid's confident share against the first grid's, is provisional too. The
+real doublings keep 0.828 (`troop`, x1.18 over the guard) and 0.943 (`pm2`); the second passes of nine right grids
+keep 0.63-0.94, because their hats play the 8ths; a doubled grid with evidence only on the first grid's beats keeps
+0.5 by construction. So the guard does not stop a false doubling, the threshold does; a guard set too high only
+falls back to v0.1's grid, with a warning.
+
+## The second power-metal song on its doubled grid (M5-11)
+
+M5-11 doubled `pm2`'s grid (99.99 -> 199.99 BPM) and adopted it although three of the order's lines failed (DESIGN
+2.3 step 7, the table; the orchestrator, 2026-11-06): the guitar gained 0.13-0.15 F1@50 against all five charts and
+the drums 0.07-0.19. Each failure is its own item, numbers from M5-11's stress runs (1 CPU take, the merge base
+cfc7d5d against the branch):
+
+- **The bass on a doubled grid.** F1@50 against the primary 0.800 -> 0.777 (alt2 0.598 -> 0.595), spread over the
+  song: 13 of 15 30-s windows lower, 46 of the 47 lost 50-ms matches outside the tempo change at 215-305 s; matched
+  notes 4.4 ms off, as before. Candidates: the bass's 16th-note phase concentration on the doubled grid is 0.099,
+  just under the quantizer's `min_concentration` 0.1, so its measured 26 ms offset is not applied (31 ms was, at
+  0.26 on the first grid); and 166 notes take the doubled grid's triplet slots (`DOUBLED_BASS_SLOTS`; 2 before).
+  Measure both on `troop` and `pm2` before changing either; half a day.
+- **A tempo change under a doubled grid.** Plain beat F1 0.397 -> 0.598 (octave-tolerant 0.658; the humans 1.000),
+  downbeat F1 0.014. The grid has the beat count (1,457 beats against 1,435) and a median error of 13.6 ms, but
+  about 40 % of its beats are more than 70 ms off, and the build warns of a 170 BPM stretch at 235-300 s that the
+  200 BPM grid does not follow (the humans' maps have 330 tempo markers, ours 153). The second pass keeps its hinted
+  line straight (`keep_line`, DESIGN 2.3 step 7), which may be what stops it following a change: measure where the
+  beats are off (a beat F1 per window in score.py), then whether the tracker inside a straight stretch's bounds
+  follows it. Half a day to measure.
+- **The guitar's chord share** is 0.112 on the doubled grid (0.119 on the first; `troop` 0.09; the humans
+  0.02-0.04). The quantizer merged none on either grid, so these are the engine's own chords: a rule on the
+  engine's chords (which to split into single notes in a fast run) is the guitar engine's work, measured against
+  the humans' chord shares.
+- **The timing measure.** score.py's `timing_err_ms_matched100` median pairs notes a 1/16 apart in dense runs (its
+  greedy matching maximizes the count): on `pm2` it reads 10.9-39.4 ms where the 50-ms matches read 3.6 ms against
+  the primary and that plus each chart's own offset against the others. `stress.py`'s feel report should give the
+  median of the 50-ms matches (or of the nearest neighbours) beside it; an hour with its test.
+- **Solos in measures on a doubled grid.** M5-03's caps count measures, which halve in length when the grid
+  doubles: `pm2`'s long middle solo (267-365 s on the first grid) is capped at 56 measures, 67 s (303-370 s), and
+  the solo share falls 0.33 -> 0.26 (the humans 0.12-0.35). Weigh it with the star-power rule below.
 
 ## The reference set at 20 or more songs, with human-charted solos
 

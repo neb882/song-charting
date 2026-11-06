@@ -51,7 +51,7 @@ def local_for(songs):
 
 def test_stress_json_parses_and_every_song_has_a_primary(tmp_path):
     songs = json.loads(S.SET_JSON.read_text(encoding="utf-8"))
-    assert [s["id"] for s in songs] == ["troop", "sooth", "break"]
+    assert [s["id"] for s in songs] == ["troop", "sooth", "break", "pm2"]
     assert all(s["slot"] and s["charts"] >= 1 and s["primary"] for s in songs)
     text = S.SET_JSON.read_text(encoding="utf-8")
     assert not S.MD5.search(text) and "charter" not in text   # the md5s and charters are the owner's list's
@@ -59,7 +59,7 @@ def test_stress_json_parses_and_every_song_has_a_primary(tmp_path):
     local.write_text(json.dumps(local_for(songs)))
     merged = S.load_set(local=local)
     assert [(m["id"], m["md5"], len(m["alts"])) for m in merged] == [
-        ("troop", md5(1), 2), ("sooth", md5(11), 1), ("break", md5(21), 3)]
+        ("troop", md5(1), 2), ("sooth", md5(11), 1), ("break", md5(21), 3), ("pm2", md5(31), 4)]
     assert merged[0]["slot"] == songs[0]["slot"] and merged[0]["title"] == "Made Up Song 0"
 
 

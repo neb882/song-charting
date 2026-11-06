@@ -665,13 +665,13 @@ def clip_to_audio(tracks: dict[str, Track], tempo: TempoMap, audio_end: float, m
 OCTAVE_SHORT = 0.75        # an interval between onsets is short under this share of a 1/16 of its beat: the ones
                            # the quantizer would merge, move or drop (its `separate` is 0.75 slot)
 OCTAVE_SHARE = 0.35        # the grid doubles when this share of the intervals, pooled over the parts, is short
-                           # (the geometric midpoint of 0.199, the most on a right grid, and 0.623 at half tempo) ...
-BACKBEAT_MIN = 0.34        # ... and the snare is not clearly on the beat lines (midpoints / lines at least this:
-                           # the geometric midpoint of 0.172, the most on a right grid, and 0.682 at half tempo) ...
+                           # (0.199 the most on a right grid, 0.527 and 0.623 at half tempo: the eleven songs of
+                           # DESIGN.md 2.3; M5-01's 0.35 kept over the midpoint 0.32, nearer the right grids) ...
 OCTAVE_MAX_BPM = 300.0     # ... and the doubled tempo is at most Magma's 300 BPM ...
 OCTAVE_MIN_ONSETS = 200    # ... and the parts have this many distinct onsets in all
-BACKBEAT_WINDOW_S = 0.035  # the snare band's peak within this of a beat line or a beat's midpoint
-BACKBEAT_MIN_BEATS = 16    # confident beats the backbeat ratio needs (fewer: indeterminate)
+BACKBEAT_WINDOW_S = 0.035  # the backbeat ratio, recorded but not a test (M5-11: 0.19 on a song at half tempo,
+                           # 0.172 on a right grid): the snare band's peak within this of a beat line or a midpoint
+BACKBEAT_MIN_BEATS = 16    # confident beats the backbeat ratio needs (fewer: none)
 DOUBLED_BASS_SLOTS = (2, 3)  # straight and triplet slots per beat for the bass on a doubled grid: its 8ths and
                              # their triplets, so its scattered onsets get the first grid's 16ths (the triplets
                              # are the first grid's 16th-note triplets, finer than its 8th-note ones)
@@ -686,7 +686,6 @@ OCTAVE_EVIDENCE_MIN = 0.7  # the doubled grid is kept when its confident share i
 class OctaveRules:
     short: float = OCTAVE_SHORT
     share: float = OCTAVE_SHARE
-    backbeat_min: float = BACKBEAT_MIN
     max_bpm: float = OCTAVE_MAX_BPM
     min_onsets: int = OCTAVE_MIN_ONSETS
     window_s: float = BACKBEAT_WINDOW_S
@@ -741,11 +740,12 @@ def grid_octave(onsets_by_part: dict[str, Any], beats: np.ndarray, features: Ons
     beats: the grid's beats (input seconds); features: the drum stem's OnsetFeatures, None without drums.
 
     The density test: per part, the share of intervals between onsets shorter than `rules.short` of a 1/16 of
-    their beat (short_intervals), pooled weighted by the parts' onset counts. The backbeat test: backbeat_ratio
-    (None without drums or with too few confident beats: indeterminate). The octave is 2 when the pooled share is at
-    least `rules.share`, the backbeat ratio is None or at least `rules.backbeat_min`, the grid's median tempo
-    doubled is at most `rules.max_bpm` and the parts have at least `rules.min_onsets` onsets; stats["reason"] says
-    which test decided."""
+    their beat (short_intervals), pooled weighted by the parts' onset counts. The octave is 2 when the pooled share
+    is at least `rules.share`, the grid's median tempo doubled is at most `rules.max_bpm` and the parts have at least
+    `rules.min_onsets` onsets; stats["reason"] says which test decided. The backbeat ratio (backbeat_ratio; None
+    without drums or with too few confident beats) is recorded in the stats (and a doubling's reason) but decides
+    nothing (M5-11: a song at half tempo with its snare on the first grid's lines has a ratio as low as a right
+    grid's)."""
     parts, n_all, weighted = {}, 0, 0.0
     for name, times in onsets_by_part.items():
         n = len(np.unique(np.asarray(times, dtype=np.float64)))
@@ -761,8 +761,6 @@ def grid_octave(onsets_by_part: dict[str, Any], beats: np.ndarray, features: Ons
     why_not = []
     if pooled < rules.share:
         why_not.append(f"{pooled:.1%} of intervals under {rules.short} of a 16th (under {rules.share:.1%})")
-    if ratio is not None and ratio < rules.backbeat_min:
-        why_not.append(f"the snare is on the beat lines (backbeat {ratio:.2f}, under {rules.backbeat_min})")
     if 2 * bpm > rules.max_bpm:
         why_not.append(f"{2 * bpm:.1f} BPM doubled is over {rules.max_bpm:.0f}")
     if n_all < rules.min_onsets:
@@ -775,8 +773,7 @@ def grid_octave(onsets_by_part: dict[str, Any], beats: np.ndarray, features: Ons
     stats = {"octave": octave, "reason": reason, "parts": parts, "onsets": n_all, "pooled_share": round(pooled, 4),
              "backbeat_ratio": None if ratio is None else round(ratio, 4), "backbeat_beats": used,
              "bpm": round(bpm, 4), "thresholds": {"short": rules.short, "share": rules.share,
-                                                  "backbeat_min": rules.backbeat_min, "max_bpm": rules.max_bpm,
-                                                  "min_onsets": rules.min_onsets}}
+                                                  "max_bpm": rules.max_bpm, "min_onsets": rules.min_onsets}}
     return octave, stats
 
 

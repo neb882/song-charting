@@ -16,5 +16,11 @@
   "slot": "an ordinary rock song (the guard against making normal songs worse)",
   "charts": 4,
   "primary": "guitar (and a 6-fret part); two of the other charts have only a 6-fret and a rhythm part"
+ },
+ {
+  "id": "pm2",
+  "slot": "a second 200 BPM power-metal song, 7:20, with long solos",
+  "charts": 5,
+  "primary": "guitar, bass, drums, keys and vocals (lyric events: timing scripts only)"
  }
 ]
