@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-05",
+  "updated": "2026-11-06",
   "about": "The short state of the project. Read it first; DESIGN.md has the detail and the evidence. Update it when a milestone, a decision or a dead end lands.",
   "people": {
     "owner": "builds this; an RTX 5070 under WSL2 (eval/gpu.sh)",
@@ -63,7 +63,7 @@
     },
     {
       "id": "M5",
-      "status": "planned 2026-11-05 on branch m5-plan (docs/work-orders/M5-00-plan.md and M5-01 to M5-09, M5-99); the advisor reviewed it the same day (11 findings and the feel note; skeptics confirmed findings 1 and 7, partly 2) and the plan was amended; the owner's open questions are decided (M5-00 section 8); next wave 0, then the waves of M5-00 section 3",
+      "status": "building (2026-11-06): wave 0 (M4-11) and M5-01 to M5-10 are merged, each with its report in docs/reports/; M5-11 (the octave by density, from a fourth stress song) is building; then the release gate (M5-00 section 7, with the full review workflow the owner asked for). Planned 2026-11-05 (docs/work-orders/M5-00-plan.md, the advisor's review in docs/reports/m5-plan-review.md)",
       "what": "v0.2.0: the owner's 2026-11-05 findings fixed and judged against human charts: the grid's tempo octave from note density and the backbeat (doubling only), no chord of notes distinct in time (the farther onset dropped, never moved) and the spacing floors at 20 ms (M5-01), a guitar take cut short by the engine's budget continued and stitched, a cached v0.1 take too (M5-02), solo caps in measures, seconds and share from the human charts (M5-03), the lyrics warning calibrated (M5-04), a CUDA take retried on the CPU (M5-05), 'Artist - Title' from the file name and folder names cut at a word (M5-06), the update notice and the update path in CI (M5-07), install polish (M5-08), the two hard songs and an ordinary rock song as a repeatable stress check with the feel measures (M5-09); M4-11's art joins it (wave 0). Left for later with reasons in M5-99: the engine thinning fast runs, the halving rule, the burst slots, the repeat-consistency fix, the 20-song set, the one-click updater, the tempo control.",
       "plan": "docs/work-orders/M5-00-plan.md: waves 0 (M4-11 merged, the conventions report and the feel note committed) to 4 (M5-08 beside M5-07), at most two builders at once; M5-09 first, since M5-01's octave threshold needs its baseline run's engine charts, with M5-06 then M5-05 in the second slot meanwhile; every charting-path order with its golden expectation and its stress-set pass lines (set from M5-09's 1-take baseline, not the owner's 4-take figures); the release gate adds the stress check with the feel report, the CI update path, the owner's PC (the update over his 0.1.0 install, the two hard songs, a provoked GPU failure under memory=12GB) and a play test of three songs by the owner and the friend's own songs",
       "conventions": "the owner asked that the version rest on how charts are supposed to be made: a research brief on the community's charting conventions and songcharter's gaps (2026-11-05, to be committed as docs/reports/charting-conventions.md at wave 0) ranks ten gaps; the orders take up 1-3 (M5-01), 5 (M5-02), 6 (M5-03) and parts of 9 and 10 (M5-04, M5-06, M4-11), state each rule they assume marked [conventions] for the advisor, and leave 4, 7, 8 and the rest in M5-99 with reasons. A second note, how a chart should feel (nine parts, each with its measure; docs/reports/feel.md at wave 0), is carried by M5-09's feel report, M5-01's pass lines and the gate's play test (M5-00 section 5)",
@@ -102,11 +102,11 @@
       "then": "wave 0 is done (M4-11 merged, the reports committed); wave 1 is running (below), in the new session (docs/handoff.md)"
     },
     {
-      "order": "M5-10 lyrics on a doubled grid",
-      "branch": "m5-10-doubled-lyrics",
-      "worktree": "wt/m5-10 beside the checkout (dev machine)",
-      "stage": "building (2026-11-06), from main after M5-03's merge",
-      "report": "<scratchpad>/briefs/m5-10.report.md, then docs/reports/M5-10-doubled-lyrics.md"
+      "order": "M5-11 the grid's octave by note density",
+      "branch": "m5-11-octave-by-density",
+      "worktree": "wt/m5-11 beside the checkout (dev machine)",
+      "stage": "building (2026-11-06), from main after M5-10's merge; the fourth stress song's refs and kept folder are on the dev machine ($EVAL_DATA/stress/pm2, golden/stress-work/pm2)",
+      "report": "<scratchpad>/briefs/m5-11.report.md, then docs/reports/M5-11-octave-by-density.md"
     }
   ],
   "next": [
@@ -207,7 +207,8 @@
     "[M5-04] The owner's pasted text of the power-metal song sits at a weak share of 0.088 against the 0.108 threshold (1.23x under it): the margin rests on two runs; revisit with more vocal songs. pipeline.py's summary line still prints the median word score (only the warning changed).",
     "[M5-08] The lyrics aligner's download line names its file, not 'the lyrics aligner' (engines/lyrics.py calls download_part without a name: one argument); ADTOF's names its file too (adtof.py is in ENGINE_FILES). curl's progress meter for uv's tarball (install.sh step 6) and uv's own bars on a terminal (step 7) are not covered by M5-08.",
     "[M5-02] The order's 'stopped at 498.6 s on the token budget' was wrong: the owner's v0.1 takes were beat-capped (beat 1280 at 498.65 s); a token-capped take could not complete under v0.1's driver, whose watchdog equalled the budget. Fixed in M5-02 (16 tokens of headroom).",
-    "[M5-09] eval/refs/build_ref.py fails on two Chorus Encore packages of a fourth stress song (2026-11-06): one carries a notes.mid.backup beside notes.mid, one has a .mid that mido refuses (ValueError); both charts were left out of that song's set. Make build_ref pick notes.mid exactly and read a MIDI leniently (mido clip=True), with a test."
+    "[M5-09] eval/refs/build_ref.py fails on two Chorus Encore packages of a fourth stress song (2026-11-06): one carries a notes.mid.backup beside notes.mid, one has a .mid that mido refuses (ValueError); both charts were left out of that song's set. Make build_ref pick notes.mid exactly and read a MIDI leniently (mido clip=True), with a test.",
+    "[M5-10] On the power-metal stress song the lyrics' 250 ms share is 0.950 (304 of 320 words), exactly the order's bar; the 100 ms share fell 0.856 -> 0.750 (M5-09's old-grid figure, 0.756): a word the aligner misplaces now misses by an 8th. M5-99, Lyrics."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
   "how_work_is_run": "docs/PIPELINE.md. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices, /prompt-caching, /sub-agents, /settings",
