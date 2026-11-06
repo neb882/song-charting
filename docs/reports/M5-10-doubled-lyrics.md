@@ -169,7 +169,7 @@ every reference.
 - **F3** (wording): the doubled grid's triplets are the first grid's 16th-note triplets, a finer superset of its
   8th-note triplets, not the same slots: `DOUBLED_BASS_SLOTS`'s comment, `lyric_rules`'s docstring, DESIGN 2.6 and
   2.15 reworded.
-- `tests/test_assemble.py` and `tests/test_lyrics.py`: 88 passed. CI on 16d3ab5: below.
+- `tests/test_assemble.py` and `tests/test_lyrics.py`: 88 passed. CI on 16d3ab5: run 42170801825, success.
 - The reviewer's two M5-99 items (the 250 ms bar met with no margin on troop, the aligner's early lead; a second
   fast song with human lyrics) are in M5-99.
 
