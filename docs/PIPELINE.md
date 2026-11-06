@@ -158,5 +158,12 @@ reviewed, merged work then found 3 real issues, none of them major.]
   agents run, schedule the next check-in yourself (a one-shot message to this session about 50 minutes ahead) with
   what to look at: the usage, the lock's holder, the progress logs, what to do when each agent reports. Agents'
   completions wake the session anyway; the check-in catches a stall.
+- **Long jobs run as tracked background tasks** (the tool's background mode, or inside an agent), never detached
+  (`setsid nohup`) with nothing tracked: a session with no turn running and no tracked task is idle, and a cloud
+  container is reclaimed after a few idle minutes, killing every process. A detached job is fine only with a tracked
+  waiter beside it (a background loop until the job's log says done). Make each long job resumable (each stage
+  kept on disk) and after a restart resume it rather than start over. [On the night of 2026-11-05 the container
+  restarted five times in two hours, 5 to 10 minutes after each turn ended, while the stress rebuild ran detached;
+  with a tracked waiter beside it, none.]
 - **Messages between sessions** may be refused (a cloud session cannot always message another; on 2026-11-05 a reply
   to the earlier session needed a trusted device). Then the owner relays them; don't wait on a reply.
