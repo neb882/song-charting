@@ -135,7 +135,11 @@ cfc7d5d against the branch):
   notes 4.4 ms off, as before. Candidates: the bass's 16th-note phase concentration on the doubled grid is 0.099,
   just under the quantizer's `min_concentration` 0.1, so its measured 26 ms offset is not applied (31 ms was, at
   0.26 on the first grid); and 166 notes take the doubled grid's triplet slots (`DOUBLED_BASS_SLOTS`; 2 before).
-  Measure both on `troop` and `pm2` before changing either; half a day.
+  M5-11's review counted pm2's bass by tick: 174 notes on triplet slots (2 before), 75 of them unmatched, the
+  whole rise in unmatched notes (+67), a median 48 ms from the nearest human note; the matched notes are no
+  further off (4.3 -> 4.4 ms), so the numbers point at the triplet slots (the doubled grid's triplets are the first
+  grid's 16th-note triplets, finer than its own), not the offset. Measure both on `troop` and `pm2` before
+  changing either; half a day.
 - **A tempo change under a doubled grid.** Plain beat F1 0.397 -> 0.598 (octave-tolerant 0.658; the humans 1.000),
   downbeat F1 0.014. The grid has the beat count (1,457 beats against 1,435) and a median error of 13.6 ms, but
   about 40 % of its beats are more than 70 ms off, and the build warns of a 170 BPM stretch at 235-300 s that the

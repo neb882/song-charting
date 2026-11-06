@@ -149,6 +149,9 @@ reviewed, merged work then found 3 real issues, none of them major.]
   `origin/main` and pushed with `git push origin HEAD:main`, never in the checkout a golden run may be reading.
 - **A pushed branch is never rebased**: bring main in by a merge (a rebase needs a force push, which is forbidden). A
   branch already rebased is pushed under a new name, and the owner deletes the stale one.
+- **A commit a branch was made from is never amended**, pushed or not: fix it with a new commit. [M5-11's branch
+  was made from a local report commit that was then amended for its CI line; main took the old commit back by a
+  merge, 2026-11-06.]
 - **Stalls:** a stall is 20 minutes with no commit, no new line in the agent's output and no heavy job running. Check
   the job with `cat /dev/shm/songcharter-heavy.lock.who` and `pgrep -af 'pytest|eval.golden|songcharter.cli'`; a long
   command alone isn't one. [A verifier hung for an hour on 2026-11-03. Twice, a quiet log during a long golden run
