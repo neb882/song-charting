@@ -191,6 +191,10 @@ def test_build_refs_builds_every_song_of_a_two_song_list_strips_the_words_and_sk
         ("aaa", [md5(2)], ["drums.opus"]), ("bbb", [], ["drums.opus"])]
     assert not any((data / "unpacked" / "stress").rglob("notes.chart"))   # the unpacked words are gone
     assert not any(w in p.stdout + p.stderr for w in WORDS)
+    # the build prints ids and numbers, never a stress song's title, artist or package md5 (the local list's)
+    assert "Made Up" not in p.stdout
+    assert [line for line in p.stdout.splitlines() if line.startswith("ok ")] == [
+        "ok aaa primary", "ok aaa alt", "ok bbb primary"]
 
 
 # ------------------------------------------------------------------------------------------------ build_ref.py
