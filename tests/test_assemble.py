@@ -12,6 +12,7 @@ import pytest
 
 import songcharter.assemble as assemble_module
 from songcharter import audio as A
+from songcharter import lyrics as L
 from songcharter.assemble import (BACKBEAT_MIN, CLIP_MARGIN_S, HOPO_RULES, OCTAVE_MAX_BPM, OCTAVE_MIN_ONSETS,
                                   OCTAVE_SHARE, OCTAVE_SHORT, GateIssue, OctaveRules, active_span, assemble,
                                   backbeat_ratio, check_inputs, clip_to_audio, difficulty_rating, failed_folder,
@@ -1414,6 +1415,25 @@ def test_on_a_doubled_grid_the_bass_snaps_to_8ths(fast_song):
     assert len(bass.notes) == FAST_NOTES // 2 and all(n.tick % (res // 2) == 0 for n in bass.notes)
     one = assemble(parse_config({**config, "parts": parts, "grid_octave": 1, "output": "out/bass1"}, root))
     assert one.report["parts"]["bass"]["slots"] == {"straight": 4, "triplet": 3}
+
+
+def test_on_a_doubled_grid_the_lyrics_snap_to_8ths(fast_song):
+    """On a doubled grid the lyrics get its 8ths and their triplets (lyric_rules: the first grid's 16ths), so made-up
+    words sung 50 ms before the beats land on the beat lines, where the doubled grid's 16ths would put them a 1/16
+    (76 ms) early; report.json records the slots. Undoubled, the quantizer's own slots, as before."""
+    root, config = fast_song
+    beats = (20, 24, 28, 32, 36, 40)
+    words = L.Timed(L.parse("zorp blen quiv fim wob dak"), tuple(FAST_FIRST + b * FAST_BEAT - 0.050 for b in beats))
+    result = assemble(parse_config({**config, "output": "out/lyrics"}, root), lyrics=words)
+    assert result.ok and result.report["grid"]["octave"] == 2
+    assert result.report["lyrics"]["slots"] == {"straight": 2, "triplet": 3}
+    tm, pad = result.chart.tempo, result.lead.pad_seconds
+    ticks = [t for t, _, text in sorted(result.chart.lyrics) if text.startswith("lyric ")]
+    assert len(ticks) == len(beats) and all(t % tm.resolution == 0 for t in ticks)   # on the beat lines
+    assert [tm.tick_to_sec(t) - pad for t in ticks] == pytest.approx([FAST_FIRST + b * FAST_BEAT for b in beats],
+                                                                      abs=0.012)
+    one = assemble(parse_config({**config, "grid_octave": 1, "output": "out/lyrics1"}, root), lyrics=words)
+    assert one.report["grid"]["octave"] == 1 and one.report["lyrics"]["slots"] == {"straight": 4, "triplet": 3}
 
 
 def _fake_grid(bpm, share, half_beat=None):
