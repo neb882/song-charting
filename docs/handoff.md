@@ -36,7 +36,7 @@ or stress run against kept folders made at 0.1.0 needs `--rerun bass` (the bass 
 ## Only in the session
 
 - **The usage meter:** `.claude/mods/usage-meter/` (its README installs it); read it before each wave. The owner's
-  limit: pause new work at 75 % of the weekly usage, stop before 80 %.
+  limit: keep working up to 90 % of the weekly usage (2026-11-06).
 - **Check-ins:** the session schedules its own while agents run (PIPELINE, Long runs), and keeps a tracked local task
   running while it waits on CI (an idle container is reclaimed).
 - **Before every push to main:** `EVAL_DATA=<dev>/eval python -I eval/privacy_check.py` (PIPELINE, the merge).
@@ -49,4 +49,4 @@ or stress run against kept folders made at 0.1.0 needs `--rerun bass` (the bass 
 ## Limits for unattended work (the owner's, unchanged)
 
 No release published without the owner; no session on the owner's PC unless he asks; no force push or branch
-delete; no usage credits; pause new work at 75 % of the weekly usage and stop before 80 %.
+delete; no usage credits; work up to 90 % of the weekly usage (the owner, 2026-11-06).

@@ -51,8 +51,8 @@ reviewed, merged work then found 3 real issues, none of them major.]
   It routes findings as an order's review does (step 4 below): the minor ones and the test gaps go to the fixer
   unverified.
 - **Usage.** Read the usage meter (`mcp__usage-meter__usage`) before each wave, before starting any builder and before
-  a big run, and give a workflow a token budget. The owner's limit for unattended work: pause new work at 75 % of the
-  weekly usage and stop before 80 % (the owner, 2026-11-06; it was 70 %), and never draw on usage credits. The meter is a mod whose source is `.claude/mods/usage-meter/`: a
+  a big run, and give a workflow a token budget. The owner's limit for unattended work: keep working up to 90 % of the
+  weekly usage (the owner, 2026-11-06 afternoon; it was 75 %, and 70 % before), and never draw on usage credits. The meter is a mod whose source is `.claude/mods/usage-meter/`: a
   new session installs it as that folder's README says (a mod is not loaded from the repository). [On 2026-11-05 a
   new session had no way to read the usage until the owner relayed the mod from the old one.]
 
@@ -162,7 +162,8 @@ reviewed, merged work then found 3 real issues, none of them major.]
   was made from a local report commit that was then amended for its CI line; main took the old commit back by a
   merge, 2026-11-06.]
 - **Stalls:** a stall is 20 minutes with no commit, no new line in the agent's output and no heavy job running. Check
-  the job with `cat /dev/shm/songcharter-heavy.lock.who` and `pgrep -af 'pytest|eval.golden|songcharter.cli'`; a long
+  the job with `cat /dev/shm/songcharter-heavy.lock.who` and `pgrep -a -f 'pytest|eval.golden|songcharter.cli' | cut -c1-80`
+  (a process's arguments can hold a stress song's title: never print them whole); a long
   command alone isn't one. [A verifier hung for an hour on 2026-11-03. Twice, a quiet log during a long golden run
   was a false alarm.]
 - Resume from the failure instead of starting over. [A message sent while a workflow ran stopped its agents.]

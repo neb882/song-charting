@@ -1655,9 +1655,10 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
     chart = Chart(info, tm, sections, experts)
     named = cfg.solos if isinstance(cfg.solos, tuple) else None
     solo_record: dict = {}   # the solo rules used and why each solo is where it is (place_solos), for the report
+    sp_record: dict = {}     # each part's star-power count: its rules, span and target (place_star_power)
     chart = place_phrases(chart, solos=named is not None or (cfg.solos != "off" and (cfg.solos == "labels"
                                                                                        or confirm is not None)),
-                          confirm_solo=confirm, solo_names=named, solo_record=solo_record)
+                          confirm_solo=confirm, solo_names=named, solo_record=solo_record, sp_record=sp_record)
     if named:
         have = {n for _, n in sections}
         lead_track = next((t for t in chart.tracks if t.instrument == "Single" and t.difficulty == "Expert"), None)
@@ -1745,7 +1746,8 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
                            if p.kind == STAR_POWER],
             "fills": [(_in_s(tm, p.tick, pad), _in_s(tm, p.tick + p.length, pad)) for p in t.phrases
                       if p.kind == DRUM_ACTIVATION],
-            "solos": [(_in_s(tm, a, pad), _in_s(tm, b, pad)) for a, b in t.solos]}
+            "solos": [(_in_s(tm, a, pad), _in_s(tm, b, pad)) for a, b in t.solos],
+            "star_power_count": sp_record.get(t.instrument)}
             for t in chart.tracks if t.difficulty == "Expert"}
         if solo_record and "guitar" in report["phrases"]:
             def solo_row(row: dict) -> dict:

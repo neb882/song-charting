@@ -211,7 +211,8 @@ page() {   # TAG RELEASES-URL: `songcharter` (the page) with $SONGCHARTER_RELEAS
   curl -fsS "${address}api/status" -o "/tmp/status-$tag-before.json"
   sleep 1
   [ "$(said)" -eq "$before" ] || die "the update check ran before the page was served"
-  curl -fsS "$address" | grep -q "<title>songcharter</title>"
+  page=$(curl -fsS "$address")   # into a variable, not a pipe: grep -q stops reading early and curl then fails
+  grep -q "<title>songcharter</title>" <<<"$page"
   for _ in $(seq 1 300); do
     n=$(said)
     [ "$n" -le "$before" ] || break
