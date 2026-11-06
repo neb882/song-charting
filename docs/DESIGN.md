@@ -1392,7 +1392,7 @@ own tempo map, first to last Expert onset), phrases per song (per 40 of the char
     human 3.24 a minute), drums 25 → 20 (3.24); pm2's guitar 36 → 29 (4.94 → 3.98; the humans 1.65–5.49), bass 36 →
     29 (the human 29, 3.99), drums 35 → 28 (3.83; the humans 3.57 and 4.95). The shred song and the rock song are
     unchanged, and so are every solo (troop's covers the human main solo 0.97–0.98, pm2's 0.96–1.00) and every other
-    stress score: 14 of 930 fields differ, all our star power a minute. A few drum onsets on the lower levels of the
+    stress score: 14 of 882 numeric fields differ, all our star power a minute. A few drum onsets on the lower levels of the
     two fast songs moved with the fills (the reducer keeps a note in each phrase and fill: troop Hard 1782 → 1776,
     Medium 901 → 900, Easy 745 → 748; pm2 Hard 2339 → 2340, Easy 952 → 950); `stress.py compare`: no regression.
   - **Not fixed:** the shred song's grid is at twice its humans' tempo (154 against 77 BPM, the octave pass never

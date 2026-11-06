@@ -171,6 +171,18 @@ def test_star_power_counts_beats_at_most_at_160_bpm():
     assert record["target"] == 3 and record["counted_beats"] is None
 
 
+def test_the_ceiling_reads_the_spans_average_tempo_not_one_beats():
+    """A beat-tracked map has a marker on every beat, so the count must read the span's average tempo: 40 beats of
+    intro at 100 BPM, then 240 BPM. The part's 479.5 beats (from its first onset, a measure in) take 36 x 0.6 +
+    443.5 x 0.25 = 132.475 s, an average of 217.2 BPM, so they count as 353.3 beats at 160 BPM: 9 phrases, where the
+    first beat's tempo (100 BPM) would allow all 479.5 beats and 12."""
+    times = np.concatenate([np.arange(40) * 0.6, 24.0 + np.arange(1600) * 0.25])
+    record = {}
+    got = place_star_power(guitar(120), TempoMap.from_beats(times), record=record)
+    assert record["span_beats"] == 479.5 and record["span_seconds"] == pytest.approx(132.475, abs=1e-3)
+    assert record["counted_beats"] == pytest.approx(353.267, abs=1e-3) and record["target"] == 9 and len(got) == 9
+
+
 @pytest.mark.parametrize("bpm, capped", [(150.0, False), (159.9, False), (160.0, False), (160.1, True),
                                          (170.0, True), (240.0, True)])
 def test_the_star_power_ceiling_starts_above_160_bpm(bpm, capped):
