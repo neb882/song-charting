@@ -84,7 +84,9 @@ phase() {   # CONTAINER PHASE: one of e2e.sh's phases, as friend, timed
 disk() { echo "50-e2e: disk: $(df -h --output=avail,size / | tail -n 1 | awk '{ print $1 " free of " $2 }')"; }
 
 disk
-PYTHON="$CI_PY" bash packaging/release/build.sh "0.1.0-ci-$(git rev-parse --short HEAD)" "$dist"
+# HEAD's version, as build.sh wants it (M5-12), with 70-release's suffix
+version="$(git show HEAD:songcharter/__init__.py | sed -n 's/^__version__ = "\(.*\)"$/\1/p')-ci-$(git rev-parse --short HEAD)"
+PYTHON="$CI_PY" bash packaging/release/build.sh "$version" "$dist"
 
 # --- Ubuntu 26.04: everything
 c=sc-e2e

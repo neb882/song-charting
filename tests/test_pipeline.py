@@ -732,6 +732,34 @@ def test_the_default_work_folder_is_the_songs_whatever_the_output(charted, tmp_p
     assert len(list((own_cache / "work").iterdir())) == 2
 
 
+def test_a_v01_work_folder_of_a_long_named_song_is_reused(charted, tmp_path, own_cache, monkeypatch, capsys):
+    """A song whose stem v0.1 cut inside a word (M5-06 cuts at a space now): its v0.1 work folder, found by the key
+    in its marker, answers the chart from its caches, and no folder of the new name is made (M5-12)."""
+    root, _, _, _ = charted
+    song = tmp_path / "Imaginary Band Name - A Made Up Song Title (Live).flac"
+    shutil.copy(root / "song.flac", song)
+    key = hashlib.sha256(song.read_bytes()).hexdigest()[:16]
+    today = own_cache / "work" / f"Imaginary Band Name - A Made Up Song-{key}"
+    old = own_cache / "work" / f"Imaginary Band Name - A Made Up Song Tit-{key}"   # v0.1.0's name for it
+    args = ["--instruments", "drums,guitar", "--genre", "Test", "--no-preview"]
+    monkeypatch.setattr(P, "Engines", standins())
+    assert main(["chart", str(song), "--out", str(tmp_path / "A"), *args]) == 0
+    assert [p.name for p in (own_cache / "work").iterdir()] == [today.name]
+    today.rename(old)   # as v0.1 left it: its marker holds the key
+    engines = standins()
+    monkeypatch.setattr(P, "Engines", engines)
+    capsys.readouterr()
+    assert main(["chart", str(song), "--out", str(tmp_path / "B"), *args]) == 0
+    err = capsys.readouterr().err
+    report = json.loads((old / "pipeline.json").read_text(encoding="utf-8"))
+    assert report["work"] == str(old) and report["output"] == str(tmp_path / "B")
+    assert [p.name for p in (own_cache / "work").iterdir()] == [old.name]
+    assert all(s["cached"] for s in report["stages"] if s["stage"] != "assemble"), report["stages"]
+    for stage in ("separate", "drums", "sections", "guitar"):
+        assert re.search(rf"^\[\d+/\d+\] {stage}: .* \(cached\), [0-9.]+ s$", err, re.M), stage
+    assert next(c for c in engines.calls if c[0] == "guitar")[2] == old / "guitar"
+
+
 def test_each_run_prunes_the_cache(charted, tmp_path, own_cache, monkeypatch, capsys):
     """After a run, the least recently used work folders in the cache go until the rest fit
     $SONGCHARTER_CACHE_GB: not the run's own, not one used in the last 24 hours, not a --work run's. A folder that

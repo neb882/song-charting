@@ -445,6 +445,27 @@ def test_the_song_folder_gets_the_art_and_nothing_else_changes(songs, tmp_path, 
     assert not (work / "art" / "background.jpg").exists()
 
 
+def test_a_persons_background_in_a_built_folder_stops_the_next_build(songs, tmp_path, monkeypatch, capsys):
+    """A background.png the person put into a song folder songcharter built (no build of it recorded one: v0.1
+    never wrote one) is not the build's to delete: charted again into that folder, with or without a background,
+    the chart stops with exit 2 before any work, as v0.1.0 did, and the picture and the earlier build stay (M5-12)."""
+    monkeypatch.setattr(P, "Engines", standins())
+    out = tmp_path / "Made Up Artist - Made Up Song"
+    code, _, err = chart_it(songs, "song.flac", out, capsys=capsys)
+    assert code == 0, err
+    before = {p.name: p.read_bytes() for p in out.iterdir()}
+    (out / "background.png").write_bytes(b"the person's own picture")
+    bg = write(tmp_path / "pictures" / "bg.png", picture((640, 360)))
+    for extra in ((), ("--background", str(bg))):
+        engines = standins()
+        monkeypatch.setattr(P, "Engines", engines)
+        code, _, err = chart_it(songs, "song.flac", out, *extra, capsys=capsys)
+        assert code == 2 and "holds what a build does not write (background.png)" in err, err
+        assert engines.calls == []
+        assert {p.name: p.read_bytes() for p in out.iterdir()} == {**before,
+                                                                    "background.png": b"the person's own picture"}
+
+
 def test_a_bad_given_image_is_exit_2_before_any_work(songs, tmp_path, monkeypatch, capsys):
     engines = standins()
     monkeypatch.setattr(P, "Engines", engines)

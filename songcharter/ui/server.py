@@ -5,7 +5,10 @@ one chart runs at a time as a child process group (jobs.py). In WSL the Windows 
 
 **Startup** (`main`):
   1. **Already running?** GET http://127.0.0.1:<port>/api/hello on 8765-8784 (or --port's alone): when one answers
-     {"app": "songcharter"}, its page opens (below) and this exits 0.
+     {"app": "songcharter"} with this version, its page opens (below) and this exits 0. One of another version (an
+     update installed while the old server's window stayed open: its page would still say the update is out) is
+     not reused: this stops with exit 2 (an InputError), saying to close the songcharter window first, and opens no
+     page (M5-12). No request stops a server, and it may be running a chart: closing its window does (6. below).
   2. **Bind** to 127.0.0.1 on the first free port from 8765 (or --port's). Each start makes an instance token,
      secrets.token_hex(8), which /api/hello returns.
   3. **The Windows self-check** (WSL with interop): wsl.windows_curl("http://localhost:<port>/api/hello") must return
@@ -935,6 +938,17 @@ def find_running(ports: Iterable[int]) -> tuple[int, dict] | None:
     return None
 
 
+def other_version(theirs: Any, url: str) -> str | None:
+    """Why a running server whose hello says the version `theirs` is not this one's to reuse, or None when it is
+    this version (the module docstring, Startup 1)."""
+    if theirs == __version__:
+        return None
+    who = (f"songcharter {theirs}" if isinstance(theirs, str) and re.fullmatch(r"[0-9A-Za-z.+-]{1,40}", theirs)
+           else "another version of songcharter")
+    return (f"{who} is still running ({url}), and this is songcharter {__version__}: close the songcharter window "
+            f"(closing it stops {who}), then start songcharter again")
+
+
 WSL_NAT = ipaddress.ip_network("172.16.0.0/12")   # WSL's NAT network [decision; that WSL picks a 172.x: inference]
 
 
@@ -1082,12 +1096,15 @@ def open_browser(url: str, in_wsl: bool) -> bool:
 
 
 def main(port: int | None = None, browser: bool = True, from_shortcut: bool = False, home: Path | None = None) -> int:
-    """`songcharter ui` (the module docstring). Exit 0 when it stopped (or another one is running), 2 when it cannot
-    start (no free port, a home it cannot write), 3 for a bug."""
+    """`songcharter ui` (the module docstring). Exit 0 when it stopped (or one of this version is running), 2 when it
+    cannot start (no free port, a home it cannot write, another version running), 3 for a bug."""
     try:
         return _main(port, browser, from_shortcut, home)
     except KeyboardInterrupt:
         return 0
+    except InputError as e:
+        print(f"songcharter: error: {e}", file=sys.stderr)
+        return 2
     except Exception:  # noqa: BLE001
         traceback.print_exc()
         print("songcharter: internal error (a bug, please report it with the traceback above)", file=sys.stderr)
@@ -1103,6 +1120,9 @@ def _main(port: int | None, browser: bool, from_shortcut: bool, home: Path | Non
     running = find_running(ports)
     if running is not None:
         url = running[1].get("url") or f"http://{'localhost' if in_wsl else '127.0.0.1'}:{running[0]}/"
+        why = other_version(running[1].get("version"), url)
+        if why is not None:   # its page is not this version's: never opened (M5-12)
+            raise InputError(why)
         print(f"songcharter is running already: {url}")
         if browser:
             open_browser(url, in_wsl)

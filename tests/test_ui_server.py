@@ -881,6 +881,54 @@ def test_songcharter_ui_starts_answers_and_stops_on_sigterm(tmp_path):
     assert S.main(port=0) == 2   # a port out of range
 
 
+def test_a_running_server_of_another_version_is_not_reused(tmp_path, monkeypatch, capsys):
+    """After an update with the old server's window left open, the launch finds that server, whose page is the old
+    version's (still saying the update is out): it opens no page, starts nothing and stops with exit 2, saying to
+    close the songcharter window; the old one is left running (nothing stops a server but its window). One of this
+    version is reused as before (M5-12)."""
+    import http.server
+    hello = {}
+
+    class Old(http.server.BaseHTTPRequestHandler):   # a stand-in for the old version's server
+        def do_GET(self):
+            body = json.dumps(hello).encode() if self.path == "/api/hello" else b"{}"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    old = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Old)
+    port = old.server_address[1]
+    threading.Thread(target=old.serve_forever, daemon=True).start()
+    opened = []
+    monkeypatch.setattr(S, "open_browser", lambda url, in_wsl: opened.append(url) or True)
+    monkeypatch.setattr(S.wsl, "is_wsl", lambda: False)
+    home, url = tmp_path / "home", f"http://localhost:{port}/"
+    this = songcharter.__version__
+    try:
+        for theirs, who in (("0.0.9-made-up", "songcharter 0.0.9-made-up"), (None, "another version of songcharter"),
+                            ("\x1b[2J9.9", "another version of songcharter"), (7, "another version of songcharter")):
+            hello.clear()
+            hello.update({"app": "songcharter", "token": "0" * 16, "url": url},
+                         **({} if theirs is None else {"version": theirs}))
+            assert S.main(port=port, home=home, browser=theirs != 7) == 2, theirs   # --no-browser too
+            got = capsys.readouterr()
+            assert got.out == "" and got.err == (
+                f"songcharter: error: {who} is still running ({url}), and this is songcharter {this}: close the "
+                f"songcharter window (closing it stops {who}), then start songcharter again\n"), theirs
+        assert opened == [] and not home.exists() and S.hello(port) == hello   # nothing started; the old one runs
+        hello["version"] = this
+        assert S.main(port=port, home=home) == 0
+        assert capsys.readouterr().out == f"songcharter is running already: {url}\n" and opened == [url]
+    finally:
+        old.shutdown()
+        old.server_close()
+
+
 # `songcharter ui`'s main with the job's command replaced by the stand-in chart (STANDIN, mode "hang": a take that
 # never ends, and a grandchild)
 DRIVER = r'''
@@ -1830,8 +1878,8 @@ def test_the_page_shows_the_update_notice_copies_the_line_and_later_hides_it(tmp
     assert done.returncode == 0, done.stderr
     out = json.loads(done.stdout)
     assert out["none"] == {"box": True, "asked": ["/api/status"], "timers": [2000, 6000, 15000]}
-    text = ("songcharter 9.9.9 is out (you have 0.1.0). To update: close this window, open Ubuntu from the Start "
-            "menu, paste this line and press Enter:")
+    text = ("songcharter 9.9.9 is out (you have 0.1.0). To update: close the songcharter window, open Ubuntu from "
+            "the Start menu, paste this line and press Enter:")   # the guide's words: not this page's window
     assert out["shown"] == {"hidden": False, "text": text, "line": up["line"], "row": False, "href": up["url"],
                             "link": False, "button": "Copy", "said": None, "selected": False,
                             "asked": ["/api/status", "/api/status", "/api/hello"]}

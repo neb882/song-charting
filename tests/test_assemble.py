@@ -932,6 +932,89 @@ def test_check_inputs(tmp_path):
         check_inputs(cfg)
 
 
+def _earlier_build(folder, background=None, report=None, size=None):
+    """A folder an earlier build made: its four files, with report.json's `art` saying it added `background` (a file
+    name; `size`: the bytes it recorded) or none (`report`: report.json's text instead)."""
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in ("notes.chart", "song.ini", "song.ogg"):
+        (folder / name).write_bytes(b"earlier")
+    record = ({"added": True, "file": background, "from": "given"} if background else
+              {"added": False, "file": None, "from": None})
+    if size is not None:
+        record["bytes"] = size
+    (folder / "report.json").write_text(report if report is not None else json.dumps(
+        {"gate": {"ok": True}, "art": {"album_art": {"added": False, "file": None, "from": None},
+                                       "background": record}}), encoding="utf-8")
+    return folder
+
+
+def _staged(tmp_path, *names):
+    """A new build in its staging folder, with `names` (a background) besides the four files; its report.json
+    records the background as the build's does."""
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    for name in ("notes.chart", "song.ini", "song.ogg", *names):
+        (staging / name).write_bytes(b"new")
+    _earlier_build(tmp_path / "record", background=names[0] if names else None)
+    shutil.move(tmp_path / "record" / "report.json", staging / "report.json")
+    shutil.rmtree(tmp_path / "record")
+    return staging
+
+
+def test_a_persons_background_in_an_earlier_builds_folder_is_kept(tmp_path):
+    """A background.* is a build's own only when the earlier build's report.json says it added that file (M5-12):
+    v0.1 never wrote one, so a background.png in a folder it made is the person's. The output check refuses that
+    folder, as v0.1.0 did, and nothing deletes the file; one a build recorded is replaced, or removed by a build
+    without a background, as since M4-11."""
+    mine = b"the person's own picture"
+    reports = [None, '{"art": {"background": {"added": true}}}', '{"art": {"background": {"added": "yes", '
+               '"file": "background.png"}}}', '{"art": null}', "[1, 2]", "not json", "￾\x00"]
+    for i, report in enumerate(reports):
+        out = _earlier_build(tmp_path / f"Made Up Song {i}", report=report)
+        (out / "background.png").write_bytes(mine)
+        if i == 0:
+            (out / "report.json").unlink()   # no report at all
+        with pytest.raises(InputError, match=r"Made Up Song \d+ holds what a build does not write \(background.png\)"):
+            assemble_module.check_output(out)
+    out = _earlier_build(tmp_path / "Made Up Artist - Made Up Song", background="background.jpg")
+    (out / "background.png").write_bytes(mine)   # a background beside the one the build wrote: the person's
+    with pytest.raises(InputError, match=r"holds what a build does not write \(background.png\)"):
+        assemble_module.check_output(out)
+    staging = _staged(tmp_path)
+    assemble_module._install(staging, out)   # had it been reached: the build's own goes, the person's stays
+    assert sorted(p.name for p in out.iterdir()) == ["background.png", "notes.chart", "report.json", "song.ini",
+                                                     "song.ogg"]
+    assert (out / "background.png").read_bytes() == mine and (out / "notes.chart").read_bytes() == b"new"
+    # what a build recorded is its own: replaced by the next build's, or removed by one without
+    for upper in (False, True):
+        out = _earlier_build(tmp_path / f"Recorded {upper}", background="background.jpg")
+        (out / ("BACKGROUND.JPG" if upper else "background.jpg")).write_bytes(b"ours")
+        assemble_module.check_output(out)
+        assemble_module._install(_staged(tmp_path, "background.jpg"), out)
+        assert (out / "background.jpg").read_bytes() == b"new" and not (out / "BACKGROUND.JPG").exists()
+        assemble_module._install(_staged(tmp_path), out)
+        assert sorted(p.name for p in out.iterdir()) == ["notes.chart", "report.json", "song.ini", "song.ogg"]
+    # a background the build wrote, then replaced by the person under the same name: theirs (its size is not the
+    # recorded one), so the folder is refused and the picture stays; the recorded size: the build's, as above
+    out = _earlier_build(tmp_path / "Replaced", background="background.jpg", size=len(b"ours"))
+    (out / "Background.JPG").write_bytes(mine)
+    with pytest.raises(InputError, match=r"holds what a build does not write \(Background.JPG\)"):
+        assemble_module.check_output(out)
+    (out / "Background.JPG").write_bytes(b"ours")
+    assemble_module.check_output(out)
+    assemble_module._install(_staged(tmp_path), out)
+    assert sorted(p.name for p in out.iterdir()) == ["notes.chart", "report.json", "song.ini", "song.ogg"]
+    # an earlier failed build: its own background goes with it, a person's stays and so does the folder
+    failed = _earlier_build(tmp_path / "Failed.failed", background="background.png")
+    (failed / "background.png").write_bytes(b"ours")
+    assemble_module._remove_build(failed)
+    assert not failed.exists()
+    failed = _earlier_build(failed)
+    (failed / "background.png").write_bytes(mine)
+    assemble_module._remove_build(failed)
+    assert [p.name for p in failed.iterdir()] == ["background.png"]
+
+
 def test_cli_help_and_errors(tmp_path, capsys):
     with pytest.raises(SystemExit) as e:
         main(["--help"])
@@ -1520,6 +1603,33 @@ def test_the_octave_pass_forced_2_keeps_the_doubled_grid_and_flags_an_unsure_pha
     sure = _fake_grid(198.0, 0.8, {"ratio": 2.2, "shifted": True, "unsure": False})
     grid, octave, _, _, warn = assemble_module._octave_pass(cfg, first, onsets, None, lambda bpm, r: sure)
     assert octave == 2 and len(warn) == 1 and warn[0].startswith("tempo doubled")
+
+
+def test_the_octave_pass_when_the_doubled_pass_finds_no_beats(tmp_path):
+    """The doubled pass can raise an InputError (beatgrid: no confident drum evidence, under 3 confident beats on the
+    doubled line). Under auto the first grid stays, with an evidence ratio of 0 and the "check the tempo" warning,
+    and the chart goes on; a forced grid_octave 2 is that InputError (exit 2), never an AttributeError on the grid
+    it did not get (exit 3, a bug)."""
+    first = _fake_grid(99.0, 0.8)
+    onsets = {"guitar": sixteenths()}
+    asked = []
+
+    def nothing(bpm, bpm_range):
+        asked.append((bpm, bpm_range))
+        raise InputError("no confident drum evidence on the made-up doubled line")
+
+    cfg = parse_config(CONFIG, tmp_path)
+    grid, octave, stats, reason, warn = assemble_module._octave_pass(cfg, first, onsets, None, nothing)
+    assert asked == [(198.0, (2 * assemble_module.BPM_RANGE[0], 2 * assemble_module.BPM_RANGE[1]))]
+    assert grid is first and octave == 1 and stats["second"] is None and stats["evidence_ratio"] == 0.0
+    assert reason.endswith("the doubled grid's confident share 0.00 against 0.80 (ratio 0.00, under 0.7): the "
+                           "first grid stays")
+    assert len(warn) == 1 and warn[0].startswith("tempo: the notes are dense for 99.0 BPM (") and warn[0].endswith(
+        ") but the drums give no evidence at 198.0 BPM: check the tempo")
+    cfg.grid_octave = 2
+    with pytest.raises(InputError, match="no confident drum evidence on the made-up doubled line"):
+        assemble_module._octave_pass(cfg, first, onsets, None, nothing)
+    assert len(asked) == 2
 
 
 def test_the_backbeat_test_gets_the_drum_stem_only(fast_song, monkeypatch):
