@@ -7,19 +7,21 @@ import json
 import re
 import shutil
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from songcharter import lyrics as L
-from songcharter.assemble import find_scan_chart, verify_folder
+from songcharter.assemble import find_scan_chart, lyric_rules, verify_folder
 from songcharter.chart import Chart, SongInfo, write_chart
 from songcharter.cli import main, read_lyrics
 from songcharter.engines import lyrics as E
 from songcharter.errors import InputError
 from songcharter.importers import _chart_sections, _decode
 from songcharter.pipeline import Options, chart
+from songcharter.quantize import RULES
 from songcharter.tempo import Tempo, TempoMap
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -203,6 +205,35 @@ def test_syllables_are_quantized_onto_the_grid():
     assert [t for t, _ in same[0].syllables] == [1152, 1200] and stats["moved_to_next_slot"] == 1
     lead, _ = L.place(x, [3.0 + 0.5 * k for k in range(6)], tm, 1.0)  # the decode's seconds sit after the pad
     assert lead[0].syllables[0][0] == 4.0 * 384
+
+
+def test_on_a_doubled_grid_a_word_snaps_one_slot_level_coarser():
+    """assemble.lyric_rules: on a doubled grid (octave 2) the 8ths and their triplets, so at 200 BPM a word 50 ms
+    before a beat goes on the beat, where the grid's 16ths put it a 1/16 (75 ms) early; on a first grid (octave 1)
+    the quantizer's own rules, as before, at any tempo."""
+    x = L.parse("zorp blen quiv fim")
+    tm = TempoMap(192, [Tempo(0, 200000)])      # 0.3 s beats, 75 ms 16ths
+    beats = (8, 12, 16, 20)
+    starts = [0.3 * b - 0.050 for b in beats]
+    doubled = lyric_rules(2)
+    assert (doubled.straight, doubled.triplet) == (2, 3) and replace(doubled, straight=4) == RULES
+    on, stats = L.place(x, starts, tm, rules=doubled)
+    assert [t for t, _ in on[0].syllables] == [192 * b for b in beats]
+    assert stats["snap_ms"]["max"] == pytest.approx(50, abs=1) and stats["moved_to_next_slot"] == 0
+    assert lyric_rules(1) == RULES
+    early, _ = L.place(x, starts, tm, rules=lyric_rules(1))
+    assert [t for t, _ in early[0].syllables] == [192 * b - 48 for b in beats]
+
+
+def test_on_a_doubled_grid_a_triplet_run_keeps_its_triplet_slots():
+    """lyric_rules(2) keeps the triplets (3 a beat: at 200 BPM 100 ms apart): made-up words sung in triplets land on
+    the triplet slots, where 8ths alone would pull every off-beat word 50 ms onto the half beat."""
+    x = L.parse("zorp blen quiv fim wob dak")
+    tm = TempoMap(192, [Tempo(0, 200000)])      # 0.3 s beats; triplet slots 64 ticks, 8ths 96
+    thirds = (24, 25, 26, 27, 28, 29)           # beats 8 and 9 in thirds
+    on, stats = L.place(x, [0.1 * k for k in thirds], tm, rules=lyric_rules(2))
+    assert [t for t, _ in on[0].syllables] == [64 * k for k in thirds]
+    assert stats["triplet_beats"] >= 2 and stats["snap_ms"]["max"] == pytest.approx(0, abs=1)
 
 
 def test_lyrics_read_back_is_checked(tmp_path):

@@ -750,14 +750,14 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
        guitar notes (and 11.4 % of the bass) to the old floors on their own maps.
    - **The bass on a doubled grid** (M5-01; decided 2026-11-05, an amendment to the order's "no change to the slot
      levels"): on a grid the octave pass doubled (§2.3 step 7), the bass part snaps one slot level coarser, to the
-     grid's 8ths and their triplets (`assemble.DOUBLED_BASS_SLOTS`, report.json's `parts.*.slots`), which are the
-     first grid's 16ths. Every other part and every undoubled song is unchanged. The bass engine's onsets spread
-     about a 16th either side of the human notes on the power-metal song (signed error against the human chart,
-     p10/p90 −75/+65 ms; 819 of 1,821 within 50 ms). The doubled grid's 16ths kept that error: bass F1@50 fell
-     from 0.702 to 0.606, 566 matched notes past half a 16th against 249 on the first grid, whose 150 ms slots had
-     pulled them onto the real 8ths where the human bass sits. It was not the offset: the matched notes' median
-     error is −2.6 ms on the first grid and −0.6 ms on the doubled one. With the coarser slots the stress run's bass
-     F1@50 is 0.716 [here, M5-01].
+     grid's 8ths and their triplets (`assemble.DOUBLED_BASS_SLOTS`, report.json's `parts.*.slots`): the first grid's
+     16ths, and its 16th-note triplets (finer than its 8th-note triplets). Every other part and every undoubled song is
+     unchanged. The bass engine's onsets spread about a 16th either side of the human notes on the power-metal song
+     (signed error against the human chart, p10/p90 −75/+65 ms; 819 of 1,821 within 50 ms). The doubled grid's 16ths
+     kept that error: bass F1@50 fell from 0.702 to 0.606, 566 matched notes past half a 16th against 249 on the first
+     grid, whose 150 ms slots had pulled them onto the real 8ths where the human bass sits. It was not the offset: the
+     matched notes' median error is −2.6 ms on the first grid and −0.6 ms on the doubled one. With the coarser slots the
+     stress run's bass F1@50 is 0.716 [here, M5-01].
    - A merge takes the union of frets, so a single-note source gains chords: on the bass engine 69–172 onsets per
      song merged on All the Small Things, Lucretia and Creep (Expert chord share after quantizing up to 0.074). The
      human bass charts: 0 on Take Me Out, Lucretia, Creep and Kimochi Warui; 0.41 on All the Small Things Expert and
@@ -1719,7 +1719,8 @@ of its words weak is warned about (the warning, calibrated, below: M4-10's rule,
 fast song that timed well).
 
 **On the chart** (`lyrics.place`): each syllable start is snapped onto our grid as the notes are (SnapGrid over the
-syllables' own ticks); phrases are the lines, also split where the next syllable starts more than 3.0 s after the
+syllables' own ticks; on a doubled grid one slot level coarser, its 8ths and their triplets, as the bass: below);
+phrases are the lines, also split where the next syllable starts more than 3.0 s after the
 last (the six references' 1,076 gaps between word starts inside a phrase: p99 2.0 s, the longest 3.02 s, 1 over
 3.0 s; a third of the gaps between their phrases are longer); phrase_start goes 0.151 s before the first syllable and
 phrase_end 0.701 s after the last one starts (their medians), snapped, never overlapping. With no lyrics, [Events]
@@ -1795,7 +1796,34 @@ half-tempo map; the humans agree 94 % with each other at 50 ms. M5-01's 200 BPM 
 the old map's 150 ms slots a word the aligner put up to 75 ms early still snapped onto the human's slot; now one put
 38 to 75 ms early (0.29 of this song's words: the aligner runs early here, median -20 ms) snaps to the slot before,
 and a quarter of the words land 72 to 75 ms early. This order changes the warning only: snapping lyrics to 8th lines
-on a fast map, or correcting the aligner's lead, would be a later order's, measured against the humans.
+on a fast map, or correcting the aligner's lead, would be a later order's, measured against the humans (M5-10 took
+the first: next).
+
+**On a doubled grid, the lyrics' 8ths** [here, M5-10: `eval/stress.py lyrics` on the stress baseline's kept folder,
+main's code and this order's, the words read in memory; the owner's pasted text through `pipeline.chart` the same way,
+paired with the human chart's words by their text; numbers only]. The bass's case in M5-01 (§2.6), and its remedy: an
+engine's spread that the doubled grid's 16ths cannot resolve. On a doubled grid (octave 2) the lyrics snap to its 8ths
+and their triplets, which are the first grid's 16ths and its 16th-note triplets (`assemble.lyric_rules`,
+DOUBLED_LYRIC_SLOTS: 2 and 3 slots a beat), so the words keep the straight slots the first grid gave them, and the
+triplet slots are a finer superset of its 8th-note triplets; report.json's `lyrics.slots` records them. On a first grid
+(octave 1) nothing changes: the references' grids are all first grids, and Take Me Out's and Kimochi Warui's checks are
+unchanged (0.567 / 0.684 / 0.870 and 0.289 / 0.289 / 0.850 within 50 / 100 / 250 ms, no warning, before and after); the
+golden charts, built without lyrics, do not move.
+
+| the power-metal song, on the chart | median error | within 50 / 100 / 250 ms | signed error p10 / 25 / 50 / 75 / 90 | phrase starts > 500 ms | warning |
+|---|---|---|---|---|---|
+| the human chart's text, the doubled grid's 16ths (main) | 67.3 ms | 0.463 / 0.856 / 0.953 | -75 / -72 / +0.5 / +8 / +99 ms | 8 of 51 | no |
+| the same, its 8ths (this order) | **3.4 ms** | **0.688** / 0.750 / 0.950 | -96 / -0.6 / +1.6 / +5.9 / +152 ms | 8 of 51 | no |
+| the owner's pasted text, the 16ths (302 of its words paired) | 65.4 ms | 0.467 / 0.858 / 0.967 | -75 / -72 / +0.5 / +10 / +104 ms | 2 of 43 | no |
+| the same, its 8ths | **3.2 ms** | **0.689** / 0.752 / 0.964 | -89 / -0.6 / +1.5 / +5.7 / +151 ms | 2 of 43 | no |
+
+That is M5-09's figures on the old 100 BPM map back (7 ms; 0.681 / 0.756 / 0.953), on the notes' 200 BPM map: the
+SyncTrack is the same in both runs, so only the lyrics moved. The middle half of the words now sits within 6 ms of
+the human's; the price is in the tails, where a word the aligner misplaced lands a whole 8th (150 ms) off instead of a
+16th, so the 100 ms share falls by 0.106 and the 250 ms share by 0.003 (one word). The weak-word share, and so the
+warning, does not depend on the grid (0.084; the owner's text 0.088). The aligner's lead (median -20 ms on this
+song's stem) is left as it is: the 8ths absorb it here, and correcting it would need more fast songs with human
+lyrics to measure against.
 
 **Not measured:** Clone Hero itself showing them (M4-08 looks); the aligner on CUDA (it runs there when the chart's
 device is CUDA); songs not in English; duets and harmonies (one line of text, timed to whoever sings it loudest).

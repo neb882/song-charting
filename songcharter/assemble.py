@@ -55,10 +55,11 @@ own difficulties, star power, fills and sections, and a Clone Hero folder that i
      other chart, ini or audio file. Without node or tools/scan-chart's node_modules, the re-implementation stands
      in for scan-chart and the gate warns that scan-chart was not run.
   * **Lyrics** (optional: `assemble(config, lyrics=...)`, the text with each syllable's start, which the pipeline
-     aligns; never in the config, whose copy goes into report.json): each syllable is quantized onto the grid and
-     the phrases are written as phrase_start, lyric and phrase_end events in [Events] (lyrics.place, DESIGN.md
-     2.15). The gate reads them back from notes.chart (every event as written) and has scan-chart find them.
-     report.json counts them; it never holds a word.
+     aligns; never in the config, whose copy goes into report.json): each syllable is quantized onto the grid (on
+     a doubled grid one slot level coarser, its 8ths: lyric_rules) and the phrases are written as phrase_start,
+     lyric and phrase_end events in [Events] (lyrics.place, DESIGN.md 2.15). The gate reads them back from
+     notes.chart (every event as written) and has scan-chart find them. report.json counts them and records the
+     slots; it never holds a word.
   * **Art** (optional: `assemble(config, art=...)`, the pipeline's record of where its album art and background came
      from, art.prepare's): report.json's `art` says, for each, whether it was added, its file, and where it came from
      ("embedded", "given", or "config" when only the config named it).
@@ -118,8 +119,8 @@ from .chart import DRUM_ACTIVATION, OPEN, STAR_POWER, Chart, DrumHit, FretNote, 
 from .errors import InputError, ToolError
 from .importers import _chart_sections, _decode, read_chart, read_song
 from .package import PackageResult, build_song_folder
-from .quantize import (RULES, TRACK_DIFFICULTY, TRACK_INSTRUMENT, QuantizeReport, estimate_offset, quantize_part,
-                       sustain_kept)
+from .quantize import (RULES, TRACK_DIFFICULTY, TRACK_INSTRUMENT, QuantizeReport, QuantizeRules, estimate_offset,
+                       quantize_part, sustain_kept)
 from .reduce import LEVELS, Issue, check_reductions, hopo_states, reduce_level
 from .sections import read_allin1, sections_from_chart, sections_from_segments
 from .starpower import check_phrases, fill_crash_share, fit_chart, place_phrases, stem_confirm
@@ -672,7 +673,11 @@ OCTAVE_MIN_ONSETS = 200    # ... and the parts have this many distinct onsets in
 BACKBEAT_WINDOW_S = 0.035  # the snare band's peak within this of a beat line or a beat's midpoint
 BACKBEAT_MIN_BEATS = 16    # confident beats the backbeat ratio needs (fewer: indeterminate)
 DOUBLED_BASS_SLOTS = (2, 3)  # straight and triplet slots per beat for the bass on a doubled grid: its 8ths and
-                             # their triplets, so its scattered onsets get the slots they had on the first grid
+                             # their triplets, so its scattered onsets get the first grid's 16ths (the triplets
+                             # are the first grid's 16th-note triplets, finer than its 8th-note ones)
+DOUBLED_LYRIC_SLOTS = (2, 3)  # the same for the lyrics (lyric_rules, DESIGN.md 2.15): the aligner's word starts
+                              # run up to 75 ms early on a fast song, which the doubled grid's 16ths (75 ms at 200
+                              # BPM) put a 1/16 before the human's, where the first grid's 16ths put them on it
 OCTAVE_EVIDENCE_MIN = 0.7  # the doubled grid is kept when its confident share is at least this times the first's
                            # (PROVISIONAL, M5-01's open question: 0.5 is no evidence between the first grid's beats)
 
@@ -1339,6 +1344,18 @@ def part_rules(part: PartConfig, octave: int = 1):
     return rules
 
 
+def lyric_rules(octave: int = 1) -> QuantizeRules:
+    """The rules the lyrics snap by (lyrics.place): the quantizer's, and on a doubled grid (octave 2) one slot level
+    coarser (DOUBLED_LYRIC_SLOTS, DESIGN.md 2.15), the doubled grid's 8ths and their triplets, which are the first
+    grid's 16ths and its 16th-note triplets: so the words keep the straight slots the first grid gave them (its
+    8th-note triplets are a subset of the triplet slots). On the power-metal stress song the aligner puts 0.29 of the
+    words 38-75 ms early, and the doubled grid's 75 ms 16ths snap them to the slot before the human's (M5-04: a median
+    67 ms off, against 7 ms on the first grid)."""
+    if octave == 2:
+        return replace(RULES, straight=DOUBLED_LYRIC_SLOTS[0], triplet=DOUBLED_LYRIC_SLOTS[1])
+    return RULES
+
+
 def _quantize(part: PartConfig, song: TimedSong, tempo: TempoMap, pad: float, offset: float, octave: int = 1
               ) -> dict[str, tuple[Track, QuantizeReport]]:
     """The part's taken difficulties on our grid, every one moved by the part's offset (_offset), with its rules
@@ -1640,10 +1657,12 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
         tracks += _ladder(placed[CHART_INSTRUMENT[part.instrument]], own, tm, [t for t, _ in sections], loud)
     chart = fit_chart(Chart(info, tm, sections, [t for t in tracks if LEVEL_KEY[t.difficulty] in cfg.levels]))
     if lyrics is not None:   # only the counts go into the report
+        rules = lyric_rules(octave)
         phrases, stats = L.place(lyrics.lyrics, lyrics.starts, tm, pad,
-                                 end_tick=last_tick_by(tm, song_end - CLIP_MARGIN_S))
+                                 end_tick=last_tick_by(tm, song_end - CLIP_MARGIN_S), rules=rules)
         chart.lyrics = L.events(phrases)
-        report["lyrics"] = {**stats, "events": len(chart.lyrics), "markup_dropped": lyrics.lyrics.dropped}
+        report["lyrics"] = {**stats, "slots": {"straight": rules.straight, "triplet": rules.triplet},
+                            "events": len(chart.lyrics), "markup_dropped": lyrics.lyrics.dropped}
 
     # checks
     issues: list[GateIssue] = []
