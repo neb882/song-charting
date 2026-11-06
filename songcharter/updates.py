@@ -9,10 +9,10 @@ section 8; M5-99 says what one would add).
 
   * **The releases:** GitHub's list of the repository's releases (RELEASES_URL, the ten newest;
     $SONGCHARTER_RELEASES_URL replaces it, for CI's check). A release counts when it is not a draft and its tag is
-    v<dotted integers> (v0.2.0): a pre-release counts, since the friend is on one [decided, the owner]; a tag with a
-    suffix (v0.2.0-ci-abc, v0.2.0rc1) does not. The newest is the highest version of those, compared as integers (0.10
-    is after 0.9; 0.2 is 0.2.0); it is newer than `version` when it is higher (a `version` that is not dotted integers
-    is never older).
+    v<dotted integers> (v0.2.0; ASCII digits, at most 10 parts of 9 digits): a pre-release counts, since the friend is
+    on one [decided, the owner]; a tag with a suffix (v0.2.0-ci-abc, v0.2.0rc1) does not. The newest is the highest
+    version of those, compared as integers (0.10 is after 0.9; 0.2 is 0.2.0); it is newer than `version` when it is
+    higher (a `version` that is not dotted integers is never older).
   * **The line**, for a newer one: the guide's own (docs/guide/windows-wsl.md, section 3, as packaging/release/
     build.sh fills it in; `install_line`), with install.sh's SHA-256 from that release's SHA256SUMS asset (its
     browser_download_url), on one line:
@@ -20,7 +20,7 @@ section 8; M5-99 says what one would add).
         && echo "<sha>  install.sh" | sha256sum -c - && bash install.sh
     Only its version (digits and dots) and the SHA-256 (64 hex) come from the network, so what the friend pastes is
     always this line. Without a readable SHA256SUMS (none, a failed fetch, no install.sh line in it) there is no line
-    (null), only the release page (`url`: the release's html_url when it is an https URL, else the tag's page).
+    (null), only the release page (`url`: always the tag's page on GitHub, RELEASE_PAGE, never the API's html_url).
   * **At most one request a day** (CHECK_EVERY_S): <home>/state/update.json keeps the last answer, and one under a day
     old for this `version` answers without a request. Any failure (no network, a timeout, an HTTP error, an answer
     that is not the releases' JSON) returns None and keeps {"checked", "version", "error"}, so the next try comes an
@@ -53,7 +53,7 @@ TIMEOUT_S = 5.0         # each request's socket timeout
 MAX_RELEASES = 1 << 20  # bytes of the releases' JSON read at most (ten releases are about 50 KB)
 MAX_SUMS = 1 << 16      # bytes of a SHA256SUMS read at most (two lines)
 STAMP = Path("state") / "update.json"   # under the home
-VERSION = re.compile(r"\d+(?:\.\d+)*")
+VERSION = re.compile(r"[0-9]{1,9}(?:\.[0-9]{1,9}){0,9}")   # ASCII digits, at most 10 parts of 9 digits
 SUM_LINE = re.compile(r"([0-9a-f]{64}) [ *]install\.sh")   # sha256sum's line for install.sh
 
 
@@ -113,14 +113,15 @@ def check(home: Path | str, version: str, url: str | None = None, timeout: float
     get = opener or urllib.request.urlopen
     try:
         release = _newest(_fetch(get, url, version, timeout, MAX_RELEASES, "application/vnd.github+json"))
-    except Failed as e:
+    except (Failed, ValueError, TypeError) as e:   # a parse error too: a failure, with its stamp, never a raise
+        e = e if isinstance(e, Failed) else Failed(f"the releases' answer: {type(e).__name__}: {e}")
         _write(path, {"checked": now, "version": version, "error": str(e)})
         say(f"update check failed: {e}; the next try is an hour away at the earliest")
         return None
     latest = release["tag_name"][1:] if release else None
     result = {"checked": now, "version": version, "latest": latest, "line": None, "url": None}
     if release and newer(latest, version):
-        result["url"] = _page(release, latest)
+        result["url"] = RELEASE_PAGE.format(version=latest)   # never the API's html_url: only the version is theirs
         result["line"] = _line(get, release, latest, version, timeout)
     _write(path, result)
     say(f"update check: {_found(result)}")
@@ -164,11 +165,6 @@ def _newest(data: bytes) -> dict | None:
     return best
 
 
-def _page(release: dict, latest: str) -> str:
-    page = release.get("html_url")
-    return page if isinstance(page, str) and page.startswith("https://") else RELEASE_PAGE.format(version=latest)
-
-
 def _line(get: Callable[..., Any], release: dict, latest: str, version: str, timeout: float) -> str | None:
     """The install line from the release's SHA256SUMS asset, or None when it cannot be read."""
     assets = release.get("assets")
@@ -207,7 +203,7 @@ def _read(path: Path, version: str) -> dict | None:
         return None
     if not newer(latest, version):
         return answer if line is None and url is None else None
-    if not (isinstance(url, str) and url.startswith("https://")):
+    if url != RELEASE_PAGE.format(version=latest):
         return None
     if line is not None:
         m = re.fullmatch(r'.*echo "([0-9a-f]{64})  install\.sh".*', line) if isinstance(line, str) else None

