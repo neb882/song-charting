@@ -810,15 +810,44 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
        drum-like jitter, and 20 ms drops nothing anywhere. The other power-metal charts lost 23.5–26.0 % of their
        guitar notes (and 11.4 % of the bass) to the old floors on their own maps.
    - **The bass on a doubled grid** (M5-01; decided 2026-11-05, an amendment to the order's "no change to the slot
-     levels"): on a grid the octave pass doubled (§2.3 step 7), the bass part snaps one slot level coarser, to the
-     grid's 8ths and their triplets (`assemble.DOUBLED_BASS_SLOTS`, report.json's `parts.*.slots`): the first grid's
-     16ths, and its 16th-note triplets (finer than its 8th-note triplets). Every other part and every undoubled song is
+     levels"; its triplet slots removed by M6-02): on a grid the octave pass doubled (§2.3 step 7), the bass part
+     snaps one slot level coarser, to the grid's 8ths only (`assemble.DOUBLED_BASS_SLOTS` (2, 0), report.json's
+     `parts.*.slots`): the first grid's 16ths, and no triplet slots. Every other part and every undoubled song is
      unchanged. The bass engine's onsets spread about a 16th either side of the human notes on the power-metal song
      (signed error against the human chart, p10/p90 −75/+65 ms; 819 of 1,821 within 50 ms). The doubled grid's 16ths
      kept that error: bass F1@50 fell from 0.702 to 0.606, 566 matched notes past half a 16th against 249 on the first
      grid, whose 150 ms slots had pulled them onto the real 8ths where the human bass sits. It was not the offset: the
      matched notes' median error is −2.6 ms on the first grid and −0.6 ms on the doubled one. With the coarser slots the
      stress run's bass F1@50 is 0.716 [here, M5-01].
+   - **No triplet slots for it** (M6-02) [here, M6-02: the stress set at main f3b9ebb, 1 CPU take, `--rerun bass`;
+     the bass Expert matched at 50 ms with score.py's own matcher, numbers only]. M5-01 gave the doubled bass the
+     grid's triplets too (2, 3), the first grid's 16th-note triplets. With 8th slots, an onset counts as off-beat from
+     a quarter to three quarters of the beat, and it leans triplet whenever it lies within 25 ms of a third: 100 of the
+     150 ms of that zone at 200 BPM. So the engine's 8ths 40–50 ms off read as triplet runs: 124 notes on troop and 174
+     on pm2 (2 on pm2's first grid, M5-11), most about 50 ms from any human note: the whole rise in pm2's unmatched bass notes (+67)
+     when M5-11 doubled its grid, and about half its F1@50 loss against the primary (removing them recovers 0.011 of
+     the 0.023; M5-99 has the rest). The humans' bass charts, at the same 200 BPM, have triplets on 0.0 % of
+     their notes (troop's primary), 0.4 % (pm2's primary) and 3.3 % (pm2's alt2); our triplet notes matched 0, 4 and 2
+     of them. Measured on the two doubled stress songs against every human chart with a bass part:
+
+     | bass F1@50 | (2, 3), M5-01 | (2, 0), chosen | (2, 3), triplet test against the 16ths |
+     |---|---|---|---|
+     | troop vs its primary | 0.7161 | **0.7346** | 0.7236 |
+     | pm2 vs its primary | 0.7766 | **0.7875** | 0.7812 |
+     | pm2 vs alt2 | **0.5949** | 0.5879 | 0.5916 |
+     | our notes on triplet slots (troop / pm2) | 124 / 174 | 0 / 0 | 67 / 97 |
+     | matched notes' median absolute error, ms (troop / pm2 / alt2) | 1.27 / 5.97 / 7.16 | 1.15 / 5.57 / 6.07 | 1.20 / 5.79 / 6.80 |
+
+     The third rule keeps the triplet slots but runs the triplet test against the doubled grid's 16ths, as the bass's
+     was before M5-01 coarsened its slots. It lies between the other two on every number and needs a quantizer field
+     of its own, so it was not kept. Only the bass tracks of troop and pm2 changed; sooth and break are first grids.
+     Every rule loses on alt2: 72 of the 90 alt2 notes that (2, 0) no longer matches are 16ths, which a triplet slot,
+     25 ms from a 16th at 200 BPM, matched by accident. alt2 has 2.5 times the primary's 16ths (1,021 of 3,154 against
+     405 of 2,571), 326 notes off any 1/32 or triplet line, and agrees with the primary at 0.710. The gains, on all
+     three charts, are 8ths and beat lines. **The reading** (the orchestrator, 2026-11-06): the order's "without
+     lowering either song below today's" is read against each song's primary, the stress check's yardstick (troop
+     +0.019, pm2 +0.011); alt2's −0.007 is inside the check's 0.01 tolerance. The 16ths themselves, which the doubled
+     bass grid has no slot for, are M5-99's (with the burst slots).
    - A merge takes the union of frets, so a single-note source gains chords: on the bass engine 69–172 onsets per
      song merged on All the Small Things, Lucretia and Creep (Expert chord share after quantizing up to 0.074). The
      human bass charts: 0 on Take Me Out, Lucretia, Creep and Kimochi Warui; 0.41 on All the Small Things Expert and
@@ -1839,7 +1868,8 @@ of its words weak is warned about (the warning, calibrated, below: M4-10's rule,
 fast song that timed well).
 
 **On the chart** (`lyrics.place`): each syllable start is snapped onto our grid as the notes are (SnapGrid over the
-syllables' own ticks; on a doubled grid one slot level coarser, its 8ths and their triplets, as the bass: below);
+syllables' own ticks; on a doubled grid one slot level coarser, its 8ths and their triplets: below; the bass there
+gets its 8ths only, §2.6);
 phrases are the lines, also split where the next syllable starts more than 3.0 s after the
 last (the six references' 1,076 gaps between word starts inside a phrase: p99 2.0 s, the longest 3.02 s, 1 over
 3.0 s; a third of the gaps between their phrases are longer); phrase_start goes 0.151 s before the first syllable and

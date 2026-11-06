@@ -144,6 +144,22 @@ cfc7d5d against the branch):
   further off (4.3 -> 4.4 ms), so the numbers point at the triplet slots (the doubled grid's triplets are the first
   grid's 16th-note triplets, finer than its own), not the offset. Measure both on `troop` and `pm2` before
   changing either; half a day.
+  - **The triplet slots: done (M6-02).** The bass on a doubled grid has no triplet slots now (`DOUBLED_BASS_SLOTS`
+    (2, 0)): bass F1@50 against the primaries 0.716 -> 0.735 (troop) and 0.777 -> 0.787 (pm2), alt2 0.595 ->
+    0.588 (DESIGN 2.6). The offset half has no support either: the matched notes' signed median error is 0.9 ms
+    (troop) and 4.3 ms (pm2) against the primaries, within 0.3 ms of before on every chart.
+  - **Left: the bass's 16ths on a doubled grid.** The doubled bass grid's 8ths are the first grid's 16ths, and it
+    has nothing finer, so a 16th-note run of the song's own tempo has nowhere to go. The humans chart 16ths there
+    (troop's primary 304 of 1,852 bass notes, pm2's 405 of 2,571, its alt2 1,021 of 3,154). The triplet slots
+    matched some of them by accident (a triplet slot is 25 ms from a 16th at 200 BPM): removing them lost 72 of
+    alt2's 16ths and 20 of the primary's. pm2's bass is still under its first grid's (0.787 against 0.800 at
+    cfc7d5d, `stress.py compare eval/baseline/stress`), troop's above M5-01's 0.716. The answer belongs with the
+    burst slots above: finer slots for an engine whose onsets can be trusted at that resolution, measured on the same
+    three charts.
+  - **Untested: the doubled-bass rules on imported lower levels.** An assemble config that imports every level
+    (`take_difficulties: "all"`) on a doubled grid would give Hard, Medium and Easy the bass rules only through
+    `part_rules`; no test covers it (M6-02's review: a break giving them the octave-1 rules passes). The pipeline
+    imports Expert only. A test, a few minutes.
 - **A tempo change under a doubled grid.** Plain beat F1 0.397 -> 0.598 (octave-tolerant 0.658; the humans 1.000),
   downbeat F1 0.014. The grid has the beat count (1,457 beats against 1,435) and a median error of 13.6 ms, but
   about 40 % of its beats are more than 70 ms off, and the build warns of a 170 BPM stretch at 235-300 s that the
