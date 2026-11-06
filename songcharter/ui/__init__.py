@@ -10,6 +10,7 @@ What the UI keeps is in $SONGCHARTER_HOME (`home`: the launcher sets it, ~/.loca
     exports/<name>.zip                          a zip the Done screen saved (M4-06)
     replaced/<stamp>/<artist - title>/          an older chart of ours that an install replaced (M4-06)
     ui.json                                     the page's settings: the Songs folder chosen (M4-06)
+    state/update.json                           the update check's last answer, kept a day (updates.py, M5-07)
 """
 from __future__ import annotations
 

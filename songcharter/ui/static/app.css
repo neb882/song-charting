@@ -157,5 +157,20 @@ a.button { color: #fff; text-decoration: none; }
 #art { display: flex; align-items: center; gap: 1rem; margin: 0 0 1rem; }
 #art figcaption { display: flex; flex-direction: column; font-weight: 600; overflow-wrap: anywhere; }
 .album-art { width: 8rem; height: 8rem; border: 1px solid var(--line); border-radius: 4px; }
+#update { border-color: var(--accent); }   /* the update notice (M5-07) */
+#update-text { margin: 0 0 0.5rem; }
+.update-copy { display: flex; gap: 0.5rem; align-items: center; margin: 0; }
+#update-line {
+  flex: 1;
+  min-width: 0;
+  font: 0.85rem/1.4 ui-monospace, Consolas, monospace;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--page);
+  color: var(--ink);
+}
+.update-copy button { margin-top: 0; }
+#update .actions a { margin-right: 1rem; }
 footer { max-width: 52rem; margin: 0 auto; padding: 0.5rem 1.25rem 2rem; }
 [hidden] { display: none !important; }

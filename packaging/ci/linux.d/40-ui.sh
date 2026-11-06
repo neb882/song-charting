@@ -19,7 +19,9 @@ home="$CI_TMP/ui-home"
 rm -rf "$home"
 mkdir -p "$home" "$CI_ART"
 log="$CI_ART/40-ui-server.txt"
-SONGCHARTER_HOME="$home" SONGCHARTER_CACHE="$CI_TMP/ui-cache" "$CI_PY" -m songcharter.cli ui --no-browser \
+# the update check the page starts goes to a closed local port: CI asks no real API (M5-07; 75-update.sh tests it)
+SONGCHARTER_HOME="$home" SONGCHARTER_CACHE="$CI_TMP/ui-cache" SONGCHARTER_RELEASES_URL=http://127.0.0.1:9/releases.json \
+  "$CI_PY" -m songcharter.cli ui --no-browser \
   --port "$port" >"$log" 2>&1 &
 server=$!
 stop() {   # SIGTERM, then the server must be gone within 5 s

@@ -65,6 +65,10 @@ songcharter chart song.mp3 --out "Songs/Artist - Title"
   the lyrics and choose the pictures, if you want them), watch each stage and cancel. Then look at the preview, install the song
   into Clone Hero's Songs folder or save it as a zip. `songcharter chart --events` writes the same progress as JSON
   lines for other programs.
+- **Updates:** the page says when a newer version is out, with its install line and a Copy button: paste it in
+  Ubuntu as the first time. Your charts, your Clone Hero folder and the downloads are kept. The page asks GitHub's
+  list of releases at most once a day, naming only songcharter and its version; nothing updates by itself, and
+  `SONGCHARTER_OFFLINE=1` turns the check off.
 - **When something goes wrong:** `songcharter diagnostics --out FILE.zip` (or the page's Diagnostics link) makes
   one file of logs and settings to send. It holds no audio, charts, lyrics or pictures.
 

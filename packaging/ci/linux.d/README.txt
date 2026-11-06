@@ -15,7 +15,7 @@ How they run
 
 Names: NN-name.sh, NN being the order that adds the hook
   10 lanes (M4-01)          40 UI (M4-04)               70 release (M4-07)
-  20 device (M4-02)         50 end to end (M4-05)
+  20 device (M4-02)         50 end to end (M4-05)       75 update (M5-07)
   30 install (M4-03)        60 results (M4-06)
 Windows hooks (../windows.d) reuse the same numbers.
 
