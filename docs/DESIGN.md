@@ -523,8 +523,11 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
        at the doubled range, with the half-beat test as before. `beat_grid` refines them onto the drums (free mode),
        and that grid is the doubled grid; the guard's ratio is then its share (`pm2`: 0.726 against the line's
        0.702 and the first grid's 0.744). They are used only when at least 8 fall inside the audio and their doubled
-       median tempo is within half an octave of the line's (a level check of this order's own, so that beats already
-       at the doubled level are not doubled again; it fires on no song here). report.json's
+       median tempo is within half an octave of the line's (a level check of this order's own: beats already at the
+       doubled level are not used at all, and the line stays; it fires on no song here). The guard reads the grid the
+       second pass returns, so a start from allin1 can keep a doubling the line would have dropped: on a song really
+       at the first level with a tempo change and dense notes, the line fails the guard and allin1's grid could pass
+       it (the review, 2026-11-06; no measured song shows it; M5-99). report.json's
        `octave_stats.second_start` says which start the grid used and why (the line's tempo-check windows, allin1's
        count and tempo, the line it replaced), and the build warns "the doubled grid follows allin1's beats: ...
        check sync there". With no allin1 beats (the librosa fallback, no sections, an imported chart's) or an empty

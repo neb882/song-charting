@@ -1776,11 +1776,25 @@ def test_the_octave_pass_starts_the_doubled_grid_from_allin1_when_its_line_misse
         assert stats["second_start"]["why"] == ("the straight line misses a tempo change (2 tempo-check windows, "
                                                 f"30-55 s), but {tail}")
         assert not any("allin1" in w for w in warn) and len(calls) == (2 if run is failing else 1)
+    line.stats["tempo_check"] = [missed[0]]   # one window is enough
+    calls.clear()
+    grid, octave, stats, _, warn = assemble_module._octave_pass(cfg, first, onsets, None, second, allin1, 120.0)
+    assert grid is followed and len(calls) == 2 and stats["second_start"]["grid"] == "allin1"
+    assert stats["second_start"]["why"].startswith("the straight line misses a tempo change (1 tempo-check windows, "
+                                                   "30-50 s): ")
     line.stats["tempo_check"] = []
+    first.stats["tempo_check"] = missed       # the first grid's own check is not the doubled grid's
     calls.clear()
     grid, octave, stats, _, warn = assemble_module._octave_pass(cfg, first, onsets, None, second, allin1, 120.0)
     assert grid is line and octave == 2 and len(calls) == 1 and len(warn) == 1
     assert stats["second_start"] == {"grid": "line", "why": "the tempo check finds no missed tempo change"}
+
+
+def test_an_imported_charts_sections_have_no_allin1_beats(tmp_path):
+    """sections "from:<part>" (the sections of an imported chart) is no allin1 file: no beats, not a file read."""
+    cfg = parse_config({**CONFIG, "sections": "from:guitar"}, tmp_path)
+    assert assemble_module._read_allin1_beats(cfg) is None
+    assert assemble_module._read_allin1_beats(parse_config({**CONFIG, "sections": None}, tmp_path)) is None
 
 
 STRETCH_START, STRETCH_BEATS = 45.0, 52  # 52 beats at 170 BPM in a 198 BPM song (as on the fourth stress song),

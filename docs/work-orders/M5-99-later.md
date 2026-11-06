@@ -169,7 +169,11 @@ cfc7d5d against the branch):
   a 141 BPM dip in the map against the humans' 170); a doubled grid without allin1's beats (the librosa fallback)
   still lays the straight line and warns; a missed tempo change on a first-level grid (octave 1) is untouched (on
   Lucretia allin1's beats score 0.305 against our 0.259, the measurer's numbers, not looked into); and `pm2`'s
-  Easy and Medium levels fell with its bar phase (one beat off the primary now, two before; M6-03's).
+  Easy and Medium levels fell with its bar phase (one beat off the primary now, two before; M6-03's: `bar_phase`
+  picks one phase for the whole song from the kick, so a start that moves one stretch's beats can flip an uncertain
+  phase either way, pm2's margin 0.125 -> 0.014). The octave guard reads the grid the second pass returns, so a
+  start from allin1 could keep a doubling the line would have dropped (a song at the first level with a tempo change
+  and dense notes; no measured song shows it, the review's).
 - **The guitar's chord share** is 0.112 on the doubled grid (0.119 on the first; `troop` 0.09; the humans
   0.02-0.04). The quantizer merged none on either grid, so these are the engine's own chords: a rule on the
   engine's chords (which to split into single notes in a fast run) is the guitar engine's work, measured against
