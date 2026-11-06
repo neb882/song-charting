@@ -5,6 +5,7 @@ published SHA-256. The whole install runs in CI (packaging/ci/linux.d/30-install
 import hashlib
 import io
 import json
+import re
 import subprocess
 import tarfile
 from pathlib import Path
@@ -176,6 +177,13 @@ def in_git() -> bool:
     return subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True).returncode == 0
 
 
+def head_version(root: Path = ROOT) -> str:
+    """HEAD's __version__, which build.sh builds (with a suffix or none) and nothing else."""
+    text = subprocess.run(["git", "-C", str(root), "show", "HEAD:songcharter/__init__.py"], capture_output=True,
+                          text=True, check=True).stdout
+    return re.search(r'^__version__ = "(.*)"$', text, re.M).group(1)
+
+
 @pytest.mark.skipif(not in_git(), reason="build.sh archives the git checkout's HEAD")
 def test_build_writes_the_three_assets(tmp_path):
     """The tarball (HEAD, with its prefix), install.sh with every value filled in, SHA256SUMS of both; the filled
@@ -184,26 +192,26 @@ def test_build_writes_the_three_assets(tmp_path):
     fake = tmp_path / "fake"
     stand_in(fake, "curl", f'echo "{UV_SHA256}  uv-x86_64-unknown-linux-gnu.tar.gz"')
     env = {"PATH": f"{fake}:/usr/bin:/bin", "HOME": str(tmp_path), "PYTHON": sys.executable}
-    out = tmp_path / "dist"
-    p = subprocess.run(["bash", str(BUILD), "0.1.0-test", str(out)], capture_output=True, text=True, env=env,
+    out, v = tmp_path / "dist", f"{head_version()}-test"   # HEAD's version and a suffix, as CI's -ci-<sha>
+    p = subprocess.run(["bash", str(BUILD), v, str(out)], capture_output=True, text=True, env=env,
                        timeout=300)
     assert p.returncode == 0, p.stderr
-    tarball = out / "songcharter-0.1.0-test.tar.gz"
+    tarball = out / f"songcharter-{v}.tar.gz"
     assert sorted(x.name for x in out.iterdir()) == ["GUIDE.md", "SHA256SUMS", "install.sh", tarball.name]
     digest = hashlib.sha256(tarball.read_bytes()).hexdigest()
     script = (out / "install.sh").read_text(encoding="utf-8")
     guide = (out / "GUIDE.md").read_text(encoding="utf-8")   # M4-07: the guide, its line with install.sh's hash
-    line = (f'/v0.1.0-test/install.sh && echo "{sha((out / "install.sh").read_bytes())}  install.sh" | sha256sum -c - '
+    line = (f'/v{v}/install.sh && echo "{sha((out / "install.sh").read_bytes())}  install.sh" | sha256sum -c - '
             "&& bash install.sh\n")
     assert "{{" not in guide and line in guide
-    assert 'VERSION="0.1.0-test"' in script and f'APP_SHA256="{digest}"' in script
+    assert f'VERSION="{v}"' in script and f'APP_SHA256="{digest}"' in script
     assert ('RELEASE_URL="${SONGCHARTER_RELEASE_URL:-https://github.com/neb882/song-charting/releases/download/'
-            'v0.1.0-test}"') in script
+            f'v{v}}}"') in script
     assert ('UV_URL="https://github.com/astral-sh/uv/releases/download/0.13.5/uv-x86_64-unknown-linux-gnu.tar.gz"'
             in script and f'UV_SHA256="{UV_SHA256}"' in script and "@VERSION@" not in script)
-    notice = "https://github.com/neb882/song-charting/blob/v0.1.0-test/packaging/NOTICE.txt"   # the guide's link
+    notice = f"https://github.com/neb882/song-charting/blob/v{v}/packaging/NOTICE.txt"   # the guide's link
     guide_md = (ROOT / "docs" / "guide" / "windows-wsl.md").read_text(encoding="utf-8")
-    assert f'NOTICE_URL="{notice}"' in script and notice.replace("0.1.0-test", "{{VERSION}}") in guide_md
+    assert f'NOTICE_URL="{notice}"' in script and notice.replace(v, "{{VERSION}}") in guide_md
     # the launcher and every call of the install's Python keep a songcharter/ folder in the current one out (-P)
     assert """exec "%s" -P -m songcharter.launch""" in script and '"$py" -m' not in script
     sums = (out / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
@@ -211,16 +219,18 @@ def test_build_writes_the_three_assets(tmp_path):
                     f"{digest}  {tarball.name}"]
     with tarfile.open(tarball) as t:
         names = t.getnames()
-    assert all(n == "songcharter-0.1.0-test" or n.startswith("songcharter-0.1.0-test/") for n in names)
-    assert "songcharter-0.1.0-test/pyproject.toml" in names and "songcharter-0.1.0-test/uv.lock" in names
-    assert "songcharter-0.1.0-test/NOTICE.txt" in names and "songcharter-0.1.0-test/LICENSE" in names
+        init = t.extractfile(f"songcharter-{v}/songcharter/__init__.py").read().decode("utf-8")
+    assert f'__version__ = "{head_version()}"' in init   # the app says the release's version (M5-12)
+    assert all(n == f"songcharter-{v}" or n.startswith(f"songcharter-{v}/") for n in names)
+    assert f"songcharter-{v}/pyproject.toml" in names and f"songcharter-{v}/uv.lock" in names
+    assert f"songcharter-{v}/NOTICE.txt" in names and f"songcharter-{v}/LICENSE" in names
     stand_in(fake, "id", "echo 0")
     p = subprocess.run(["bash", str(out / "install.sh"), "--yes"], capture_output=True, text=True, env=env, timeout=60)
     assert p.returncode == 2 and p.stderr.splitlines()[-1] == (
         "songcharter: start failed: songcharter installs for your own user: run it as your Ubuntu user, without sudo. "
         "Run the same command again to continue.")
     stand_in(fake, "curl", 'echo "0000  uv-x86_64-unknown-linux-gnu.tar.gz"')
-    p = subprocess.run(["bash", str(BUILD), "0.1.0-test", str(out)], capture_output=True, text=True, env=env,
+    p = subprocess.run(["bash", str(BUILD), v, str(out)], capture_output=True, text=True, env=env,
                        timeout=300)
     assert p.returncode == 1 and "published SHA-256 is '0000'" in p.stderr
 
@@ -242,13 +252,56 @@ def test_build_ships_install_sh_and_the_guide_as_head_has_them(tmp_path):
     stand_in(fake, "curl", f'echo "{UV_SHA256}  uv-x86_64-unknown-linux-gnu.tar.gz"')
     env = {"PATH": f"{fake}:/usr/bin:/bin", "HOME": str(tmp_path), "PYTHON": sys.executable}
     out = tmp_path / "dist"
-    p = subprocess.run(["bash", str(clone / "packaging" / "release" / "build.sh"), "0.1.0-test", str(out)],
+    p = subprocess.run(["bash", str(clone / "packaging" / "release" / "build.sh"), f"{head_version()}-test",
+                        str(out)],
                        capture_output=True, text=True, env=env, timeout=300)
     assert p.returncode == 0, p.stderr
     assert "zorp" not in (out / "install.sh").read_text(encoding="utf-8")
     assert "zorp" not in (out / "GUIDE.md").read_text(encoding="utf-8")
     assert "uncommitted changes are not in the release" in p.stderr
     assert "packaging/linux/install.sh" in p.stderr and "docs/guide/windows-wsl.md" in p.stderr
+
+
+def test_build_refuses_a_version_that_is_not_heads(tmp_path):
+    """build.sh builds HEAD's version only (M5-12): one whose dotted-integer part is not HEAD's __version__ and
+    pyproject.toml's version stops it with exit 2 before anything is written, so a release can never install an app
+    that calls itself another version (whose update notice would then offer the friend his own release). A suffix
+    (CI's -ci-<sha>) is allowed, HEAD's files are read, not the working copy's, and pyproject.toml must agree."""
+    v = head_version()
+    major, minor, patch = (int(x) for x in v.split("."))   # HEAD's is plain dotted integers
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)}   # no curl stand-in: it stops before any download
+
+    def build(script: Path, version: str, out: Path):
+        return subprocess.run(["bash", str(script), version, str(out)], capture_output=True, text=True, env=env,
+                              timeout=120)
+
+    out = tmp_path / "dist"
+    for bad in (f"{major}.{minor + 1}.{patch}", f"{major}.{minor}.{patch}.1", f"{major}.{minor}", f"1{v}",
+                f"{major}.{minor}.{patch + 1}-ci-abc1234", f"{major}.{minor}.{patch}1-test", "0.0.1"):
+        p = build(BUILD, bad, out)
+        assert p.returncode == 2 and p.stderr == (
+            f"build.sh: {bad} is not HEAD's version: its songcharter/__init__.py says '{v}' and its pyproject.toml "
+            f"'{v}'. Build that version (a suffix such as -ci-<sha> may follow it), or bump both (then uv lock) and "
+            "commit first\n"), (bad, p.stderr)
+        assert not out.exists(), bad
+    # in a clone: an uncommitted bump is not HEAD's; a committed pyproject.toml that disagrees stops it too
+    clone = tmp_path / "clone"
+    head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True,
+                          check=True).stdout.strip()
+    subprocess.run(["git", "clone", "-q", "--no-hardlinks", "--no-checkout", str(ROOT), str(clone)], check=True)
+    subprocess.run(["git", "-C", str(clone), "checkout", "-q", "--detach", head], check=True)
+    init = clone / "songcharter" / "__init__.py"
+    init.write_text(init.read_text(encoding="utf-8").replace(f'"{v}"', '"9.9.9"'), encoding="utf-8")
+    p = build(clone / "packaging" / "release" / "build.sh", "9.9.9", out)
+    assert p.returncode == 2 and f"its songcharter/__init__.py says '{v}'" in p.stderr and not out.exists()
+    subprocess.run(["git", "-C", str(clone), "checkout", "-q", "--", "songcharter/__init__.py"], check=True)
+    project = clone / "pyproject.toml"
+    project.write_text(project.read_text(encoding="utf-8").replace(f'\nversion = "{v}"\n', '\nversion = "0.0.1"\n', 1),
+                       encoding="utf-8")
+    subprocess.run(["git", "-C", str(clone), "-c", "user.name=Made Up", "-c", "user.email=made-up@example.invalid",
+                    "commit", "-q", "-am", "a made-up pyproject.toml that disagrees"], check=True)
+    p = build(clone / "packaging" / "release" / "build.sh", f"{v}-ci-abc1234", out)
+    assert p.returncode == 2 and f"says '{v}' and its pyproject.toml '0.0.1'" in p.stderr and not out.exists()
 
 
 # ------------------------------------------------------------------------------------------------ the whole install

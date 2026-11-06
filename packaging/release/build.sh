@@ -3,6 +3,8 @@
 #
 #   bash packaging/release/build.sh <version> <out>
 #
+# <version> is HEAD's __version__, which pyproject.toml's version matches, optionally with a suffix (CI's
+# <version>-ci-<sha>); another is refused (exit 2) before anything is written.
 # Writes into <out>:
 #   songcharter-<version>.tar.gz   `git archive` of HEAD (committed files only), with the prefix songcharter-<version>/,
 #                                  and HEAD's packaging/NOTICE.txt added at its root (beside LICENSE);
@@ -28,6 +30,20 @@ if ! [[ $version =~ ^[0-9][0-9A-Za-z.+-]*$ ]]; then
   exit 2
 fi
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+# The version is HEAD's (M5-12): its dotted-integer part (0.2.0 of 0.2.0 or 0.2.0-ci-<sha>) must be that of HEAD's
+# __version__ (songcharter/__init__.py) and of pyproject.toml's version. Else the app reports another version than
+# its release, and its update notice offers the friend the release he already has. CI's -ci-<sha> suffix may follow.
+base() { if [[ $1 =~ ^[0-9]+(\.[0-9]+)* ]]; then echo "${BASH_REMATCH[0]}"; fi; }
+head_init=$(git -C "$root" cat-file blob HEAD:songcharter/__init__.py | sed -n 's/^__version__ = "\(.*\)"$/\1/p')
+head_project=$(git -C "$root" cat-file blob HEAD:pyproject.toml |
+  sed -n '/^\[project\]$/,/^\[/s/^version = "\(.*\)"$/\1/p')
+want=$(base "$head_init")
+if [ -z "$want" ] || [ "$(base "$version")" != "$want" ] || [ "$(base "$head_project")" != "$want" ]; then
+  echo "build.sh: $version is not HEAD's version: its songcharter/__init__.py says '$head_init' and its" \
+    "pyproject.toml '$head_project'. Build that version (a suffix such as -ci-<sha> may follow it), or bump both" \
+    "(then uv lock) and commit first" >&2
+  exit 2
+fi
 python=${PYTHON:-python3}
 UV_VERSION=0.13.5
 UV_URL=https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-x86_64-unknown-linux-gnu.tar.gz

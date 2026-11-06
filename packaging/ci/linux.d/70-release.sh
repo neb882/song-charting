@@ -24,7 +24,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 art="$CI_ART/70-release"
 dist="$CI_TMP/release"
 mkdir -p "$art"
-version="0.1.0-ci-$(git rev-parse --short HEAD)"
+# HEAD's __version__ (build.sh refuses another, M5-12) and the commit
+version="$(git show HEAD:songcharter/__init__.py | sed -n 's/^__version__ = "\(.*\)"$/\1/p')-ci-$(git rev-parse --short HEAD)"
 tarball="songcharter-$version.tar.gz"
 release_path="neb882/song-charting/releases/download/v$version"
 fail() { echo "70-release: $*"; exit 1; }

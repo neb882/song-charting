@@ -53,7 +53,9 @@ if grep -q skipped "$art/tests.txt"; then
   exit 1
 fi
 
-PYTHON="$CI_PY" bash packaging/release/build.sh "0.1.0-ci-$(git rev-parse --short HEAD)" "$dist"
+# HEAD's version, as build.sh wants it (M5-12), with 70-release's suffix
+version="$(git show HEAD:songcharter/__init__.py | sed -n 's/^__version__ = "\(.*\)"$/\1/p')-ci-$(git rev-parse --short HEAD)"
+PYTHON="$CI_PY" bash packaging/release/build.sh "$version" "$dist"
 name="sc-install-$$"
 docker run -d --name "$name" -v "$dist:/dist:ro" -v "$PWD/packaging/ci:/ci:ro" -v "$CI_CLIP:/clip.wav:ro" \
   ubuntu:26.04 sleep infinity >/dev/null

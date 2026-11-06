@@ -12,17 +12,17 @@
 #   3. the new line pasted over it: "songcharter <new>: in .../app/<new>", app/0.1.0 gone, and only install.sh and
 #      the tarball fetched from the server for it (SHA256SUMS too may be), each once; nothing else downloaded (no line
 #      of runtime.py's fetch, uv's downloads, install.sh's own but the app's tarball, or uv's Python install: the
-#      runtime is kept); `songcharter doctor` exits 0 with "doctor: OK" and HEAD's __version__ (the same as 0.1.0's
-#      until the release changes it, so the new code is also proven by runtime.json's app and by the install's Python
-#      importing songcharter.updates, which 0.1.0 has not); the clip charted again into the same work folder, with
-#      separate, drums, bass, sections and guitar "(cached)", and check_gate.py passes on it;
+#      runtime is kept); `songcharter doctor` exits 0 with "doctor: OK" and HEAD's __version__, which must be newer
+#      than 0.1.0 (M5-12: build.sh builds only HEAD's; the new code is also proven by runtime.json's app and by the
+#      install's Python importing songcharter.updates, which 0.1.0 has not); the clip charted again into the same work
+#      folder, with separate, drums, bass, sections and guitar "(cached)", and check_gate.py passes on it;
 #   4. the notice: `songcharter` (the page, as the guide starts it) with $SONGCHARTER_RELEASES_URL naming a JSON file
 #      on the server; /api/status before the page has no update and makes no request, then the page, then (once the
 #      check's line is in the log) /api/status again: with a release v9.9.9 whose assets are on the server, with a
 #      SHA256SUMS there, update.version 9.9.9 and update.line exactly the expected line, from one request for the
-#      JSON and one for the SHA256SUMS; started again with a JSON of v0.1.0 only, the answer kept for a day still
-#      says 9.9.9, with no request; the kept answer deleted, update null; with the URL unreachable, null, and the page
-#      still answering;
+#      JSON and one for the SHA256SUMS; started again with a JSON of v0.1.0 and v<HEAD's __version__> (the release
+#      this build is: no notice for it, M5-12), the answer kept for a day still says 9.9.9, with no request; the kept
+#      answer deleted, update null; with the URL unreachable, null, and the page still answering;
 #   5. `songcharter uninstall` answered with Enter (No), then the new line again: the reinstall after an update works,
 #      with nothing downloaded but install.sh and the tarball.
 # The logs, the server's access log and the JSON files go to $CI_ART/75-update (no audio: the clip, the charts and
@@ -37,6 +37,9 @@ fail() { echo "75-update: $*"; exit 1; }
 old=0.1.0
 head_version=$(git show HEAD:songcharter/__init__.py | sed -n 's/^__version__ = "\(.*\)"$/\1/p')
 [ -n "$head_version" ] || fail "no __version__ in HEAD's songcharter/__init__.py"
+# the update path is from an older install: HEAD's version must be newer than v$old's (M5-12)
+[ "$head_version" != "$old" ] && [ "$(printf '%s\n' "$old" "$head_version" | sort -V | head -n 1)" = "$old" ] ||
+  fail "HEAD's __version__ $head_version is not newer than $old: bump it (and pyproject.toml's, then uv lock)"
 new="$head_version-ci-$(git rev-parse --short HEAD)"
 base="neb882/song-charting/releases/download"
 old_tree="$work/v$old"
@@ -114,13 +117,14 @@ one_change "$old_line" "$local_old"
 one_change "$new_line" "$local_new"
 echo "75-update: serving $root at $url"
 
-# the notice's releases: v9.9.9 (a pre-release, its assets on the server, its SHA256SUMS the new build's), and v0.1.0
+# the notice's releases: v9.9.9 (a pre-release, its assets on the server, its SHA256SUMS the new build's), v0.1.0,
+# and v<HEAD's __version__>, the release this build is (not newer: no notice, and nothing asked of it)
 mkdir -p "$root/$base/v9.9.9"
 cp "$work/dist-new/SHA256SUMS" "$root/$base/v9.9.9/SHA256SUMS"
-"$CI_PY" - "$root" "$url$base" <<'PY'
+"$CI_PY" - "$root" "$url$base" "$head_version" <<'PY'
 import json, sys
 from pathlib import Path
-root, download = Path(sys.argv[1]), sys.argv[2]
+root, download, head = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 
 
 def release(version, prerelease):
@@ -131,7 +135,7 @@ def release(version, prerelease):
 
 
 (root / "releases-999.json").write_text(json.dumps([release("9.9.9", True), release("0.1.0", True)], indent=1))
-(root / "releases-010.json").write_text(json.dumps([release("0.1.0", True)], indent=1))
+(root / "releases-010.json").write_text(json.dumps([release(head, True), release("0.1.0", True)], indent=1))
 PY
 cp "$root"/releases-*.json "$art/"
 expect_999=$("$CI_PY" -c 'import json, sys; from songcharter import updates
@@ -312,13 +316,13 @@ only "$before" releases-999.json "$base/v9.9.9/SHA256SUMS"
 [ "$(asked "$before" releases-999.json)" -eq 1 ] && [ "$(asked "$before" "$base/v9.9.9/SHA256SUMS")" -eq 1 ] ||
   fail "the check did not ask for the JSON and the SHA256SUMS once each"
 before=$(mark)
-friend "the page again, with only v$old listed: the answer kept for a day" '
+friend "the page again, with v$old and v$head_version listed: the answer kept for a day" '
 page kept "${SERVER}releases-010.json"
 update_is kept "$EXPECT_999"
 grep -q "\"latest\": \"9.9.9\"" "$home/state/update.json"'
 [ -z "$(since "$before")" ] || fail "the check asked the server again within a day: $(since "$before")"
 before=$(mark)
-friend "the page, with only v$old listed (the kept answer deleted)" '
+friend "the page, with v$old and v$head_version listed (the kept answer deleted): no notice" '
 rm "$home/state/update.json"
 page 010 "${SERVER}releases-010.json"
 update_is 010 null'
