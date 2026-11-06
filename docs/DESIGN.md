@@ -1383,10 +1383,18 @@ own tempo map, first to last Expert onset), phrases per song (per 40 of the char
     (without troop: 0.200 → 0.193 at 160; without pm2: 0.226 → 0.199), and the fit is flat from 130 to 165 BPM, so
     160 is not a tuned point: it is the plateau's middle and the value the set gives without troop. Every reference
     and the shred song's grid (154 BPM, the span's average) are under it, so their counts do not change.
-  - **The rule:** K = round(min(beats, minutes × 160) / 40). On our charts' spans: troop 25 → 20 phrases (4.0 a
-    minute; the humans 3.03–4.44), pm2 36 → 29 (4.0; the humans 1.65–5.49, four of five 4.1–5.5); bass and drums
-    alike. pm2's guitar alone fits the old count better (its five charts' median is 35), troop's three parts and pm2's
-    bass and drums the new one; the evidence is two fast songs, both power metal at 200 BPM.
+  - **The rule:** K = round(min(beats, minutes × 160) / 40). pm2's guitar alone fits the old count better (its five
+    charts' median is 35), troop's three parts and pm2's bass and drums the new one; the evidence is two fast songs,
+    both power metal at 200 BPM.
+  - **Evaluation** (1 CPU take on the kept folders, `--rerun bass` on both sides, main f3b9ebb against the branch):
+    the golden diff (`--expect none`) has no change at all, every song's hashes, counts and scores identical. The
+    stress set: troop's guitar 25 → 20 phrases (5.04 → 4.04 a minute; its humans 3.03–4.44), bass 24 → 19 (the
+    human 3.24 a minute), drums 25 → 20 (3.24); pm2's guitar 36 → 29 (4.94 → 3.98; the humans 1.65–5.49), bass 36 →
+    29 (the human 29, 3.99), drums 35 → 28 (3.83; the humans 3.57 and 4.95). The shred song and the rock song are
+    unchanged, and so are every solo (troop's covers the human main solo 0.97–0.98, pm2's 0.96–1.00) and every other
+    stress score: 14 of 930 fields differ, all our star power a minute. A few drum onsets on the lower levels of the
+    two fast songs moved with the fills (the reducer keeps a note in each phrase and fill: troop Hard 1782 → 1776,
+    Medium 901 → 900, Easy 745 → 748; pm2 Hard 2339 → 2340, Easy 952 → 950); `stress.py compare`: no regression.
   - **Not fixed:** the shred song's grid is at twice its humans' tempo (154 against 77 BPM, the octave pass never
     halves), so its 35 phrases (3.89 a minute) stay above its two charts' 2.34–3.23; a halving rule would fix it
     (M5-99). report.json's `phrases.<part>.star_power_count` has the rules, the span in beats and seconds, the beats
