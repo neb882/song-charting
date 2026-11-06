@@ -38,11 +38,11 @@ for entry in REFS:
         for alt in entry['alts']:
             a = os.path.join(d, 'alt', alt['md5'])
             if not os.path.exists(os.path.join(a, 'ref_notes.json')):
-                print('skipping (not built): %s alt %s' % (entry['id'], alt['md5'][:6])); continue
+                print('skipping (not built): %s alt%d' % (entry['id'], entry['alts'].index(alt) + 1)); continue
             s['alts'].append(built(a, alt))
     out.append(s)
 json.dump(out, open(os.path.join(R, 'songs.json'), 'w'), indent=1)
-for s in out:
-    print(s['id'], '|', s.get('artist'), '-', s.get('title'), '|', s.get('charter'), '| %.1fs' % s['duration_s'],
-          '|', s['instruments'], '| tempo markers', s['tempo_markers'], '| offset check', s['ref_offset_check_ms'], 'ms'
-          + ''.join(' | alt %s: %s' % (a['md5'][:6], a['instruments']) for a in s.get('alts') or []))
+for s in out:  # ids and numbers only: a stress set's titles, artists, charters and md5s stay in its local list
+    print(s['id'], '| %.1fs' % s['duration_s'], '|', s['instruments'], '| tempo markers', s['tempo_markers'],
+          '| offset check', s['ref_offset_check_ms'], 'ms'
+          + ''.join(' | alt%d: %s' % (i, a['instruments']) for i, a in enumerate(s.get('alts') or [], 1)))

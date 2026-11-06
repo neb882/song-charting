@@ -191,6 +191,213 @@ def test_build_refs_builds_every_song_of_a_two_song_list_strips_the_words_and_sk
         ("aaa", [md5(2)], ["drums.opus"]), ("bbb", [], ["drums.opus"])]
     assert not any((data / "unpacked" / "stress").rglob("notes.chart"))   # the unpacked words are gone
     assert not any(w in p.stdout + p.stderr for w in WORDS)
+    # the build prints ids and numbers, never a stress song's title, artist or package md5 (the local list's)
+    assert "Made Up" not in p.stdout
+    assert [line for line in p.stdout.splitlines() if line.startswith("ok ")] == [
+        "ok aaa primary", "ok aaa alt", "ok bbb primary"]
+
+
+# ------------------------------------------------------------------------------------------------ build_ref.py
+
+def vlq(v: int) -> bytes:
+    out = [v & 0x7F]
+    v >>= 7
+    while v:
+        out.append(0x80 | (v & 0x7F))
+        v >>= 7
+    return bytes(reversed(out))
+
+
+def mid_meta(delta: int, kind: int, payload: bytes = b"") -> bytes:
+    return vlq(delta) + bytes([0xFF, kind]) + vlq(len(payload)) + payload
+
+
+def mid_sysex(delta: int, data: bytes) -> bytes:
+    return vlq(delta) + b"\xf0" + vlq(len(data)) + data
+
+
+def mid_track(*events: bytes) -> bytes:
+    body = b"".join(events)
+    return b"MTrk" + struct.pack(">I", len(body)) + body
+
+
+def mid_file(*tracks: bytes) -> bytes:
+    return b"MThd" + struct.pack(">IHHH", 6, 1, len(tracks), 480) + b"".join(tracks)
+
+
+# Phase Shift's tap marker for every difficulty: the difficulty byte is 0xFF, a data byte over 127 that mido refuses
+TAP_ON = bytes([0x50, 0x53, 0, 0, 0xFF, 0x04, 0x01, 0xF7])
+TAP_OFF = bytes([0x50, 0x53, 0, 0, 0xFF, 0x04, 0x00, 0xF7])
+MID_TEMPO = mid_track(mid_meta(0, 0x51, bytes([0x07, 0xA1, 0x20])), mid_meta(0, 0x58, bytes([4, 2, 24, 8])),
+                      mid_meta(0, 0x2F))
+# a guitar part: three notes at 0.5 s, 1.0 s and 1.5 s (the first one a tap), running status all through, a channel
+# event in running status straight after a sysex (mido keeps the sysex as the running status), and a lyrics event
+GUITAR_HEAD = [mid_meta(0, 3, b"PART GUITAR"), mid_sysex(0, TAP_ON), vlq(480) + b"\x90\x60\x64", vlq(60) + b"\x60\x00",
+               mid_sysex(0, TAP_OFF), vlq(420) + b"\x61\x64", vlq(60) + b"\x61\x00"]
+# and at the end a program change (one data byte) and, after a sysex, another one in running status
+GUITAR_TAIL = [vlq(60) + b"\x62\x00", vlq(0) + b"\xc0\x01", mid_sysex(0, b"\x7e\x7f\x09\x01\xf7"), vlq(10) + b"\x02",
+               mid_meta(0, 0x2F)]
+LYRIC_80 = mid_meta(80, 5, WORDS[0].encode())
+GUITAR_WITH_LYRIC = mid_track(*GUITAR_HEAD, LYRIC_80, vlq(340) + b"\x62\x64", *GUITAR_TAIL)
+GUITAR_WITHOUT = mid_track(*GUITAR_HEAD, vlq(420) + b"\x62\x64", *GUITAR_TAIL)   # the lyric's 80 ticks go to the next event
+VOCALS = mid_track(mid_meta(0, 3, b"PART VOCALS"), vlq(0) + b"\x90\x3c\x64", mid_meta(480, 5, WORDS[1].encode()),
+                   vlq(0) + b"\x80\x3c\x40", mid_meta(0, 0x2F))
+HARM = mid_track(mid_meta(0, 3, b"HARM1"), mid_meta(0, 5, WORDS[2].encode()), mid_meta(0, 0x2F))
+MID_WITH_WORDS = mid_file(MID_TEMPO, GUITAR_WITH_LYRIC, VOCALS, HARM) + b"\x01\x02\x03"   # and bytes after the last track
+
+
+def scanned(folder: Path, env) -> dict:
+    p = subprocess.run([G.node(), env["SONGCHARTER_SCAN_CHART"], str(folder), "--notes"], capture_output=True,
+                       text=True, stdin=subprocess.DEVNULL, timeout=120)
+    assert p.returncode == 0, p.stderr[-500:]
+    return json.loads(p.stdout)
+
+
+def mid_folder(path: Path, data: bytes) -> Path:
+    path.mkdir(parents=True)
+    (path / "notes.mid").write_bytes(data)
+    (path / "song.ini").write_text("[song]\nname = Made Up Song\nartist = Made Up Band\n")
+    return path
+
+
+def test_strip_mid_drops_the_vocal_tracks_and_lyrics_events_and_changes_no_other_byte(tmp_path):
+    from eval.refs import strip_lyrics as SL
+    src, dst = tmp_path / "in.mid", tmp_path / "out.mid"
+    src.write_bytes(MID_WITH_WORDS)
+    assert SL.strip_mid(str(src), str(dst)) == (2, 1)                 # two vocal tracks, one lyrics event elsewhere
+    assert dst.read_bytes() == mid_file(MID_TEMPO, GUITAR_WITHOUT)    # the sysex 0xFF and every running status intact
+    assert not any(w.encode() in dst.read_bytes() for w in WORDS) and b"VOCALS" not in dst.read_bytes()
+
+
+def test_strip_mid_drops_every_vocal_track_name_and_keeps_every_other_event(tmp_path):
+    """The privacy rule pinned: a track goes when any of its name events names a vocal track (PART VOCALS, HARM1-3,
+    PART HARM*, in any case and spacing; the name not the track's first event), and nothing else goes: the EVENTS
+    track's text and marker events, a channel pressure (0xD, one data byte) in its own status and in running status,
+    an F7 escape event and a header longer than six bytes are copied byte for byte, and a lyric after them still
+    goes (a misread event length would shift the walk off it)."""
+    from eval.refs import strip_lyrics as SL
+    vocal = [mid_track(mid_meta(0, 3, n.encode()), mid_meta(0, 5, WORDS[i].encode()), mid_meta(0, 0x2F))
+             for i, n in enumerate(["HARM2", "HARM3", "PART HARM3", " part vocals ", "Harm1"])]
+    vocal.append(mid_track(mid_meta(0, 1, b"[idle]"), mid_meta(0, 3, b"PART VOCALS"),
+                           mid_meta(0, 5, WORDS[5].encode()), mid_meta(0, 0x2F)))   # the name after another event
+    vocal.append(mid_track(mid_meta(0, 3, b"PART GUITAR"), mid_meta(0, 3, b"PART VOCALS"),
+                           mid_meta(0, 5, WORDS[6].encode()), mid_meta(0, 0x2F)))   # a second name, vocal
+    events = mid_track(mid_meta(0, 3, b"EVENTS"), mid_meta(0, 1, b"[section intro]"), mid_meta(480, 6, b"verse"),
+                       mid_meta(0, 0x2F))
+    pressure = [mid_meta(0, 3, b"PART DRUMS"), vlq(0) + b"\xd9\x40", vlq(10) + b"\x41"]   # 0xD: one data byte
+    tail = [vlq(60) + b"\x24\x00", vlq(0) + b"\xf7\x02\x01\x02", vlq(0) + b"\x24\x64", mid_meta(0, 0x2F)]
+    drums = mid_track(*pressure, mid_meta(5, 5, WORDS[7].encode()), vlq(0) + b"\x99\x24\x64", *tail)
+    keep = [MID_TEMPO, events, mid_track(*pressure, vlq(5) + b"\x99\x24\x64", *tail)]   # the lyric's 5 ticks carried
+    head = b"MThd" + struct.pack(">IHHH", 8, 1, len(keep) + len(vocal), 480) + b"\x00\x00"
+    src, dst = tmp_path / "in.mid", tmp_path / "out.mid"
+    src.write_bytes(head + b"".join(keep[:2] + vocal[:4] + [drums] + vocal[4:]))
+    assert SL.strip_mid(str(src), str(dst)) == (len(vocal), 1)
+    assert dst.read_bytes() == b"MThd" + struct.pack(">IHHH", 8, 1, len(keep), 480) + b"\x00\x00" + b"".join(keep)
+    assert not any(w.encode() in dst.read_bytes() for w in WORDS)
+
+
+def test_strip_mid_gives_scan_chart_the_same_notes_and_taps_as_the_original(tmp_path, scan_env):
+    from eval.refs import strip_lyrics as SL
+    whole = mid_folder(tmp_path / "whole", MID_WITH_WORDS)
+    SL.strip_mid(str(whole / "notes.mid"), str(mid_folder(tmp_path / "stripped", b"") / "notes.mid"))
+    a, b = scanned(whole, scan_env), scanned(tmp_path / "stripped", scan_env)
+    guitar = [t for t in b["tracks"] if t["instrument"] == "guitar" and t["difficulty"] == "expert"][0]
+    assert [(n["ms"], n["type"], "tap" in n["flags"]) for n in guitar["notes"]] == [
+        (500, "green", True), (1000, "red", False), (1500, "yellow", False)]   # the tap marker read as "all"
+    assert [t for t in a["tracks"] if t["instrument"] not in ("vocals", "harm1")] == b["tracks"]
+    assert a["tempos"] == b["tempos"] and a["hasLyrics"] and not b["hasLyrics"]
+
+
+def test_the_made_up_midi_is_one_that_mido_refuses():
+    mido = pytest.importorskip("mido")
+    import io
+    with pytest.raises(ValueError):                                   # the data byte over 127
+        mido.MidiFile(file=io.BytesIO(MID_WITH_WORDS))
+    only_running = mid_file(MID_TEMPO, mid_track(mid_meta(0, 3, b"PART GUITAR"), mid_sysex(0, TAP_ON[:4] + b"\x00\x04\x01\xf7"),
+                                                 vlq(480) + b"\x90\x60\x64", vlq(60) + b"\x60\x00", mid_sysex(0, TAP_OFF[:4] + b"\x00\x04\x00\xf7"),
+                                                 vlq(420) + b"\x61\x64", vlq(60) + b"\x61\x00", mid_meta(0, 0x2F)))
+    with pytest.raises(EOFError):                                     # a sysex, then running status: mido, even with clip=True
+        mido.MidiFile(file=io.BytesIO(only_running), clip=True)
+
+
+@pytest.mark.parametrize("name, data, match", [
+    ("not a MIDI file", b"MTrk\0\0\0\0", "MThd"),
+    ("a track chunk missing", mid_file(MID_TEMPO)[:14] + b"XXXX\0\0\0\0" + b"\0" * 3, "MTrk"),
+    ("running status before any status byte", mid_file(mid_track(vlq(0) + b"\x60\x64", mid_meta(0, 0x2F))), "running"),
+    ("an event cut off", mid_file(mid_track(mid_meta(0, 3, b"PART GUITAR")[:-4])), "past its track"),
+    ("an unknown status byte", mid_file(mid_track(vlq(0) + b"\xf8")), "status byte")])
+def test_strip_mid_refuses_a_broken_file_instead_of_writing_part_of_it(tmp_path, name, data, match):
+    from eval.refs import strip_lyrics as SL
+    (tmp_path / "in.mid").write_bytes(data)
+    with pytest.raises(ValueError, match=match):
+        SL.strip_mid(str(tmp_path / "in.mid"), str(tmp_path / "out.mid"))
+
+
+@pytest.mark.parametrize("files, want", [
+    (["notes.mid"], ("notes.mid", [])),
+    (["notes.chart"], ("notes.chart", [])),
+    (["notes.mid", "notes.chart"], ("notes.mid", ["notes.chart"])),                # scan-chart reads the .mid
+    (["notes.chart", "notes.mid.backup", "song.ini"], ("notes.chart", [])),
+    (["notes.mid", "notes.mid.backup", "notes.old.mid", "Notes.MID", "song.mid", "notes.chart.bak"], ("notes.mid", [])),
+])
+def test_pick_chart_takes_notes_mid_or_notes_chart_by_exact_name(files, want):
+    from eval.refs import build_ref as BR
+    assert BR.pick_chart(files) == want
+
+
+@pytest.mark.parametrize("files", [[], ["song.ini", "song.ogg"], ["notes.mid.backup", "Notes.mid", "song.mid"]])
+def test_pick_chart_refuses_a_package_with_no_chart_of_those_names(files):
+    from eval.refs import build_ref as BR
+    with pytest.raises(SystemExit, match="no notes.mid or notes.chart"):
+        BR.pick_chart(files)
+
+
+def built_ref(tmp_path, scan_env, tools_path, name, extra: dict[str, bytes]) -> tuple[Path, dict]:
+    """build_ref.py over a made-up unpacked package: a stub ogg, song.ini and the `extra` files."""
+    src = tmp_path / "unpacked" / name
+    src.mkdir(parents=True)
+    (src / "song.ogg").write_bytes(ogg(tmp_path / f"{name}.ogg", tone(6)))
+    (src / "song.ini").write_text("[song]\nname = Made Up Song\nartist = Made Up Band\n")
+    for f, data in extra.items():
+        (src / f).write_bytes(data)
+    out = tmp_path / "built" / name
+    p = subprocess.run([sys.executable, "-I", str(ROOT / "eval" / "refs" / "build_ref.py"), str(src), str(out), md5(5)],
+                       env={**scan_env, "PATH": tools_path}, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                       timeout=600)
+    assert p.returncode == 0, p.stderr[-2000:]
+    return out, json.loads((out / "build_meta.json").read_text())
+
+
+def test_build_ref_builds_a_midi_mido_refuses_and_ignores_a_backup_beside_notes_mid(tmp_path, scan_env, tools_path):
+    out, meta = built_ref(tmp_path, scan_env, tools_path, "bak", {
+        "notes.mid": MID_WITH_WORDS, "notes.mid.backup": MID_WITH_WORDS + b"older"})
+    assert meta["chart_file"] == "notes.mid" and "chart_not_used" not in meta and meta["lyric_strip"] == "dropped tracks=2 events=1"
+    assert sorted(os.listdir(out / "ref")) == ["notes.mid", "song.ini", "song.ogg"]       # the backup is not copied
+    assert (out / "ref" / "notes.mid").read_bytes() == mid_file(MID_TEMPO, GUITAR_WITHOUT)
+    notes = json.loads((out / "ref_notes.json").read_text())
+    assert [(t["instrument"], t["difficulty"], len(t["notes"])) for t in notes["tracks"]] == [("guitar", "expert", 3)]
+    assert notes["hasLyrics"] is False
+    assert not any(w.encode() in p.read_bytes() for p in (out / "ref").iterdir() for w in WORDS)
+
+
+def test_build_ref_with_both_chart_files_takes_notes_mid_and_names_the_other(tmp_path, scan_env, tools_path):
+    out, meta = built_ref(tmp_path, scan_env, tools_path, "both", {
+        "notes.mid": MID_WITH_WORDS, "notes.chart": write_chart(made_up_chart()).encode("utf-8")})
+    assert meta["chart_file"] == "notes.mid" and meta["chart_not_used"] == ["notes.chart"]
+    assert sorted(os.listdir(out / "ref")) == ["notes.mid", "song.ini", "song.ogg"]
+    notes = json.loads((out / "ref_notes.json").read_text())
+    assert [len(t["notes"]) for t in notes["tracks"]] == [3]           # the .mid's three notes, not the .chart's 24
+
+
+def test_build_ref_without_a_chart_stops_before_the_audio_work(tmp_path, scan_env, tools_path):
+    src = tmp_path / "unpacked"
+    src.mkdir()
+    (src / "song.ogg").write_bytes(b"not audio")
+    (src / "song.ini").write_text("[song]\nname = Made Up Song\n")
+    (src / "notes.mid.backup").write_bytes(MID_WITH_WORDS)
+    p = subprocess.run([sys.executable, "-I", str(ROOT / "eval" / "refs" / "build_ref.py"), str(src), str(tmp_path / "out"), md5(5)],
+                       env={**scan_env, "PATH": tools_path}, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    assert p.returncode == 1 and "no notes.mid or notes.chart" in p.stderr and not (tmp_path / "out" / "input.wav").exists()
 
 
 # ------------------------------------------------------------------------------------------------ score.py

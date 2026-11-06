@@ -48,7 +48,7 @@ while IFS=$'\t' read -r id md5 role <&3; do
     "$PY" -I "$HERE/refs/offset_check.py" "$dest" > "$dest/offset_check.json" </dev/null
     if [ "$SET" = stress ]; then rm -rf "$unp"; fi   # the package stays in sng/; its unpacked lyrics need not
   fi
-  echo "ok $id${role:+ $role}${md5:+ ${md5:0:6}}"
+  echo "ok $id${role:+ $role}"   # the id only: a stress set's md5s stay in its local list
 done 3< <("$PY" -I -c "import json,sys
 for r in json.load(open(sys.argv[1])):
     print(r['id'], r['md5'], 'primary', sep='\t')

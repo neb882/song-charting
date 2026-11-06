@@ -117,6 +117,13 @@ The packages' md5s, titles and charters are not committed, the owner keeps the l
 (`refs.json`'s shape, each entry with `alts`, the other charts' `md5` and `charter`). The packages are other
 people's work: downloaded into `$EVAL_DATA/sng/`, never committed.
 
+`eval/refs/build_ref.py` takes the chart by its exact name, `notes.mid` or `notes.chart` (a `notes.mid.backup` beside
+it is not one); a package with both gets `notes.mid`, the one scan-chart reads, and `build_meta.json` names the other as
+`chart_not_used`. `eval/refs/strip_lyrics.py` drops the vocal tracks and lyrics events of a MIDI without reading it
+into a MIDI library, so what mido refuses is accepted and every other byte is kept: a Phase Shift sysex with the
+difficulty byte 0xFF (a tap or open marker for every difficulty; mido: ValueError, and `clip=True` turns it into 0x7F,
+which scan-chart cannot read) and a channel event in running status straight after a sysex (mido: EOFError).
+
 ```sh
 export EVAL_DATA=... SONGCHARTER_GOLDEN=...                      # as for the golden charts, and the same engines:
 export SONGCHARTER_AUTOCHART=... SONGCHARTER_ALLIN1_PYTHON=... SONGCHARTER_SCAN_CHART=...
