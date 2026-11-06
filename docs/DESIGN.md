@@ -777,8 +777,10 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
      limits; its HOPO state then comes as any single note's, by the guitar's "forced" rule the natural one: a HOPO
      after another fret). A chord at a run's start or
      end, a chord in a slower passage and a strum section of chords 120 ms or more apart stay, and so do the part's
-     first and last onsets. Only the guitar part passes it (`assemble._quantize`); the bass and the drums do not, and
-     the lower levels follow Expert (reduce.py). report.json's `parts.guitar.quantize.<level>` has `run_chord_s` (the
+     first and last onsets. Only the guitar part passes it (`assemble._quantize`); the bass and the drums do not. Our
+     lower levels follow Expert (reduce.py takes each chord's shape from the level above); a tool's own lower levels
+     (`take_difficulties: "all"`) are each read against their own neighbouring onsets, so a Hard chord stays where
+     Hard's own notes are slower than Expert's. report.json's `parts.guitar.quantize.<level>` has `run_chord_s` (the
      rule; 0 = off) and `run_chords` (the chords it changed).
      - **The humans** [here, M6-04: the 18 Expert guitar charts of the six references and the four stress songs,
        read through score.py's scan_notes.cjs; ours the release candidate's runs, gate-rc and gate-rc-stress]. Each

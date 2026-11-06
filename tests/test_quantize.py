@@ -402,6 +402,33 @@ def test_a_chord_inside_a_fast_run_becomes_its_top_note():
     assert [n.frets for n in track.notes] == [f for _, f in seq] and rep.run_chords == 0 and rep.run_chord_s == 0
 
 
+def test_a_forced_strum_chord_in_a_fast_run_stays_a_strum_as_one_note():
+    """The source's forced state follows the chord into its one note: the HOPO flip is worked out on the note the rule
+    leaves (its top fret after another fret is a natural HOPO, so a forced strum needs the flip), not on the chord
+    (which is never a natural HOPO, so the flip would be lost and the note played as a HOPO)."""
+    tm = const_map(200.0)
+    seq = [(4, (1,), None), (4.25, (2,), None), (4.5, (1, 3), False), (4.75, (2,), None), (5, (1,), None)]
+    notes = [TimedNote(at(tm, b), f, hopo=h, hopo_forced=h is not None) for b, f, h in seq]
+    track, rep = quantize_part(part(notes), tm, PAD, offset=0.0,
+                               rules=QuantizeRules(forced_only=True, run_chord_s=RUN_CHORD_S))
+    assert [n.frets for n in track.notes] == [(1,), (2,), (3,), (2,), (1,)] and rep.run_chords == 1
+    assert play_states(track.notes, RES) == ["strum", "hopo", "strum", "hopo", "hopo"] and rep.flips == 1
+
+
+@pytest.mark.parametrize("difficulty", ["expert", "hard", "medium"])
+def test_a_tools_own_lower_level_is_read_against_its_own_onsets(difficulty):
+    """A tool's own lower level (take_difficulties "all") meets the rule on its own notes: a chord in its own 16th run
+    becomes one note on every level, and a chord between its own 8ths stays, whatever Expert's notes there are."""
+    tm = const_map(200.0)
+    fast = [(4, (0,)), (4.25, (1,)), (4.5, (0, 2)), (4.75, (1,)), (5, (0,))]
+    slow = [(8, (0,)), (8.5, (0, 2)), (9, (1,))]
+    notes = [TimedNote(at(tm, b), f) for b, f in fast + slow]
+    track, rep = quantize_part(part(notes, difficulty=difficulty), tm, PAD, offset=0.0,
+                               rules=QuantizeRules(run_chord_s=RUN_CHORD_S))
+    assert [n.frets for n in track.notes] == [(0,), (1,), (2,), (1,), (0,), (0,), (0, 2), (1,)]
+    assert rep.run_chords == 1 and rep.run_chord_s == RUN_CHORD_S
+
+
 @pytest.mark.parametrize("bpm, one_note", [(126.0, True), (125.0, False)])
 def test_a_chord_in_a_run_of_16ths_under_120_ms(bpm, one_note):
     """A 1/16 is 119 ms at 126 BPM, a fast run: its chord becomes one note. At 125 BPM it is 120 ms, where the human
