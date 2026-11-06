@@ -5,7 +5,7 @@ import io
 import json
 import shutil
 import sys
-from dataclasses import replace
+from dataclasses import asdict, replace
 
 import numpy as np
 import pytest
@@ -25,6 +25,7 @@ from songcharter.cli import main
 from songcharter.errors import InputError, ToolError
 from songcharter.importers import read_chart, read_song
 from songcharter.quantize import play_states, quantize_part
+from songcharter.starpower import SOLO_RULES
 from songcharter.tempo import Tempo, TempoMap
 from songcharter.timed import TimedHit, TimedNote, TimedPart, TimedSong, TimedSpan
 
@@ -1037,8 +1038,44 @@ def test_expert_only_and_solos_on_named_sections(built):
     i = next(k for k, (_, n) in enumerate(secs) if n == pick)
     a, b = secs[i][0], secs[i + 1][0]
     assert len(lead.solos) == 1 and a <= lead.solos[0][0] and lead.solos[0][1] < b
+    # report.json: the rules used (not capped: a person's names), and each solo's measures and onsets
+    pad = result.report["lead_in"]["pad_seconds"]
+    phrases = result.report["phrases"]["guitar"]
+    assert phrases["solo_rules"] == {**asdict(SOLO_RULES), "capped": False}
+    (row,) = phrases["solo_details"]
+    assert [row["start"], row["end"]] == list(phrases["solos"][0]) == [
+        round(result.chart.tempo.tick_to_sec(t) - pad, 3) for t in lead.solos[0]]
+    assert row["onsets"] == len({n.tick for n in lead.notes if a <= n.tick < b}) and row["measures"] >= 4
+    assert phrases["solos_skipped_by_share"] == phrases["solos_skipped_by_gap"] == []
+    assert phrases["solos_trimmed_by_share"] == []
     assert any("no section is named 'Nowhere'" in w for w in result.report["warnings"])
     assert result.report["tracks"]["guitar"].keys() == {"expert"}
+
+
+
+def test_the_solo_report_without_names(built):
+    """With the "Solo" label, a run over the share budget: report.json's solo rows (kept, trimmed, skipped) are in song
+    seconds, as the solos are."""
+    root, first, _ = built
+    segments = [[0.0, 0.5, "start"], [0.5, 16.5, "intro"], [16.5, 52.5, "solo"], [52.5, 64.5, "chorus"],
+                [64.5, 80.5, "solo"], [80.5, DURATION, "end"]]
+    (root / "solo_sections.json").write_text(json.dumps({"segments": segments}), encoding="utf-8")
+    cfg = {**CONFIG, "sections": "solo_sections.json", "solos": "labels", "levels": ["expert"],
+           "output": "out/solo_rules"}
+    (root / "solo_rules.json").write_text(json.dumps(cfg), encoding="utf-8")
+    result = assemble(root / "solo_rules.json")
+    assert result.ok, [i for i in result.issues if i.error]
+    phrases = json.loads((result.folder / "report.json").read_text(encoding="utf-8"))["phrases"]["guitar"]
+    assert phrases["solo_rules"] == {**asdict(SOLO_RULES), "capped": True}
+    # the two runs, 16.5-52.5 s and 64.5-80.5 s, are 52 s of a 75.8-s span (0.40 of it: 30.3 s): the denser first
+    # run is cut to its densest window within the budget, and the second, with no room left, is skipped
+    (trimmed,), (skipped,) = phrases["solos_trimmed_by_share"], phrases["solos_skipped_by_share"]
+    assert 16.0 < trimmed["start"] < trimmed["end"] < 52.5 and trimmed["measures"] == 18
+    assert 64.0 < skipped["start"] < skipped["end"] < 80.5 and skipped["measures"] == 8
+    (row,) = phrases["solo_details"]
+    assert [row["start"], row["end"]] == phrases["solos"][0] and row["measures"] < 18
+    assert trimmed["start"] <= row["start"] < row["end"] <= trimmed["end"] and row["end"] - row["start"] <= 30.3
+    assert phrases["solos_skipped_by_gap"] == []
 
 
 # ------------------------------------------------------------------------------------------------ the end of the audio

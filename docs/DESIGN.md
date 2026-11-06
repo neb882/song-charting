@@ -1372,7 +1372,78 @@ to detect, from the guitar's pick noise, where our chart is too sparse, and to f
   borderline. The ensemble runs were allin1 1.1.0 on the CPU, not all-in-one-infer on CUDA; the stem thresholds were
   never tuned; nobody listened to whether the busy vocals stem is singing or guitar bleed; the 6s stems give Solo 2
   0.863 where v1's ft stems gave 95 %.
-- **Placement:** `E solo` on the first note, `E soloend` on the last (inclusive). No back-to-back solos; expect 1–3 per song.
+- **Placement:** `E solo` on the first note, `E soloend` on the last (inclusive). Consecutive solo sections are one
+  run; expect 1–3 per song.
+- **Length and share (M5-03)** [conventions: solo markers go on a featured lead break, not on every instrumental
+  passage; a counter running for most of a song makes the bonus meaningless; here, M5-03]. On the owner's 9-minute
+  shred instrumental allin1 labelled most of the song Solo (Solo 1A–1C at 64–103 s, Solo 2A–2Z at 116–535 s), so two
+  markers covered about 7 minutes; on the power-metal song the Solo A–E run was one 100-s solo (134–235 s of 302).
+  Three rules (`starpower.SoloRules`), set from the human charts' own solo markers (`importers.read_song`, numbers
+  only):
+
+  | chart | solos | each: measures of the chart's map (s) | share of the first..last Expert onset |
+  |---|---|---|---|
+  | the six references | 2 (four have none) | Kimochi Warui 8.0 (17.9), Lucretia 32.0 (77.0) | 0.064, 0.333 |
+  | troop, primary | 1 | 53.0 (63.6) | 0.214 |
+  | troop, alt 1 | 3 | 4.3 (5.1), 4.3 (5.1), 52.8 (63.3) | 0.248 |
+  | troop, alt 2 | 4 | 4.1 (5.0), 4.3 (5.1), 15.9 (19.1), 52.9 (63.5) | 0.311 |
+  | sooth, primary | 0 | – | 0 |
+  | sooth, alt | 2 | 31.8 (95.9), 32.0 (96.9) | 0.357 |
+  | break, primary and its lead alt | 1 each | 13.0 (27.0); 12.0 (24.9) | 0.163, 0.150 |
+
+  14 solos on 13 charts (12 on the order's 11 without break: the same values): median 1 a chart; the 95th
+  percentile of length 52.9 measures and 96.4 s; the largest share 0.357.
+  1. `max_measures` **56**: the 95th percentile of length rounded up to a multiple of 8 (within 16–64). A run of
+     Solo sections longer than this, or than `max_seconds`, gives its **densest window**: from a measure line to a
+     measure line (or the run's own ends), within both caps, with the most Expert onsets, ties to the earlier start.
+     The rest of the run on either side is split the same way while it is over a cap, and every piece is a
+     candidate; the section starts inside a run play no part. A run within both caps is one candidate, as before.
+     [decision, the orchestrator, 2026-11-05, after the first stress run: grouping the lettered parts from the run's
+     start left the power-metal song a dense 23-measure tail that won on density, and the gap rule then dropped the
+     larger part beside it, so the solo overlapped the human one by only 0.43.]
+  2. `max_seconds` **100**: the same in seconds rounded up to the next 10 s (within 30–120), since the measures are
+     counted on our map, which need not be the humans': on the shred song the owner's v0.1 map runs at about twice
+     their tempo (154 against 80 BPM; halving is M5-99's), so 56 of our measures there are about 87 s where 56 of
+     theirs are 168 s, and on the power-metal song at about half (100 against 198 BPM), where the seconds cap binds.
+  3. `max_share` **0.40**: the largest human share rounded up to the next 0.05 (at least 0.15), set by the shred
+     song's alt chart itself: about 3.6 minutes of markers on the shred song against one human chart's 3.2. The
+     owner may want a tighter share for songs with vocals (M5-00 section 8).
+  **The choice** [conventions: on an instrumental, the spans where the lead stands out]: the candidates with 4
+  measures and 16 Expert onsets are ranked by onset density (Expert onsets per measure, ties to the earlier start)
+  and taken in that order, at most 3, skipping any that starts within `min_gap_measures` (**4**) after a kept solo's
+  end or ends within 4 before a kept solo's start. One that would take the solos' seconds (first to last onset) past
+  `max_share` of the first..last Expert onset's is cut to its densest window within the budget left (measure-aligned,
+  as the length rule's), or skipped when that window lacks the minimums, so a song never loses its only solo to the
+  share [decision, the orchestrator, 2026-11-05, after the golden run below]; the result is sorted by start. The gap rule [decision, the
+  orchestrator, 2026-11-05] keeps a split run from giving back-to-back markers while a long run can still give
+  separated solos (the shred song's alt chart has two, 4:30–6:06 and 6:56–8:33). A person's names (`--solos "Solo
+  1,Solo 2"`) are neither split, gapped nor share-capped: the person's choice stands, within the minimums and the
+  3-solo cap. `report.json`'s `phrases.guitar` holds `solo_rules` (the values used, and `capped`: false with names),
+  `solo_details` (per solo: start, end, measures, onsets, onsets per measure), `solos_skipped_by_gap`,
+  `solos_trimmed_by_share` (the candidates as they were before the cut) and `solos_skipped_by_share`; the preview's overview draws each solo as a green band under the star power's cyan one
+  [code].
+  **On the owner's v0.1 charts** (4 CUDA takes; the rules rerun on their own notes and sections, numbers only;
+  input seconds, as report.json and the human charts) [here, M5-03]: the power-metal song's one solo 2:14.4–3:55.1
+  (101 s, share 0.34) becomes 2:14.4–3:52.7 (98 s, 41 measures on that 100-BPM map, share 0.33: the seconds cap's
+  window), covering 0.87 of the human solo (2:57.6–4:01.2). The shred song's 1:04.8–1:41.2 and 1:56.0–8:18.1 (share
+  0.84) become 4:17.1–5:49.2 and 6:52.4–8:16.6 (56 measures each, share 0.35; two pieces skipped by the gap, two by
+  the share), covering 0.82 and 0.83 of the alt chart's two human solos (4:30.3–6:06.2, 6:56.1–8:33.0). The rock
+  song is unchanged (1:46.6–2:15.3). Grouping from the run's start instead, with the gap rule, gave the power-metal
+  song 2:14.4–3:35.9 (0.60 of the human solo) and the shred song three solos covering 0.84 and 0.50; without the gap
+  rule, back-to-back markers on both.
+  **Evaluation** (1 CPU take, warm, on kept folders rebuilt at main 8ba3cbd, against d88a6c9) [here, M5-03]. The
+  golden diff (`--expect guitar`) has no UNEXPECTED change and every song's onsets and F1 are identical (pooled
+  guitar F1@50: Expert 0.8527, Hard 0.8010, Medium 0.7474, Easy 0.6150). Only Lucretia's guitar changed. Its one
+  solo, 140.7–236.7 s (96 s, within both length caps), would pass the share (0.40 of its 231-s span is 92 s): before
+  the cut above it was skipped, leaving the reference whose human solo (140.7–217.7 s) the label found with none; now
+  it is 140.7–232.2 s, 38 measures and 508 onsets of the 40-measure, 531-onset candidate. The stress set: the
+  power-metal song's 2:28.2–3:59.3 (share 0.31) becomes 2:52.2–3:59.3 (56 measures, 67 s, share 0.23; the 20
+  measures before it skipped by the gap), overlapping the three human charts' main solo by 0.97, 0.98 and 1.00; the
+  shred song's three solos (share 0.80) become 3:01.3–3:45.3 (the 2:40.8–4:09.3 candidate cut to the budget left),
+  4:25.7–5:53.0 and 7:22.7–8:46.0 (share 0.398), covering 0.86 and 0.73 of the alt chart's two human solos; the rock
+  song is unchanged (1:46.5–2:15.4; 0.76 and 0.78 of its two charts' solos). The stress scores are identical but for
+  the solo share (5 of 481 fields; the shred song 0.80 to 0.40, the power-metal song 0.31 to 0.23); `stress.py
+  compare`: no regression.
 - **Difficulties:** solos are written on every guitar difficulty. The reducer copies them down and keeps at least one note in each solo on every level (`reduce.py`) [code], so scan-chart's `emptySoloSection`, which it checks on every track, cannot fire.
 
 - **Not chosen:** imported star power (autochart has none; STRUM's 8 phrases placed on the densest Expert windows come out empty on Easy); chartgen's 19 phrases.
