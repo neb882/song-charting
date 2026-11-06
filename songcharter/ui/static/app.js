@@ -93,7 +93,7 @@ function renderUpdate(up, have) {
   if (!up || state.later) { box.hidden = true; return; }
   const yours = have ? ` (you have ${have})` : "";
   if (up.line) {
-    text($("update-text"), `songcharter ${up.version} is out${yours}. To update: close this window, open Ubuntu from the Start menu, paste this line and press Enter:`);
+    text($("update-text"), `songcharter ${up.version} is out${yours}. To update: close the songcharter window, open Ubuntu from the Start menu, paste this line and press Enter:`);
   } else {
     text($("update-text"), `songcharter ${up.version} is out${yours}. Its release page has the line to paste in Ubuntu, and the steps:`);
   }
