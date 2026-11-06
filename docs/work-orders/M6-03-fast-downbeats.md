@@ -1,6 +1,8 @@
 # M6-03: downbeats on fast songs
 
-**Branch:** `m6-03-fast-downbeats`, from `main` after M6-02's merge (both may touch `assemble.py`). **Agent:**
+**Branch:** `m6-03-fast-downbeats`, from `main` after M6-05's merge (both touch the octave pass, and the downbeats
+follow the grid M6-05 chooses: on a song with a tempo change it starts from allin1's beats, whose downbeats are a
+candidate here). **Agent:**
 `sc-builder`, then `sc-reviewer`. May push its branch to run CI. **Files:** `songcharter/beatgrid.py` (`bar_phase`
 and its callers), `songcharter/assemble.py`'s octave pass only to carry a phase, `songcharter/sections.py` or
 `songcharter/engines/sections.py` only to read allin1's downbeats if they are chosen, their tests, `docs/DESIGN.md`
