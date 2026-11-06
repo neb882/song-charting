@@ -4,8 +4,9 @@ import numpy as np
 import pytest
 
 from songcharter.chart import DRUM_ACTIVATION, STAR_POWER, Chart, SongInfo, write_chart
-from songcharter.quantize import (HOPO_SPACING_S, MERGE_MAX_S, STRUM_SPACING_S, QuantizeRules, SnapGrid,
-                                  estimate_offset, limit_chord, odd_32nds, play_states, quantize_part, quantize_song)
+from songcharter.quantize import (HOPO_SPACING_S, MERGE_MAX_S, RUN_CHORD_S, STRUM_SPACING_S, QuantizeRules,
+                                  SnapGrid, estimate_offset, limit_chord, odd_32nds, play_states, quantize_part,
+                                  quantize_song, run_chords)
 from songcharter.tempo import TempoMap
 from songcharter.timed import OPEN, TimedHit, TimedNote, TimedPart, TimedSong, TimedSpan
 
@@ -370,6 +371,57 @@ def test_fast_16ths_keep_every_note():
     assert [n.tick for n in track.notes] == [4 * RES + 48 * q for q in range(4)] + [8 * RES + 48 * q for q in range(4)]
     assert play_states(track.notes, RES) == ["strum"] * 5 + ["hopo"] * 3 and rep.dropped == 0
     check(rep)
+
+
+def test_a_chord_inside_a_fast_run_becomes_its_top_note():
+    """With run_chord_s (the guitar's 120 ms), a chord whose previous and next onsets both lie closer than that
+    becomes its top fret, and plays as any single note there (a natural HOPO after another fret); a chord at a run's
+    start or end, a chord between 8ths, a strum section of 8th-note chords and the part's first and last onsets
+    stay. The report records the rule and the chords it changed; without the rule nothing changes."""
+    assert RUN_CHORD_S == 0.120
+    tm = const_map(200.0)  # a 1/16 is 75 ms, an 8th 150 ms
+    seq = [(1, (0, 2)),                                                  # the part's first onset
+           (1.25, (1,)), (1.5, (2,)),
+           (4, (1,)), (4.25, (2,)), (4.5, (1, 3)), (4.75, (2,)),         # inside a run of 16ths: becomes 3
+           (5, (1, 2, 4)), (5.25, (1,)),                                 # and a three-note chord: 4
+           (8, (0, 2)), (8.25, (1,)), (8.5, (2,)),                       # a run's start (an 8th rest before it)
+           (10, (1,)), (10.25, (2,)), (10.5, (1, 3)),                    # a run's end (a rest after it)
+           (12, (0,)), (12.5, (1, 2)), (13, (0,)),                       # between 8ths
+           (16, (0, 1)), (16.5, (0, 1)), (17, (1, 2)), (17.5, (1, 2)),   # a strum section in 8ths
+           (20, (2,)), (20.25, (3,)), (20.5, (1, 4))]                    # the part's last onset
+    notes = [TimedNote(at(tm, b), f) for b, f in seq]
+    rules = QuantizeRules(forced_only=True, run_chord_s=RUN_CHORD_S)
+    track, rep = quantize_part(part(notes), tm, PAD, offset=0.0, rules=rules)
+    want = [f for _, f in seq]
+    want[5], want[7] = (3,), (4,)
+    assert [n.frets for n in track.notes] == want and [n.tick for n in track.notes] == [b * RES for b, _ in seq]
+    assert play_states(track.notes, RES)[4:9] == ["hopo"] * 5
+    assert rep.run_chords == 2 and rep.run_chord_s == RUN_CHORD_S and rep.limited == 0
+    check(rep)
+    track, rep = quantize_part(part(notes), tm, PAD, offset=0.0, rules=QuantizeRules(forced_only=True))
+    assert [n.frets for n in track.notes] == [f for _, f in seq] and rep.run_chords == 0 and rep.run_chord_s == 0
+
+
+@pytest.mark.parametrize("bpm, one_note", [(126.0, True), (125.0, False)])
+def test_a_chord_in_a_run_of_16ths_under_120_ms(bpm, one_note):
+    """A 1/16 is 119 ms at 126 BPM, a fast run: its chord becomes one note. At 125 BPM it is 120 ms, where the human
+    charts strum chords: a chord there stays, and so does a strum section of 16th-note chords."""
+    tm = const_map(bpm)
+    seq = [(4, (0,)), (4.25, (1,)), (4.5, (0, 2)), (4.75, (1,)), (5, (0,)),
+           (8, (0, 1)), (8.25, (0, 1)), (8.5, (1, 3)), (8.75, (1, 3)), (9, (0, 1))]
+    notes = [TimedNote(at(tm, b), f) for b, f in seq]
+    track, rep = quantize_part(part(notes), tm, PAD, offset=0.0, rules=QuantizeRules(run_chord_s=RUN_CHORD_S))
+    want = [f for _, f in seq] if not one_note else [(0,), (1,), (2,), (1,), (0,), (0, 1), (1,), (3,), (3,), (0, 1)]
+    assert [n.frets for n in track.notes] == want and rep.run_chords == (4 if one_note else 0)
+
+
+def test_run_chords():
+    """The rule on its own: times in seconds, and 0 turns it off."""
+    t = [0.0, 0.1, 0.2, 0.3, 0.5, 0.6]
+    f = [(0, 1), (0, 1), (1, 2, 4), (2,), (0, 3), (1,)]
+    assert run_chords(t, f, 0.12) == [(0, 1), (1,), (4,), (2,), (0, 3), (1,)]
+    assert run_chords(t, f, 0.25) == [(0, 1), (1,), (4,), (2,), (3,), (1,)]
+    assert run_chords(t, f, 0.0) == f and run_chords([], [], 0.12) == [] and run_chords([0.0], [(0, 1)], 1) == [(0, 1)]
 
 
 @pytest.mark.parametrize("gap, kept", [(0.020, True), (0.019, False)])
