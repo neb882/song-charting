@@ -4,8 +4,9 @@ own difficulties, star power, fills and sections, and a Clone Hero folder that i
 `assemble(config)` runs the whole build from one config (a JSON file for `songcharter assemble`):
 
   0. **Inputs.** `check_inputs`: every file the config names exists, the sections file reads, the output folder holds
-     only files this tool writes; then every part's source and takes are read (step 3's import), all before any
-     audio work.
+     only files this tool writes (a background.* only when the earlier build's report.json says it added it: else it
+     is the person's, M5-12); then every part's source and takes are read (step 3's import), all before any audio
+     work.
   1. **Audio.** One gapless decode of the input (audio.decode), the time reference for everything. Stems (WAV or
      FLAC at 44.1 kHz, separated from that decode) are read as they are and checked against it: the median lag over
      windows that correlate (>= 0.15) must be within 2 samples; stems quieter than -30 dB against the mix are not
@@ -165,6 +166,9 @@ SCAN_ALLOWED = {"noAlbumArt"}  # the folder issue the gate accepts
 # what a build writes: an output folder holding anything else is not replaced (it may be Clone Hero's Songs folder)
 OUTPUT_FILES = {"notes.chart", "song.ini", "song.ogg", "album.png", "album.jpg", "album.jpeg", "background.png",
                 "background.jpg", "background.jpeg", "report.json"}
+# a background is ours only when the earlier build's report.json says it wrote it (`_ours`): v0.1 wrote none, so one
+# in a folder it made is the person's, which a build refuses to replace, as v0.1 did (M5-12)
+BACKGROUNDS = {"background.png", "background.jpg", "background.jpeg"}
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg")   # album art and backgrounds as Clone Hero reads them
 _HARMLESS_FILES = {"thumbs.db", "desktop.ini"}  # and names starting with "."; left where they are
 FAILED_SUFFIX = ".failed"  # a build the gate fails goes to <output>.failed
@@ -468,12 +472,27 @@ def failed_folder(output: Path) -> Path:
     return output.with_name(output.name + FAILED_SUFFIX)
 
 
+def _ours(folder: Path) -> set[str]:
+    """The names (lower case) an earlier build in `folder` may have left there: OUTPUT_FILES but the backgrounds, and
+    the background its report.json's `art` says it added. A background nothing recorded is the person's."""
+    names = OUTPUT_FILES - BACKGROUNDS
+    try:
+        record = json.loads((folder / "report.json").read_text(encoding="utf-8"))["art"]["background"]
+        if record.get("added") is True and str(record.get("file")).lower() in BACKGROUNDS:
+            names |= {record["file"].lower()}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):   # no record, or not one of ours
+        pass
+    return names
+
+
 def _foreign(folder: Path) -> list[str]:
-    """What an existing output folder holds that a build does not write (OS clutter such as Thumbs.db aside)."""
+    """What an existing output folder holds that a build does not write (OS clutter such as Thumbs.db aside), or
+    that no earlier build there wrote (a background.* of the person's: `_ours`)."""
     if not folder.is_dir():
         return []
+    ours = _ours(folder) | _HARMLESS_FILES
     return sorted(p.name for p in folder.iterdir()
-                  if not (p.is_file() and (p.name.lower() in OUTPUT_FILES | _HARMLESS_FILES or p.name.startswith("."))))
+                  if not (p.is_file() and (p.name.lower() in ours or p.name.startswith("."))))
 
 
 def check_inputs(cfg: AssembleConfig) -> None:
@@ -1386,11 +1405,12 @@ def _ladder(expert: Track, own: dict[str, Track], tempo: TempoMap, sections: lis
 
 def _install(staging: Path, target: Path) -> Path:
     """Move a finished build from its staging folder into `target`, replacing what an earlier build left there
-    (check_inputs made sure it holds nothing else of ours to lose)."""
+    (check_inputs made sure it holds nothing else to lose; a background no earlier build wrote stays: `_ours`)."""
     target.mkdir(parents=True, exist_ok=True)
     new = {p.name for p in staging.iterdir()}
+    ours = _ours(target)   # by the earlier build's report.json, before the new one replaces it
     for p in target.iterdir():
-        if p.is_file() and p.name.lower() in OUTPUT_FILES and p.name not in new:
+        if p.is_file() and p.name.lower() in ours and p.name not in new:
             p.unlink()  # an earlier build's album.jpg or report.json
     for p in staging.iterdir():
         os.replace(p, target / p.name)
@@ -1399,11 +1419,12 @@ def _install(staging: Path, target: Path) -> Path:
 
 
 def _remove_build(folder: Path) -> None:
-    """Delete an earlier build's files from `folder`, and the folder when that empties it."""
+    """Delete an earlier build's files from `folder` (`_ours`), and the folder when that empties it."""
     if not folder.is_dir():
         return
+    ours = _ours(folder)
     for p in folder.iterdir():
-        if p.is_file() and p.name.lower() in OUTPUT_FILES:
+        if p.is_file() and p.name.lower() in ours:
             p.unlink()
     if not any(folder.iterdir()):
         folder.rmdir()
