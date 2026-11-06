@@ -598,11 +598,15 @@ def test_an_install_over_a_running_songcharter_stops_before_it_changes_anything(
     before = tree(i.share, i.launcher.parent)
     hello = {"app": "songcharter", "version": "0.0.1", "token": "0" * 16, "url": "http://localhost:8765/"}
     with stand_in_server(hello, UI_RANGE) as port:
+        line = (f"songcharter: songcharter 0.0.1 is still running (port {port}): close the songcharter window first, "
+                "then paste the line again. Nothing was changed.")
         p = i.run("--from", str(i.dist))
-    assert p.returncode == 2 and last(p) == (
-        f"songcharter: songcharter 0.0.1 is still running (port {port}): close the songcharter window first, then "
-        "paste the line again. Nothing was changed."), p.stderr
-    assert "== [5/10]" in p.stdout and "== [6/10]" not in p.stdout
+        assert p.returncode == 2 and last(p) == line, p.stderr
+        assert "== [5/10]" in p.stdout and "== [6/10]" not in p.stdout
+        # the guide's line has no --yes: Enter at the licence prompt, then the same stop
+        p = subprocess.run(["bash", str(i.dist / "install.sh"), "--lane", "cpu", "--from", str(i.dist)], input="\n",
+                           capture_output=True, text=True, env=i.env, timeout=120)
+        assert p.returncode == 2 and p.stderr.splitlines() == [line] and p.stdout.endswith("Continue? [Y/n] ")
     assert tree(i.share, i.launcher.parent) == before and {name: i.log(name) for name in logs} == logs
     p = i.run("--from", str(i.dist))   # the window closed: the same line goes on
     assert p.returncode == 0 and not older.exists() and [x.name for x in (i.share / "app").iterdir()] == [VERSION]

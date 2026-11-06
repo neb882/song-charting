@@ -301,12 +301,16 @@ port=${port##*:}
 apps=$(ls "$home/app")
 [ "$apps" = "$OLD" ] || die "app/ holds $apps before the line, not $OLD"
 code=0
-printf "\n" | SONGCHARTER_RELEASE_URL=$NEW_URL bash -c "$NEW_LINE" >/tmp/update-refused.log 2>&1 || code=$?
-tail -n 3 /tmp/update-refused.log
+# stderr apart: with stdin a pipe, nothing echoes the Enter after "Continue? [Y/n] ", so in one log the refusal
+# would share the prompt'"'"'s line (a terminal shows it on its own)
+printf "\n" | SONGCHARTER_RELEASE_URL=$NEW_URL bash -c "$NEW_LINE" >/tmp/update-refused.log 2>/tmp/update-refused.err ||
+  code=$?
+tail -n 2 /tmp/update-refused.log
+cat /tmp/update-refused.err
 [ $code -eq 2 ] || die "the line over a running v$OLD exited $code, not 2"
 grep -qx "install.sh: OK" /tmp/update-refused.log || die "no \"install.sh: OK\" in /tmp/update-refused.log"
 want="songcharter: songcharter $OLD is still running (port $port): close the songcharter window first, then paste the line again. Nothing was changed."
-[ "$(tail -n 1 /tmp/update-refused.log)" = "$want" ] || die "its last line is not: $want"
+[ "$(tail -n 1 /tmp/update-refused.err)" = "$want" ] || die "its last line on stderr is not: $want"
 if grep -q "^== \[6/10\]" /tmp/update-refused.log; then die "the refused line went on to step 6"; fi
 [ "$(ls "$home/app")" = "$apps" ] || die "app/ changed: it holds $(ls "$home/app")"
 curl -fsS -o /dev/null "${address}api/hello" || die "v$OLD'"'"'s page stopped answering"
@@ -314,7 +318,7 @@ kill -TERM "$pid"
 wait "$pid" || die "v$OLD'"'"'s page did not stop cleanly on SIGTERM"
 if curl -fsS -o /dev/null "${address}api/hello" 2>/dev/null; then die "v$OLD'"'"'s page still answers"; fi
 echo "refused while v$OLD ran on port $port; its page stopped"'
-keep /tmp/update-refused.log /tmp/page-old.log
+keep /tmp/update-refused.log /tmp/update-refused.err /tmp/page-old.log
 only "$before" "$base/v$new/install.sh"
 [ "$(asked "$before" "$base/v$new/install.sh")" -eq 1 ] || fail "the refused line did not fetch install.sh once"
 echo "75-update: the line under a running v$old fetched install.sh alone and stopped before step 6"
