@@ -82,7 +82,7 @@
     },
     {
       "id": "M6",
-      "status": "started 2026-11-06 at the owner's go-ahead, while v0.2.0 waits on his PC checks: the doubled grid's follow-ups M6-01 (star power and solo caps on fast songs), M6-02 (the bass's triplet slots on a doubled grid), M6-03 (downbeats on fast songs), written by the orchestrator from v0.2.0's gate and M5-99; M6's full plan (a planner, then the advisor) after the owner's v0.2.0 results",
+      "status": "started 2026-11-06 at the owner's go-ahead; orders written by the orchestrator from v0.2.0's gate, M5-99 and measurements: M6-01 (star power and solo caps on fast songs) merged 2026-11-06 at 0c63090, M6-02 (the bass's triplet slots on a doubled grid) merged 2026-11-06 at 80a3c1f; M6-04 (chords in fast runs) and M6-05 (a tempo change under a doubled grid) building; M6-03 (downbeats) and M6-06 (the halving rule) after M6-05; the 20-song reference set being built from the owner's audio",
       "what": "v0.3.0: fast songs charted more like the humans' (star power, solos, the bass, downbeats; then the chords in fast runs, tempo changes, the 20-song set, M5-99's other items)"
     }
   ],
@@ -105,13 +105,6 @@
       "order": "v0.2.0's release gate (M5-00 section 7)",
       "stage": "published 2026-11-06 as a pre-release at eb0f340 (tag v0.2.0) by the owner after his PC checks; the history was rewritten that day to remove a report's md5 prefixes and a stress song's artist (the owner's decision; v0.1.0 and everything before 2026-11-05 kept their hashes)",
       "then": "the owner sends the friend the release link with the guide's update line; the friend's notes count most"
-    },
-    {
-      "order": "M6-02 the bass's triplet slots on a doubled grid",
-      "branch": "m6-02-doubled-bass-triplets",
-      "worktree": "wt/m6-02 beside the checkout (dev machine)",
-      "stage": "building (2026-11-06)",
-      "report": "<scratchpad>/briefs/m6-02.report.md, then docs/reports/M6-02-doubled-bass-triplets.md"
     },
     {
       "order": "M6-04 chords in fast runs",
