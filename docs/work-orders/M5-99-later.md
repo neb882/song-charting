@@ -152,6 +152,10 @@ cfc7d5d against the branch):
     cfc7d5d, `stress.py compare eval/baseline/stress`), troop's above M5-01's 0.716. The answer belongs with the
     burst slots above: finer slots for an engine whose onsets can be trusted at that resolution, measured on the same
     three charts.
+  - **Untested: the doubled-bass rules on imported lower levels.** An assemble config that imports every level
+    (`take_difficulties: "all"`) on a doubled grid would give Hard, Medium and Easy the bass rules only through
+    `part_rules`; no test covers it (M6-02's review: a break giving them the octave-1 rules passes). The pipeline
+    imports Expert only. A test, a few minutes.
 - **A tempo change under a doubled grid.** Plain beat F1 0.397 -> 0.598 (octave-tolerant 0.658; the humans 1.000),
   downbeat F1 0.014. The grid has the beat count (1,457 beats against 1,435) and a median error of 13.6 ms, but
   about 40 % of its beats are more than 70 ms off, and the build warns of a 170 BPM stretch at 235-300 s that the

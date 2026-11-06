@@ -824,8 +824,9 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
      grid's triplets too (2, 3), the first grid's 16th-note triplets. With 8th slots, an onset counts as off-beat from
      a quarter to three quarters of the beat, and it leans triplet whenever it lies within 25 ms of a third: 100 of the
      150 ms of that zone at 200 BPM. So the engine's 8ths 40–50 ms off read as triplet runs: 124 notes on troop and 174
-     on pm2 (2 on pm2's first grid, M5-11), most about 50 ms from any human note, the whole of pm2's loss against its
-     primary when M5-11 doubled its grid. The humans' bass charts, at the same 200 BPM, have triplets on 0.0 % of
+     on pm2 (2 on pm2's first grid, M5-11), most about 50 ms from any human note: the whole rise in pm2's unmatched bass notes (+67)
+     when M5-11 doubled its grid, and about half its F1@50 loss against the primary (removing them recovers 0.011 of
+     the 0.023; M5-99 has the rest). The humans' bass charts, at the same 200 BPM, have triplets on 0.0 % of
      their notes (troop's primary), 0.4 % (pm2's primary) and 3.3 % (pm2's alt2); our triplet notes matched 0, 4 and 2
      of them. Measured on the two doubled stress songs against every human chart with a bass part:
 
