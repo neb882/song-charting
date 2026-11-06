@@ -13,7 +13,7 @@ import pytest
 import songcharter.assemble as assemble_module
 from songcharter import audio as A
 from songcharter import lyrics as L
-from songcharter.assemble import (BACKBEAT_MIN, CLIP_MARGIN_S, HOPO_RULES, OCTAVE_MAX_BPM, OCTAVE_MIN_ONSETS,
+from songcharter.assemble import (CLIP_MARGIN_S, HOPO_RULES, OCTAVE_MAX_BPM, OCTAVE_MIN_ONSETS,
                                   OCTAVE_SHARE, OCTAVE_SHORT, GateIssue, OctaveRules, active_span, assemble,
                                   backbeat_ratio, check_inputs, clip_to_audio, difficulty_rating, failed_folder,
                                   find_scan_chart, grid_octave, last_tick_by, load_config, parse_config,
@@ -1216,8 +1216,8 @@ def test_grid_octave_doubles_a_grid_too_slow_for_the_notes():
     assert stats["pooled_share"] == pytest.approx(600 / 900, abs=1e-3)  # weighted by the onset counts
     assert stats["backbeat_ratio"] > 10 and stats["backbeat_beats"] == len(SLOW_GRID) - 1
     assert stats["bpm"] == pytest.approx(99.0, abs=0.01)
-    assert stats["thresholds"] == {"short": OCTAVE_SHORT, "share": OCTAVE_SHARE, "backbeat_min": BACKBEAT_MIN,
-                                   "max_bpm": OCTAVE_MAX_BPM, "min_onsets": OCTAVE_MIN_ONSETS}
+    assert stats["thresholds"] == {"short": OCTAVE_SHORT, "share": OCTAVE_SHARE, "max_bpm": OCTAVE_MAX_BPM,
+                                   "min_onsets": OCTAVE_MIN_ONSETS}  # the backbeat has no threshold (M5-11)
     assert stats["reason"].startswith("66.7% of intervals under 0.75 of a 16th")
     octave, stats = grid_octave({"guitar": sixteenths(0.5)}, SLOW_GRID, snare)
     assert octave == 1 and stats["pooled_share"] == 0.0 and "under 0.75 of a 16th (under" in stats["reason"]
@@ -1237,26 +1237,68 @@ def test_grid_octave_needs_enough_onsets_and_room_under_300_bpm():
                        OctaveRules(max_bpm=320.0))[0] == 2
 
 
-def test_the_backbeat_vetoes_or_lets_it_double():
-    """A snare on the grid's beat lines says the grid is the pulse or faster: it keeps 1 although the density says
-    2. On the midpoints it lets it double; without drum features the test is indeterminate (None) and the density
-    decides; a snare on both is about 1, which does not contradict."""
+def test_the_backbeat_is_recorded_not_a_veto():
+    """M5-11: the density decides; the backbeat ratio is recorded in the stats and a doubling's reason. A 200 BPM
+    song charted at 100 BPM had its snare on the first grid's lines (backbeat 0.19, under M5-01's veto of 0.34, the
+    right grids reaching 0.172), so the snare on the lines no longer keeps a grid the notes say is too slow. On the
+    midpoints, on both, or without drums (None) it doubles all the same."""
     notes = {"guitar": sixteenths()}
-    octave, stats = grid_octave(notes, SLOW_GRID, snare_features(SLOW_GRID, "lines"))
-    assert octave == 1 and stats["backbeat_ratio"] < BACKBEAT_MIN
-    assert stats["reason"].startswith(f"the snare is on the beat lines (backbeat 0.01, under {BACKBEAT_MIN})")
-    assert grid_octave(notes, SLOW_GRID, snare_features(SLOW_GRID, "mids"))[0] == 2
+    for on, ratio in (("lines", 0.01), ("mids", 100.0), ("both", 1.0)):
+        octave, stats = grid_octave(notes, SLOW_GRID, snare_features(SLOW_GRID, on))
+        assert octave == 2 and stats["backbeat_ratio"] == pytest.approx(ratio), on
+        assert stats["backbeat_beats"] == len(SLOW_GRID) - 1
+        assert stats["reason"] == f"100.0% of intervals under 0.75 of a 16th (at least 35.0%), backbeat {ratio:.2f}"
     octave, stats = grid_octave(notes, SLOW_GRID, None)
     assert octave == 2 and stats["backbeat_ratio"] is None and stats["reason"].endswith(", no drums")
+    few = snare_features(SLOW_GRID[:10], "lines", duration=SLOW_GRID[-1] + 1)  # drums in the first 10 beats only
+    octave, stats = grid_octave(notes, SLOW_GRID, few)
+    assert octave == 2 and stats["backbeat_ratio"] is None and stats["backbeat_beats"] == 10
+    assert stats["reason"].endswith(", too few confident beats")
     ratio, used = backbeat_ratio(snare_features(SLOW_GRID, "both"), SLOW_GRID)
     assert ratio == pytest.approx(1.0) and used == len(SLOW_GRID) - 1
-    # the power-metal song's case: a first grid half a beat off, the snare on neither (ratio 0.68 there); the
-    # measured BACKBEAT_MIN (0.34, the right grids reaching 0.17) lets it double, the plan's 0.8 did not
-    half_on = snare_features(SLOW_GRID, "both", mid_level=0.5)
-    assert backbeat_ratio(half_on, SLOW_GRID)[0] == pytest.approx(0.5) and grid_octave(notes, SLOW_GRID, half_on)[0] == 2
-    assert grid_octave(notes, SLOW_GRID, snare_features(SLOW_GRID, "both", mid_level=0.2))[0] == 1
-    # only the beats with confident drum evidence count: the second half (no envelope peak) has the snare between
-    # the beats, which would make the ratio about 1
+
+
+def test_a_song_at_half_tempo_with_its_snare_on_the_lines_doubles():
+    """The fourth stress song's case (M5-11): its guitar in 16ths of the song, its bass in 8ths, pooled 0.526 on the
+    100 BPM grid (0.527 measured), and the snare mostly on the first grid's lines (backbeat 0.19). M5-01's veto kept
+    it at 100 BPM; now it doubles, with the ratio recorded."""
+    notes = {"guitar": sixteenths(), "bass": sixteenths(0.5, 540)}
+    pm2 = snare_features(SLOW_GRID, "both", mid_level=0.19)
+    octave, stats = grid_octave(notes, SLOW_GRID, pm2)
+    assert octave == 2 and stats["pooled_share"] == pytest.approx(600 / 1140, abs=1e-4)
+    assert stats["backbeat_ratio"] == pytest.approx(0.19) and stats["backbeat_beats"] == len(SLOW_GRID) - 1
+    assert stats["reason"] == "52.6% of intervals under 0.75 of a 16th (at least 35.0%), backbeat 0.19"
+
+
+def test_a_dense_song_on_its_right_grid_stays():
+    """A 140 BPM song on its own grid, in 16ths, with a bass engine's close double onsets (40 ms apart) on its 8ths:
+    the right grids' shares come mostly from those (DESIGN.md 2.3), here pooled 0.25, under 0.35, so the grid
+    stays, whatever the snare says (on the midpoints, as at half tempo, too). The threshold: a share of 0.34 stays,
+    0.36 doubles."""
+    grid = 1.0 + np.arange(200) * 60 / 140
+    sixteenth = 60 / 140 / 4
+    guitar = 1.0 + np.arange(700) * sixteenth
+    bass = np.sort(np.concatenate([1.0 + np.arange(350) * 2 * sixteenth, 1.04 + np.arange(350) * 2 * sixteenth]))
+    for on in ("lines", "mids"):
+        octave, stats = grid_octave({"guitar": guitar, "bass": bass}, grid, snare_features(grid, on))
+        assert octave == 1 and stats["parts"]["guitar"]["share"] == 0.0, on
+        assert stats["parts"]["bass"]["short"] == 350 and stats["pooled_share"] == pytest.approx(0.25, abs=1e-3)
+        assert stats["reason"] == "25.0% of intervals under 0.75 of a 16th (under 35.0%)"
+        assert stats["backbeat_ratio"] == pytest.approx(0.01 if on == "lines" else 100.0)  # recorded all the same
+
+    def shares(k, n=500):  # k of n intervals short (the song's 16ths on SLOW_GRID), the others its 8ths
+        return 1.0 + np.concatenate([[0.0], np.cumsum([0.25 * FAST_BEAT] * k + [0.5 * FAST_BEAT] * (n - k))])
+
+    snare = snare_features(SLOW_GRID, "mids")
+    under, stats = grid_octave({"guitar": shares(170)}, SLOW_GRID, snare)
+    assert under == 1 and stats["pooled_share"] == pytest.approx(0.34)
+    over, stats = grid_octave({"guitar": shares(180)}, SLOW_GRID, snare)
+    assert over == 2 and stats["pooled_share"] == pytest.approx(0.36)
+
+
+def test_the_backbeat_ratio_counts_confident_beats_only():
+    """Only the beats with confident drum evidence count: the second half (no envelope peak) has the snare between
+    the beats, which would make the ratio about 1."""
     half = len(SLOW_GRID) // 2
     mixed = snare_features(SLOW_GRID, "lines")
     late = SLOW_GRID[half:] - ONSET_TO_BEAT_MS / 1000
