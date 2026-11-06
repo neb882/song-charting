@@ -156,7 +156,8 @@ for _ in $(seq 1 600); do
   sleep 0.1
 done
 [ -n "$address" ] || { cat /tmp/page.log; echo "70-release: songcharter gave no address"; exit 1; }
-curl -fsS "$address" | grep -q "<title>songcharter</title>"
+page=$(curl -fsS "$address")   # into a variable, not a pipe: grep -q stops reading early and curl then fails
+grep -q "<title>songcharter</title>" <<<"$page"
 kill -TERM "$pid"
 wait "$pid"
 cat /tmp/page.log'
