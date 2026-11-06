@@ -16,8 +16,8 @@
 #      runtime is kept); `songcharter doctor` exits 0 with "doctor: OK" and HEAD's __version__, which must be newer
 #      than 0.1.0 (M5-12: build.sh builds only HEAD's; the new code is also proven by runtime.json's app and by the
 #      install's Python importing songcharter.updates, which 0.1.0 has not); the clip charted again into the same work
-#      folder (v0.1.0's name, found by the key in its marker, not today's), with separate, drums, bass, sections and
-#      guitar "(cached)", and check_gate.py passes on it;
+#      folder (v0.1.0's name, found by the key in its marker, not today's), with separate, drums, sections and guitar
+#      "(cached)" (bass runs again: its cache key holds songcharter's version), and check_gate.py passes on it;
 #   4. the notice: `songcharter` (the page, as the guide starts it) with $SONGCHARTER_RELEASES_URL naming a JSON file
 #      on the server; /api/status before the page has no update and makes no request, then the page, then (once the
 #      check's line is in the log) /api/status again: with a release v9.9.9 whose assets are on the server, with a
@@ -312,7 +312,10 @@ case $(basename "$work") in
   "$today"-*) die "the work folder $work has the new version'"'"'s name ($today): the lookup by key is not tested" ;;
 esac
 echo "the work folder of v$OLD'"'"'s name, $(basename "$work"), not today'"'"'s ($today), with its caches"
-for stage in separate drums bass sections guitar; do
+# the bass cache key holds the songcharter version (engines/bass.py versions(): its code can change the notes), so
+# a newer version runs it again, a rule engine of seconds; every other engine answers from the caches of v$OLD
+grep -qE "^\[[0-9]+/[0-9]+\] bass: " /tmp/chart-new.log || die "bass did not run"
+for stage in separate drums sections guitar; do
   grep -qE "^\[[0-9]+/[0-9]+\] $stage: .* \(cached\), [0-9.]+ s$" /tmp/chart-new.log || die "$stage was not cached"
 done
 "$py" /ci/check_gate.py ~/Songs/"Clip after the update"'
