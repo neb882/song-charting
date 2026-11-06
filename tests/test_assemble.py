@@ -901,8 +901,8 @@ def test_config_parsing_and_errors(tmp_path):
 
 
 def test_check_inputs(tmp_path):
-    """Every named file must exist and the sections file be an allin1 result; the output folder (and its .failed)
-    may hold only what a build writes, plus OS clutter."""
+    """Every named file must exist and the sections file be an allin1 result (its beats, when it has them, times);
+    the output folder (and its .failed) may hold only what a build writes, plus OS clutter."""
     for name in ("mix.wav", "drums.wav", "tool/notes.chart", "strum/notes.mid"):
         (tmp_path / name).parent.mkdir(exist_ok=True)
         (tmp_path / name).write_bytes(b"x")
@@ -924,6 +924,11 @@ def test_check_inputs(tmp_path):
     with pytest.raises(ValueError, match="Click Song.failed holds"):
         check_inputs(cfg)
     shutil.rmtree(failed_folder(out))
+    (tmp_path / "allin1.json").write_text(json.dumps({"segments": [], "beats": [0.5, 1.0]}), encoding="utf-8")
+    check_inputs(cfg)  # allin1's beats (the second pass's start on a tempo change, _octave_pass)
+    (tmp_path / "allin1.json").write_text(json.dumps({"segments": [], "beats": ["x"]}), encoding="utf-8")
+    with pytest.raises(InputError, match="not an allin1 result .*'beats' is not a list of times"):
+        check_inputs(cfg)
     (tmp_path / "allin1.json").write_text(json.dumps({"sections": []}), encoding="utf-8")
     with pytest.raises(ValueError, match="not an allin1 result"):
         check_inputs(cfg)

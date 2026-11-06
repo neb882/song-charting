@@ -1613,15 +1613,12 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
                      secondary=second_stem, features=features)
     onsets = {p.key: sorted({n.time for n in songs[p.key].parts[(p.from_instrument, "expert")].notes})
               for p in cfg.parts}
-    allin1 = _read_allin1_beats(cfg)
-    if allin1 is not None:  # the beats inside the audio (their start grid's own trim)
-        allin1 = allin1[(allin1 >= 0) & (allin1 <= duration)]
     grid, octave, octave_stats, octave_reason, warn = _octave_pass(
         cfg, grid, onsets, features if src == "drums" else None,
         lambda bpm, bpm_range, start=None: beat_grid(grid_audio, sr, duration=duration, bpm=bpm, mode=cfg.grid_mode,
                                                      secondary=second_stem, features=features, bpm_range=bpm_range,
                                                      half_beat=True, keep_line=True, start=start),
-        allin1, duration)
+        _read_allin1_beats(cfg), duration)
     warnings += warn
     lead = plan_lead_in(grid.beats, grid.downbeats, sr, min_lead=cfg.lead_in, duration=duration)
     tm = TempoMap.from_beats(lead.beats, bars=lead.bars, tolerance=cfg.tempo_tolerance)
