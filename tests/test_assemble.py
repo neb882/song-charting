@@ -3,6 +3,7 @@
 the config and the command line on their own. Only synthetic audio and charts are used."""
 import io
 import json
+import math
 import shutil
 import sys
 from dataclasses import asdict, replace
@@ -1400,17 +1401,20 @@ FAST_FIRST, FAST_SECONDS = 0.5, 40.0
 FAST_NOTES = int((FAST_SECONDS - 2.0) / (FAST_BEAT / 4))  # 16ths of the 198 BPM beat to 38.5 s: 500
 
 
-def fast_drums(seed=0) -> np.ndarray:
+def fast_drums(seed=0, beats=None, seconds=FAST_SECONDS) -> np.ndarray:
     """198 BPM from FAST_FIRST: a kick and a crash on every other beat, a snare on the beats between (the backbeat
-    at the pulse). The first pass folds the tempo into [85, 185): 99 BPM, its lines on the kicks."""
+    at the pulse). The first pass folds the tempo into [85, 185): 99 BPM, its lines on the kicks. `beats` (and the
+    song's `seconds`) put the same hits on other beats."""
     rng = np.random.default_rng(seed)
-    y = np.zeros(int(FAST_SECONDS * SR))
+    y = np.zeros(int(seconds * SR))
     t = np.arange(int(0.25 * SR)) / SR
     kick = np.sin(2 * np.pi * 55 * t) * np.exp(-t / 0.08)
     crash = np.diff(np.diff(rng.standard_normal(len(t) + 2))) * np.exp(-t / 0.05)
     snare = 0.5 * (0.5 * np.sin(2 * np.pi * 190 * t) + 0.6 * rng.standard_normal(len(t))) * np.exp(-t / 0.06)
-    for k in range(int((FAST_SECONDS - 1.0) / FAST_BEAT)):
-        i = int(round((FAST_FIRST + k * FAST_BEAT) * SR))
+    if beats is None:
+        beats = FAST_FIRST + np.arange(int((FAST_SECONDS - 1.0) / FAST_BEAT)) * FAST_BEAT
+    for k, b in enumerate(beats):
+        i = int(round(b * SR))
         y[i:i + len(t)] += (kick + crash) if k % 2 == 0 else snare
     y += rng.standard_normal(len(y)) * 1e-3
     y = (0.4 * y).astype(np.float32)
@@ -1648,3 +1652,184 @@ def test_the_backbeat_test_gets_the_drum_stem_only(fast_song, monkeypatch):
             assemble(parse_config({**config, **change}, root))
     assert isinstance(seen[0], OnsetFeatures) and seen[1] is None
 
+
+
+# ---------------------------------------------------------------------------- a tempo change under a doubled grid
+
+def test_allin1_start_doubles_the_beats_moves_them_to_onset_times_and_checks_their_level():
+    """allin1's beats (at a fast song's half rate) as the doubled grid's start: a midpoint between each two, then
+    moved to onset times (beat_grid's start= convention, ONSET_TO_BEAT_MS later). None, with why, without beats,
+    with under 8 inside the audio, or when doubled they are more than half an octave from the doubled grid."""
+    beats = 1.0 + np.arange(100) * 0.6  # 100 BPM
+    start, rec = assemble_module.allin1_start(beats, 200.0)
+    want = np.sort(np.concatenate([beats, beats[:-1] + 0.3])) - ONSET_TO_BEAT_MS / 1000
+    assert ONSET_TO_BEAT_MS < 0 and start == pytest.approx(want, abs=1e-12) and len(start) == 199
+    assert rec == {"beats": 100, "doubled": 199, "bpm": 200.0, "why": "allin1's beats doubled: 199 beats at 200.0 BPM"}
+    assert assemble_module.allin1_start(beats, 200.0 * 2 ** 0.45)[0] is not None  # inside half an octave
+    for other in (400.0, 100.0, 141.0, 283.0):  # past it either way
+        none, rec = assemble_module.allin1_start(beats, other)
+        assert none is None and rec["why"] == (f"allin1's beats doubled are at 200.0 BPM, not the doubled grid's level "
+                                               f"({other:.1f} BPM)")
+    assert assemble_module.allin1_start(None, 200.0) == (None, {"beats": None,
+                                                                "why": "the sections have no allin1 beats"})
+    for few, duration in ((beats[:4], math.inf), (beats, 3.0)):  # 7 doubled; 1.022 to 2.822 s inside 3 s
+        none, rec = assemble_module.allin1_start(few, 200.0, duration)
+        assert none is None and rec["why"] == "allin1's beats doubled are 7 inside the audio, under 8"
+
+
+def test_the_octave_pass_starts_the_doubled_grid_from_allin1_when_its_line_misses_a_tempo_change(tmp_path):
+    """The doubled grid's straight line misses a tempo change (its tempo check is not empty) and allin1's beats are
+    there: the second pass runs again from them, and that grid is the doubled grid, recorded and warned about. No
+    allin1 beats, beats at another level, a grid from them that fails, or no missed tempo change: the line stays,
+    asked for once when nothing is missed."""
+    first = _fake_grid(99.0, 0.8)
+    onsets = {"guitar": sixteenths()}
+    missed = [(30.0, 50.0, 170.0, 198.0), (35.0, 55.0, 170.0, 198.0)]
+    line, followed = _fake_grid(198.0, 0.7), _fake_grid(198.0, 0.75)
+    line.stats["tempo_check"], followed.stats["tempo_check"] = missed, []
+    allin1 = 1.0 + np.arange(150) * 60 / 99
+    calls = []
+
+    def second(bpm, bpm_range, start=None):
+        calls.append((bpm, bpm_range, start))
+        return line if start is None else followed
+
+    cfg = parse_config(CONFIG, tmp_path)
+    grid, octave, stats, reason, warn = assemble_module._octave_pass(cfg, first, onsets, None, second, allin1, 120.0)
+    assert grid is followed and octave == 2 and stats["evidence_ratio"] == pytest.approx(0.75 / 0.8, abs=1e-4)
+    assert [c[:2] for c in calls] == [(198.0, (170.0, 370.0))] * 2 and calls[0][2] is None
+    assert calls[1][2] == pytest.approx(assemble_module.allin1_start(allin1, line.bpm, 120.0)[0], abs=1e-12)
+    rec = stats["second_start"]
+    assert rec["grid"] == "allin1" and rec["tempo_check"] == [list(w) for w in missed]
+    assert rec["why"] == ("the straight line misses a tempo change (2 tempo-check windows, 30-55 s): the grid starts "
+                          "from allin1's beats doubled: 299 beats at 198.0 BPM")
+    assert rec["allin1"]["beats"] == 150 and rec["line"]["confident_share"] == 0.7
+    assert stats["second"]["confident_share"] == 0.75
+    assert warn[-1] == ("the doubled grid follows allin1's beats: its straight line missed a tempo change at 30-55 s: "
+                        "check sync there")
+    tails = {"the sections have no allin1 beats": (None, second),
+             "allin1's beats doubled are at 396.0 BPM, not the doubled grid's level (198.0 BPM)":
+                 (1.0 + np.arange(300) * 60 / 198, second)}
+
+    def failing(bpm, bpm_range, start=None):
+        calls.append((bpm, bpm_range, start))
+        if start is None:
+            return line
+        raise InputError("no confident drum evidence: made up")
+
+    tails["allin1's beats doubled: 299 beats at 198.0 BPM; the grid from them failed: no confident drum evidence: "
+          "made up"] = (allin1, failing)
+    for tail, (beats, run) in tails.items():
+        calls.clear()
+        grid, octave, stats, _, warn = assemble_module._octave_pass(cfg, first, onsets, None, run, beats, 120.0)
+        assert grid is line and octave == 2 and stats["second"]["confident_share"] == 0.7
+        assert stats["second_start"]["grid"] == "line" and "line" not in stats["second_start"]
+        assert stats["second_start"]["why"] == ("the straight line misses a tempo change (2 tempo-check windows, "
+                                                f"30-55 s), but {tail}")
+        assert not any("allin1" in w for w in warn) and len(calls) == (2 if run is failing else 1)
+    line.stats["tempo_check"] = []
+    calls.clear()
+    grid, octave, stats, _, warn = assemble_module._octave_pass(cfg, first, onsets, None, second, allin1, 120.0)
+    assert grid is line and octave == 2 and len(calls) == 1 and len(warn) == 1
+    assert stats["second_start"] == {"grid": "line", "why": "the tempo check finds no missed tempo change"}
+
+
+STRETCH_START, STRETCH_BEATS = 45.0, 52  # 52 beats at 170 BPM in a 198 BPM song (as on the fourth stress song),
+STRETCH = (STRETCH_START, STRETCH_START + STRETCH_BEATS * 60 / 170)  # which leave the 198 line 0.44 beat out after
+STRETCH_SECONDS = 90.0
+
+
+def stretch_beats() -> np.ndarray:
+    t = [FAST_FIRST]
+    while t[-1] < STRETCH_SECONDS - 2.0:
+        t.append(t[-1] + (60 / 170 if STRETCH[0] <= t[-1] < STRETCH[1] - 1e-9 else FAST_BEAT))
+    return np.array(t[:-1])
+
+
+def _beat_f1(lines, truth, lo=-math.inf, hi=math.inf, tol=0.070) -> float:
+    """F1 of the beat lines against the true beats inside [lo, hi), each matched within tol (nearest, both ways)."""
+    lines, truth = np.asarray(lines), np.asarray(truth)
+    t, g = truth[(truth >= lo) & (truth < hi)], lines[(lines >= lo) & (lines < hi)]
+    hit_t = np.array([np.min(np.abs(lines - x)) <= tol for x in t])
+    hit_g = np.array([np.min(np.abs(truth - x)) <= tol for x in g])
+    return float(2 * hit_t.sum() * hit_g.mean() / (hit_t.sum() + len(t) * hit_g.mean())) if hit_t.any() else 0.0
+
+
+@pytest.fixture(scope="module")
+def stretch_song(tmp_path_factory):
+    """A 198 BPM song with a 170 BPM stretch at 45-63 s: the fast song's drums and 16ths on its beats, and an
+    allin1 result with made-up beats on every other beat (allin1's half rate on such a song), in 10 ms frames and
+    off by up to 10 ms; a second sections file without them (the librosa fallback's)."""
+    root = tmp_path_factory.mktemp("stretch")
+    truth = stretch_beats()
+    drums = fast_drums(beats=truth, seconds=STRETCH_SECONDS)
+    times = np.concatenate([a + np.arange(4) * (b - a) / 4 for a, b in zip(truth, truth[1:])])
+    tone = np.zeros(drums.shape[1], dtype=np.float32)
+    for t in times:
+        i = int(t * SR)
+        tone[i:i + 2000] += (0.05 * np.sin(2 * np.pi * 330 * np.arange(2000) / SR)).astype(np.float32)
+    A.write_wav(drums + tone, root / "mix.wav")
+    A.write_wav(drums, root / "drums.wav")
+    tm = TempoMap(480, [Tempo(0, 198000)])
+    notes = [FretNote(round(tm.sec_to_tick(t)), ((0, 1, 2, 1)[q % 4],)) for q, t in enumerate(times)]
+    (root / "tool").mkdir()
+    (root / "tool" / "notes.chart").write_text(write_chart(Chart(SongInfo("tool", "tool"), tm, [], [
+        Track("Expert", "Single", notes)])), encoding="utf-8", newline="")
+    segments = [[0.0, 0.5, "start"], [0.5, STRETCH[0], "verse"], [STRETCH[0], STRETCH[1], "bridge"],
+                [STRETCH[1], STRETCH_SECONDS, "chorus"]]
+    half = truth[::2] + np.random.default_rng(5).uniform(-0.01, 0.01, len(truth[::2]))
+    beats = [round(float(b), 2) for b in half]
+    (root / "allin1.json").write_text(json.dumps({"segments": segments, "bpm": 99, "beats": beats,
+                                                  "downbeats": beats[::4]}), encoding="utf-8")
+    (root / "librosa.json").write_text(json.dumps({"segments": segments}), encoding="utf-8")
+    config = {"audio": "mix.wav", "stems": {"drums": "drums.wav"}, "lead_in": 2.5, "sections": "allin1.json",
+              "parts": [{"instrument": "guitar", "source": "tool/notes.chart"}], "levels": ["expert"],
+              "grid_octave": 2, "metadata": {**CONFIG["metadata"], "name": "Stretch Song"}, "output": "out/allin1"}
+    return root, config, truth
+
+
+def test_a_doubled_grid_follows_a_tempo_change_from_allin1s_beats(stretch_song):
+    """The doubled grid's straight line misses the 170 BPM stretch (its tempo check warns; on this made-up song
+    the first grid follows the stretch, so the line, hinted at twice its tilted click tempo, is off elsewhere too).
+    Started from allin1's beats it follows the stretch and the 198 BPM around it, its own tempo check finds nothing,
+    and report.json and the warnings say so. From the librosa fallback's sections (no beats) the line stays,
+    warned about, as before. (grid_octave 2 on both: without allin1's beats the line's evidence is too thin for the
+    octave pass to keep it.)"""
+    root, config, truth = stretch_song
+    a = assemble(parse_config(config, root))
+    b = assemble(parse_config({**config, "sections": "librosa.json", "output": "out/librosa"}, root))
+    assert a.ok and b.ok and a.report["grid"]["octave"] == b.report["grid"]["octave"] == 2
+    ga, gb = a.report["grid"], b.report["grid"]
+    rec = ga["octave_stats"]["second_start"]
+    assert rec["grid"] == "allin1" and rec["allin1"]["beats"] == len(truth[::2]) and rec["tempo_check"]
+    assert rec["why"].startswith("the straight line misses a tempo change (") and ga["stats"]["start"]["source"] == \
+        "external" and ga["stats"]["tempo_check"] == []
+    assert rec["line"] == gb["octave_stats"]["second"]  # the line it replaced is the grid without allin1's beats
+    assert gb["octave_stats"]["second_start"]["grid"] == "line" and gb["octave_stats"]["second_start"]["why"].endswith(
+        "but the sections have no allin1 beats") and gb["stats"]["tempo_check"] == rec["tempo_check"]
+    lines = {k: np.asarray(r.lead.beats) - r.lead.pad_seconds for k, r in (("allin1", a), ("line", b))}
+    assert _beat_f1(lines["allin1"], truth, *STRETCH) > 0.95 and _beat_f1(lines["allin1"], truth) > 0.95
+    assert _beat_f1(lines["allin1"], truth, STRETCH[1]) > 0.9  # and in phase after it
+    assert _beat_f1(lines["line"], truth, *STRETCH) < 0.6
+    follows = [w for w in a.report["warnings"] if "allin1" in w]
+    assert len(follows) == 1 and follows[0].startswith("the doubled grid follows allin1's beats: its straight line "
+                                                       "missed a tempo change at ")
+    assert not any("is not followed by the grid" in w for w in a.report["warnings"])
+    assert any("is not followed by the grid" in w for w in b.report["warnings"])
+    assert not any("allin1" in w for w in b.report["warnings"])
+
+
+def test_allin1s_beats_change_nothing_when_the_doubled_grid_misses_no_tempo_change(fast_song):
+    """The steady 198 BPM song with allin1's beats in its sections file: its doubled grid's tempo check is empty,
+    so the chart is the one built without them, and report.json says the line stayed and why."""
+    root, config = fast_song
+    beats = [round(FAST_FIRST + k * 2 * FAST_BEAT, 2) for k in range(int((FAST_SECONDS - 1) / (2 * FAST_BEAT)))]
+    data = json.loads((root / "allin1.json").read_text(encoding="utf-8"))
+    (root / "allin1-beats.json").write_text(json.dumps({**data, "beats": beats}), encoding="utf-8")
+    a = assemble(parse_config({**config, "output": "out/steady-plain"}, root))
+    b = assemble(parse_config({**config, "sections": "allin1-beats.json", "output": "out/steady-beats"}, root))
+    assert a.report["grid"]["octave"] == b.report["grid"]["octave"] == 2
+    want = {"grid": "line", "why": "the tempo check finds no missed tempo change"}
+    assert a.report["grid"]["octave_stats"]["second_start"] == b.report["grid"]["octave_stats"]["second_start"] == want
+    assert (a.folder / "notes.chart").read_bytes() == (b.folder / "notes.chart").read_bytes()
+    assert np.array_equal(a.lead.beats, b.lead.beats) and a.report["warnings"] == b.report["warnings"]
