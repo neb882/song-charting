@@ -26,7 +26,7 @@ from songcharter.cli import main
 from songcharter.errors import InputError, ToolError
 from songcharter.importers import read_chart, read_song
 from songcharter.quantize import play_states, quantize_part
-from songcharter.starpower import SOLO_RULES
+from songcharter.starpower import SOLO_RULES, SP_RULES
 from songcharter.tempo import Tempo, TempoMap
 from songcharter.timed import TimedHit, TimedNote, TimedPart, TimedSong, TimedSpan
 
@@ -1149,8 +1149,17 @@ def test_the_solo_report_without_names(built):
     (root / "solo_rules.json").write_text(json.dumps(cfg), encoding="utf-8")
     result = assemble(root / "solo_rules.json")
     assert result.ok, [i for i in result.issues if i.error]
-    phrases = json.loads((result.folder / "report.json").read_text(encoding="utf-8"))["phrases"]["guitar"]
+    every = json.loads((result.folder / "report.json").read_text(encoding="utf-8"))["phrases"]
+    phrases = every["guitar"]
     assert phrases["solo_rules"] == {**asdict(SOLO_RULES), "capped": True}
+    # each part's star-power count (M6-01): the rules, its span's beats counted at most at 160 BPM, the target
+    assert every.keys() == {"guitar", "bass", "drums"}
+    for part in every.values():
+        count = part["star_power_count"]
+        assert count["rules"] == asdict(SP_RULES) and count["placed"] == len(part["star_power"]) > 0
+        assert count["counted_beats"] == pytest.approx(
+            min(count["span_beats"], count["span_seconds"] * SP_RULES.max_bpm / 60), abs=0.01)
+        assert count["target"] == round(count["counted_beats"] / SP_RULES.beats_per_phrase) >= count["placed"]
     # the two runs, 16.5-52.5 s and 64.5-80.5 s, are 52 s of a 75.8-s span (0.40 of it: 30.3 s): the denser first
     # run is cut to its densest window within the budget, and the second, with no room left, is skipped
     (trimmed,), (skipped,) = phrases["solos_trimmed_by_share"], phrases["solos_skipped_by_share"]
