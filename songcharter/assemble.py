@@ -712,10 +712,12 @@ OCTAVE_MIN_ONSETS = 200    # ... and the parts have this many distinct onsets in
 BACKBEAT_WINDOW_S = 0.035  # the backbeat ratio, recorded but not a test (M5-11: 0.19 on a song at half tempo,
                            # 0.172 on a right grid): the snare band's peak within this of a beat line or a midpoint
 BACKBEAT_MIN_BEATS = 16    # confident beats the backbeat ratio needs (fewer: none)
-DOUBLED_BASS_SLOTS = (2, 3)  # straight and triplet slots per beat for the bass on a doubled grid: its 8ths and
-                             # their triplets, so its scattered onsets get the first grid's 16ths (the triplets
-                             # are the first grid's 16th-note triplets, finer than its 8th-note ones)
-DOUBLED_LYRIC_SLOTS = (2, 3)  # the same for the lyrics (lyric_rules, DESIGN.md 2.15): the aligner's word starts
+DOUBLED_BASS_SLOTS = (2, 0)  # straight and triplet slots per beat for the bass on a doubled grid: its 8ths only,
+                             # so its scattered onsets get the first grid's 16ths. No triplet slots (M6-02, DESIGN.md
+                             # 2.6): its 8ths 40-50 ms off read as triplets there, and the humans chart these basses
+                             # in straight 8ths and 16ths (0 and 0.4 % triplets on the two songs' primaries)
+DOUBLED_LYRIC_SLOTS = (2, 3)  # the doubled grid's 8ths and their triplets for the lyrics (lyric_rules, DESIGN.md
+                              # 2.15; the triplets are the first grid's 16th-note triplets): the aligner's word starts
                               # run up to 75 ms early on a fast song, which the doubled grid's 16ths (75 ms at 200
                               # BPM) put a 1/16 before the human's, where the first grid's 16ths put them on it
 OCTAVE_EVIDENCE_MIN = 0.7  # the doubled grid is kept when its confident share is at least this times the first's
@@ -1373,8 +1375,9 @@ def _offset(part: PartConfig, song: TimedSong, tempo: TempoMap, pad: float) -> t
 
 def part_rules(part: PartConfig, octave: int = 1):
     """The quantizer's rules for a part: its HOPO rule (HOPO_RULES), and on a doubled grid (octave 2) the bass one
-    slot level coarser (DOUBLED_BASS_SLOTS, DESIGN.md 2.6): the bass engine's onsets spread about a 16th either side
-    of the notes at 200 BPM, which the doubled grid's 16ths cannot resolve."""
+    slot level coarser and with no triplet slots (DOUBLED_BASS_SLOTS, DESIGN.md 2.6): the bass engine's onsets spread
+    about a 16th either side of the notes at 200 BPM, which the doubled grid's 16ths cannot resolve, and its 8ths that
+    far off lie nearer the doubled grid's triplets than its 8ths."""
     rules = HOPO_RULES[part.hopo]
     if octave == 2 and part.instrument == "bass":
         rules = replace(rules, straight=DOUBLED_BASS_SLOTS[0], triplet=DOUBLED_BASS_SLOTS[1])
@@ -1723,9 +1726,10 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
     chart = Chart(info, tm, sections, experts)
     named = cfg.solos if isinstance(cfg.solos, tuple) else None
     solo_record: dict = {}   # the solo rules used and why each solo is where it is (place_solos), for the report
+    sp_record: dict = {}     # each part's star-power count: its rules, span and target (place_star_power)
     chart = place_phrases(chart, solos=named is not None or (cfg.solos != "off" and (cfg.solos == "labels"
                                                                                        or confirm is not None)),
-                          confirm_solo=confirm, solo_names=named, solo_record=solo_record)
+                          confirm_solo=confirm, solo_names=named, solo_record=solo_record, sp_record=sp_record)
     if named:
         have = {n for _, n in sections}
         lead_track = next((t for t in chart.tracks if t.instrument == "Single" and t.difficulty == "Expert"), None)
@@ -1813,7 +1817,8 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
                            if p.kind == STAR_POWER],
             "fills": [(_in_s(tm, p.tick, pad), _in_s(tm, p.tick + p.length, pad)) for p in t.phrases
                       if p.kind == DRUM_ACTIVATION],
-            "solos": [(_in_s(tm, a, pad), _in_s(tm, b, pad)) for a, b in t.solos]}
+            "solos": [(_in_s(tm, a, pad), _in_s(tm, b, pad)) for a, b in t.solos],
+            "star_power_count": sp_record.get(t.instrument)}
             for t in chart.tracks if t.difficulty == "Expert"}
         if solo_record and "guitar" in report["phrases"]:
             def solo_row(row: dict) -> dict:

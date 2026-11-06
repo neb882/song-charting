@@ -858,15 +858,44 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
        drum-like jitter, and 20 ms drops nothing anywhere. The other power-metal charts lost 23.5–26.0 % of their
        guitar notes (and 11.4 % of the bass) to the old floors on their own maps.
    - **The bass on a doubled grid** (M5-01; decided 2026-11-05, an amendment to the order's "no change to the slot
-     levels"): on a grid the octave pass doubled (§2.3 step 7), the bass part snaps one slot level coarser, to the
-     grid's 8ths and their triplets (`assemble.DOUBLED_BASS_SLOTS`, report.json's `parts.*.slots`): the first grid's
-     16ths, and its 16th-note triplets (finer than its 8th-note triplets). Every other part and every undoubled song is
+     levels"; its triplet slots removed by M6-02): on a grid the octave pass doubled (§2.3 step 7), the bass part
+     snaps one slot level coarser, to the grid's 8ths only (`assemble.DOUBLED_BASS_SLOTS` (2, 0), report.json's
+     `parts.*.slots`): the first grid's 16ths, and no triplet slots. Every other part and every undoubled song is
      unchanged. The bass engine's onsets spread about a 16th either side of the human notes on the power-metal song
      (signed error against the human chart, p10/p90 −75/+65 ms; 819 of 1,821 within 50 ms). The doubled grid's 16ths
      kept that error: bass F1@50 fell from 0.702 to 0.606, 566 matched notes past half a 16th against 249 on the first
      grid, whose 150 ms slots had pulled them onto the real 8ths where the human bass sits. It was not the offset: the
      matched notes' median error is −2.6 ms on the first grid and −0.6 ms on the doubled one. With the coarser slots the
      stress run's bass F1@50 is 0.716 [here, M5-01].
+   - **No triplet slots for it** (M6-02) [here, M6-02: the stress set at main f3b9ebb, 1 CPU take, `--rerun bass`;
+     the bass Expert matched at 50 ms with score.py's own matcher, numbers only]. M5-01 gave the doubled bass the
+     grid's triplets too (2, 3), the first grid's 16th-note triplets. With 8th slots, an onset counts as off-beat from
+     a quarter to three quarters of the beat, and it leans triplet whenever it lies within 25 ms of a third: 100 of the
+     150 ms of that zone at 200 BPM. So the engine's 8ths 40–50 ms off read as triplet runs: 124 notes on troop and 174
+     on pm2 (2 on pm2's first grid, M5-11), most about 50 ms from any human note: the whole rise in pm2's unmatched bass notes (+67)
+     when M5-11 doubled its grid, and about half its F1@50 loss against the primary (removing them recovers 0.011 of
+     the 0.023; M5-99 has the rest). The humans' bass charts, at the same 200 BPM, have triplets on 0.0 % of
+     their notes (troop's primary), 0.4 % (pm2's primary) and 3.3 % (pm2's alt2); our triplet notes matched 0, 4 and 2
+     of them. Measured on the two doubled stress songs against every human chart with a bass part:
+
+     | bass F1@50 | (2, 3), M5-01 | (2, 0), chosen | (2, 3), triplet test against the 16ths |
+     |---|---|---|---|
+     | troop vs its primary | 0.7161 | **0.7346** | 0.7236 |
+     | pm2 vs its primary | 0.7766 | **0.7875** | 0.7812 |
+     | pm2 vs alt2 | **0.5949** | 0.5879 | 0.5916 |
+     | our notes on triplet slots (troop / pm2) | 124 / 174 | 0 / 0 | 67 / 97 |
+     | matched notes' median absolute error, ms (troop / pm2 / alt2) | 1.27 / 5.97 / 7.16 | 1.15 / 5.57 / 6.07 | 1.20 / 5.79 / 6.80 |
+
+     The third rule keeps the triplet slots but runs the triplet test against the doubled grid's 16ths, as the bass's
+     was before M5-01 coarsened its slots. It lies between the other two on every number and needs a quantizer field
+     of its own, so it was not kept. Only the bass tracks of troop and pm2 changed; sooth and break are first grids.
+     Every rule loses on alt2: 72 of the 90 alt2 notes that (2, 0) no longer matches are 16ths, which a triplet slot,
+     25 ms from a 16th at 200 BPM, matched by accident. alt2 has 2.5 times the primary's 16ths (1,021 of 3,154 against
+     405 of 2,571), 326 notes off any 1/32 or triplet line, and agrees with the primary at 0.710. The gains, on all
+     three charts, are 8ths and beat lines. **The reading** (the orchestrator, 2026-11-06): the order's "without
+     lowering either song below today's" is read against each song's primary, the stress check's yardstick (troop
+     +0.019, pm2 +0.011); alt2's −0.007 is inside the check's 0.01 tolerance. The 16ths themselves, which the doubled
+     bass grid has no slot for, are M5-99's (with the burst slots).
    - A merge takes the union of frets, so a single-note source gains chords: on the bass engine 69–172 onsets per
      song merged on All the Small Things, Lucretia and Creep (Expert chord share after quantizing up to 0.074). The
      human bass charts: 0 on Take Me Out, Lucretia, Creep and Kimochi Warui; 0.41 on All the Small Things Expert and
@@ -1394,12 +1423,59 @@ to detect, from the guitar's pick noise, where our chart is too sparse, and to f
 
 ### 2.10 Star power, solos and drum activation lanes
 **Guitar and bass star power** (v1's rules):
-1. **How many:** K = round(total beats / 40), about 24 for the test song. Humans chart 11 (Harmonix) to 14 (customs) phrases per song [here, v1]; on 175–288 s references that rate is consistent with beats/40 [est.].
+1. **How many:** K = round(total beats / 40), about 24 for the test song. Humans chart 11 (Harmonix) to 14 (customs) phrases per song [here, v1]; on 175–288 s references that rate is consistent with beats/40 [est.]. The beats are those of the first to the last Expert onset, counted at most at 160 BPM (`StarPowerRules.max_bpm`; the span's average tempo), so at most one phrase per 15 s (M6-01, below).
 2. **Shape:** one measure, starting on its first note (92–98 % of human phrases start on a note). `S 2` covers [T, T + len).
 3. **Exclusions:** none in the first 4 measures after the first note or in the last 8 measures.
 4. **Score per measure:** +2 contains a sustain; +2 first measure of a section; +1 lead-like (guitar loud, vocal stem quiet). A candidate needs at least 2 Expert notes.
 5. **Placement:** split the song into K equal windows and take the best measure in each, at least 24 beats apart.
 6. **All difficulties:** copy the phrases to every difficulty. The reducer guarantees ≥ 1 note per phrase on every track and difficulty, so `emptyStarPower` = 0.
+
+**Star power on fast songs (M6-01)** [here, M6-01]. On a grid the octave pass doubled (§2.3 step 7) the beats double,
+and so did K: the power-metal song got 5.04 phrases a minute where its three human charts have 3.03–4.44. Measured on
+every human chart of the reference set and the stress set (`eval/scorer`'s chart reader, numbers only; each chart's
+own tempo map, first to last Expert onset), phrases per song (per 40 of the chart's own beats):
+
+| song | tempo (BPM) | guitar | bass | drums |
+|---|---|---|---|---|
+| kimochi_warui | 107 | 8 (0.64) | 6 (0.56) | 7 (0.57) |
+| drunk_drivers | 117 | 10 (0.95) | – | – |
+| take_me_out | 105.5 | 11 (1.03) | 11 (1.03) | 10 (0.93) |
+| all_the_small_things | 147.5 | 10 (1.03) | 9 (0.92) | 10 (1.03) |
+| lucretia | 97 | 9 (0.97) | 9 (0.97) | 9 (0.97) |
+| creep | 92 | 13 (1.48) | 13 (1.47) | 12 (1.36) |
+| sooth, 2 charts | 77 | 21, 29 (1.21, 1.67) | 21 (1.25) | – |
+| break, 2 charts | 115.5 | 7, 6 (0.88, 0.75) | – | – |
+| troop, 3 charts | 200 | 17, 15, 22 (0.69, 0.61, 0.89) | 16 (0.65) | 16 (0.65) |
+| pm2, 5 charts | 200 | 30, 40, 36, 35, 12 (0.84, 1.12, 1.01, 0.98, 0.34) | 29 (0.81) | 26, 36 (0.73, 1.01) |
+
+  - **Per beat, not per second.** Under 150 BPM the 21 human parts write a median 0.97 phrases per 40 beats
+    (0.56–1.67) and 2.65 a minute; at 200 BPM the 13 parts write 0.81 per 40 beats (0.33–1.12) and 3.99 a minute. So
+    the rate follows the beats, a little under them on the fast songs (0.84 times), and a count in seconds does not
+    fit: the fast songs' humans write half again as many a minute.
+  - **The fit.** Each rule's K on each human chart's own span, against the chart's count, as the mean |log(K / n)|
+    over the 25 song-parts (each song-part the mean over its charts): beats/40 0.226 (guitar alone 0.216); a count in
+    seconds 0.239 at one per 20 s, 0.251 at one per 22.5 s (the best near the slower songs' median, 22 s); the
+    doubled grid's beats halved (counting on the first grid) 0.253; beats/40 counted at most at 150, 160 or 170 BPM
+    0.194, 0.195, 0.201 (guitar 0.207, 0.204, 0.203). The ceiling's gain holds with either fast song left out
+    (without troop: 0.200 → 0.193 at 160; without pm2: 0.226 → 0.199), and the fit is flat from 130 to 165 BPM, so
+    160 is not a tuned point: it is the plateau's middle and the value the set gives without troop. Every reference
+    and the shred song's grid (154 BPM, the span's average) are under it, so their counts do not change.
+  - **The rule:** K = round(min(beats, minutes × 160) / 40). pm2's guitar alone fits the old count better (its five
+    charts' median is 35), troop's three parts and pm2's bass and drums the new one; the evidence is two fast songs,
+    both power metal at 200 BPM.
+  - **Evaluation** (1 CPU take on the kept folders, `--rerun bass` on both sides, main f3b9ebb against the branch):
+    the golden diff (`--expect none`) has no change at all, every song's hashes, counts and scores identical. The
+    stress set: troop's guitar 25 → 20 phrases (5.04 → 4.04 a minute; its humans 3.03–4.44), bass 24 → 19 (the
+    human 3.24 a minute), drums 25 → 20 (3.24); pm2's guitar 36 → 29 (4.94 → 3.98; the humans 1.65–5.49), bass 36 →
+    29 (the human 29, 3.99), drums 35 → 28 (3.83; the humans 3.57 and 4.95). The shred song and the rock song are
+    unchanged, and so are every solo (troop's covers the human main solo 0.97–0.98, pm2's 0.96–1.00) and every other
+    stress score: 14 of 882 numeric fields differ, all our star power a minute. A few drum onsets on the lower levels of the
+    two fast songs moved with the fills (the reducer keeps a note in each phrase and fill: troop Hard 1782 → 1776,
+    Medium 901 → 900, Easy 745 → 748; pm2 Hard 2339 → 2340, Easy 952 → 950); `stress.py compare`: no regression.
+  - **Not fixed:** the shred song's grid is at twice its humans' tempo (154 against 77 BPM, the octave pass never
+    halves), so its 35 phrases (3.89 a minute) stay above its two charts' 2.34–3.23; a halving rule would fix it
+    (M5-99). report.json's `phrases.<part>.star_power_count` has the rules, the span in beats and seconds, the beats
+    counted, the target K and the phrases placed [code].
 
 **Drums: activation lanes first, then star power** (critique G16, E11):
 1. **Activation lanes (`S 64`):**
@@ -1553,11 +1629,22 @@ to detect, from the guitar's pick noise, where our chart is too sparse, and to f
   song is unchanged (1:46.5–2:15.4; 0.76 and 0.78 of its two charts' solos). The stress scores are identical but for
   the solo share (5 of 481 fields; the shred song 0.80 to 0.40, the power-metal song 0.31 to 0.23); `stress.py
   compare`: no regression.
+  **On fast songs (M6-01)** [here, M6-01]: the caps count our grid's measures, doubled or not. The second 200-BPM
+  song's five human charts (each on its own map, as the table above) have 18 solos: its long solo on four of them,
+  56.0, 56.3, 57.3 and 57.9 measures (67.2–69.5 s, at 200 BPM); 16.5–16.8 measures (19.8–20.1 s) twice on four; 8.0
+  measures (11.2–11.3 s, at 170 BPM) on three; one of 32.0 (45.2 s); shares 0.117–0.348. The humans' maps of both
+  200-BPM songs are at the doubled grid's tempo, so their long solos, 53–58 of their own measures, are 53–58 of ours,
+  and the 56-measure cap reproduces them: v0.2.0's candidate's solos cover the human main solo by 0.97, 0.98 and 0.97
+  on the power-metal song and 0.96, 1.00, 0.97 and 0.99 on the second (its 303–370 s against the humans' 303–373 s).
+  Counting measures of a bounded length (at most 160 BPM, as the star power: 56 of them are 84 s), or seconds alone
+  (100 s), would lengthen that solo past every human chart's 67–70 s. M5-03's rounding over all 32 human solos (the
+  95th percentile 56.8 measures and 85.5 s) would give 64 measures and 90 s: 77-s solos on the fast songs and
+  Lucretia's 91-s solo cut; not adopted. So `SoloRules` is unchanged.
 - **Difficulties:** solos are written on every guitar difficulty. The reducer copies them down and keeps at least one note in each solo on every level (`reduce.py`) [code], so scan-chart's `emptySoloSection`, which it checks on every track, cannot fire.
 
 - **Not chosen:** imported star power (autochart has none; STRUM's 8 phrases placed on the densest Expert windows come out empty on Easy); chartgen's 19 phrases.
 - **Confidence:** low-medium: the rules now run on the test song (`starpower.py`), but nobody has played the result.
-- **Would change it:** M2 counts and coverage against Encore references; the playtest; the owner choosing to omit fills (then `noDrumActivationLanes` needs a gate exemption). For solos: references with more human solos, outside allin1's training data; the friend saying whether the test song's third "solo" (317.8 s on) is one.
+- **Would change it:** M2 counts and coverage against Encore references; the playtest; the owner choosing to omit fills (then `noDrumActivationLanes` needs a gate exemption). For solos: references with more human solos, outside allin1's training data; the friend saying whether the test song's third "solo" (317.8 s on) is one. For the star-power ceiling (M6-01): fast songs of other styles in the 20-song set (the two that set it are 200-BPM power metal), and a halving rule (a grid at twice the humans' tempo stays under it).
 
 ### 2.11 Difficulty reductions
 Each level is built from the one above, so the tiers are nested by construction. `reduce.py` implements this [code]; it re-implements the ideas of Onyx and the RBN authoring guide (GPL; no code copied). autochart's own tiers are not used: they are not nested, and they triple its run time [here, 5070].
@@ -1829,7 +1916,8 @@ of its words weak is warned about (the warning, calibrated, below: M4-10's rule,
 fast song that timed well).
 
 **On the chart** (`lyrics.place`): each syllable start is snapped onto our grid as the notes are (SnapGrid over the
-syllables' own ticks; on a doubled grid one slot level coarser, its 8ths and their triplets, as the bass: below);
+syllables' own ticks; on a doubled grid one slot level coarser, its 8ths and their triplets: below; the bass there
+gets its 8ths only, §2.6);
 phrases are the lines, also split where the next syllable starts more than 3.0 s after the
 last (the six references' 1,076 gaps between word starts inside a phrase: p99 2.0 s, the longest 3.02 s, 1 over
 3.0 s; a third of the gaps between their phrases are longer); phrase_start goes 0.151 s before the first syllable and

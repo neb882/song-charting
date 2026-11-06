@@ -7,6 +7,7 @@ import math
 import shutil
 import sys
 from dataclasses import asdict, replace
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -15,9 +16,9 @@ import songcharter.assemble as assemble_module
 from songcharter import audio as A
 from songcharter import lyrics as L
 from songcharter.assemble import (CLIP_MARGIN_S, HOPO_RULES, OCTAVE_MAX_BPM, OCTAVE_MIN_ONSETS,
-                                  OCTAVE_SHARE, OCTAVE_SHORT, GateIssue, OctaveRules, active_span, assemble,
+                                  OCTAVE_SHARE, OCTAVE_SHORT, GateIssue, OctaveRules, PartConfig, active_span, assemble,
                                   backbeat_ratio, check_inputs, clip_to_audio, difficulty_rating, failed_folder,
-                                  find_scan_chart, grid_octave, last_tick_by, load_config, parse_config,
+                                  find_scan_chart, grid_octave, last_tick_by, load_config, parse_config, part_rules,
                                   run_scan_chart, scan_chart_issues, scan_chart_song, scan_rules, self_check,
                                   short_intervals, silent_onsets, stem_alignment, trim_silent_edges, verify_folder)
 from songcharter.beatgrid import ONSET_TO_BEAT_MS, BeatGrid, OnsetFeatures
@@ -27,7 +28,7 @@ from songcharter.cli import main
 from songcharter.errors import InputError, ToolError
 from songcharter.importers import read_chart, read_song
 from songcharter.quantize import play_states, quantize_part
-from songcharter.starpower import SOLO_RULES
+from songcharter.starpower import SOLO_RULES, SP_RULES
 from songcharter.tempo import Tempo, TempoMap
 from songcharter.timed import TimedHit, TimedNote, TimedPart, TimedSong, TimedSpan
 
@@ -1155,8 +1156,17 @@ def test_the_solo_report_without_names(built):
     (root / "solo_rules.json").write_text(json.dumps(cfg), encoding="utf-8")
     result = assemble(root / "solo_rules.json")
     assert result.ok, [i for i in result.issues if i.error]
-    phrases = json.loads((result.folder / "report.json").read_text(encoding="utf-8"))["phrases"]["guitar"]
+    every = json.loads((result.folder / "report.json").read_text(encoding="utf-8"))["phrases"]
+    phrases = every["guitar"]
     assert phrases["solo_rules"] == {**asdict(SOLO_RULES), "capped": True}
+    # each part's star-power count (M6-01): the rules, its span's beats counted at most at 160 BPM, the target
+    assert every.keys() == {"guitar", "bass", "drums"}
+    for part in every.values():
+        count = part["star_power_count"]
+        assert count["rules"] == asdict(SP_RULES) and count["placed"] == len(part["star_power"]) > 0
+        assert count["counted_beats"] == pytest.approx(
+            min(count["span_beats"], count["span_seconds"] * SP_RULES.max_bpm / 60), abs=0.01)
+        assert count["target"] == round(count["counted_beats"] / SP_RULES.beats_per_phrase) >= count["placed"]
     # the two runs, 16.5-52.5 s and 64.5-80.5 s, are 52 s of a 75.8-s span (0.40 of it: 30.3 s): the denser first
     # run is cut to its densest window within the budget, and the second, with no room left, is skipped
     (trimmed,), (skipped,) = phrases["solos_trimmed_by_share"], phrases["solos_skipped_by_share"]
@@ -1537,20 +1547,54 @@ def test_grid_octave_2_past_300_bpm_is_bad_input(built, monkeypatch):
 
 
 def test_on_a_doubled_grid_the_bass_snaps_to_8ths(fast_song):
-    """On a doubled grid the bass gets the grid's 8ths and their triplets (the first grid's 16ths), so its late
+    """On a doubled grid the bass gets the grid's 8ths (the first grid's 16ths) and no triplet slots, so its late
     8ths (its offset fixed at 0 here) stay on 8th lines instead of the 1/16 after them; the guitar keeps 1/16s.
     Undoubled, nothing changes."""
     root, config = fast_song
     parts = config["parts"] + [{"instrument": "bass", "source": "tool/bass.chart", "offset": 0.0}]
     result = assemble(parse_config({**config, "parts": parts, "output": "out/bass"}, root))
     assert result.ok and result.report["grid"]["octave"] == 2
-    assert result.report["parts"]["bass"]["slots"] == {"straight": 2, "triplet": 3}
+    assert result.report["parts"]["bass"]["slots"] == {"straight": 2, "triplet": 0}
     assert result.report["parts"]["guitar"]["slots"] == {"straight": 4, "triplet": 3}
     res = result.chart.tempo.resolution
     bass = next(t for t in result.chart.tracks if t.name == "ExpertDoubleBass")
     assert len(bass.notes) == FAST_NOTES // 2 and all(n.tick % (res // 2) == 0 for n in bass.notes)
     one = assemble(parse_config({**config, "parts": parts, "grid_octave": 1, "output": "out/bass1"}, root))
     assert one.report["parts"]["bass"]["slots"] == {"straight": 4, "triplet": 3}
+
+
+def scattered_bass(tm: TempoMap, seed: int = 0) -> list[TimedNote]:
+    """A made-up bass engine's straight 8ths on a 200 BPM map (a doubled grid's tempo): each beat line within 5 ms,
+    each off-beat 8th 40-50 ms early or late, so it lies within 10 ms of a third of the beat (a triplet slot, 100 ms
+    apart) and 40-50 ms from its 8th: the spread that put pm2's bass on triplet slots (DESIGN.md 2.6)."""
+    rng = np.random.default_rng(seed)
+    notes = []
+    for b in range(8, 40):
+        notes.append(TimedNote(tm.tick_to_sec(b * tm.resolution) + rng.uniform(-0.005, 0.005), (b % 3,)))
+        late = (-1) ** (b // 2) * rng.uniform(0.040, 0.050)  # two beats early, two late, ...
+        notes.append(TimedNote(tm.tick_to_sec((b + 0.5) * tm.resolution) + late, ((b + 1) % 3,)))
+    return notes
+
+
+def test_on_a_doubled_grid_the_bass_has_no_triplet_slots():
+    """The bass on a doubled grid snaps to the grid's 8ths only (DOUBLED_BASS_SLOTS (2, 0)): an engine's 8ths spread
+    40-50 ms off land on their 8ths, where the doubled grid's triplets (the first grid's 16th-note triplets) took them
+    a third of a beat off. On an octave-1 grid, and for every other part, the quantizer's own rules: the same onsets
+    go triplet there."""
+    tm = TempoMap.from_beats(np.arange(48) * 0.3)  # 200 BPM
+    res, notes = tm.resolution, scattered_bass(tm)
+    want = [b * res + h for b in range(8, 40) for h in (0, res // 2)]
+    bass, guitar, drums = (PartConfig(i, Path(f"{i}.chart")) for i in ("bass", "guitar", "drums"))
+    for hopo, rules in HOPO_RULES.items():
+        assert part_rules(replace(bass, hopo=hopo), 2) == replace(rules, straight=2, triplet=0)
+        for p, octave in ((bass, 1), (guitar, 1), (drums, 1), (guitar, 2), (drums, 2)):
+            assert part_rules(replace(p, hopo=hopo), octave) == rules, (p.instrument, octave, hopo)
+    track, rep = quantize_part(TimedPart("bass", "expert", notes), tm, 0.0, 0.0, part_rules(bass, 2))
+    assert [n.tick for n in track.notes] == want and rep.triplet_notes == 0
+    for p, octave in ((bass, 1), (guitar, 2)):
+        part = TimedPart(p.instrument, "expert", notes)
+        track, rep = quantize_part(part, tm, 0.0, 0.0, part_rules(p, octave))
+        assert rep.triplet_notes > 20 and [n.tick for n in track.notes] != want, (p.instrument, octave)
 
 
 def test_on_a_doubled_grid_the_lyrics_snap_to_8ths(fast_song, monkeypatch):

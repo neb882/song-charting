@@ -85,7 +85,8 @@ Its ranked gaps 1-3, 5 and 6 are M5-01, M5-02 and M5-03; part of 9 and 10 are M5
 The shred instrumental's grid came out at twice the human charts' tempo (octave-tolerant beat F1 0.94-0.96).
 M5-01 doubles a grid that is too slow and never halves one: this version builds the doubling pass only, and the
 first pass still folds into 85-185 BPM, so a pulse under 85 stays at double with its effects on the HOPO states,
-the star-power count (about twice the phrases) and the solo measures (M5-03 caps solos in seconds for that reason).
+the star-power count (about twice the phrases; M6-01's ceiling at 160 BPM does not reach a 154-BPM grid) and the
+solo measures (M5-03 caps solos in seconds for that reason).
 A halving rule needs its own statistic (the share of onsets on beat lines, the backbeat ratio M5-01 records for
 every song, the HOPO shares) and a check that the natural HOPO threshold (in ticks) still reads right; measure on
 the stress set first. Half a day to measure, a day to build. M5-01's statistics for the shred song on its first
@@ -96,11 +97,14 @@ share ours 0.34 against the humans' 0.55 and 0.39; star power 3.88 phrases a min
 side finding of M6-05's measurement: allin1's beats at their own rate are at the humans' level on the shred song,
 beat F1 0.967 against our grid's 0.643, so allin1's tempo is one candidate statistic for halving (M6-06).
 
-## Star power on a doubled grid
+## Star power on a doubled grid (closed by M6-01)
 
 The phrase rule counts beats (`starpower.py`, about one phrase per 40 beats), so a doubled grid about doubles the
 phrases: the power-metal song went from 2.42 to 5.04 a minute against the humans' 3.03-4.44 (M5-01's stress run).
-A rule in seconds or in measures at the pulse is the fix; the reviewer looks at it before the gate.
+**M6-01:** measured on every human chart, the rate follows the beats (a count in seconds fits worse), a little under
+them at 200 BPM (0.84 times); the span's beats are now counted at most at 160 BPM (DESIGN 2.10). Left: the 160 rests on
+two 200-BPM power-metal songs (the 20-song set measures it again), and a grid at twice the humans' tempo under 160 BPM
+(the shred song's, 154) keeps its doubled count until a halving rule (above).
 
 ## Downbeats when the kick is on every beat (M5-01's follow-up)
 
@@ -142,6 +146,22 @@ cfc7d5d against the branch):
   further off (4.3 -> 4.4 ms), so the numbers point at the triplet slots (the doubled grid's triplets are the first
   grid's 16th-note triplets, finer than its own), not the offset. Measure both on `troop` and `pm2` before
   changing either; half a day.
+  - **The triplet slots: done (M6-02).** The bass on a doubled grid has no triplet slots now (`DOUBLED_BASS_SLOTS`
+    (2, 0)): bass F1@50 against the primaries 0.716 -> 0.735 (troop) and 0.777 -> 0.787 (pm2), alt2 0.595 ->
+    0.588 (DESIGN 2.6). The offset half has no support either: the matched notes' signed median error is 0.9 ms
+    (troop) and 4.3 ms (pm2) against the primaries, within 0.3 ms of before on every chart.
+  - **Left: the bass's 16ths on a doubled grid.** The doubled bass grid's 8ths are the first grid's 16ths, and it
+    has nothing finer, so a 16th-note run of the song's own tempo has nowhere to go. The humans chart 16ths there
+    (troop's primary 304 of 1,852 bass notes, pm2's 405 of 2,571, its alt2 1,021 of 3,154). The triplet slots
+    matched some of them by accident (a triplet slot is 25 ms from a 16th at 200 BPM): removing them lost 72 of
+    alt2's 16ths and 20 of the primary's. pm2's bass is still under its first grid's (0.787 against 0.800 at
+    cfc7d5d, `stress.py compare eval/baseline/stress`), troop's above M5-01's 0.716. The answer belongs with the
+    burst slots above: finer slots for an engine whose onsets can be trusted at that resolution, measured on the same
+    three charts.
+  - **Untested: the doubled-bass rules on imported lower levels.** An assemble config that imports every level
+    (`take_difficulties: "all"`) on a doubled grid would give Hard, Medium and Easy the bass rules only through
+    `part_rules`; no test covers it (M6-02's review: a break giving them the octave-1 rules passes). The pipeline
+    imports Expert only. A test, a few minutes.
 - **A tempo change under a doubled grid.** Narrowed by M6-05 (DESIGN 2.3 step 7): when the doubled grid's tempo
   check warns and allin1's beats are there, the second pass starts from them, doubled; `pm2`'s beat F1 0.598 ->
   0.987, windows under 0.9 from 22 to 4 of 45, its Expert F1@50 not lower on any part, the other stress songs and
@@ -158,9 +178,12 @@ cfc7d5d against the branch):
   greedy matching maximizes the count): on `pm2` it reads 10.9-39.4 ms where the 50-ms matches read 3.6 ms against
   the primary and that plus each chart's own offset against the others. `stress.py`'s feel report should give the
   median of the 50-ms matches (or of the nearest neighbours) beside it; an hour with its test.
-- **Solos in measures on a doubled grid.** M5-03's caps count measures, which halve in length when the grid
-  doubles: `pm2`'s long middle solo (267-365 s on the first grid) is capped at 56 measures, 67 s (303-370 s), and
-  the solo share falls 0.33 -> 0.26 (the humans 0.12-0.35). Weigh it with the star-power rule below.
+- **Solos in measures on a doubled grid (closed by M6-01: no change).** M5-03's caps count measures, which halve
+  in length when the grid doubles: `pm2`'s long middle solo (267-365 s on the first grid) is capped at 56 measures,
+  67 s (303-370 s), and the solo share falls 0.33 -> 0.26 (the humans 0.12-0.35). M6-01 measured the humans' own: on
+  both 200-BPM songs their maps are at the doubled grid's tempo and their long solos are 53-58 of those measures
+  (pm2's 67-70 s at 303-373 s), which the capped solo covers by 0.96-1.00; a longer cap would pass every human chart
+  (DESIGN 2.10).
 
 ## The reference set at 20 or more songs, with human-charted solos
 
