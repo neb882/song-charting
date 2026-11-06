@@ -48,4 +48,4 @@ of later code passes `--rerun drums,guitar` on both sides (PROGRESS, golden).
 ## Limits for unattended work (the owner's, unchanged)
 
 No release published without the owner; no session on the owner's PC unless he asks; no force push or branch
-delete; no usage credits; pause new work at 70% of the weekly usage.
+delete; no usage credits; pause new work at 75% of the weekly usage and stop before 80% (the owner, 2026-11-06; it was 70%).
