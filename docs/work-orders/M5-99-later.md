@@ -148,8 +148,10 @@ cfc7d5d against the branch):
     has nothing finer, so a 16th-note run of the song's own tempo has nowhere to go. The humans chart 16ths there
     (troop's primary 304 of 1,852 bass notes, pm2's 405 of 2,571, its alt2 1,021 of 3,154). The triplet slots
     matched some of them by accident (a triplet slot is 25 ms from a 16th at 200 BPM): removing them lost 72 of
-    alt2's 16ths and 20 of the primary's. The answer belongs with the burst slots above: finer slots for an engine
-    whose onsets can be trusted at that resolution, measured on the same three charts.
+    alt2's 16ths and 20 of the primary's. pm2's bass is still under its first grid's (0.787 against 0.800 at
+    cfc7d5d, `stress.py compare eval/baseline/stress`), troop's above M5-01's 0.716. The answer belongs with the
+    burst slots above: finer slots for an engine whose onsets can be trusted at that resolution, measured on the same
+    three charts.
 - **A tempo change under a doubled grid.** Plain beat F1 0.397 -> 0.598 (octave-tolerant 0.658; the humans 1.000),
   downbeat F1 0.014. The grid has the beat count (1,457 beats against 1,435) and a median error of 13.6 ms, but
   about 40 % of its beats are more than 70 ms off, and the build warns of a 170 BPM stretch at 235-300 s that the
