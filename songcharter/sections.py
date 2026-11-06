@@ -74,22 +74,35 @@ def read_allin1(path) -> list[Segment]:
     return sorted(out, key=lambda s: (s.start, s.end))
 
 
+def _read_times(path, key: str) -> np.ndarray | None:
+    """The times under `key` in an allin1 result JSON (sorted, repeats dropped), or None when it holds none (absent,
+    null or empty). A value that is not a list of finite times is an InputError."""
+    data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    times = data.get(key) if isinstance(data, dict) else None
+    if times is None or (isinstance(times, list) and not times):
+        return None
+    try:
+        b = np.asarray(times, dtype=np.float64)
+    except (TypeError, ValueError) as e:
+        raise InputError(f"{path}: '{key}' is not a list of times ({type(e).__name__}: {e})") from e
+    if b.ndim != 1 or not np.isfinite(b).all():
+        raise InputError(f"{path}: '{key}' is not a list of finite times")
+    return np.unique(b)
+
+
 def read_allin1_beats(path) -> np.ndarray | None:
     """allin1's beats in an allin1 result JSON (seconds of the input audio, sorted, repeats dropped), or None when
     it holds none: the librosa fallback writes only `segments`. assemble's second pass starts from them when its
     straight line misses a tempo change (DESIGN.md 2.3). A `beats` that is not a list of finite times is an
     InputError."""
-    data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
-    beats = data.get("beats") if isinstance(data, dict) else None
-    if beats is None or (isinstance(beats, list) and not beats):
-        return None
-    try:
-        b = np.asarray(beats, dtype=np.float64)
-    except (TypeError, ValueError) as e:
-        raise InputError(f"{path}: 'beats' is not a list of times ({type(e).__name__}: {e})") from e
-    if b.ndim != 1 or not np.isfinite(b).all():
-        raise InputError(f"{path}: 'beats' is not a list of finite times")
-    return np.unique(b)
+    return _read_times(path, "beats")
+
+
+def read_allin1_downbeats(path) -> np.ndarray | None:
+    """allin1's downbeats in an allin1 result JSON (seconds of the input audio, sorted, repeats dropped), or None
+    when it holds none (the librosa fallback). assemble takes the bar phase from them (beatgrid.with_downbeats,
+    DESIGN.md 2.3 step 4). A `downbeats` that is not a list of finite times is an InputError."""
+    return _read_times(path, "downbeats")
 
 
 def label_name(label: str) -> str:
