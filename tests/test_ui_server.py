@@ -501,7 +501,9 @@ def test_uploads(served, monkeypatch):
     assert body["tags"]["name"] == "Jörg's Söng" and body["origin"]["name"] == "file name"   # the name as dropped
     assert body["tags"]["artist"] == "Unknown" and body["origin"]["artist"] == "default"
     assert S.read_upload(ctx.home, key[:16])["path"] == str(folder / "Jorg's Song.wav")
-    for bad in ("../" + key[:14], key[:15], key[:16].upper(), None, 7):
+    # an upper-cased id differs only when the key has a letter (the WAV's bytes, so the key, depend on the CPU's sin)
+    upper = [key[:16].upper()] if key[:16].upper() != key[:16] else []
+    for bad in ("../" + key[:14], key[:15], key[:15] + "g", *upper, None, 7):
         assert S.read_upload(ctx.home, bad) is None
     assert not list((ctx.home / "uploads").glob(".incoming-*"))
     # too big: 413 before a byte is read; no length: 411

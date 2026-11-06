@@ -793,7 +793,7 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
        | pooled | HOPO / tap | 7,184 / 1,191 | 37.0 / 37.5 | 37.5 / 37.5 | — |
 
        The pooled 1st percentile was the plan's first rule; it lands on the power-metal song's mass point of 3,092
-       strummed 16ths at exactly 75.0 ms (200 BPM), 37 % of the pooled strum gaps;
+       strummed 16ths at exactly 75.0 ms (200 BPM; 19.7 % of the pooled strum gaps, the power-metal charts 37 % of them);
      - notes dropped from the power-metal song's first guitar chart (2,495 notes) through `quantize_part` as a perfect
        engine, by floor (strum/HOPO, ms):
 
@@ -2020,7 +2020,10 @@ v1's absolute targets, kept as information only:
   - `break`, an ordinary rock song, the guard against making normal songs worse: 4 charts, of which two have only a
     6-fret and a rhythm part (listed, not scored); the owner's own file of it aligns with the packages' audio
     (`stress.py align`: +81.5 ms, 9 of 9 windows at 0.3 or more, the lags' MAD 0.00 ms), so his chart and play test
-    of it are comparable with the set's numbers.
+    of it are comparable with the set's numbers;
+  - `pm2` (M5-11), a second 200 BPM power-metal song, 7:20, with long solos: 5 charts; the primary has guitar,
+    bass, drums, keys and vocals (lyric events: timing scripts only). It is the second song that needs a doubled
+    grid (§2.3 step 7).
 
   The primary of each is the chart with the most parts (ties: more Expert guitar notes), counted by a script that
   prints counts only. Our chart is scored against every human chart, and the others against the primary: the
@@ -2167,7 +2170,9 @@ v1's absolute targets, kept as information only:
   - **The baseline** [here, M5-09]: `main` at fbd9751 (wave 1's, after M4-11), one CPU take, 2 threads, cold:
     4000 s for the three songs (kept folders made in 1371, 2046 and 410 s: the guitar take 943, 1277 and 160 s, the
     separation 226, 419 and 118 s, allin1 126, 205 and 88 s; then 28 to 80 s a build), 2.5 GB of kept folders (the
-    stems separated into them) and 0.57 GB for the built set; `eval/baseline/stress/`. Every gate OK. Expert F1@50
+    stems separated into them) and 0.57 GB for the built set; then `eval/baseline/stress/` (since M5-11 that folder holds main at cfc7d5d's
+    four-song run, M5-11's report; this M5-09 run stays on the dev machine as `$SONGCHARTER_GOLDEN/stress-base`,
+    the run v0.2.0's release gate compares with). Every gate OK. Expert F1@50
     against the primary (the other human charts against it beside): the power-metal song's guitar 0.614 (0.917,
     0.925), bass 0.702, drums 0.851; the shred instrumental's guitar 0.651 (0.712), bass 0.692; the rock song's
     guitar 0.832 (0.951). Beat F1 0.302, 0.644 and 0.994 (octave-tolerant 0.399, 0.963, 0.994; downbeat 0.070,

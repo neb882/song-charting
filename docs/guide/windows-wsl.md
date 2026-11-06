@@ -49,7 +49,7 @@ page.
   again. It switches to the GPU build too.
 - At the end, it sets how much memory WSL may use and restarts WSL, and the window closes.
 - **When a new version is out,** songcharter's page says so in a box at the top, with the new version's install
-  line and a **Copy** button (the page looks once a day). To update: close the songcharter window, open Ubuntu from
+  line and a **Copy** button (the page looks once a day, or an hour after a look that failed). To update: close the songcharter window, open Ubuntu from
   the Start menu, paste the line (a right-click or Ctrl+V) and press Enter, as above. Your charts, your Clone Hero
   folder and the big downloads are kept, so it fetches only what changed: usually a minute or two. "Later" hides the
   box until the page is opened again.

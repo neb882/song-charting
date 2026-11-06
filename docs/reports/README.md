@@ -28,6 +28,17 @@ ones then, but the CI runs they link still name the old ones.
 | `rc-fixes.md` | the release candidate's fixes (the guide's timings, the guitar's GPU-failure message, doctor's problems on the page, M4-08's release-first order and checks) and their review |
 | `release-gate.md` | the release gate for v0.1: the full review, the golden charts and the test song; the GPU smoke test on the owner's 5070; the gate's fixes and their second review |
 | `charting-conventions.md` | how 5-fret charts are supposed to be made (tempo maps, notes, chords, HOPOs, sustains, star power, solos, lyrics, the song folder), with sources, and songcharter's gaps (M5) |
+| `M5-01-fast-grid.md` | the grid's tempo octave doubled on dense songs, no chord of notes distinct in time, the 20 ms floors; the four decisions and the review |
+| `M5-02-long-songs.md` | a guitar take cut short by the engine's token budget continued and stitched; the watchdog's headroom after the skeptic |
+| `M5-03-solos.md` | solo caps in measures, seconds and share from the human charts; the densest window and the trim |
+| `M5-04-lyrics-warning.md` | the lyrics' unsure warning on the share of weak words, calibrated on 14 runs (numbers only) |
+| `M5-05-gpu-retry.md` | a failed CUDA take retried on the CPU, classified from the driver's FAILED line after the skeptic |
+| `M5-06-names.md` | "Artist - Title" from the file name; folder names cut at a word |
+| `M5-07-updates.md` | the page's update notice with a Copy button, and the update path in CI |
+| `M5-08-install-polish.md` | the install's quiet lines and download names |
+| `M5-09-stress-eval.md` | the stress set (generic ids, the owner's list kept outside), `eval/stress.py` and the feel measures, the baseline |
+| `M5-10-doubled-lyrics.md` | the lyrics on a doubled grid snap to its 8ths (numbers only) |
+| `M5-11-octave-by-density.md` | the octave by note density alone, a fourth stress song, the new four-song baseline |
 | `feel.md` | how a chart should feel to play: nine parts, each with a measure, revised after the advisor (M5) |
 | `m5-plan-review.md` | the advisor's review of the M5 plan and the three skeptics' verdicts |
 | `pipeline-review.md` | an advisor's review of how work is run (2026-11-04), finding by finding, with what was done |
