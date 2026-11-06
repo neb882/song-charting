@@ -145,6 +145,10 @@ the preview rerun) is a day, with the quick fixes of M4-99 (the downbeat and the
 - The 50 ms share: 0.45 pooled on the references, 0.68 on the power-metal song, where the humans agree 0.94 with
   each other. The 20 ms emission grid, the star tokens and the syllable spread are the places to look; M5-09's
   timing script measures it. A day to measure.
+- On a doubled grid (M5-10): the words snap to its 8ths, so a word the aligner misplaces misses by an 8th; on
+  the power-metal song the 250 ms share is 0.950, exactly the bar, and the 100 ms share 0.750. The aligner's
+  lead (a median 20 ms early there) is the lever; it needs a second fast song with human lyrics to measure
+  against (none in the sets yet). Half a day once there is one.
 - Non-Latin scripts (no romanization: words spread between neighbours), and the first-use download's progress line
   on the page (the release gate's deferred item). Half a day each.
 
