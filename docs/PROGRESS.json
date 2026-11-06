@@ -110,6 +110,7 @@
     }
   ],
   "next": [
+    "M5-11 (docs/work-orders/M5-11-octave-by-density.md, after M5-10's merge): the grid's octave by note density alone. A fourth stress song (a 200 BPM power-metal song, the owner's audio, five human charts) is charted at 100 BPM by main: its density says double (0.527) but its backbeat ratio (0.19) vetoes it; the guitar lands about 70 ms off the humans' (F1@50 0.65-0.68 against their 0.92-0.97).",
     "M5-10 (docs/work-orders/M5-10-doubled-lyrics.md, after M5-03's merge): on a doubled grid the lyrics snap one slot level coarser, as M5-01 did for the bass (M5-04 measured the power-metal song's lyric timing at a median 67 ms on M5-01's 200 BPM grid, 7 ms before).",
     "The release gate for v0.2.0 (M5-00 section 7), once M5-03, M5-10 and M5-07 are merged and main's CI is green: the owner decided on 2026-11-05 that the full review workflow (.claude/workflows/full-review.js, the full-review skill) runs over the integrated release, sized under 10 agents and within the 70 % weekly limit; then the advisor; then the owner's PC checks and his approval.",
     "M4: M4-08 part B, the friend's PC: he follows the guide alone, charts the test song with 1 take and with the defaults, charts a song of his own, installs it into Clone Hero and plays it, and sends the diagnostics zip saved after his last chart.",
