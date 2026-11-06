@@ -165,10 +165,14 @@ in the sound forms below) and the play test at the gate (section 7).
 ## 7. The release gate for this version
 
 PIPELINE's gate, in its order, plus what this version adds:
+0. **Added at the gate (2026-11-06):** the version bumped to 0.2.0 (`__version__`, pyproject, uv.lock) and
+   build.sh's check that the tag's version is HEAD's (M5-12), before the gate's runs.
 1. The full suite passes.
 2. The golden charts against v0.1.0's checkout, `--rerun drums,guitar` both sides, `--expect` as section 4 says;
    `report.md` read: the pooled F1 per part not lower than v0.1.0's on any part.
-3. **Added:** the stress check (`stress.py compare` of the baseline and the candidate): every F1@50 at least the
+3. **Added:** the stress check (`stress.py compare` of the baseline and the candidate; the baseline is M5-09's run,
+   kept on the dev machine as `$SONGCHARTER_GOLDEN/stress-base`, since M5-11 moved `eval/baseline/stress/` to
+   cfc7d5d's four-song run): every F1@50 at least the
    baseline's − 0.01 on every song and part, the rock song included (the guard against making normal songs worse),
    and M5-01's, M5-02's and M5-03's pass lines met; the feel report read beside it (no measure of section 5 worse
    than the baseline's without a reason the merge report gave); the lyrics check on the power-metal song with no

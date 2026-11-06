@@ -51,8 +51,8 @@ reviewed, merged work then found 3 real issues, none of them major.]
   It routes findings as an order's review does (step 4 below): the minor ones and the test gaps go to the fixer
   unverified.
 - **Usage.** Read the usage meter (`mcp__usage-meter__usage`) before each wave, before starting any builder and before
-  a big run, and give a workflow a token budget. The owner's limit for unattended work: pause new work at 70 % of the
-  weekly usage, and never draw on usage credits. The meter is a mod whose source is `.claude/mods/usage-meter/`: a
+  a big run, and give a workflow a token budget. The owner's limit for unattended work: pause new work at 75 % of the
+  weekly usage and stop before 80 % (the owner, 2026-11-06; it was 70 %), and never draw on usage credits. The meter is a mod whose source is `.claude/mods/usage-meter/`: a
   new session installs it as that folder's README says (a mod is not loaded from the repository). [On 2026-11-05 a
   new session had no way to read the usage until the owner relayed the mod from the old one.]
 
@@ -99,6 +99,11 @@ reviewed, merged work then found 3 real issues, none of them major.]
      the matches of a few distinctive words of the owner's lyrics text. [Reports left in the session's scratch folder
      vanish with the container; DESIGN.md once cited evidence nobody could re-check. On 2026-11-05 a builder's
      report named the packages by md5 prefix.]
+   - **The privacy check** before every push to main: `EVAL_DATA=<dev>/eval python -I eval/privacy_check.py`
+     (every tracked file; or the report's file before it is committed) finds the stress set's md5s, their prefixes
+     and its titles, artists and charters, printing only where; exit 1 stops the push. [v0.2.0's full review found a
+     committed plan review naming five packages by 4-digit md5 prefixes, and three docs naming the rock song by
+     title and artist, 2026-11-06; the history keeps them.]
    - Update PROGRESS (the order leaves `in_flight`), and append to the later orders anything this one deferred to
      them.
    - Remove the worktree, and delete the order's scratch and `/dev/shm` folders; note `df -h /` in the merge's
@@ -115,6 +120,10 @@ reviewed, merged work then found 3 real issues, none of them major.]
     [Both of M4's plans needed a full round of the advisor's corrections (11, then 12, all accepted). Planning is the
     cheap phase, and a fresh agent also tests that the repository holds everything a new session needs.]
 - **A release, before the friend gets it:**
+  0. The version is the release's: `songcharter/__init__.py`, `pyproject.toml` and `uv.lock` say it before the
+     gate's runs, so the commit the gate measures is the one that is tagged (`build.sh` refuses another version,
+     M5-12). [v0.2.0's candidate still said 0.1.0: its page would have told the friend, after the update, that
+     0.2.0 is out, every day.]
   1. The full suite passes.
   2. The golden charts show no UNEXPECTED change on the whole reference set: `eval/README.md`'s commands (Golden
      charts), run from the release's checkout with the last release checked out at `/dev/shm/golden-old` and every

@@ -111,6 +111,7 @@ ceiling of every measure). `eval/stress.json` names the songs by generic ids:
 | troop | a 198 BPM power-metal song | 3 | guitar, bass, drums and vocals (lyric events: the lyrics check) |
 | sooth | a 9-minute shred instrumental | 2 | guitar and bass |
 | break | an ordinary rock song, the guard against making normal songs worse | 4 | guitar (two other charts have only a 6-fret and a rhythm part, and are listed but not scored) |
+| pm2 | a second 200 BPM power-metal song, 7:20, with long solos (M5-11) | 5 | guitar, bass, drums, keys and vocals (lyric events: timing scripts only) |
 
 The packages' md5s, titles and charters are not committed, the owner keeps the list: `$EVAL_DATA/stress.local.json`
 (`refs.json`'s shape, each entry with `alts`, the other charts' `md5` and `charter`). The packages are other
@@ -162,7 +163,8 @@ python eval/stress.py align break /path/to/a/file/of/the/song.mp3               
 
 **Cost** [measured on the dev machine, 4 cores, CPU, 2 threads]: the build, under a minute a chart (3 minutes for
 the nine), 0.57 GB; the first run, which makes the kept folders (the separation runs in them: no separation cache
-holds these songs), 67 minutes (23, 34 and 7 minutes a song, the guitar take most of it) and 2.5 GB; a run after that
+holds these songs), 67 minutes for the first three songs (23, 34 and 7 minutes a song, the guitar take most of it; pm2, added by M5-11,
+28 minutes more) and 2.5 GB; a run after that
 builds each song from its kept folder in 28 to 80 s (as the first run's builds did); `score`, 2 minutes. Refuse to
 start a first run under 10 GB free.
 

@@ -135,7 +135,7 @@ reference); and two onsets that snap to one tick merge into a chord whenever the
    = `HOPO_SPACING_S` = 0.020 s, fixed (`brokenNote` plus a margin), the rule's shape kept (an onset under the floor
    is dropped, `QuantizeReport.dropped`). Not the human charts' 1st percentile, as the plan first said: the skeptic
    measured that rule at 75 ms, exactly the power-metal song's strummed 16ths at 200 BPM (3,092 gaps at that mass
-   point, 37 % of the pooled strum gaps of the eleven human charts), so whether hundreds of that song's notes survive
+   point, 19.7 % of the pooled strum gaps of the eleven human charts; the power-metal charts are 37 % of them), so whether hundreds of that song's notes survive
    depends on tempo differences of 0.0005 %; 74 ms survives clean grids but breaks at drum-like jitter; 20 ms drops
    nothing anywhere and keeps the only guarantee the floors were ever for (DESIGN 2.6 step 3: `brokenNote` cannot
    fire). The key rows, notes dropped from the power-metal song's primary guitar chart (2,495 notes) through
