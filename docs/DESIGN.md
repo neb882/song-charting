@@ -390,7 +390,8 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
    (`beat_grid(bpm_range=(170, 370))`, which reaches every fold), drops the first-beat hint, keeps its hinted line
    (`keep_line=True`) and runs the half-beat test (`half_beat=True`). The tempo map, lead-in, downbeats, sections, star power and the HOPO threshold follow
    the chosen grid. Halving is not built: a pulse under 85 BPM stays at double, as on the shred instrumental; its
-   statistics are in M5-99.
+   statistics are in M5-99. There allin1's beats, at their own rate, are at the humans' level: beat F1 0.967 against
+   our grid's 0.643 (M6-05's measurement; M6-06 measures a halving).
    - **Why the fold is wrong** (the charting-conventions report, section 11 item 1): charters chart the musical
      tempo, anywhere in Magma's 40–300 BPM, and then force the HOPO states. Every rule songcharter counts in beats
      or ticks only comes out right at that pulse: the HOPO threshold, the 1/16 slots, the sustain floors, star
@@ -505,8 +506,58 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
      - **The beat F1.** The grid has the beat count (1,457 against the primary's 1,435) and a median error of
        13.6 ms, but about 40 % of its beats are more than 70 ms off, and the build warns of a 170 BPM stretch at
        235–300 s that the 200 BPM grid does not follow. The drums' matched notes sit within 14 ms of the primary's
-       in every 30-s window.
+       in every 30-s window. M6-05 (below) starts the doubled grid from allin1's beats there: 0.987.
      - The guitar's chords are the engine's: the quantizer merged none on either grid.
+   - **A tempo change under the doubled grid: the second pass from allin1's beats** (M6-05) [code; here, M6-05's
+     stress runs: cb48d81 against the branch, 1 CPU take, `--rerun bass`, `stress.py score`; the measurement behind
+     the order in its report]. `pm2`'s human charts hold one 170 BPM stretch (about 246–291 s, 128 beats) in a 200
+     BPM song. Both passes laid a straight line through it: F1 0.39–0.46 in the stretch, then a constant half-beat
+     slip after it (F1 0.00 in every 10-s window from 290 s, our lines on the "and"s). The tempo check saw it and
+     nothing acted on it; `keep_line` is not the cause (off, the start stays the line on `pm2`), and the tracker's
+     own beats flip phase on this drum stem (F1 0.20 at the first range, 0.32 at the doubled one). allin1's beats
+     (the sections engine's `segments.json`; at half the humans' rate on this song) doubled by midpoints follow the
+     stretch and keep the phase after it.
+     - **The rule** (`assemble._octave_pass`, `assemble.allin1_start`). When the doubled grid's tempo check
+       (`missed_tempo_changes`) is not empty and the sections file holds allin1's beats, the second pass runs again
+       with `start=` those beats: a midpoint added between each two, moved to onset times (minus `ONSET_TO_BEAT_MS`),
+       at the doubled range, with the half-beat test as before. `beat_grid` refines them onto the drums (free mode),
+       and that grid is the doubled grid; the guard's ratio is then its share (`pm2`: 0.726 against the line's
+       0.702 and the first grid's 0.744). They are used only when at least 8 fall inside the audio and their doubled
+       median tempo is within half an octave of the line's (a level check of this order's own: beats already at the
+       doubled level are not used at all, and the line stays; it fires on no song here). The guard reads the grid the
+       second pass returns, so a start from allin1 can keep a doubling the line would have dropped: on a song really
+       at the first level with a tempo change and dense notes, the line fails the guard and allin1's grid could pass
+       it (the review, 2026-11-06; no measured song shows it; M5-99). report.json's
+       `octave_stats.second_start` says which start the grid used and why (the line's tempo-check windows, allin1's
+       count and tempo, the line it replaced), and the build warns "the doubled grid follows allin1's beats: ...
+       check sync there". With no allin1 beats (the librosa fallback, no sections, an imported chart's) or an empty
+       tempo check, nothing changes. (`drift_ms` means nothing on such a grid: it is measured against a line through
+       the start's indices.)
+     - **The sections stage runs before assemble on every path**: `pipeline._engine_stages` runs it after the drums
+       and bass and before the lyrics, the guitar and assemble, with no switch to skip it; the page runs `songcharter
+       chart`; a cached run reads the same `segments.json` (allin1's has held its beats since the first commit); and
+       a sections stage that fails without the fallback stops the chart (ToolError) before assemble.
+     - **Measured** (before → after):
+
+       | song | beat F1 | 10-s windows under 0.9 | median window error | Expert F1@50 guitar / bass / drums (primary) |
+       |---|---|---|---|---|
+       | `pm2` (tempo check: 10 windows, 235–300 s, 170 against 200 BPM) | 0.598 → **0.987** | 22 → 4 of 45 | 11.5 → 7.9 ms | 0.803 → 0.807 / 0.777 → 0.785 / 0.973 → 0.973 |
+       | `troop` (doubled, tempo check empty) | 1.000 → 1.000 | 2 → 2 | 1.8 → 1.8 ms | every track hash identical |
+       | `sooth`, `break` (octave 1: no second pass) | 0.644, 0.994 | — | — | every track hash identical |
+       | the seven references (octave 1: no second pass, empty tempo checks) | identical | — | — | identical (the golden diff, `--expect none`, `--rerun bass,sections`, against main 8a93698: every hash, count and score) |
+
+       On `pm2` the stretch and everything after it go from 0.00–0.46 to 0.97–1.02 per window, 2–12 ms off. The
+       entry into the stretch stays weaker: 230–240 s 1.01 → 0.85, 240–250 s 0.74 → 0.55 (44 ms; the tempo map dips
+       to 141 BPM there, the humans' maps hold 170). The windows under 0.9 left are that entry, the first window (our
+       lead-in beats, an edge artefact) and the song's last.
+     - **`pm2`'s lower levels fall** (the stress check reads Expert only): Easy guitar 0.515 → 0.113, Easy bass
+       0.559 → 0.093, drums Medium 0.579 → 0.458 and Easy 0.553 → 0.378, while Hard and Medium guitar (0.589 → 0.667,
+       0.524 → 0.783) and bass (0.585 → 0.694, 0.568 → 0.874) rise. The cause is the bar phase, not the beats: our
+       measure lines sat 2 beats off the primary's before 235 s (so Easy's half-measure lines fell on its measure
+       lines) and now sit 1 beat off over the whole song (on its beats 2 and 4). With a kick on every beat
+       `bar_phase` has no margin (0.125 → 0.014, both flagged), and the downbeat F1 was 0.014 and is 0.000. The
+       downbeats on fast songs are M6-03's; allin1's own downbeats (in the same file) are a candidate there, not
+       measured.
 
 **Whole-song runs tonight** [here, beatgrid run].
 

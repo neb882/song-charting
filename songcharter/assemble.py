@@ -14,11 +14,14 @@ own difficulties, star power, fills and sections, and a Clone Hero folder that i
   2. **Grid.** beatgrid.beat_grid on the drum stem (or the mix), with the optional bpm / first-beat hints and mode
      override. Beats the drums leave without evidence (a guitar-only intro) follow a second stem's onsets where they
      hold a clear 8th/16th phase (`grid_secondary`: by default the guitar stem, else "other"; none when the grid
-     comes from the mix). A window whose tempo the grid does not follow (stats["tempo_check"]), and a stretch of 16
-     or more beats that neither the drums nor the second stem time, are warned about. plan_lead_in puts silence in
-     front so tick 0 is a measure line, and TempoMap.from_beats builds the map (3 ms). From here every input second
-     t sits at t + pad_seconds on the map, and every stage is given the pad: the notes, the sections, the solo test
-     and the audio all move by it together. Then the sections (allin1's segments, or an imported chart's; DESIGN.md
+     comes from the mix). The octave pass (`_octave_pass`, DESIGN.md 2.3) builds the grid again at twice the tempo
+     when the notes are too dense for it; when that doubled grid's straight line misses a tempo change and the
+     sections file holds allin1's beats, the doubled grid starts from them instead (`allin1_start`). A window whose
+     tempo the grid does not follow (stats["tempo_check"]), and a stretch of 16 or more beats that neither the drums
+     nor the second stem time, are warned about. plan_lead_in puts silence in front so tick 0 is a measure line, and
+     TempoMap.from_beats builds the map (3 ms). From here every input second t sits at t + pad_seconds on the map,
+     and every stage is given the pad: the notes, the sections, the solo test and the audio all move by it
+     together. Then the sections (allin1's segments, or an imported chart's; DESIGN.md
      2.5: under 4 measures merged, an allin1 segment over 16 split into parts of about 8), built here because a
      part's takes are spliced by them.
   3. **Parts.** Each part is read with importers.read_song (a .chart, a .mid or a song folder, with its song.ini)
@@ -123,7 +126,7 @@ from .package import PackageResult, build_song_folder
 from .quantize import (RULES, RUN_CHORD_S, TRACK_DIFFICULTY, TRACK_INSTRUMENT, QuantizeReport, QuantizeRules,
                        estimate_offset, quantize_part, sustain_kept)
 from .reduce import LEVELS, Issue, check_reductions, hopo_states, reduce_level
-from .sections import read_allin1, sections_from_chart, sections_from_segments
+from .sections import read_allin1, read_allin1_beats, sections_from_chart, sections_from_segments
 from .starpower import check_phrases, fill_crash_share, fit_chart, place_phrases, stem_confirm
 from .takes import splice
 from .tempo import LeadIn, TempoMap, plan_lead_in
@@ -467,6 +470,17 @@ def _read_sections(path) -> list:
         raise InputError(f"sections {path}: not an allin1 result ({type(e).__name__}: {e})") from e
 
 
+def _read_allin1_beats(cfg: AssembleConfig) -> np.ndarray | None:
+    """allin1's beats in the sections file (sections.read_allin1_beats), None without them: no sections, an
+    imported chart's ("from:"), or the librosa fallback's file."""
+    if cfg.sections is None or cfg.sections.startswith("from:"):
+        return None
+    try:
+        return read_allin1_beats(cfg.sections)
+    except (KeyError, TypeError, IndexError, ValueError) as e:
+        raise InputError(f"sections {cfg.sections}: not an allin1 result ({type(e).__name__}: {e})") from e
+
+
 def failed_folder(output: Path) -> Path:
     """Where a build the gate fails is written: <output>.failed beside the output folder."""
     return output.with_name(output.name + FAILED_SUFFIX)
@@ -519,6 +533,7 @@ def check_inputs(cfg: AssembleConfig) -> None:
             raise InputError(f"{what} {p} is not a file")
     if cfg.sections is not None and not cfg.sections.startswith("from:"):
         _read_sections(cfg.sections)
+        _read_allin1_beats(cfg)
     for folder in (cfg.output, failed_folder(cfg.output)):
         check_output(folder)
 
@@ -1448,14 +1463,42 @@ def _grid_record(g: BeatGrid) -> dict:
             **({"half_beat": g.stats["half_beat"]} if "half_beat" in g.stats else {})}
 
 
+def allin1_start(allin1: np.ndarray | None, grid_bpm: float, duration: float = math.inf
+                 ) -> tuple[np.ndarray | None, dict]:
+    """allin1's beats as the start grid of the doubled grid (DESIGN.md 2.3): a midpoint added between each two
+    neighbours (allin1 reads a fast song at the first grid's level: half the doubled grid's rate), then moved to
+    onset times (minus ONSET_TO_BEAT_MS: the convention beat_grid's `start=` takes). (start, record): None when
+    there are no beats, fewer than beat_grid's 8 inside the audio, or the doubled beats' median tempo is not at the
+    doubled grid's level (more than half an octave from grid_bpm); the record says which and why."""
+    if allin1 is None:
+        return None, {"beats": None, "why": "the sections have no allin1 beats"}
+    b = np.asarray(allin1, dtype=np.float64)
+    start = np.sort(np.concatenate([b, 0.5 * (b[:-1] + b[1:])])) - ONSET_TO_BEAT_MS / 1000.0
+    inside = int(((start >= 0) & (start <= duration)).sum())
+    rec: dict[str, Any] = {"beats": int(len(b)), "doubled": int(len(start))}
+    if inside < 8:
+        return None, {**rec, "why": f"allin1's beats doubled are {inside} inside the audio, under 8"}
+    bpm = 60.0 / float(np.median(np.diff(start)))
+    rec["bpm"] = round(bpm, 4)
+    if abs(math.log2(bpm / grid_bpm)) > 0.5:
+        return None, {**rec, "why": f"allin1's beats doubled are at {bpm:.1f} BPM, not the doubled grid's level "
+                                    f"({grid_bpm:.1f} BPM)"}
+    return start, {**rec, "why": f"allin1's beats doubled: {len(start)} beats at {bpm:.1f} BPM"}
+
+
 def _octave_pass(cfg: AssembleConfig, first: BeatGrid, onsets: dict[str, list[float]],
-                 drum_features: OnsetFeatures | None, second_pass) -> tuple[BeatGrid, int, dict, str, list[str]]:
+                 drum_features: OnsetFeatures | None, second_pass, allin1: np.ndarray | None = None,
+                 duration: float = math.inf) -> tuple[BeatGrid, int, dict, str, list[str]]:
     """The grid's octave (DESIGN.md 2.3, doubling only): (grid, octave, stats, reason, warnings). grid_octave
     decides on the first grid unless the config forces it; a 2 builds the grid again at twice the first grid's
     click tempo, with the fold range doubled, no first-beat hint and the half-beat phase test
-    (`second_pass(bpm, bpm_range)`; beatgrid.half_beat_phase). The doubled grid is kept when its confident share is at least OCTAVE_RULES.evidence_min times the first's (a doubled grid
-    has fewer drum hits per beat by nature), or when the config forces 2; otherwise the first stays, with a
-    warning."""
+    (`second_pass(bpm, bpm_range)`; beatgrid.half_beat_phase). When that grid's tempo check (its stats["tempo_check"],
+    beatgrid.missed_tempo_changes) finds a tempo change its straight line misses and `allin1` (allin1's beats from
+    the sections file, seconds of the input) can start it (allin1_start), the second pass runs again from them
+    (`second_pass(bpm, bpm_range, start=...)`, which ignores the bpm), and that grid is the doubled grid;
+    stats["second_start"] records the start used and why. The doubled grid is kept when its confident share is at
+    least OCTAVE_RULES.evidence_min times the first's (a doubled grid has fewer drum hits per beat by nature), or
+    when the config forces 2; otherwise the first stays, with a warning."""
     rules = OCTAVE_RULES
     want, stats = grid_octave(onsets, first.beats, drum_features, rules)
     stats["thresholds"]["evidence_min"] = rules.evidence_min
@@ -1470,12 +1513,35 @@ def _octave_pass(cfg: AssembleConfig, first: BeatGrid, onsets: dict[str, list[fl
     if want == 1:
         return first, 1, stats, ("forced: grid_octave 1" if forced else stats["reason"]), []
     lo, hi = BPM_RANGE
+    bpm2, range2 = 2 * first.stats["click"]["bpm"], (2 * lo, 2 * hi)
     try:
-        second = second_pass(2 * first.stats["click"]["bpm"], (2 * lo, 2 * hi))
+        second = second_pass(bpm2, range2)
     except InputError:
         if forced:
             raise
         second = None
+    followed = None  # the tempo change the doubled grid follows from allin1's beats: (start s, end s)
+    if second is not None:
+        missed = second.stats.get("tempo_check") or []
+        if not missed:
+            stats["second_start"] = {"grid": "line", "why": "the tempo check finds no missed tempo change"}
+        else:
+            span = f"{missed[0][0]:.0f}-{missed[-1][1]:.0f} s"
+            where = f"the straight line misses a tempo change ({len(missed)} tempo-check windows, {span})"
+            start, record = allin1_start(allin1, second.bpm, duration)
+            rec = {"tempo_check": [list(w) for w in missed], "allin1": record}
+            again = None
+            if start is not None:
+                try:
+                    again = second_pass(bpm2, range2, start=start)
+                except InputError as e:  # beatgrid: no confident drum evidence around them
+                    record["why"] += f"; the grid from them failed: {e}"
+            if again is None:
+                stats["second_start"] = {"grid": "line", "why": f"{where}, but {record['why']}", **rec}
+            else:
+                stats["second_start"] = {"grid": "allin1", "why": f"{where}: the grid starts from {record['why']}",
+                                         **rec, "line": _grid_record(second)}
+                second, followed = again, (missed[0][0], missed[-1][1])
     s1 = first.stats["evidence"]["confident_share"]
     s2 = second.stats["evidence"]["confident_share"] if second is not None else 0.0
     ratio = s2 / s1 if s1 > 0 else (math.inf if s2 > 0 else 0.0)
@@ -1491,6 +1557,9 @@ def _octave_pass(cfg: AssembleConfig, first: BeatGrid, onsets: dict[str, list[fl
         if hb.get("unsure"):
             warn.append(f"beat phase unsure: the kick is about as strong between the beats as on them (ratio "
                         f"{hb['ratio']:.2f}): check that the beat lines are on the kick")
+        if followed is not None:  # (onset times, about 22 ms after the beats: close enough for a warning)
+            warn.append(f"the doubled grid follows allin1's beats: its straight line missed a tempo change at "
+                        f"{followed[0]:.0f}-{followed[1]:.0f} s: check sync there")
         return second, 2, stats, why, warn
     why = (f"{stats['reason']}; but the doubled grid's confident share {s2:.2f} against {s1:.2f} (ratio "
            f"{ratio:.2f}, under {rules.evidence_min}): the first grid stays")
@@ -1551,9 +1620,10 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
               for p in cfg.parts}
     grid, octave, octave_stats, octave_reason, warn = _octave_pass(
         cfg, grid, onsets, features if src == "drums" else None,
-        lambda bpm, bpm_range: beat_grid(grid_audio, sr, duration=duration, bpm=bpm, mode=cfg.grid_mode,
-                                         secondary=second_stem, features=features, bpm_range=bpm_range,
-                                         half_beat=True, keep_line=True))
+        lambda bpm, bpm_range, start=None: beat_grid(grid_audio, sr, duration=duration, bpm=bpm, mode=cfg.grid_mode,
+                                                     secondary=second_stem, features=features, bpm_range=bpm_range,
+                                                     half_beat=True, keep_line=True, start=start),
+        _read_allin1_beats(cfg), duration)
     warnings += warn
     lead = plan_lead_in(grid.beats, grid.downbeats, sr, min_lead=cfg.lead_in, duration=duration)
     tm = TempoMap.from_beats(lead.beats, bars=lead.bars, tolerance=cfg.tempo_tolerance)

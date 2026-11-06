@@ -74,6 +74,24 @@ def read_allin1(path) -> list[Segment]:
     return sorted(out, key=lambda s: (s.start, s.end))
 
 
+def read_allin1_beats(path) -> np.ndarray | None:
+    """allin1's beats in an allin1 result JSON (seconds of the input audio, sorted, repeats dropped), or None when
+    it holds none: the librosa fallback writes only `segments`. assemble's second pass starts from them when its
+    straight line misses a tempo change (DESIGN.md 2.3). A `beats` that is not a list of finite times is an
+    InputError."""
+    data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    beats = data.get("beats") if isinstance(data, dict) else None
+    if beats is None or (isinstance(beats, list) and not beats):
+        return None
+    try:
+        b = np.asarray(beats, dtype=np.float64)
+    except (TypeError, ValueError) as e:
+        raise InputError(f"{path}: 'beats' is not a list of times ({type(e).__name__}: {e})") from e
+    if b.ndim != 1 or not np.isfinite(b).all():
+        raise InputError(f"{path}: 'beats' is not a list of finite times")
+    return np.unique(b)
+
+
 def label_name(label: str) -> str:
     """An allin1 label as a section name without its number: "inst" -> "Instrumental"."""
     key = label.strip().lower()

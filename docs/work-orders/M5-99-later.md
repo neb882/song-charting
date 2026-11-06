@@ -93,7 +93,9 @@ the stress set first. Half a day to measure, a day to build. M5-01's statistics 
 grid (153.97 BPM, twice the humans'): density shares guitar 0.059, bass 0.121, drums 0.000 (pooled 0.062, the
 right grids' range); backbeat ratio 0.003, the snare on the lines as at the pulse. So neither of M5-01's tests sees
 a grid that is too fast, and halving needs another (the snare on every other line, the onsets on odd 8ths). HOPO
-share ours 0.34 against the humans' 0.55 and 0.39; star power 3.88 phrases a minute against 2.33 and 3.23.
+share ours 0.34 against the humans' 0.55 and 0.39; star power 3.88 phrases a minute against 2.33 and 3.23. A
+side finding of M6-05's measurement: allin1's beats at their own rate are at the humans' level on the shred song,
+beat F1 0.967 against our grid's 0.643, so allin1's tempo is one candidate statistic for halving (M6-06).
 
 ## Star power on a doubled grid (closed by M6-01)
 
@@ -160,13 +162,18 @@ cfc7d5d against the branch):
     (`take_difficulties: "all"`) on a doubled grid would give Hard, Medium and Easy the bass rules only through
     `part_rules`; no test covers it (M6-02's review: a break giving them the octave-1 rules passes). The pipeline
     imports Expert only. A test, a few minutes.
-- **A tempo change under a doubled grid.** Plain beat F1 0.397 -> 0.598 (octave-tolerant 0.658; the humans 1.000),
-  downbeat F1 0.014. The grid has the beat count (1,457 beats against 1,435) and a median error of 13.6 ms, but
-  about 40 % of its beats are more than 70 ms off, and the build warns of a 170 BPM stretch at 235-300 s that the
-  200 BPM grid does not follow (the humans' maps have 330 tempo markers, ours 153). The second pass keeps its hinted
-  line straight (`keep_line`, DESIGN 2.3 step 7), which may be what stops it following a change: measure where the
-  beats are off (a beat F1 per window in score.py), then whether the tracker inside a straight stretch's bounds
-  follows it. Half a day to measure.
+- **A tempo change under a doubled grid.** Narrowed by M6-05 (DESIGN 2.3 step 7): when the doubled grid's tempo
+  check warns and allin1's beats are there, the second pass starts from them, doubled; `pm2`'s beat F1 0.598 ->
+  0.987, windows under 0.9 from 22 to 4 of 45, its Expert F1@50 not lower on any part, the other stress songs and
+  the references unchanged. What is left: the entry into the stretch (230-250 s: window F1 0.85 and 0.55, 44 ms,
+  a 141 BPM dip in the map against the humans' 170); a doubled grid without allin1's beats (the librosa fallback)
+  still lays the straight line and warns; a missed tempo change on a first-level grid (octave 1) is untouched (on
+  Lucretia allin1's beats score 0.305 against our 0.259, the measurer's numbers, not looked into); and `pm2`'s
+  Easy and Medium levels fell with its bar phase (one beat off the primary now, two before; M6-03's: `bar_phase`
+  picks one phase for the whole song from the kick, so a start that moves one stretch's beats can flip an uncertain
+  phase either way, pm2's margin 0.125 -> 0.014). The octave guard reads the grid the second pass returns, so a
+  start from allin1 could keep a doubling the line would have dropped (a song at the first level with a tempo change
+  and dense notes; no measured song shows it, the review's).
 - **The guitar's chord share**, narrowed by M6-04 (DESIGN 2.6 step 3): a chord with both neighbours under 120 ms
   is now its top note, which takes `pm2` 0.112 -> 0.065 and `troop` 0.086 -> 0.079 (the humans 0.02-0.05). What
   is left is not in fast runs: `pm2`'s chords at 140-160 ms (ours 0.10 of those onsets, the humans 0.07) and

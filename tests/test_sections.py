@@ -5,8 +5,9 @@ import json
 import numpy as np
 import pytest
 
-from songcharter.sections import (Segment, clean_name, label_name, read_allin1, sections_from_chart,
-                                  sections_from_segments)
+from songcharter.errors import InputError
+from songcharter.sections import (Segment, clean_name, label_name, read_allin1, read_allin1_beats,
+                                  sections_from_chart, sections_from_segments)
 from songcharter.tempo import TempoMap
 
 RES = 192
@@ -46,6 +47,26 @@ def test_read_allin1_lists_and_objects(tmp_path):
         c.write_text(json.dumps(data), encoding="utf-8")
         with pytest.raises(ValueError, match=message):
             read_allin1(c)
+
+
+def test_read_allin1_beats(tmp_path):
+    """allin1's beats when the result holds them (sorted, repeats dropped), None when it holds none: the librosa
+    fallback writes only segments, and an empty or null list is none. Anything else is a bad input."""
+    p = tmp_path / "segments.json"
+    segments = [[0.0, 4.0, "intro"]]
+    p.write_text(json.dumps({"segments": segments, "bpm": 100, "beats": [0.6, 0.0, 1.2, 0.6, 1.8],
+                             "downbeats": [0.0]}), encoding="utf-8")
+    assert read_allin1_beats(p).tolist() == [0.0, 0.6, 1.2, 1.8]
+    for none in ({"segments": segments}, {"segments": segments, "beats": []}, {"segments": segments, "beats": None}):
+        p.write_text(json.dumps(none), encoding="utf-8")
+        assert read_allin1_beats(p) is None
+    for bad in (["x", 1.0], [[0.0, 1.0], [2.0, 3.0]], 3.0, "0.5"):
+        p.write_text(json.dumps({"segments": segments, "beats": bad}), encoding="utf-8")
+        with pytest.raises(InputError, match="'beats' is not a list of"):
+            read_allin1_beats(p)
+    p.write_text('{"segments": [], "beats": [0.0, NaN]}', encoding="utf-8")
+    with pytest.raises(InputError, match="finite"):
+        read_allin1_beats(p)
 
 
 def test_starts_snap_to_the_nearest_measure_and_silence_is_dropped():
