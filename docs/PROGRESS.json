@@ -79,6 +79,11 @@
         "a background smaller than 1280x720 is kept as it is, not upscaled (Clone Hero scales it to the screen; upscaling only blurs it)",
         "left for the gate, with the numbers: the solo share for songs with vocals, the HOPO mode (forced or source) if M5-01's state-agreement numbers are clear, the CPU retry's default for WSL if its swap passes 4 GB"
       ]
+    },
+    {
+      "id": "M6",
+      "status": "started 2026-11-06 at the owner's go-ahead, while v0.2.0 waits on his PC checks: the doubled grid's follow-ups M6-01 (star power and solo caps on fast songs), M6-02 (the bass's triplet slots on a doubled grid), M6-03 (downbeats on fast songs), written by the orchestrator from v0.2.0's gate and M5-99; M6's full plan (a planner, then the advisor) after the owner's v0.2.0 results",
+      "what": "v0.3.0: fast songs charted more like the humans' (star power, solos, the bass, downbeats; then the chords in fast runs, tempo changes, the 20-song set, M5-99's other items)"
     }
   ],
   "golden": {
@@ -105,9 +110,24 @@
       "order": "v0.2.0's release gate (M5-00 section 7)",
       "stage": "the orchestrator's part done (2026-11-06; docs/reports/v0.2.0-gate.md): the full review and its fixes (M5-12), the golden charts and the stress check on the candidate, the test song's preview, the advisor and its two fixes (M5-13)",
       "then": "the owner: his PC checks, the play test, the approval to publish (nothing is published without him)"
+    },
+    {
+      "order": "M6-01 star power and solo caps on fast songs",
+      "branch": "m6-01-fast-sp-solos",
+      "worktree": "wt/m6-01 beside the checkout (dev machine)",
+      "stage": "building (2026-11-06)",
+      "report": "<scratchpad>/briefs/m6-01.report.md, then docs/reports/M6-01-fast-star-power-solos.md"
+    },
+    {
+      "order": "M6-02 the bass's triplet slots on a doubled grid",
+      "branch": "m6-02-doubled-bass-triplets",
+      "worktree": "wt/m6-02 beside the checkout (dev machine)",
+      "stage": "building (2026-11-06)",
+      "report": "<scratchpad>/briefs/m6-02.report.md, then docs/reports/M6-02-doubled-bass-triplets.md"
     }
   ],
   "next": [
+    "v0.2.0 is the gate's commit 6b9fd38 (tag it there, not at main's head): M6's branches merge into main only after the owner has tagged v0.2.0, so main never holds unreleased v0.3 code under the version 0.2.0. M6-03 (downbeats on fast songs) after M6-02's merge.",
     "The release gate for v0.2.0 (M5-00 section 7), running since 2026-11-06: the full review workflow has run over v0.1.0...77c3c8e (4 lenses, 4 confirmed majors, 12 findings for the fixer: M5-12); on 77c3c8e the golden charts against v0.1.0's passed on 6 of the 7 songs (pooled F1 unchanged on every part; bass hashes moved by M5-01's chord rule; the test song's guitar take was killed by a review agent's out-of-memory run, to rerun) and the stress check against M5-09's baseline passed (troop's guitar +0.16 to +0.18, sooth +0.006, break identical; pm2's bass the known trade); both are rerun after M5-12; then the test song end to end, the advisor, and the owner's PC checks, play test and approval (nothing is published without him).",
     "M4: M4-08 part B, the friend's PC: he follows the guide alone, charts the test song with 1 take and with the defaults, charts a song of his own, installs it into Clone Hero and plays it, and sends the diagnostics zip saved after his last chart.",
     "Before the next quality decision beyond this version's defect fixes: grow the reference set to 20 or more human charts, with human-charted solos among them. M5-09 makes a song one entry in eval/stress.json; the songs are the owner's to pick (M5-99); this version's set is the two hard songs and one ordinary rock song."
