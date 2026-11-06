@@ -38,6 +38,7 @@ ones then, but the CI runs they link still name the old ones.
 | `M5-08-install-polish.md` | the install's quiet lines and download names |
 | `M5-09-stress-eval.md` | the stress set (generic ids, the owner's list kept outside), `eval/stress.py` and the feel measures, the baseline |
 | `M5-10-doubled-lyrics.md` | the lyrics on a doubled grid snap to its 8ths (numbers only) |
+| `M5-12-gate-fixes.md` | v0.2.0's release gate fixes: the version and build.sh's check, the work folder by key, a person's background, the old server; the docs and privacy fixes and `eval/privacy_check.py`; both reviews |
 | `M5-11-octave-by-density.md` | the octave by note density alone, a fourth stress song, the new four-song baseline |
 | `feel.md` | how a chart should feel to play: nine parts, each with a measure, revised after the advisor (M5) |
 | `m5-plan-review.md` | the advisor's review of the M5 plan and the three skeptics' verdicts |
