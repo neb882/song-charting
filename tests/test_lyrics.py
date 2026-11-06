@@ -225,6 +225,17 @@ def test_on_a_doubled_grid_a_word_snaps_one_slot_level_coarser():
     assert [t for t, _ in early[0].syllables] == [192 * b - 48 for b in beats]
 
 
+def test_on_a_doubled_grid_a_triplet_run_keeps_its_triplet_slots():
+    """lyric_rules(2) keeps the triplets (3 a beat: at 200 BPM 100 ms apart): made-up words sung in triplets land on
+    the triplet slots, where 8ths alone would pull every off-beat word 50 ms onto the half beat."""
+    x = L.parse("zorp blen quiv fim wob dak")
+    tm = TempoMap(192, [Tempo(0, 200000)])      # 0.3 s beats; triplet slots 64 ticks, 8ths 96
+    thirds = (24, 25, 26, 27, 28, 29)           # beats 8 and 9 in thirds
+    on, stats = L.place(x, [0.1 * k for k in thirds], tm, rules=lyric_rules(2))
+    assert [t for t, _ in on[0].syllables] == [64 * k for k in thirds]
+    assert stats["triplet_beats"] >= 2 and stats["snap_ms"]["max"] == pytest.approx(0, abs=1)
+
+
 def test_lyrics_read_back_is_checked(tmp_path):
     from songcharter.assemble import lyrics_read_back
     x = L.parse("zorp blen")

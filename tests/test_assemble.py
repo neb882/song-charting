@@ -1417,7 +1417,7 @@ def test_on_a_doubled_grid_the_bass_snaps_to_8ths(fast_song):
     assert one.report["parts"]["bass"]["slots"] == {"straight": 4, "triplet": 3}
 
 
-def test_on_a_doubled_grid_the_lyrics_snap_to_8ths(fast_song):
+def test_on_a_doubled_grid_the_lyrics_snap_to_8ths(fast_song, monkeypatch):
     """On a doubled grid the lyrics get its 8ths and their triplets (lyric_rules: the first grid's 16ths), so made-up
     words sung 50 ms before the beats land on the beat lines, where the doubled grid's 16ths would put them a 1/16
     (76 ms) early; report.json records the slots. Undoubled, the quantizer's own slots, as before."""
@@ -1434,6 +1434,19 @@ def test_on_a_doubled_grid_the_lyrics_snap_to_8ths(fast_song):
                                                                       abs=0.012)
     one = assemble(parse_config({**config, "grid_octave": 1, "output": "out/lyrics1"}, root), lyrics=words)
     assert one.report["grid"]["octave"] == 1 and one.report["lyrics"]["slots"] == {"straight": 4, "triplet": 3}
+    # words sung in triplets (beats 20 and 21 in thirds) keep the doubled grid's triplet slots, not its 8ths
+    thirds = range(60, 66)
+    trip = L.Timed(L.parse("zorp blen quiv fim wob dak"), tuple(FAST_FIRST + k * FAST_BEAT / 3 for k in thirds))
+    t3 = assemble(parse_config({**config, "output": "out/lyrics3"}, root), lyrics=trip)
+    ticks = [t for t, _, text in sorted(t3.chart.lyrics) if text.startswith("lyric ")]
+    res = t3.chart.tempo.resolution
+    assert t3.report["grid"]["octave"] == 2 and len(ticks) == len(thirds)
+    assert all(t % (res // 3) == 0 for t in ticks) and sum(t % (res // 2) != 0 for t in ticks) == 4
+    # the doubled grid tried and rejected by the guard: the first grid stays, and so do its slots
+    monkeypatch.setattr(assemble_module, "OCTAVE_RULES", replace(assemble_module.OCTAVE_RULES, evidence_min=2.0))
+    kept = assemble(parse_config({**config, "output": "out/lyrics-kept"}, root), lyrics=words).report
+    assert kept["grid"]["octave"] == 1 and "second" in kept["grid"]["octave_stats"]
+    assert kept["lyrics"]["slots"] == {"straight": 4, "triplet": 3}
 
 
 def _fake_grid(bpm, share, half_beat=None):

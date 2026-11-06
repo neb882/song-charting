@@ -750,14 +750,14 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
        guitar notes (and 11.4 % of the bass) to the old floors on their own maps.
    - **The bass on a doubled grid** (M5-01; decided 2026-11-05, an amendment to the order's "no change to the slot
      levels"): on a grid the octave pass doubled (§2.3 step 7), the bass part snaps one slot level coarser, to the
-     grid's 8ths and their triplets (`assemble.DOUBLED_BASS_SLOTS`, report.json's `parts.*.slots`), which are the
-     first grid's 16ths. Every other part and every undoubled song is unchanged. The bass engine's onsets spread
-     about a 16th either side of the human notes on the power-metal song (signed error against the human chart,
-     p10/p90 −75/+65 ms; 819 of 1,821 within 50 ms). The doubled grid's 16ths kept that error: bass F1@50 fell
-     from 0.702 to 0.606, 566 matched notes past half a 16th against 249 on the first grid, whose 150 ms slots had
-     pulled them onto the real 8ths where the human bass sits. It was not the offset: the matched notes' median
-     error is −2.6 ms on the first grid and −0.6 ms on the doubled one. With the coarser slots the stress run's bass
-     F1@50 is 0.716 [here, M5-01].
+     grid's 8ths and their triplets (`assemble.DOUBLED_BASS_SLOTS`, report.json's `parts.*.slots`): the first grid's
+     16ths, and its 16th-note triplets (finer than its 8th-note triplets). Every other part and every undoubled song is
+     unchanged. The bass engine's onsets spread about a 16th either side of the human notes on the power-metal song
+     (signed error against the human chart, p10/p90 −75/+65 ms; 819 of 1,821 within 50 ms). The doubled grid's 16ths
+     kept that error: bass F1@50 fell from 0.702 to 0.606, 566 matched notes past half a 16th against 249 on the first
+     grid, whose 150 ms slots had pulled them onto the real 8ths where the human bass sits. It was not the offset: the
+     matched notes' median error is −2.6 ms on the first grid and −0.6 ms on the doubled one. With the coarser slots the
+     stress run's bass F1@50 is 0.716 [here, M5-01].
    - A merge takes the union of frets, so a single-note source gains chords: on the bass engine 69–172 onsets per
      song merged on All the Small Things, Lucretia and Creep (Expert chord share after quantizing up to 0.074). The
      human bass charts: 0 on Take Me Out, Lucretia, Creep and Kimochi Warui; 0.41 on All the Small Things Expert and
@@ -1800,15 +1800,15 @@ on a fast map, or correcting the aligner's lead, would be a later order's, measu
 the first: next).
 
 **On a doubled grid, the lyrics' 8ths** [here, M5-10: `eval/stress.py lyrics` on the stress baseline's kept folder,
-main's code and this order's, the words read in memory; the owner's pasted text through `pipeline.chart` the same
-way, paired with the human chart's words by their text; numbers only]. The bass's case in M5-01 (§2.6), and its
-remedy: an engine's spread that the doubled grid's 16ths cannot resolve. On a doubled grid (octave 2) the lyrics
-snap to its 8ths and their triplets, which are the first grid's 16ths and its triplets
-(`assemble.lyric_rules`, DOUBLED_LYRIC_SLOTS: 2 and 3 slots a beat), so the words keep the slots the first grid gave
-them; report.json's `lyrics.slots` records them. On a first grid (octave 1) nothing changes: the references' grids
-are all first grids, and Take Me Out's and Kimochi Warui's checks are unchanged (0.567 / 0.684 / 0.870 and 0.289 /
-0.289 / 0.850 within 50 / 100 / 250 ms, no warning, before and after); the golden charts, built without lyrics, do
-not move.
+main's code and this order's, the words read in memory; the owner's pasted text through `pipeline.chart` the same way,
+paired with the human chart's words by their text; numbers only]. The bass's case in M5-01 (§2.6), and its remedy: an
+engine's spread that the doubled grid's 16ths cannot resolve. On a doubled grid (octave 2) the lyrics snap to its 8ths
+and their triplets, which are the first grid's 16ths and its 16th-note triplets (`assemble.lyric_rules`,
+DOUBLED_LYRIC_SLOTS: 2 and 3 slots a beat), so the words keep the straight slots the first grid gave them, and the
+triplet slots are a finer superset of its 8th-note triplets; report.json's `lyrics.slots` records them. On a first grid
+(octave 1) nothing changes: the references' grids are all first grids, and Take Me Out's and Kimochi Warui's checks are
+unchanged (0.567 / 0.684 / 0.870 and 0.289 / 0.289 / 0.850 within 50 / 100 / 250 ms, no warning, before and after); the
+golden charts, built without lyrics, do not move.
 
 | the power-metal song, on the chart | median error | within 50 / 100 / 250 ms | signed error p10 / 25 / 50 / 75 / 90 | phrase starts > 500 ms | warning |
 |---|---|---|---|---|---|

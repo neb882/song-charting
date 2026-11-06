@@ -673,7 +673,8 @@ OCTAVE_MIN_ONSETS = 200    # ... and the parts have this many distinct onsets in
 BACKBEAT_WINDOW_S = 0.035  # the snare band's peak within this of a beat line or a beat's midpoint
 BACKBEAT_MIN_BEATS = 16    # confident beats the backbeat ratio needs (fewer: indeterminate)
 DOUBLED_BASS_SLOTS = (2, 3)  # straight and triplet slots per beat for the bass on a doubled grid: its 8ths and
-                             # their triplets, so its scattered onsets get the slots they had on the first grid
+                             # their triplets, so its scattered onsets get the first grid's 16ths (the triplets
+                             # are the first grid's 16th-note triplets, finer than its 8th-note ones)
 DOUBLED_LYRIC_SLOTS = (2, 3)  # the same for the lyrics (lyric_rules, DESIGN.md 2.15): the aligner's word starts
                               # run up to 75 ms early on a fast song, which the doubled grid's 16ths (75 ms at 200
                               # BPM) put a 1/16 before the human's, where the first grid's 16ths put them on it
@@ -1346,9 +1347,10 @@ def part_rules(part: PartConfig, octave: int = 1):
 def lyric_rules(octave: int = 1) -> QuantizeRules:
     """The rules the lyrics snap by (lyrics.place): the quantizer's, and on a doubled grid (octave 2) one slot level
     coarser (DOUBLED_LYRIC_SLOTS, DESIGN.md 2.15), the doubled grid's 8ths and their triplets, which are the first
-    grid's 16ths and its triplets: so the words keep the slots the first grid gave them. On the power-metal stress
-    song the aligner puts 0.29 of the words 38-75 ms early, and the doubled grid's 75 ms 16ths snap them to the slot
-    before the human's (M5-04: a median 67 ms off, against 7 ms on the first grid)."""
+    grid's 16ths and its 16th-note triplets: so the words keep the straight slots the first grid gave them (its
+    8th-note triplets are a subset of the triplet slots). On the power-metal stress song the aligner puts 0.29 of the
+    words 38-75 ms early, and the doubled grid's 75 ms 16ths snap them to the slot before the human's (M5-04: a median
+    67 ms off, against 7 ms on the first grid)."""
     if octave == 2:
         return replace(RULES, straight=DOUBLED_LYRIC_SLOTS[0], triplet=DOUBLED_LYRIC_SLOTS[1])
     return RULES
