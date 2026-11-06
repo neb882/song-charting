@@ -10,7 +10,10 @@
 #   2. 0.1.0 installed with its line (Enter at the licence prompt), and CI's clip charted with `songcharter chart`
 #      (its work folder noted), under a made-up long name that v0.1.0 cuts inside a word and M5-06's safe_name at a
 #      space, so the two versions name its work folder differently (M5-12);
-#   3. the new line pasted over it: "songcharter <new>: in .../app/<new>", app/0.1.0 gone, and only install.sh and
+#   3. the new line pasted while 0.1.0's page (`songcharter`) still runs: exit 2, its last line "songcharter: songcharter
+#      0.1.0 is still running (port <its port>): close the songcharter window first, ...", no step 6, app/ as it was,
+#      and only install.sh fetched (M5-13); then, that page stopped (SIGTERM, as its window closing does), the new
+#      line pasted over it: "songcharter <new>: in .../app/<new>", app/0.1.0 gone, and only install.sh and
 #      the tarball fetched from the server for it (SHA256SUMS too may be), each once; nothing else downloaded (no line
 #      of runtime.py's fetch, uv's downloads, install.sh's own but the app's tarball, or uv's Python install: the
 #      runtime is kept); `songcharter doctor` exits 0 with "doctor: OK" and HEAD's __version__, which must be newer
@@ -280,7 +283,42 @@ sed -n "s/^work folder: \(.*\) (.*$/\1/p" /tmp/chart-old.log | head -n 1 >/tmp/w
 echo "work folder: $(cat /tmp/work-old.txt)"'
 keep /tmp/chart-old.log
 
-# --- 3. the new line over it
+# --- 3. the new line over it: first with 0.1.0's page still running (M5-13), then with its window closed
+before=$(mark)
+friend "the new version's line, pasted while v$old's page runs: refused, nothing changed" '
+songcharter >/tmp/page-old.log 2>&1 &
+pid=$!
+address=""
+for _ in $(seq 1 600); do
+  address=$(sed -n "s|^songcharter is at \(http://[^ ]*\) .*|\1|p" /tmp/page-old.log | head -n 1)
+  [ -z "$address" ] || break
+  kill -0 "$pid" 2>/dev/null || { cat /tmp/page-old.log; die "v$OLD'"'"'s page ended"; }
+  sleep 0.1
+done
+[ -n "$address" ] || { cat /tmp/page-old.log; die "v$OLD'"'"'s page gave no address"; }
+port=${address%/}
+port=${port##*:}
+apps=$(ls "$home/app")
+[ "$apps" = "$OLD" ] || die "app/ holds $apps before the line, not $OLD"
+code=0
+printf "\n" | SONGCHARTER_RELEASE_URL=$NEW_URL bash -c "$NEW_LINE" >/tmp/update-refused.log 2>&1 || code=$?
+tail -n 3 /tmp/update-refused.log
+[ $code -eq 2 ] || die "the line over a running v$OLD exited $code, not 2"
+grep -qx "install.sh: OK" /tmp/update-refused.log || die "no \"install.sh: OK\" in /tmp/update-refused.log"
+want="songcharter: songcharter $OLD is still running (port $port): close the songcharter window first, then paste the line again. Nothing was changed."
+[ "$(tail -n 1 /tmp/update-refused.log)" = "$want" ] || die "its last line is not: $want"
+if grep -q "^== \[6/10\]" /tmp/update-refused.log; then die "the refused line went on to step 6"; fi
+[ "$(ls "$home/app")" = "$apps" ] || die "app/ changed: it holds $(ls "$home/app")"
+curl -fsS -o /dev/null "${address}api/hello" || die "v$OLD'"'"'s page stopped answering"
+kill -TERM "$pid"
+wait "$pid" || die "v$OLD'"'"'s page did not stop cleanly on SIGTERM"
+if curl -fsS -o /dev/null "${address}api/hello" 2>/dev/null; then die "v$OLD'"'"'s page still answers"; fi
+echo "refused while v$OLD ran on port $port; its page stopped"'
+keep /tmp/update-refused.log /tmp/page-old.log
+only "$before" "$base/v$new/install.sh"
+[ "$(asked "$before" "$base/v$new/install.sh")" -eq 1 ] || fail "the refused line did not fetch install.sh once"
+echo "75-update: the line under a running v$old fetched install.sh alone and stopped before step 6"
+
 before=$(mark)
 friend "the new version's line, pasted over $old" '
 line /tmp/update.log "$NEW_URL" "$NEW_LINE"

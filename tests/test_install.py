@@ -1,13 +1,19 @@
 """packaging/linux/install.sh's decisions, sourced in bash for its functions: the lane from a stand-in nvidia-smi
 (each threshold), no silent move of a GPU install to the cpu lane when nvidia-smi fails, no `uv sync` without a lane,
-and the usage and template refusals. Then packaging/release/build.sh's three assets, with a stand-in curl for uv's
-published SHA-256. The whole install runs in CI (packaging/ci/linux.d/30-install.sh)."""
+the usage and template refusals, and a running songcharter found on its ports. Then packaging/release/build.sh's
+three assets, with a stand-in curl for uv's published SHA-256. The whole install runs in CI
+(packaging/ci/linux.d/30-install.sh)."""
+import contextlib
 import hashlib
+import http.server
 import io
 import json
 import re
+import socket
 import subprocess
 import tarfile
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -171,6 +177,100 @@ def test_usage_and_the_template(tmp_path):
     assert p.returncode == 2 and p.stderr.splitlines()[-1] == (
         "songcharter: start failed: this is install.sh's template: make the release with "
         "packaging/release/build.sh. Run the same command again to continue.")
+
+
+# ------------------------------------------------------------------------------------------------ a running songcharter
+
+class Hello(http.server.BaseHTTPRequestHandler):
+    """A stand-in page server: GET /api/hello answers the server's `hello` as JSON, anything else 404."""
+
+    def do_GET(self):
+        body = json.dumps(self.server.hello).encode() if self.path == "/api/hello" else b""
+        self.send_response(200 if body else 404)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+@contextlib.contextmanager
+def stand_in_server(hello: dict, ports=(0,)):
+    """A stand-in server on 127.0.0.1, serving on a thread, on the first port of `ports` it can bind (0: one the
+    system picks); its port. Skips the test when none of them is free."""
+    for port in ports:
+        try:
+            server = http.server.HTTPServer(("127.0.0.1", port), Hello)
+            break
+        except OSError:
+            continue
+    else:
+        pytest.skip(f"none of the ports {list(ports)} is free")
+    server.hello = hello
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield server.server_address[1]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def closed_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def test_the_ports_are_songcharter_uis(tmp_path):
+    from songcharter.ui import server as S
+    assert sourced(tmp_path, 'echo "$UI_PORTS"').stdout.split() == [str(port) for port in S.PORTS]
+
+
+def test_running_ui_finds_songcharters_server_and_nothing_else(tmp_path):
+    """running_ui asks /api/hello on each port as songcharter's own find_running does: the real server (its Host
+    guard, its JSON) is found, with its version; a closed port, another program's server and a port that never
+    answers (within UI_TIMEOUT_S) are not songcharter."""
+    from songcharter import __version__
+    from songcharter.ui import server as S
+    home = tmp_path / "ui-home"
+    home.mkdir()
+    app = S.App(home, log=S.Log(None, console=lambda line: None), report=lambda: {})
+    real = S.bind(app, [0])
+    silent = socket.socket()
+    silent.bind(("127.0.0.1", 0))
+    silent.listen(8)   # connects, and is never answered
+    try:
+        with stand_in_server({"app": "another program", "version": "1.0"}) as other:
+            ports = f"{closed_port()} {other} {silent.getsockname()[1]}"
+            start = time.monotonic()
+            p = sourced(tmp_path, f'UI_PORTS="{ports}"; UI_TIMEOUT_S=1; running_ui || echo "none: $?"')
+            assert p.stdout == "none: 1\n" and time.monotonic() - start < 10, (p.stdout, p.stderr)
+            port = real[0].server_address[1]
+            p = sourced(tmp_path, f'UI_PORTS="{ports} {port}"; UI_TIMEOUT_S=1; running_ui')
+            assert p.returncode == 0 and p.stdout == f"{port} {__version__}\n", (p.stdout, p.stderr)
+    finally:
+        silent.close()
+        for s in real:
+            s.shutdown()
+            s.server_close()
+        app.jobs.shutdown()
+
+
+@pytest.mark.parametrize("version, said", [("0.1.0", "songcharter 0.1.0"), (None, "songcharter"),
+                                           ("1.0; made up", "songcharter")])
+def test_a_running_songcharter_stops_the_install_with_the_line(tmp_path, version, said):
+    """refuse_if_running: exit 2 and one line, naming the version only when it reads as one; nothing after it
+    runs. With nothing running it returns."""
+    hello = {"app": "songcharter", "token": "0" * 16, **({"version": version} if version else {})}
+    with stand_in_server(hello) as port:
+        p = sourced(tmp_path, f'UI_PORTS="{closed_port()} {port}"; refuse_if_running; echo went on')
+    assert p.returncode == 2 and "went on" not in p.stdout and p.stderr.splitlines() == [
+        f"songcharter: {said} is still running (port {port}): close the songcharter window first, then paste the "
+        "line again. Nothing was changed."]
+    p = sourced(tmp_path, f'UI_PORTS="{closed_port()}"; refuse_if_running; echo went on')
+    assert p.returncode == 0 and p.stdout == "went on\n" and p.stderr == ""
 
 
 def in_git() -> bool:
@@ -473,6 +573,39 @@ def test_a_release_installs_with_stand_ins(tmp_path):
     (i.share / "bin" / "uv").unlink()
     (i.share / "runtime" / "state" / "downloads" / "uv.tar.gz.part").write_bytes(i.uv)   # a download that finished
     assert i.run("--from", str(i.dist)).returncode == 0 and len(i.log("curl.log")) == 1
+
+
+UI_RANGE = range(8784, 8764, -1)   # songcharter ui's ports, from the last: the whole range is asked
+
+
+def tree(*roots: Path) -> dict:
+    """Every path under `roots` with whether it is a folder, its size and its mtime (to the nanosecond)."""
+    return {str(p): (p.is_dir(), p.lstat().st_size, p.lstat().st_mtime_ns)
+            for root in roots for p in [root, *sorted(root.rglob("*"))]}
+
+
+def test_an_install_over_a_running_songcharter_stops_before_it_changes_anything(tmp_path):
+    """The release gate advisor's finding 2: step 6 deletes the older app/<version> and step 7 re-syncs the
+    environment a running page server (perhaps charting) runs from. With a songcharter server answering on one of
+    its ports, the install stops before step 6 with the line to close the window, exit 2, every file as it was and
+    nothing run or downloaded; with that server gone, the same command updates as before (the older app/ goes)."""
+    i = Install(tmp_path)
+    assert i.run("--from", str(i.dist)).returncode == 0
+    older = i.share / "app" / "0.0.1"   # a made-up older version, as an update finds it
+    older.mkdir()
+    (older / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    logs = {name: i.log(name) for name in ("curl.log", "uv.log", "python.log")}
+    before = tree(i.share, i.launcher.parent)
+    hello = {"app": "songcharter", "version": "0.0.1", "token": "0" * 16, "url": "http://localhost:8765/"}
+    with stand_in_server(hello, UI_RANGE) as port:
+        p = i.run("--from", str(i.dist))
+    assert p.returncode == 2 and last(p) == (
+        f"songcharter: songcharter 0.0.1 is still running (port {port}): close the songcharter window first, then "
+        "paste the line again. Nothing was changed."), p.stderr
+    assert "== [5/10]" in p.stdout and "== [6/10]" not in p.stdout
+    assert tree(i.share, i.launcher.parent) == before and {name: i.log(name) for name in logs} == logs
+    p = i.run("--from", str(i.dist))   # the window closed: the same line goes on
+    assert p.returncode == 0 and not older.exists() and [x.name for x in (i.share / "app").iterdir()] == [VERSION]
 
 
 def test_the_prompt_names_the_licences_and_enter_goes_on(tmp_path):

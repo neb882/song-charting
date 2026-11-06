@@ -19,6 +19,10 @@
 #   * uv's cache is songcharter's own, runtime/uv-cache ($UV_CACHE_DIR for every uv call here), never the person's
 #     ~/.cache/uv, which other uv projects share: the disk check counts only songcharter's folders, and uninstall
 #     deletes only them.
+#   * Never under a running songcharter (M5-13): step 6 deletes the older app/<version> and step 7 re-syncs the
+#     environment its page server runs from, which may be charting. So before step 6, the first that changes
+#     anything, a songcharter server answering /api/hello on 127.0.0.1 (songcharter ui's ports, 8765-8784; any
+#     version) stops the install, exit 2: "close the songcharter window first, then paste the line again".
 #   * packaging/release/build.sh fills in the @...@ values below; this file in the repository is the template.
 #   * Needs bash, curl or wget, tar, xz and sha256sum, which Ubuntu's WSL image ships. Refuses to run as root.
 set -Eeuo pipefail
@@ -33,6 +37,8 @@ UV_VERSION=0.13.5
 PYTHON_VERSION=3.13.17
 WSL_NVIDIA_SMI=/usr/lib/wsl/lib/nvidia-smi   # WSL's, from the Windows driver [doc: NVIDIA's WSL guide]
 SMI_TIMEOUT_S=15                             # songcharter.device's: a slower nvidia-smi is a GPU out of reach
+UI_PORTS=$(seq -s ' ' 8765 8784)             # songcharter ui's (songcharter/ui/server.py's PORTS; v0.1.0's too)
+UI_TIMEOUT_S=3                               # each port's answer: a server busy with a chart may be slow
 GB=1000000000
 # free disk each lane needs, in GB: the downloads unpacked plus the work folders' 5 GB [decision; M4-05, M4-08 measure]
 need_gb() { case $1 in cpu) echo 8 ;; *) echo 15 ;; esac; }   # cpu: 2.8 GB installed (M4-05's CI) and 5 GB of work folders
@@ -197,6 +203,32 @@ sync_env() {   # WHAT PROJECT ENVIRONMENT [OPTIONS...]: `uv sync --frozen` of on
     --python "$PYTHON_VERSION" --extra "$lane" "$@" || fail "uv sync of $what exited $? (its error is above)"
 }
 
+running_ui() {   # "PORT VERSION" of the first songcharter server answering /api/hello on 127.0.0.1 (UI_PORTS), else
+  # status 1. Through bash's /dev/tcp, so it needs neither curl nor wget; a port nothing listens on refuses at once,
+  # and one that does not answer within UI_TIMEOUT_S is not songcharter's (its own find_running gives up sooner)
+  local port reply version
+  for port in $UI_PORTS; do
+    reply=$(timeout "$UI_TIMEOUT_S" bash -c 'exec 3<>"/dev/tcp/127.0.0.1/$1" || exit 1
+      printf "GET /api/hello HTTP/1.0\r\nHost: 127.0.0.1:%s\r\n\r\n" "$1" >&3
+      head -c 65536 <&3' _ "$port" 2>/dev/null) || true
+    if [[ $reply =~ \"app\"[[:space:]]*:[[:space:]]*\"songcharter\" ]]; then
+      version=$(printf '%s\n' "$reply" | sed -n 's/.*"version": *"\([0-9A-Za-z.+-]\{1,40\}\)".*/\1/p' | head -n 1)
+      echo "$port${version:+ $version}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+refuse_if_running() {   # before step 6 (the header): a running songcharter stops the install, exit 2, nothing changed
+  local found port version=""
+  found=$(running_ui) || return 0
+  read -r port version <<<"$found"
+  trap - ERR
+  echo "songcharter: songcharter${version:+ $version} is still running (port $port): close the songcharter window first, then paste the line again. Nothing was changed." >&2
+  exit 2
+}
+
 # ------------------------------------------------------------------------------------------------ the steps
 
 main() {
@@ -302,6 +334,7 @@ main() {
     case $answer in [nN]*) echo "songcharter: stopped; nothing was downloaded."; exit 1 ;; esac
   fi
 
+  refuse_if_running   # the steps from here change the install, under a server that may be charting (the header)
   header downloads 6 "uv, Python and the app"
   export UV_HTTP_TIMEOUT=300 UV_HTTP_RETRIES=5 UV_PYTHON_INSTALL_DIR="$runtime/python" UV_CACHE_DIR="$uv_cache"
   if [ -x "$uv" ] && [ "$("$uv" --version 2>/dev/null | cut -d' ' -f2)" = "$UV_VERSION" ]; then
