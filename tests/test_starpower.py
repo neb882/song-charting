@@ -1,5 +1,7 @@
 """Star power, drum fills and solos on synthetic parts: placement on Expert (count, shape, spacing, scoring), fill
 scheduling against star power, fitting to lower difficulties after the reductions, and the checks."""
+from dataclasses import asdict
+
 import numpy as np
 import pytest
 
@@ -7,9 +9,9 @@ from songcharter.chart import (DRUM_ACTIVATION, ROLL, STAR_POWER, Chart, DrumHit
                                write_chart)
 from songcharter.importers import read_chart
 from songcharter.reduce import check_reductions, reduce_chart
-from songcharter.starpower import (FILL_RULES, SOLO_RULES, FillRules, SoloRules, check_phrases, fill_crash_share,
-                                   fit_chart, fit_phrases, place_fills, place_phrases, place_solos, place_star_power,
-                                   schedule_drums, solo_sections, stem_confirm)
+from songcharter.starpower import (FILL_RULES, SOLO_RULES, SP_RULES, FillRules, SoloRules, StarPowerRules,
+                                   check_phrases, fill_crash_share, fit_chart, fit_phrases, place_fills, place_phrases,
+                                   place_solos, place_star_power, schedule_drums, solo_sections, stem_confirm)
 from songcharter.tempo import TempoMap
 
 RES = 192
@@ -134,6 +136,77 @@ def test_short_or_empty_parts_get_no_star_power():
     assert place_star_power(guitar(10), tm) == []
     assert place_star_power(Track("Expert", "Single", []), tm) == []
     assert place_star_power(guitar(40), tm, count=0) == []
+    record = {}
+    assert place_star_power(Track("Expert", "Single", []), tm, record=record) == []
+    assert record == {"rules": asdict(SP_RULES), "span_beats": None, "span_seconds": None, "counted_beats": None,
+                      "target": None}
+
+
+def bpm_map(bpm, beats=1600):
+    return TempoMap.from_beats(np.arange(beats) * 60.0 / bpm)
+
+
+def test_star_power_counts_beats_at_most_at_160_bpm():
+    """Rule 1 on a 100 and a 200 BPM grid (M6-01): the same 120 measures of 8ths, 479.5 beats, give 12 phrases at
+    100 BPM (287.7 s: the beats count) and 10 at 200 BPM (143.85 s, counted as 383.6 beats at 160 BPM), where the
+    beats alone gave 12 there too, twice the phrases a minute of the 100-BPM grid."""
+    assert SP_RULES.max_bpm == 160.0 and SP_RULES.beats_per_phrase == 40.0
+    ex = guitar(120)
+    record = {}
+    assert len(place_star_power(ex, bpm_map(100), record=record)) == 12
+    assert record == {"rules": asdict(SP_RULES), "span_beats": 479.5, "span_seconds": 287.7, "counted_beats": 479.5,
+                      "target": 12}
+    record = {}
+    fast = place_star_power(ex, bpm_map(200), record=record)
+    assert len(fast) == 10
+    assert (record["span_beats"], record["span_seconds"], record["counted_beats"], record["target"]) == (
+        479.5, 143.85, 383.6, 10)
+    starts = [p.tick for p in fast]
+    assert all(b - a >= 24 * RES for a, b in zip(starts, starts[1:]))
+    # the rules' own values: without the ceiling the 200-BPM grid gets the beats' 12
+    assert len(place_star_power(ex, bpm_map(200), rules=StarPowerRules(max_bpm=1000.0))) == 12
+    # `count` overrides rule 1, and is what the record gives as the target
+    record = {}
+    assert len(place_star_power(ex, bpm_map(200), count=3, record=record)) == 3
+    assert record["target"] == 3 and record["counted_beats"] is None
+
+
+@pytest.mark.parametrize("bpm, capped", [(150.0, False), (159.9, False), (160.0, False), (160.1, True),
+                                         (170.0, True), (240.0, True)])
+def test_the_star_power_ceiling_starts_above_160_bpm(bpm, capped):
+    """At or under 160 BPM the span's beats count; over it, its minutes x 160."""
+    record = {}
+    got = place_star_power(guitar(120), bpm_map(bpm), record=record)
+    beats, seconds = record["span_beats"], record["span_seconds"]
+    assert beats == 479.5 and seconds == pytest.approx(479.5 * 60 / bpm, abs=1e-3)
+    want = seconds * 160 / 60 if capped else beats
+    assert record["counted_beats"] == pytest.approx(want, abs=1e-3)
+    assert (record["counted_beats"] < beats - 0.01) == capped
+    assert len(got) == record["target"] == round(want / 40)
+
+
+def test_drum_star_power_and_the_record_through_place_phrases():
+    """place_phrases records each Expert part's count (report.json's star_power_count): the same ceiling on drums,
+    and the phrases each part got (a bass with two measures of 2 notes gets 2 of its 10)."""
+    fast = bpm_map(200)
+    thin = guitar(120, thin=set(range(1, 121)) - {30, 60})
+    chart = Chart(SongInfo("Synthetic", "Nobody"), fast, [(m * M, f"s{m}") for m in (1, 33, 65, 97)],
+                  [guitar(120), Track("Expert", "DoubleBass", thin.notes),
+                   drums(120, sections=[33 * M, 65 * M, 97 * M])])
+    record = {}
+    placed = place_phrases(chart, sp_record=record)
+    assert record.keys() == {"Single", "DoubleBass", "Drums"}
+    for t in placed.tracks:
+        r = record[t.instrument]
+        assert r["placed"] == len(kinds(t, STAR_POWER)) and r["rules"] == asdict(SP_RULES)
+        assert r["counted_beats"] == pytest.approx(r["span_seconds"] * 160 / 60, abs=1e-3)
+        assert r["counted_beats"] < r["span_beats"]
+        assert r["target"] == round(r["counted_beats"] / 40)
+    assert record["Single"]["placed"] == record["Single"]["target"] == 10
+    assert record["DoubleBass"]["placed"] == 2 and record["DoubleBass"]["target"] == 10
+    assert 0 < record["Drums"]["placed"] <= record["Drums"]["target"] == 10
+    assert [p.tick for p in kinds(placed.tracks[0], STAR_POWER)] == [
+        p.tick for p in place_star_power(guitar(120), fast, [m * M for m in (1, 33, 65, 97)])]
 
 
 # ------------------------------------------------------------------------------------------------ fills
@@ -395,6 +468,17 @@ def test_a_long_run_keeps_its_densest_window():
     record = {}
     assert place_solos(ex, tm, secs, record=record) == [(38 * M, 94 * M - M // 12)]
     assert [(r["start"] // M, r["measures"]) for r in record["skipped_by_gap"]] == [(21, 17)]
+
+
+def test_the_default_solo_caps_on_a_100_and_a_200_bpm_grid():
+    """M6-01 measured the human solos of the two 200-BPM songs at 53-58 of their own measures (63-70 s): their
+    measures are the doubled grid's, so the measure cap stands. On a 200-BPM grid a long run gives 56 measures
+    (67.2 s); at 100 BPM the seconds cap binds (41 measures, 98.4 s)."""
+    end = 300 * M
+    even = sorted({n.tick for n in guitar(300).notes})
+    assert spans(solo_sections(lettered(9, [100]), end, tempo=bpm_map(200), onsets=even)) == [(9, 56), (65, 44)]
+    assert spans(solo_sections(lettered(9, [100]), end, tempo=bpm_map(100), onsets=even)) == [
+        (9, 41), (50, 41), (91, 18)]
 
 
 def test_a_run_is_cut_at_the_seconds_cap_on_a_fast_map():

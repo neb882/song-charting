@@ -8,8 +8,11 @@ follow DESIGN.md 2.10 with the critique's corrections (CRITIQUE.json, which wins
 
 Star power (every 5-fret part and drums), `place_star_power`:
   1. Count: K = round(span / 40 beats), the span running from the first to the last Expert onset (Harmonix: one
-     phrase per 41 beats, median 11 a song; about 24 on the 6:52 test song). Drums may get fewer, since their fills
-     are placed first (the critique: Encore does not ask for drum star power).
+     phrase per 41 beats, median 11 a song; about 24 on the 6:52 test song), its beats counted at most at 160 BPM
+     (`StarPowerRules.max_bpm`), so at most one phrase per 15 s: the human charts of the two 200-BPM stress songs
+     write about 0.82 times the slower songs' phrases per beat, and far more a minute than the slower songs' (M6-01,
+     DESIGN.md 2.10). Drums may get fewer, since their fills are placed first (the critique: Encore does not ask for
+     drum star power).
   2. Shape: one measure. A phrase starts on the measure's first Expert onset (Harmonix 92 %, customs 98 % start on a
      note) and ends on the next measure line: `S 2` covers [T, T + length), so the next downbeat is outside.
   3. Exclusions: none in the first 4 measures from the first onset's measure, and the last at least 8 measures
@@ -109,6 +112,9 @@ Bonus = Callable[[int, int], float]  # (phrase start tick, end tick) -> extra sc
 @dataclass(frozen=True)
 class StarPowerRules:
     beats_per_phrase: float = 40.0  # K = round(span in beats / this)
+    max_bpm: float = 160.0          # the span's beats counted at most at this tempo (its average over the span): on
+                                    # 200-BPM songs the humans write 0.82 times the slower songs' phrases per beat
+                                    # (M6-01); 160 is the middle of the fit's plateau (150-165), at most 1 per 15 s
     min_start_gap: float = 24.0     # beats between two phrase starts
     lead_measures: int = 4          # no phrase in the first measures from the first onset's
     tail_measures: int = 8          # the last phrase this many measures before the last onset's
@@ -134,7 +140,9 @@ class FillRules:
 class SoloRules:
     """The solo rules (DESIGN.md 2.10), the caps set from 14 human solos on 13 human charts (the six references and
     the stress set's guitar charts, M5-03): their 95th percentile of length, 52.9 measures and 96.4 s, and their
-    largest share of a chart's span, 0.357."""
+    largest share of a chart's span, 0.357. M6-01 measured the second 200-BPM song's five charts too: their long solo
+    is 56.0-57.9 of their own measures (67-70 s), the measures of our doubled grid, where the 56-measure cap gives
+    67 s covering 0.96-1.00 of it; so the caps count our grid's measures, doubled or not."""
     min_measures: int = 4
     min_onsets: int = 16
     max_solos: int = 3              # human median 1 a song, p90 2-3
@@ -208,20 +216,31 @@ class _Candidate:
 
 def place_star_power(expert: Track, tempo: TempoMap, sections: Sequence[int] = (), *, count: int | None = None,
                      bonus: Bonus | None = None, allowed: Callable[[int, int], bool] | None = None,
-                     rules: StarPowerRules = SP_RULES) -> list[Phrase]:
+                     rules: StarPowerRules = SP_RULES, record: dict | None = None) -> list[Phrase]:
     """Star-power phrases for an Expert part (rules 1-5 of the module docstring).
 
     sections: section start ticks (measure lines); a measure opening one scores +2.
     count:    the number of phrases to aim for, instead of rule 1's.
     bonus:    extra score for a phrase [start, end), e.g. +1 where the part plays lead.
     allowed:  a phrase [start, end) is only placed where this returns True (schedule_drums keeps it off fills).
+    record:   filled with rule 1's numbers (report.json's phrases.<part>.star_power_count): "rules" (StarPowerRules'
+              values), "span_beats" and "span_seconds" (first to last Expert onset), "counted_beats" (the beats,
+              at most span_seconds x max_bpm / 60) and "target" (K, or `count`); the counts are None without onsets.
     """
     onsets = _onsets(expert)
-    if len(onsets) < rules.min_onsets:
-        return []
     res = tempo.resolution
-    k = count if count is not None else round((onsets[-1] - onsets[0]) / res / rules.beats_per_phrase)
-    if k <= 0:
+    k = count
+    if record is not None:
+        record.update(rules=asdict(rules), span_beats=None, span_seconds=None, counted_beats=None, target=count)
+    if onsets and count is None:
+        beats = (onsets[-1] - onsets[0]) / res
+        seconds = tempo.tick_to_sec(onsets[-1]) - tempo.tick_to_sec(onsets[0])
+        counted = min(beats, seconds * rules.max_bpm / 60)
+        k = round(counted / rules.beats_per_phrase)
+        if record is not None:
+            record.update(span_beats=round(beats, 3), span_seconds=round(seconds, 3), counted_beats=round(counted, 3),
+                          target=k)
+    if not onsets or len(onsets) < rules.min_onsets or k <= 0:
         return []
     bars = _Bars(tempo, onsets[-1])
     lo = bars.index(onsets[0]) + rules.lead_measures
@@ -413,8 +432,10 @@ class _Fills:
 
 def schedule_drums(expert: Track, tempo: TempoMap, sections: Sequence[int] = (), *, count: int | None = None,
                    bonus: Bonus | None = None, sp_rules: StarPowerRules = SP_RULES,
-                   fill_rules: FillRules = FILL_RULES) -> tuple[list[Phrase], list[Phrase]]:
-    """(star power, fills) for an Expert drum track, scheduled in the module docstring's steps 1-4."""
+                   fill_rules: FillRules = FILL_RULES,
+                   sp_record: dict | None = None) -> tuple[list[Phrase], list[Phrase]]:
+    """(star power, fills) for an Expert drum track, scheduled in the module docstring's steps 1-4. sp_record: filled
+    as place_star_power's record."""
     if not expert.is_drums:
         raise ValueError(f"schedule_drums needs a drum track, not {expert.name}")
     ctx = _Fills(expert, tempo, fill_rules)
@@ -423,7 +444,8 @@ def schedule_drums(expert: Track, tempo: TempoMap, sections: Sequence[int] = (),
     def allowed(s: int, e: int) -> bool:
         return all(_clear(s, e, f, tempo, fill_rules) for f in fills.values())
 
-    sp = place_star_power(expert, tempo, sections, count=count, bonus=bonus, allowed=allowed, rules=sp_rules)
+    sp = place_star_power(expert, tempo, sections, count=count, bonus=bonus, allowed=allowed, rules=sp_rules,
+                          record=sp_record)
     fills = ctx.usable(ctx.fill_gaps(fills, sp), sp)
     if sp and not fills and _long(_onsets(expert), tempo):
         # too sparse for the usual fills: try looser ones, else no star power (scan-chart's noDrumActivationLanes
@@ -695,7 +717,7 @@ def place_phrases(chart: Chart, *, solos: bool = False, confirm_solo: Callable[[
                   solo_names: Sequence[str] | None = None,
                   bonus: dict[str, Bonus] | None = None, sp_rules: StarPowerRules = SP_RULES,
                   fill_rules: FillRules = FILL_RULES, solo_rules: SoloRules = SOLO_RULES,
-                  solo_record: dict | None = None) -> Chart:
+                  solo_record: dict | None = None, sp_record: dict | None = None) -> Chart:
     """The chart with new star power on every Expert track, fills on Expert drums and (if `solos`) solos on Expert
     lead guitar, replacing any the tracks had; lower tracks already there get them fitted.
 
@@ -703,6 +725,8 @@ def place_phrases(chart: Chart, *, solos: bool = False, confirm_solo: Callable[[
                   Off by default: no signal for them is reliable (see place_solos); the pipeline asks for them.
     solo_names:   with solos, exactly the sections of these names (see place_solos).
     solo_record:  with solos, filled as place_solos' record for Expert lead guitar.
+    sp_record:    filled per instrument with place_star_power's record of its Expert track, and "placed": the
+                  phrases it got (drums may get fewer, or none).
     bonus:        per instrument ("Single", "DoubleBass", "Drums", ...), extra score for a phrase [start, end).
     Run it before reduce_chart, which copies Expert's phrases down and keeps a note in each, then `fit_chart`.
     """
@@ -712,14 +736,18 @@ def place_phrases(chart: Chart, *, solos: bool = False, confirm_solo: Callable[[
         if ex.difficulty != "Expert":
             continue
         b = (bonus or {}).get(ex.instrument)
+        rec: dict = {}
         if ex.is_drums:
-            sp, fills = schedule_drums(ex, chart.tempo, starts, bonus=b, sp_rules=sp_rules, fill_rules=fill_rules)
+            sp, fills = schedule_drums(ex, chart.tempo, starts, bonus=b, sp_rules=sp_rules, fill_rules=fill_rules,
+                                       sp_record=rec)
             solo = list(ex.solos)
         else:
-            sp, fills = place_star_power(ex, chart.tempo, starts, bonus=b, rules=sp_rules), []
+            sp, fills = place_star_power(ex, chart.tempo, starts, bonus=b, rules=sp_rules, record=rec), []
             solo = place_solos(ex, chart.tempo, chart.sections, confirm=confirm_solo, names=solo_names,
                                rules=solo_rules, record=solo_record) \
                 if solos and ex.instrument == "Single" else []
+        if sp_record is not None:
+            sp_record[ex.instrument] = {**rec, "placed": len(sp)}
         other = [p for p in ex.phrases if p.kind not in (STAR_POWER, DRUM_ACTIVATION)]
         new = Track(ex.difficulty, ex.instrument, list(ex.notes),
                     sorted(sp + fills + other, key=lambda p: (p.tick, p.kind)), solo)
