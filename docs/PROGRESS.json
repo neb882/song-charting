@@ -103,7 +103,7 @@
     },
     {
       "order": "v0.2.0's release gate (M5-00 section 7)",
-      "stage": "running (2026-11-06): the full review workflow over v0.1.0...77c3c8e is done and its findings are fixed (M5-12, merged); on the merged candidate: the suite, the golden charts against v0.1.0's (--rerun drums,bass,guitar; the version's bump changes bass's cache key), the stress check against M5-09's baseline, the test song end to end, then the advisor",
+      "stage": "the orchestrator's part done (2026-11-06; docs/reports/v0.2.0-gate.md): the full review and its fixes (M5-12), the golden charts and the stress check on the candidate, the test song's preview, the advisor and its two fixes (M5-13)",
       "then": "the owner: his PC checks, the play test, the approval to publish (nothing is published without him)"
     }
   ],
@@ -195,7 +195,9 @@
     "[M5-02] The order's 'stopped at 498.6 s on the token budget' was wrong: the owner's v0.1 takes were beat-capped (beat 1280 at 498.65 s); a token-capped take could not complete under v0.1's driver, whose watchdog equalled the budget. Fixed in M5-02 (16 tokens of headroom).",
     "[M5-09] eval/refs/build_ref.py fails on two Chorus Encore packages of a fourth stress song (2026-11-06): one carries a notes.mid.backup beside notes.mid, one has a .mid that mido refuses (ValueError); both charts were left out of that song's set. Make build_ref pick notes.mid exactly and read a MIDI leniently (mido clip=True), with a test.",
     "[M5-10] On the power-metal stress song the lyrics' 250 ms share is 0.950 (304 of 320 words), exactly the order's bar; the 100 ms share fell 0.856 -> 0.750 (M5-09's old-grid figure, 0.756): a word the aligner misplaces now misses by an 8th. M5-99, Lyrics.",
-    "[owner] The history keeps what v0.2.0's full review found in committed docs (2026-11-06): five stress packages named by 4-digit md5 prefixes in docs/reports/m5-plan-review.md (since 31b00bc) and the rock stress song's title and artist in M5-00, M5-09 and PROGRESS; the files are fixed (M5-12's docs), and eval/privacy_check.py now runs before every push. Whether to rewrite the history (as on 2026-11-04) is the owner's call."
+    "[owner] The history keeps what v0.2.0's full review found in committed docs (2026-11-06): five stress packages named by 4-digit md5 prefixes in docs/reports/m5-plan-review.md (since 31b00bc) and the rock stress song's title and artist in M5-00, M5-09 and PROGRESS; the files are fixed (M5-12's docs), and eval/privacy_check.py now runs before every push. Whether to rewrite the history (as on 2026-11-04) is the owner's call.",
+    "[M5-13] clonehero.install reads report.json in every top-level folder of Songs on each install: unmeasured on a large library over drvfs (the owner's PC check times it). A v0.1.0 chart whose song.ini name or artist differ from today's for the same file is not matched (two differently named entries). songcharter/ui/server.py's install docstring still says the 409 comes when the same-name folder is there; it can name an older folder now.",
+    "[gate] tests/test_art.py::test_without_pillow_a_given_image_is_a_tool_error_and_an_embedded_one_a_warning failed once in a local full suite (M5-13's first run) and passed five reruns and both CI suites: a flaky test, cause unchecked (perhaps art.py's ffmpeg probe of the embedded picture)."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
   "how_work_is_run": "docs/PIPELINE.md. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices, /prompt-caching, /sub-agents, /settings",
