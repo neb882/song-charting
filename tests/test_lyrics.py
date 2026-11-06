@@ -210,7 +210,7 @@ def test_syllables_are_quantized_onto_the_grid():
 def test_on_a_doubled_grid_a_word_snaps_one_slot_level_coarser():
     """assemble.lyric_rules: on a doubled grid (octave 2) the 8ths and their triplets, so at 200 BPM a word 50 ms
     before a beat goes on the beat, where the grid's 16ths put it a 1/16 (75 ms) early; on a first grid (octave 1)
-    the quantizer's own rules, as before, whatever the tempo."""
+    the quantizer's own rules, as before, at any tempo."""
     x = L.parse("zorp blen quiv fim")
     tm = TempoMap(192, [Tempo(0, 200000)])      # 0.3 s beats, 75 ms 16ths
     beats = (8, 12, 16, 20)
