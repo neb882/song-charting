@@ -19,12 +19,15 @@ FILES = ("notes.chart", "song.ini", "song.ogg", "report.json")
 NAME = "Zorp Blen - Quiv Dree"
 
 
-def built(root: Path, name: str = NAME, charter: str = "songcharter", body: str = "v1") -> Path:
-    """A song folder as songcharter builds it (the four files; song.ogg is only its header and a word)."""
+def built(root: Path, name: str = NAME, charter: str = "songcharter", body: str = "v1", song: str = "Quiv Dree",
+          artist: str | None = None) -> Path:
+    """A song folder as songcharter builds it (the four files; song.ogg is only its header and a word). song.ini
+    has `song` as its name, and an artist line only when `artist` is given."""
     folder = root / name
     folder.mkdir(parents=True)
     (folder / "notes.chart").write_text(f"[Song]\r\n{{\r\n  Name = \"{body}\"\r\n}}\r\n", encoding="utf-8")
-    (folder / "song.ini").write_text(f"[song]\r\nname = Quiv Dree\r\ncharter = {charter}\r\n", encoding="utf-8")
+    by = "" if artist is None else f"artist = {artist}\r\n"
+    (folder / "song.ini").write_text(f"[song]\r\nname = {song}\r\n{by}charter = {charter}\r\n", encoding="utf-8")
     (folder / "song.ogg").write_bytes(b"OggS" + body.encode())
     (folder / "report.json").write_text(json.dumps({"gate": {"ok": True}, "body": body}), encoding="utf-8")
     return folder
@@ -442,3 +445,165 @@ def test_our_own_leftovers_go_and_nothing_else_is_touched(tmp_path):
     assert {p: sorted(x.name for x in p.iterdir()) for p in keep} == before
     assert (tmp_path / "elsewhere" / NAME / "song.ogg").read_bytes() == b"OggSlinked"
     assert C.leftovers(songs, NAME) == []
+
+
+# ------------------------------------------------------------------------------------------------ older charts (M5-13)
+
+BAND, TITLE = "Imaginary Band Name", "A Made Up Song Title (Live at Nowhere)"   # made up
+LONG = f"{BAND} - {TITLE}"                     # the library folder's name since M5-06 (cut at 80: whole)
+V01 = "Imaginary Band Name - A Made Up Song Tit"   # v0.1.0's: its safe_name cut "Artist - Title" at 40, in a word
+
+
+def long_song(root: Path, name: str = LONG, body: str = "v1", **kw) -> Path:
+    return built(root, name=name, body=body, **{"song": TITLE, "artist": BAND, **kw})
+
+
+def names(songs: Path) -> list[str]:
+    return sorted(p.name for p in songs.iterdir())
+
+
+def test_a_chart_installed_under_v010s_cut_of_the_name_is_the_older_chart(tmp_path):
+    """The release gate advisor's finding 1: v0.1.0 installed the song as V01, today's name is LONG. The install
+    finds V01 as the older chart (409, ours, naming it), and a replace moves it to replaced/ under its own name, so
+    Clone Hero lists the song once."""
+    from songcharter import cache
+    from songcharter.ui.jobs import LIBRARY_NAME_MAX
+    assert cache.safe_name(LONG, LIBRARY_NAME_MAX) == LONG and len(V01) == 40 and LONG.startswith(V01)
+    home, songs = tmp_path / "home", tmp_path / "Songs"
+    songs.mkdir()
+    v1 = contents(long_song(songs, name=V01))
+    new = long_song(tmp_path / "library", body="v2")
+    with pytest.raises(C.Exists) as e:
+        C.install(new, songs, home)
+    assert e.value.ours is True and e.value.target == songs / V01
+    assert names(songs) == [V01] and contents(songs / V01) == v1 and not (home / "replaced").exists()
+    done = C.install(new, songs, home, replace=True, now=1_700_000_000)
+    assert names(songs) == [LONG] and contents(done.target) == contents(new)
+    stamp = done.replaced.parent.name
+    assert done.replaced == home / "replaced" / stamp / V01 and contents(done.replaced) == v1 and done.note is None
+
+
+@pytest.mark.parametrize("make", ["another charter", "no report.json", "a link to ours", "hidden"])
+def test_the_same_song_in_a_folder_without_our_marks_is_never_touched(tmp_path, make):
+    """A person's folder under v0.1.0's cut of the name, holding the same song (name and artist) but not our marks,
+    stays as it is, as does a link to one of ours and a hidden folder (a leading dot); the install goes ahead
+    without asking."""
+    home, songs = tmp_path / "home", tmp_path / "Songs"
+    songs.mkdir()
+    if make == "another charter":
+        other = long_song(songs, name=V01, charter="Made Up Charter")
+    elif make == "no report.json":
+        other = long_song(songs, name=V01)
+        (other / "report.json").unlink()
+    elif make == "a link to ours":
+        other = songs / V01
+        other.symlink_to(long_song(tmp_path / "elsewhere"))
+    else:
+        other = long_song(songs, name=f".{V01}")
+    before = contents(other)
+    done = C.install(long_song(tmp_path / "library", body="v2"), songs, home)
+    assert done.replaced is None and done.note is None and not (home / "replaced").exists()
+    done = C.install(long_song(tmp_path / "library2", body="v3"), songs, home, replace=True)   # over the v2 just in
+    assert done.replaced.name == LONG and contents(done.replaced)["song.ogg"] == b"OggSv2" and done.note is None
+    assert names(songs) == sorted([LONG, other.name]) and contents(other) == before
+    assert [p.name for p in (home / "replaced").glob("*/*")] == [LONG]
+    assert make != "a link to ours" or other.is_symlink()
+
+
+@pytest.mark.parametrize("song, artist, folder", [
+    ("A Made Up Song Tithe", BAND, V01),                    # another song v0.1.0 cut to the same name
+    ("A Made Up Song Title (Studio)", BAND, f"{BAND} - A Made Up Song Title (Studio)"),
+    (TITLE, "Another Made Up Band", f"Another Made Up Band - {TITLE}"),
+    (TITLE, None, V01),                                     # no artist line: not a song.ini of ours to match
+    ("", BAND, V01),                                        # no name
+])
+def test_another_song_of_ours_is_never_touched(tmp_path, song, artist, folder):
+    home, songs = tmp_path / "home", tmp_path / "Songs"
+    songs.mkdir()
+    other = built(songs, name=folder, song=song, artist=artist)
+    before = contents(other)
+    done = C.install(long_song(tmp_path / "library", body="v2"), songs, home)   # no 409: nothing to replace
+    assert done.replaced is None and names(songs) == sorted([LONG, folder]) and contents(other) == before
+    done = C.install(long_song(tmp_path / "library2", body="v3"), songs, home, replace=True)
+    assert contents(other) == before and names(songs) == sorted([LONG, folder])
+    assert [p.name for p in (home / "replaced").glob("*/*")] == [LONG]   # the first install's, only
+
+
+def test_the_same_names_chart_and_older_ones_under_other_names_all_go(tmp_path):
+    """songs/LONG of ours, v0.1.0's V01 and a copy of ours the person renamed (its song.ini in other case and
+    spacing), all the same song: the 409 names LONG; the replace moves all three to replaced/, LONG's first (the
+    answer's `replaced`), the others named in the note."""
+    home, songs = tmp_path / "home", tmp_path / "Songs"
+    songs.mkdir()
+    olds = {LONG: contents(long_song(songs, body="v1")), V01: contents(long_song(songs, name=V01, body="v0")),
+            "My copy": contents(built(songs, name="My copy", body="v-1", song=TITLE.lower(),
+                                      artist=" imaginary  BAND name "))}
+    new = long_song(tmp_path / "library", body="v2")
+    with pytest.raises(C.Exists) as e:
+        C.install(new, songs, home)
+    assert e.value.target == songs / LONG and e.value.ours is True and names(songs) == sorted(olds)
+    done = C.install(new, songs, home, replace=True, now=1_700_000_000)
+    assert names(songs) == [LONG] and contents(done.target) == contents(new)
+    stamp = home / "replaced" / done.replaced.parent.name
+    assert done.replaced == stamp / LONG and {p.name: contents(p) for p in stamp.iterdir()} == olds
+    assert done.note == (f"another older chart of this song, {V01}, went to {stamp / V01}; another older chart of "
+                         f"this song, My copy, went to {stamp / 'My copy'}")
+
+
+def test_a_name_that_differs_only_in_case_is_the_target_where_case_is_ignored(tmp_path, monkeypatch):
+    """On ext4 a folder of ours named as LONG but for case is another folder, an older chart; on drvfs (case
+    ignored: samefile says so) it is songs/LONG itself, which the install's own replace deals with."""
+    songs = tmp_path / "Songs"
+    songs.mkdir()
+    variant = long_song(songs, name=LONG.lower())
+    new = long_song(tmp_path / "library", body="v2")
+    assert C.older_charts(songs, new) == [variant]
+    monkeypatch.setattr(os.path, "samefile", lambda a, b: Path(a).name.lower() == Path(b).name.lower())
+    assert C.older_charts(songs, new) == []
+    monkeypatch.setattr(os.path, "samefile", lambda a, b: False)
+    assert C.older_charts(songs, new) == [variant]
+
+
+def test_an_older_chart_windows_will_not_let_go_stays_with_a_note(tmp_path):
+    """The new chart is in place; V01 cannot be renamed aside (EBUSY, every try): it stays whole, and the note says
+    Clone Hero lists the song twice until it is deleted."""
+    home, songs = tmp_path / "home", tmp_path / "Songs"
+    songs.mkdir()
+    v1 = contents(long_song(songs, name=V01))
+
+    def rename(src, dst):
+        if Path(src).name == V01:
+            raise OSError(errno.EBUSY, os.strerror(errno.EBUSY))
+        os.rename(src, dst)
+
+    slept = []
+    done = C.install(long_song(tmp_path / "library", body="v2"), songs, home, replace=True, rename=rename,
+                     sleep=slept.append)
+    assert names(songs) == sorted([LONG, V01]) and contents(songs / V01) == v1 and done.replaced is None
+    assert contents(done.target)["song.ogg"] == b"OggSv2" and len(slept) == C.RENAME_TRIES - 1
+    assert done.note == (f"moving an older chart of this song aside was refused {C.RENAME_TRIES} times in about 5 s: "
+                         f"{os.strerror(errno.EBUSY)}: it stays in {songs / V01}, and Clone Hero lists the song twice "
+                         "until that folder is deleted")
+
+
+def test_an_older_chart_whose_move_fails_is_a_leftover_the_next_install_clears(tmp_path, monkeypatch):
+    home, songs = tmp_path / "home", tmp_path / "Songs"
+    songs.mkdir()
+    v1 = contents(long_song(songs, name=V01))
+
+    def refused(src, dst):
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(shutil, "move", refused)
+    done = C.install(long_song(tmp_path / "library", body="v2"), songs, home, replace=True, now=1_700_000_000)
+    [aside] = dot_folders(songs)
+    assert aside.startswith(f".{LONG}.songcharter-") and aside.endswith(".old") and contents(songs / aside) == v1
+    assert names(songs) == sorted([LONG, aside]) and done.replaced is None
+    assert done.note == (f"an older chart of this song stays in {songs / aside}: moving it into {home / 'replaced'} "
+                         "failed (Input/output error); the next install of this song tries again")
+    monkeypatch.undo()
+    v2 = contents(done.target)
+    done = C.install(long_song(tmp_path / "library2", body="v3"), songs, home, replace=True, now=1_700_000_000)
+    assert names(songs) == [LONG] and contents(done.target)["song.ogg"] == b"OggSv3"
+    went = sorted(contents(p)["song.ogg"] for p in (home / "replaced").rglob(LONG))
+    assert went == [b"OggSv1", b"OggSv2"] and "an older chart left in Songs went to " in done.note

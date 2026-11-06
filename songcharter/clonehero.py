@@ -19,6 +19,17 @@ the programs that hold a new folder for a moment (OneDrive's sync, antivirus).
   * **Installing** (`install`): into songs/<the song folder's name>.
       - A folder of that name there already: Exists, with `ours` (its song.ini says charter = songcharter and it
         holds report.json). Only our own is replaced, and only when asked (replace=True); another charter's never.
+      - **Our older charts of the same song under another name** (`older_charts`, M5-13): each folder at the top of
+        songs that is ours and whose song.ini has the same name and artist as the new chart's (`song_of`: compared
+        without case, runs of spaces as one); not hidden, not a link, and not songs/<name> itself (a name that
+        differs only in case is that folder on drvfs, another one on ext4). v0.1.0 cut the library folder's name at
+        40 characters and M5-06 at 80, so a song charted under v0.1.0 whose "Artist - Title" ran longer is in songs
+        under v0.1.0's cut, and Clone Hero would list the song twice; a folder of ours the person renamed is one
+        too. They count as the existing chart: Exists (ours) names the first when replace is false; with
+        replace=True each goes to replaced/ as a same-name one does, after the new chart is in place (renamed aside
+        to .<the new name>.songcharter-<8 hex>.old, so a move that fails is a leftover the next install clears). A
+        folder without our marks, or one of ours with another song in it (a v0.1.0 cut two songs share), is never
+        touched. The cost: one look at each folder in songs (report.json), and song.ini read in our own.
       - The copy goes to songs/.<name>.songcharter-<8 hex>.tmp, contents only (shutil.copyfile, never copystat: not
         shutil.copytree, which copies each folder's timestamps and modes, what drvfs refuses).
       - When replacing, the old folder is renamed aside in songs (.<name>.songcharter-<8 hex>.old), the copy renamed
@@ -89,8 +100,9 @@ class Blocked(Exception):
 @dataclass(frozen=True)
 class Installed:
     target: Path                     # songs/<name>
-    replaced: Path | None = None     # where the older chart went, when one was replaced
-    note: str | None = None          # what did not go as planned after the install itself (the older chart's move)
+    replaced: Path | None = None     # where the older chart went, when one was replaced (the first, of several)
+    note: str | None = None          # what did not go as planned after the install itself (the older chart's move),
+                                     # and where the other older charts went, when there were several
 
 
 # ------------------------------------------------------------------------------------------------ ui.json
@@ -226,6 +238,63 @@ def is_ours(folder: Path) -> bool:
     return bool(m) and m.group(1).strip().lower() == CHARTER
 
 
+def song_of(folder: Path) -> tuple[str, str] | None:
+    """The song a song folder holds, as Clone Hero lists it: its song.ini's (name, artist), each folded (NFC,
+    without case, runs of spaces as one), from the first line of each key; None when song.ini cannot be read, or
+    has no name (or an empty one) or no artist line."""
+    try:
+        text = (Path(folder) / "song.ini").read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return None
+    found: dict[str, str] = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        key = key.strip().lower()
+        if sep and key in ("name", "artist") and key not in found:
+            found[key] = _fold(" ".join(value.split()))
+    if not found.get("name") or "artist" not in found:
+        return None
+    return found["name"], found["artist"]
+
+
+def older_charts(songs: Path | str, song_folder: Path | str) -> list[Path]:
+    """Our older charts, in `songs` under another name, of the song in `song_folder` (the module docstring): each
+    real folder at the top of `songs` (not a link), not hidden (a leading dot), not songs/<song_folder's name>
+    itself (that name, or one that differs only in case and is the same folder, as drvfs and Windows find it), that
+    is_ours and holds the same song (song_of); by name."""
+    song = song_of(Path(song_folder))
+    if song is None:
+        return []
+    target = Path(songs) / Path(song_folder).name
+    try:
+        with os.scandir(songs) as it:
+            entries = sorted(it, key=lambda e: e.name)
+    except OSError:
+        return []
+    found = []
+    for e in entries:
+        if e.name.startswith(".") or e.name == target.name:
+            continue
+        if _fold(e.name) == _fold(target.name) and _same_folder(e.path, target):
+            continue
+        try:
+            real_folder = e.is_dir(follow_symlinks=False)
+        except OSError:
+            continue
+        folder = Path(e.path)
+        if real_folder and is_ours(folder) and song_of(folder) == song:
+            found.append(folder)
+    return found
+
+
+def _same_folder(a: Path | str, b: Path | str) -> bool:
+    """Whether two paths name one folder (os.path.samefile), False when either cannot be looked at."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
 def retryable(e: OSError) -> bool:
     """An error a moment's wait may cure (the module docstring)."""
     return isinstance(e, PermissionError) or e.errno in RETRY_ERRNOS
@@ -321,9 +390,11 @@ def install(song_folder: Path | str, songs: Path | str, home: Path | str, replac
             rename: Callable[[Path, Path], None] = os.rename, sleep: Callable[[float], None] = time.sleep,
             now: float | None = None) -> Installed:
     """Put the song folder into the Songs folder (the module docstring). InputError when either is not a folder;
-    Exists (409) when songs/<name> exists and is not ours, or `replace` is false; Blocked (403) when Windows does not
-    let it finish. `rename` and `sleep` are os.rename's and time.sleep's stand-ins for tests. Our leftovers for the
-    name go first (_tidy); `note` says what of them stays, or where an older chart went."""
+    Exists (409) when songs/<name> exists and is not ours, or when it (ours) or an older chart of ours of the same
+    song under another name (older_charts: then Exists names the first) is there and `replace` is false; Blocked
+    (403) when Windows does not let it finish. `rename` and `sleep` are os.rename's and time.sleep's stand-ins for
+    tests. Our leftovers for the name go first (_tidy), the older charts under other names last (_replace_older);
+    `note` says what of them stays, or where an older chart went."""
     src, songs = Path(song_folder), Path(songs)
     if not src.is_dir():
         raise InputError(f"the song folder {src} does not exist")
@@ -336,6 +407,9 @@ def install(song_folder: Path | str, songs: Path | str, home: Path | str, replac
         ours = target.is_dir() and not target.is_symlink() and is_ours(target)
         if not (replace and ours):
             raise Exists(target, ours)
+    older = older_charts(songs, src)
+    if older and not replace:
+        raise Exists(older[0], True)
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(time.time() if now is None else now))
     moved, notes = _tidy(songs, name, home, stamp, sleep)
     notes = [f"an older chart left in Songs went to {p}" for p in moved] + notes
@@ -364,16 +438,40 @@ def install(song_folder: Path | str, songs: Path | str, home: Path | str, replac
     except Blocked:
         _remove(tmp, sleep)
         raise
-    note = "; ".join(notes) or None
-    if old is None:
-        return Installed(target, moved[0] if moved else None, note)
+    first = None   # where the older chart went (the first, of several)
+    if old is not None:
+        try:
+            first = _to_replaced(old, home, name, stamp)
+        except OSError as e:
+            notes.append(f"the older chart stays in {old}: moving it into {Path(home) / REPLACED} failed "
+                         f"({e.strerror or type(e).__name__}); the next install of this song tries again")
+    for folder in older:
+        went, why = _replace_older(folder, songs, name, home, stamp, rename, sleep)
+        if went is None:
+            notes.append(why)
+        elif first is None:
+            first = went
+        else:
+            notes.append(f"another older chart of this song, {folder.name}, went to {went}")
+    return Installed(target, first if first is not None else (moved[0] if moved else None), "; ".join(notes) or None)
+
+
+def _replace_older(folder: Path, songs: Path, name: str, home: Path | str, stamp: str,
+                   rename: Callable[[Path, Path], None], sleep: Callable[[float], None]) -> tuple[Path | None, str]:
+    """One of older_charts out of Songs, once the new chart `name` is in place: renamed aside (retried) to
+    .<name>.songcharter-<8 hex>.old, then moved to replaced/<stamp>/<its own name>. (where it went, "") or (None,
+    why it stays)."""
+    aside = songs / f".{name}.songcharter-{secrets.token_hex(4)}.old"
     try:
-        dest = _to_replaced(old, home, name, stamp)
+        retry(lambda: rename(folder, aside), "moving an older chart of this song aside", folder, sleep)
+    except Blocked as e:
+        return None, (f"{e.why}: it stays in {folder}, and Clone Hero lists the song twice until that folder is "
+                      "deleted")
+    try:
+        return _to_replaced(aside, home, folder.name, stamp), ""
     except OSError as e:
-        notes.append(f"the older chart stays in {old}: moving it into {Path(home) / REPLACED} failed "
-                     f"({e.strerror or type(e).__name__}); the next install of this song tries again")
-        return Installed(target, moved[0] if moved else None, "; ".join(notes))
-    return Installed(target, dest, note)
+        return None, (f"an older chart of this song stays in {aside}: moving it into {Path(home) / REPLACED} failed "
+                      f"({e.strerror or type(e).__name__}); the next install of this song tries again")
 
 
 def export_zip(song_folder: Path | str, home: Path | str) -> Path:
