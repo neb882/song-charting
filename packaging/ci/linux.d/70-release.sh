@@ -145,7 +145,7 @@ echo "70-release: the installed NOTICE.txt is packaging/NOTICE.txt"
 
 # --- 5. the guide's other commands, as written
 friend "songcharter (the page)" '
-songcharter >/tmp/page.log 2>&1 &
+SONGCHARTER_RELEASES_URL=http://127.0.0.1:9/releases.json songcharter >/tmp/page.log 2>&1 &   # no real API request (M5-07)
 pid=$!
 address=""
 for _ in $(seq 1 600); do
