@@ -32,8 +32,7 @@ machine", rebuilds it):
 - `<dev>/owner_v01`: the owner's v0.1 song folders of the stress songs (charts and report.json; the rock song's
   chart carries lyric events: numbers-only scripts).
 The environment variables are eval/README.md's step 9; every brief names them.
-The kept folders are being remade at main 8ba3cbd (drums stale since M5-01, guitar since M5-02); until then a run
-of later code passes `--rerun drums,guitar` on both sides (PROGRESS, golden).
+The kept folders were remade at main 8ba3cbd on 2026-11-06 (base runs: golden/base-main, golden/stress-base-main).
 
 ## Only in the session
 

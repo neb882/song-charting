@@ -88,7 +88,7 @@
     "cost": "cold (a kept folder made, stems hard-linked): 474-1081 s a song, 80 min for the set, the guitar take most of it; warm: 44-76 s a song, 6.5 min for the set (CPU, 2 threads)",
     "rebuilt_2026_11_05": "The dev machine was rebuilt (eval/README.md, 'Rebuilding the dev machine') and its cold golden base on main at fbd9751 (after M4-11) is in <dev>/golden/base: all 72 tracks of the six references are byte-identical to eval/baseline/summary.json, so M4-11 moved no note and the committed baseline stands. The test song's upload is another encode of the owner's file (separation key 063cc9c8..., not 13506d568d...), so its 12 tracks differ: the test song has a new baseline on this machine. 64 min for the set, cold.",
     "stress": "The stress set (M5-09, merged 2026-11-05): eval/stress.json (troop, sooth, break; generic slots), built by eval/build_refs.sh --set stress from the package list $EVAL_DATA/stress.local.json (not committed, the owner keeps it), run with eval.golden --refs $EVAL_DATA/stress --work $SONGCHARTER_GOLDEN/stress-work and scored by eval/stress.py score (eval/README.md, Stress songs). The baseline: main at fbd9751, 1 CPU take, in eval/baseline/stress/ (the dev machine's run in $SONGCHARTER_GOLDEN/stress-base; cold 4000 s). An order on the charting path compares with it by stress.py compare (exit 1 when a primary F1@50 falls by more than 0.01).",
-    "kept_drums": "Rebuilding (2026-11-05): the kept folders (golden work/, stress-work/) were fbd9751's (drums stale since M5-01, guitar since M5-02); they are remade cold at main 8ba3cbd, with the runs $SONGCHARTER_GOLDEN/base-main and stress-base-main as the base. Until that finishes, a run of code after M5-01 needs --rerun drums,guitar on both sides."
+    "kept_drums": "The kept folders (golden work/, stress-work/) were remade cold at main 8ba3cbd on 2026-11-06 (after M5-01's beatgrid and M5-02's guitar changes); the base runs are $SONGCHARTER_GOLDEN/base-main and stress-base-main. A run of later code needs no --rerun unless it changes an engine's files."
   },
   "in_flight": [
     {
@@ -102,11 +102,11 @@
       "then": "wave 0 is done (M4-11 merged, the reports committed); wave 1 is running (below), in the new session (docs/handoff.md)"
     },
     {
-      "order": "M5-03 solos (wave 3)",
-      "branch": "m5-03-solos",
-      "worktree": "wt/m5-03 beside the checkout (dev machine)",
-      "stage": "built; the densest window passes the stress lines (troop's solo overlaps the humans' 0.97-1.00; sooth 0.86/0.73); Lucretia's only solo was lost to the share cap: decided, a candidate over the remaining budget keeps its densest window within it; then a warm golden/stress against the rebuilt kept folders, then review",
-      "report": "<scratchpad>/briefs/m5-03.report.md, then docs/reports/M5-03-solos.md"
+      "order": "M5-10 lyrics on a doubled grid",
+      "branch": "m5-10-doubled-lyrics",
+      "worktree": "wt/m5-10 beside the checkout (dev machine)",
+      "stage": "building (2026-11-06), from main after M5-03's merge",
+      "report": "<scratchpad>/briefs/m5-10.report.md, then docs/reports/M5-10-doubled-lyrics.md"
     }
   ],
   "next": [
@@ -205,7 +205,8 @@
     "[owner] The remote branch m5-01-fast-grid is stale (its rebase was pushed as m5-01-fast-grid-rebased and merged): the owner deletes it.",
     "[M5-04] The owner's pasted text of the power-metal song sits at a weak share of 0.088 against the 0.108 threshold (1.23x under it): the margin rests on two runs; revisit with more vocal songs. pipeline.py's summary line still prints the median word score (only the warning changed).",
     "[M5-08] The lyrics aligner's download line names its file, not 'the lyrics aligner' (engines/lyrics.py calls download_part without a name: one argument); ADTOF's names its file too (adtof.py is in ENGINE_FILES). curl's progress meter for uv's tarball (install.sh step 6) and uv's own bars on a terminal (step 7) are not covered by M5-08.",
-    "[M5-02] The order's 'stopped at 498.6 s on the token budget' was wrong: the owner's v0.1 takes were beat-capped (beat 1280 at 498.65 s); a token-capped take could not complete under v0.1's driver, whose watchdog equalled the budget. Fixed in M5-02 (16 tokens of headroom)."
+    "[M5-02] The order's 'stopped at 498.6 s on the token budget' was wrong: the owner's v0.1 takes were beat-capped (beat 1280 at 498.65 s); a token-capped take could not complete under v0.1's driver, whose watchdog equalled the budget. Fixed in M5-02 (16 tokens of headroom).",
+    "[M5-09] eval/refs/build_ref.py fails on two Chorus Encore packages of a fourth stress song (2026-11-06): one carries a notes.mid.backup beside notes.mid, one has a .mid that mido refuses (ValueError); both charts were left out of that song's set. Make build_ref pick notes.mid exactly and read a MIDI leniently (mido clip=True), with a test."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
   "how_work_is_run": "docs/PIPELINE.md. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices, /prompt-caching, /sub-agents, /settings",
