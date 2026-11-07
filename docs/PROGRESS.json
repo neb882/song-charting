@@ -105,6 +105,13 @@
       "order": "v0.2.0's release gate (M5-00 section 7)",
       "stage": "published 2026-11-06 as a pre-release at eb0f340 (tag v0.2.0) by the owner after his PC checks; the history was rewritten that day to remove a report's md5 prefixes and a stress song's artist (the owner's decision; v0.1.0 and everything before 2026-11-05 kept their hashes); v0.2.1 (v0.2.0 with M6-08's fix: a build stuck for an hour on a quiet stretch) published by the owner 2026-11-07 as a pre-release at 23389ac (tag v0.2.1; the orchestrator checked the tag, SHA256SUMS, install.sh's tarball SHA-256 and version, the guide's install line, and the tarball = git archive of 23389ac + NOTICE.txt)",
       "then": "the owner sends the friend v0.2.1's install line (or his page's update box shows it within a day); the friend's notes count most"
+    },
+    {
+      "order": "M6-09 a chart you can hear (songcharter listen; the Done screen's Listen control)",
+      "branch": "m6-09-listen",
+      "worktree": "wt/m6-09 beside the checkout (dev machine)",
+      "stage": "building (2026-11-07); for v0.3.1 (the owner: after v0.3.0, merged only once v0.3.0 is tagged)",
+      "report": "<scratchpad>/briefs/m6-09.report.md, then docs/reports/M6-09-listen.md"
     }
   ],
   "next": [
