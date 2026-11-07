@@ -113,11 +113,15 @@ def test_a_sparse_window_gives_a_tempo_in_range_and_ends():
     """Eight scattered onsets in 20 s (a quiet window): the refined period came out negative here, and folding the
     negative tempo by octaves never ended (a build stuck for an hour). In a subprocess with a time limit, so a hang
     fails the test instead of stopping the suite."""
-    code = ("import numpy as np; from songcharter.beatgrid import estimate_tempo; env = np.zeros(2000); "
-            f"env[{SPARSE[0]}] = {SPARSE[1]}; print(estimate_tempo(env, 100.0))")
+    code = ("import numpy as np; import songcharter.beatgrid as B; env = np.zeros(2000); "
+            f"env[{SPARSE[0]}] = {SPARSE[1]}; lo, hi = B.BPM_RANGE; bpms = np.arange(lo, hi, 0.05); "
+            "ac = B._autocorrelation(env, 100.0, int(4.5 * 60 * 100.0 / lo)); "
+            "coarse = float(bpms[int(np.argmax(B._tempo_score(ac, 60.0 * 100.0 / bpms)))]); "
+            "print(B.estimate_tempo(env, 100.0), coarse)")
     p = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=60)
     assert p.returncode == 0, p.stderr[-500:]
-    assert BPM_RANGE[0] <= float(p.stdout) < BPM_RANGE[1]
+    bpm, coarse = map(float, p.stdout.split())
+    assert bpm == coarse and BPM_RANGE[0] <= bpm < BPM_RANGE[1]    # the unrefined winner, not just any tempo in range
 
 
 def test_the_octave_fold_ends_on_any_tempo():
