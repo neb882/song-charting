@@ -503,6 +503,9 @@ def hf_home() -> Path:
 
 
 SEPARATION, SECTIONS = "htdemucs_6s", "harmonix-all"   # the pipeline's models the install fetches from the hub
+# allin1's 8 folds are 11.2 MB (DESIGN.md 4.2): fold 0, which model "auto" runs on every device since M6-10, and
+# 9.8 MB that only a model asked for reads. Kept: about 0.1 % of a GPU lane's downloads, and the installed app
+# reads the hub offline (launch.environment), so a model asked for (harmonix-all, say) is there only if fetched now
 
 
 @contextlib.contextmanager

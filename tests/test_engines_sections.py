@@ -120,15 +120,32 @@ def test_allin1_gets_our_stems_folded_to_its_four(tmp_path, weights):
     assert info["allin1"]["peak_rss_mb"] == 640.5  # the runner's own peak, for the pipeline's report
 
 
-def test_the_ensemble_runs_on_cuda_and_fold_0_on_the_cpu(tmp_path, weights):
+def test_fold_0_runs_on_cuda_and_on_the_cpu_and_a_model_asked_for_runs_on_either(tmp_path, weights, monkeypatch):
+    """model "auto" is fold 0 on every device, the ensemble on CUDA no more (M6-10: the grid's rules that read
+    allin1's beats were measured on fold 0); a model asked for runs as asked on either device. The cache key
+    follows the model run, not the setting: an ensemble result cached by an earlier version is not what "auto"
+    reads now, nor is fold 0's once "auto" means another model."""
     mix, stems = song()
-    fake = FakeAllin1(cuda=True)
-    r = find_sections(mix, stems, tmp_path / "gpu", Settings(python="py"), run=fake, download=weights)
-    assert fake.jobs[0]["device"] == "cuda" and r.info["allin1"]["model"] == "harmonix-all"
+    fold0 = [str(weights.files[ALLIN1_FOLDS["harmonix-fold0"][0]])]
     ensemble = [str(weights.files[ALLIN1_FOLDS[f][0]]) for f in ALLIN1_MODELS["harmonix-all"]]
-    assert fake.jobs[0]["checkpoints"] == ensemble
-    find_sections(mix, stems, tmp_path / "cpu", Settings(python="py", device="cpu"), run=fake, download=weights)
-    assert fake.jobs[1]["device"] == "cpu" and len(fake.jobs[1]["checkpoints"]) == 1
+    fake = FakeAllin1(cuda=True)
+    runs = [find_sections(mix, stems, tmp_path / str(i), s, run=fake, download=weights) for i, s in enumerate((
+        Settings(python="py"), Settings(python="py", device="cpu"), Settings(python="py", model="harmonix-all"),
+        Settings(python="py", device="cpu", model="harmonix-all")))]
+    assert S.AUTO_MODEL == "harmonix-fold0"
+    assert [(j["device"], j["checkpoints"]) for j in fake.jobs] == [
+        ("cuda", fold0), ("cpu", fold0), ("cuda", ensemble), ("cpu", ensemble)]
+    assert [r.info["allin1"]["model"] for r in runs] == ["harmonix-fold0"] * 2 + ["harmonix-all"] * 2
+    assert len({r.info["key"] for r in runs}) == 4
+    out = tmp_path / "one"   # the ensemble's result in the folder, then "auto" on CUDA: run again, with fold 0
+    find_sections(mix, stems, out, Settings(python="py", model="harmonix-all"), run=fake, download=weights)
+    auto = find_sections(mix, stems, out, Settings(python="py"), run=fake, download=weights)
+    assert not auto.cached and fake.jobs[-1]["checkpoints"] == fold0 and auto.info["key"] == runs[0].info["key"]
+    assert find_sections(mix, stems, out, Settings(python="py"), run=fake, download=weights).cached
+    assert len(fake.jobs) == 6
+    monkeypatch.setattr(S, "AUTO_MODEL", "harmonix-fold3")
+    moved = find_sections(mix, stems, out, Settings(python="py"), run=fake, download=weights)
+    assert not moved.cached and moved.info["allin1"]["model"] == "harmonix-fold3" and len(fake.jobs) == 7
     with pytest.raises(Allin1Error, match="no working CUDA"):
         find_sections(mix, stems, tmp_path / "x", Settings(backend="allin1", python="py", device="cuda"),
                       run=FakeAllin1(cuda=False), download=weights)
@@ -138,15 +155,20 @@ def test_a_failed_cuda_run_is_run_again_on_the_cpu_when_the_device_was_auto(tmp_
     mix, stems = song()
     fake = FakeAllin1(cuda=True, fail="cuda")  # CUDA is there, but this torch build has no kernels for the GPU
     r = find_sections(mix, stems, tmp_path / "out", Settings(python="py"), run=fake, download=weights)
-    assert [(j["device"], len(j["checkpoints"])) for j in fake.jobs] == [("cuda", 8), ("cpu", 1)]
+    assert [(j["device"], len(j["checkpoints"])) for j in fake.jobs] == [("cuda", 1), ("cpu", 1)]
     assert r.backend == "allin1" and r.info["allin1"]["device"] == "cpu"
-    assert r.info["allin1"]["model"] == "harmonix-fold0"  # the CPU's model, and the CPU's key
+    assert r.info["allin1"]["model"] == "harmonix-fold0"  # the same model, and the CPU's key
     assert r.info["key"] == find_sections(mix, stems, tmp_path / "cpu", Settings(python="py", device="cpu"),
                                           run=FakeAllin1(), download=weights).info["key"]
     fallback = "the CUDA run failed (torch.AcceleratorError: CUDA error: no kernel image is available"
     assert r.info["allin1"]["fallback"].startswith(fallback) and fallback in r.info["why"]
     again = find_sections(mix, stems, tmp_path / "out", Settings(python="py"), run=fake, download=weights)
     assert again.cached and len(fake.jobs) == 3 and fallback in again.info["why"]  # the CPU result is reused
+    asked = FakeAllin1(cuda=True, fail="cuda")   # a model asked for: the CPU runs it too
+    r = find_sections(mix, stems, tmp_path / "all", Settings(python="py", model="harmonix-all"), run=asked,
+                      download=weights)
+    assert [(j["device"], len(j["checkpoints"])) for j in asked.jobs] == [("cuda", 8), ("cpu", 8)]
+    assert r.info["allin1"]["model"] == "harmonix-all"
     with pytest.raises(Allin1Error, match="no kernel image"):  # asked for cuda: no second try
         find_sections(mix, stems, tmp_path / "asked", Settings(backend="allin1", python="py", device="cuda"),
                       run=FakeAllin1(cuda=True, fail="cuda"), download=weights)

@@ -1,21 +1,26 @@
-# Handoff (updated 2026-11-06)
+# Handoff (updated 2026-11-07)
 
-The session that ran M3 and M4 ended on 2026-11-05; a new session took over that morning and ran M5 (v0.2.0) to its
-release gate. Read CLAUDE.md, docs/PROGRESS.json (`in_flight` says what is waiting, `deferred` holds the known gaps)
-and docs/PIPELINE.md first. This note adds what only the running session knows.
+The session that ran M3 and M4 ended on 2026-11-05; a new session took over that morning and ran M5 (v0.2.0); M6
+(v0.3.0) is at its release gate. Read CLAUDE.md, docs/PROGRESS.json (`in_flight` says what is waiting, `deferred`
+holds the known gaps) and docs/PIPELINE.md first. This note adds what only the running session knows.
 
 ## Where things stand
 
 - **v0.1.0** is published as a pre-release; the friend is running M4-08 part B. When his diagnostics zip and notes
   arrive, read them as M4-08 says.
-- **v0.2.0** is built and through the orchestrator's part of the release gate (docs/reports/v0.2.0-gate.md): every
-  order merged (M4-11, M5-01 to M5-13), the full review workflow and its fixes, the golden charts and the stress check
-  on the candidate, the advisor and its fixes. **Nothing is published.** What is left is the owner's: his PC checks
-  and play test (the gate report's list), his decisions (its table, with recommendations), and his approval. Then the
-  release is built from a clean clone at the tagged commit with `packaging/release/build.sh 0.2.0` (it refuses any
-  other version) and published by the owner, as v0.1.0 was (the session's proxy refuses tag pushes).
-- **The owner's open questions:** the git history (a committed report's md5 prefixes and a stress song's title and
-  artist, fixed in the files, kept by the history: rewrite or leave); the stale remote branch `m5-01-fast-grid`.
+- **v0.2.0** was published by the owner on 2026-11-06 as a pre-release (tag v0.2.0, eb0f340; its gate:
+  docs/reports/v0.2.0-gate.md), after his PC checks. **v0.2.1** (v0.2.0 with M6-08's fix, a build stuck for an hour
+  on a quiet stretch) followed on 2026-11-07 (tag v0.2.1, 23389ac). Next there: the owner sends the friend v0.2.1's
+  install line.
+- **v0.3.0** (M6) is at its release gate (PIPELINE, Gates), on the candidate 85e18b0 (the version 0.3.0): the full
+  review workflow found no correctness or major finding and 12 minor ones, fixed by M6-10 (branch
+  `m6-10-gate-fixes`), and the golden pair reruns on the result. The rest of the gate follows (the test song end to
+  end, the advisor, the owner's approval). The release is built from a clean clone at the tagged commit with
+  `packaging/release/build.sh 0.3.0` (it refuses any other version) and published by the owner, as the earlier ones
+  were (the session's proxy refuses tag pushes). M6-09 (a chart you can hear) is for v0.3.1, merged once v0.3.0 is
+  tagged.
+- **The owner's earlier questions are settled:** the history was rewritten on 2026-11-06 to remove a report's md5
+  prefixes and a stress song's artist (his decision), and the stale remote branch `m5-01-fast-grid` is gone.
 
 ## The dev machine
 
@@ -30,8 +35,9 @@ machine", rebuilds it):
 - `<dev>/stress`: the owner's audio of the stress songs, a notes folder with the titles and md5s, and `private/`
   with the owner's lyrics text for the timing-only check (never printed, quoted or committed).
 - `<dev>/owner_v01`: the owner's v0.1 song folders of the stress songs.
-The environment variables are eval/README.md's step 9; every brief names them. Since the version is 0.2.0, a golden
-or stress run against kept folders made at 0.1.0 needs `--rerun bass` (the bass cache key holds the version).
+The environment variables are eval/README.md's step 9; every brief names them. Since the version is 0.3.0, a golden
+or stress run against kept folders made at an earlier version needs `--rerun bass` (the bass cache key holds the
+version: engines/bass.py).
 
 ## Only in the session
 
