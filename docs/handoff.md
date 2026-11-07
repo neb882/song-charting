@@ -1,7 +1,7 @@
 # Handoff (updated 2026-11-07)
 
 The session that ran M3 and M4 ended on 2026-11-05; a new session took over that morning and ran M5 (v0.2.0); M6
-(v0.3.0) is at its release gate. Read CLAUDE.md, docs/PROGRESS.json (`in_flight` says what is waiting, `deferred`
+(v0.3.0) was published on 2026-11-07. Read CLAUDE.md, docs/PROGRESS.json (`in_flight` says what is waiting, `deferred`
 holds the known gaps) and docs/PIPELINE.md first. This note adds what only the running session knows.
 
 ## Where things stand
@@ -12,13 +12,12 @@ holds the known gaps) and docs/PIPELINE.md first. This note adds what only the r
   docs/reports/v0.2.0-gate.md), after his PC checks. **v0.2.1** (v0.2.0 with M6-08's fix, a build stuck for an hour
   on a quiet stretch) followed on 2026-11-07 (tag v0.2.1, 23389ac). Next there: the owner sends the friend v0.2.1's
   install line.
-- **v0.3.0** (M6) is at its release gate (PIPELINE, Gates), on the candidate 85e18b0 (the version 0.3.0): the full
-  review workflow found no correctness or major finding and 12 minor ones, fixed by M6-10 (branch
-  `m6-10-gate-fixes`), and the golden pair reruns on the result. The rest of the gate follows (the test song end to
-  end, the advisor, the owner's approval). The release is built from a clean clone at the tagged commit with
-  `packaging/release/build.sh 0.3.0` (it refuses any other version) and published by the owner, as the earlier ones
-  were (the session's proxy refuses tag pushes). M6-09 (a chart you can hear) is for v0.3.1, merged once v0.3.0 is
-  tagged.
+- **v0.3.0** (M6) was published by the owner on 2026-11-07 as a pre-release (tag v0.3.0, b609b40; its gate:
+  docs/reports/v0.3.0-gate.md). Its three assets are byte-identical to `packaging/release/build.sh 0.3.0` at the tag.
+  Still to come from the owner: three songs re-charted on his GPU, their grid records against the CPU's (the gate
+  report lists both), since allin1 fold 0 had not run on a GPU before. M6-09 (a chart you can hear) is for v0.3.1:
+  v0.3.0 is tagged, so it merges once reviewed. Releases are built from a clean clone at the tagged commit and
+  published by the owner (the session's proxy refuses tag pushes).
 - **The owner's earlier questions are settled:** the history was rewritten on 2026-11-06 to remove a report's md5
   prefixes and a stress song's artist (his decision), and the stale remote branch `m5-01-fast-grid` is gone.
 
