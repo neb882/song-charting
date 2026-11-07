@@ -16,7 +16,9 @@ own difficulties, star power, fills and sections, and a Clone Hero folder that i
      hold a clear 8th/16th phase (`grid_secondary`: by default the guitar stem, else "other"; none when the grid
      comes from the mix). The octave pass (`_octave_pass`, DESIGN.md 2.3) builds the grid again at twice the tempo
      when the notes are too dense for it; when that doubled grid's straight line misses a tempo change and the
-     sections file holds allin1's beats, the doubled grid starts from them instead (`allin1_start`). A window whose
+     sections file holds allin1's beats, the doubled grid starts from them instead (`allin1_start`). The bar phase
+     of the grid chosen is the one allin1's downbeats vote for, when the sections file holds them
+     (beatgrid.with_downbeats; else the kick's, beatgrid.bar_phase; DESIGN.md 2.3 step 4). A window whose
      tempo the grid does not follow (stats["tempo_check"]), and a stretch of 16 or more beats that neither the drums
      nor the second stem time, are warned about. plan_lead_in puts silence in front so tick 0 is a measure line, and
      TempoMap.from_beats builds the map (3 ms). From here every input second t sits at t + pad_seconds on the map,
@@ -118,7 +120,7 @@ import numpy as np
 from . import audio as A
 from . import lyrics as L
 from .beatgrid import (BPM_RANGE, FREE_SHARE, ONSET_TO_BEAT_MS, BeatGrid, OnsetFeatures, beat_grid, local_beats,
-                       onset_features)
+                       onset_features, with_downbeats)
 from .chart import DRUM_ACTIVATION, OPEN, STAR_POWER, Chart, DrumHit, FretNote, SongInfo, Track
 from .errors import InputError, ToolError
 from .importers import _chart_sections, _decode, read_chart, read_song
@@ -126,7 +128,8 @@ from .package import PackageResult, build_song_folder
 from .quantize import (RULES, RUN_CHORD_S, TRACK_DIFFICULTY, TRACK_INSTRUMENT, QuantizeReport, QuantizeRules,
                        estimate_offset, quantize_part, sustain_kept)
 from .reduce import LEVELS, Issue, check_reductions, hopo_states, reduce_level
-from .sections import read_allin1, read_allin1_beats, sections_from_chart, sections_from_segments
+from .sections import (read_allin1, read_allin1_beats, read_allin1_downbeats, sections_from_chart,
+                       sections_from_segments)
 from .starpower import check_phrases, fill_crash_share, fit_chart, place_phrases, stem_confirm
 from .takes import splice
 from .tempo import LeadIn, TempoMap, plan_lead_in
@@ -470,13 +473,14 @@ def _read_sections(path) -> list:
         raise InputError(f"sections {path}: not an allin1 result ({type(e).__name__}: {e})") from e
 
 
-def _read_allin1_beats(cfg: AssembleConfig) -> np.ndarray | None:
-    """allin1's beats in the sections file (sections.read_allin1_beats), None without them: no sections, an
-    imported chart's ("from:"), or the librosa fallback's file."""
+def _read_allin1_beats(cfg: AssembleConfig, downbeats: bool = False) -> np.ndarray | None:
+    """allin1's beats in the sections file (sections.read_allin1_beats), or its downbeats with `downbeats`
+    (read_allin1_downbeats), None without them: no sections, an imported chart's ("from:"), or the librosa
+    fallback's file."""
     if cfg.sections is None or cfg.sections.startswith("from:"):
         return None
     try:
-        return read_allin1_beats(cfg.sections)
+        return (read_allin1_downbeats if downbeats else read_allin1_beats)(cfg.sections)
     except (KeyError, TypeError, IndexError, ValueError) as e:
         raise InputError(f"sections {cfg.sections}: not an allin1 result ({type(e).__name__}: {e})") from e
 
@@ -534,6 +538,7 @@ def check_inputs(cfg: AssembleConfig) -> None:
     if cfg.sections is not None and not cfg.sections.startswith("from:"):
         _read_sections(cfg.sections)
         _read_allin1_beats(cfg)
+        _read_allin1_beats(cfg, downbeats=True)
     for folder in (cfg.output, failed_folder(cfg.output)):
         check_output(folder)
 
@@ -1625,6 +1630,7 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
                                                      half_beat=True, keep_line=True, start=start),
         _read_allin1_beats(cfg), duration)
     warnings += warn
+    grid = with_downbeats(grid, _read_allin1_beats(cfg, downbeats=True))  # the bar phase (DESIGN.md 2.3 step 4)
     lead = plan_lead_in(grid.beats, grid.downbeats, sr, min_lead=cfg.lead_in, duration=duration)
     tm = TempoMap.from_beats(lead.beats, bars=lead.bars, tolerance=cfg.tempo_tolerance)
     pad = lead.pad_seconds
@@ -1639,11 +1645,17 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
                       "downbeat_phase": grid.stats["downbeats"]["phase"],
                       "downbeat_margin": grid.stats["downbeats"]["margin"],
                       "downbeats_uncertain": grid.stats["downbeats"]["uncertain"],
+                      "downbeat_source": grid.stats["downbeats"]["source"],
                       "drift_ms": grid.stats["drift_ms"], "octave": octave, "octave_reason": octave_reason,
                       "octave_stats": octave_stats, "stats": _jsonable(grid.stats)}
-    if grid.stats["downbeats"]["uncertain"]:
-        warnings.append(f"downbeats uncertain (bar-phase margin {grid.stats['downbeats']['margin']:.3f}): "
-                        "check that beat 1 is on the kick")
+    db = grid.stats["downbeats"]
+    if db["uncertain"]:
+        warnings.append(f"downbeats uncertain (bar-phase margin {db['margin']:.3f}): " + (
+            "allin1's downbeats fall on more than one beat of the bar: check where beat 1 is"
+            if db["source"] == "allin1" else "check that beat 1 is on the kick"))
+    elif db["source"] == "allin1" and not db["kick"]["uncertain"] and db["kick"]["phase"] != db["phase"]:
+        warnings.append(f"downbeats follow allin1's, {(db['phase'] - db['kick']['phase']) % 4} beat(s) after the "
+                        f"kick's beat 1 (bar-phase margin {db['kick']['margin']:.3f}): check where beat 1 is")
     if not cfg.grid_mode and grid.stats["start"]["grid"] == "line" and abs(share - FREE_SHARE) < MODE_MARGIN:
         warnings.append(f"grid mode {grid.mode} chosen on a thin margin (confident share {share:.3f} against "
                         f"{FREE_SHARE}); grid_mode overrides it")

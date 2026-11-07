@@ -94,7 +94,8 @@ def _summary(result) -> str:
     g, tmap = r["grid"], r["tempo_map"]
     lines = [f"song folder: {result.folder}",
              f"grid: {g['mode']} ({g['mode_reason']}), {g['beats']} beats, median {g['bpm_median']:.3f} BPM, "
-             f"downbeat phase {g['downbeat_phase']} (margin {g['downbeat_margin']:.2f})",
+             f"downbeat phase {g['downbeat_phase']} from {g.get('downbeat_source', 'kick')} (margin "
+             f"{g['downbeat_margin']:.2f})",
              f"tempo map: {tmap['markers']} markers, largest error {tmap['max_error_ms']:.2f} ms; "
              f"lead-in {r['lead_in']['pad_seconds']:.3f} s"]
     for key, p in r["parts"].items():

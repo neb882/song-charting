@@ -3,11 +3,11 @@ import numpy as np
 import pytest
 
 import songcharter.beatgrid as B
-from songcharter.beatgrid import (BPM_RANGE, HALF_BEAT_SHIFT, BeatGrid, OnsetFeatures, bar_phase, beat_grid,
-                                  estimate_tempo, half_beat_phase,
+from songcharter.beatgrid import (BPM_RANGE, DOWNBEAT_MIN_MARGIN, HALF_BEAT_SHIFT, BeatGrid, OnsetFeatures,
+                                  bar_phase, beat_grid, downbeat_vote, estimate_tempo, half_beat_phase,
                                   local_beats, local_periods, loess, mel_filterbank, missed_tempo_changes,
                                   onset_features, onset_phase, onset_times, robust_line, shift_half_beat,
-                                  track_beats, window_tempi)
+                                  track_beats, window_tempi, with_downbeats)
 from songcharter.errors import InputError
 from songcharter.tempo import TempoMap, plan_lead_in
 
@@ -518,3 +518,89 @@ def test_the_half_beat_test_needs_a_margin(mids, shifted, unsure):
     assert (shift, stats["shifted"], stats["unsure"]) == (shifted, shifted, unsure)
     assert stats["ratio"] == pytest.approx(mids)
 
+
+
+# ------------------------------------------------------------------------------------------------ external downbeats
+
+def test_downbeat_vote_counts_the_beats_the_downbeats_fall_on():
+    """Each downbeat votes for its nearest beat within a quarter of the local beat period; the phase is the one
+    most votes fall on, the margin its lead over the next one per vote, a tie goes to the lower phase."""
+    rng = np.random.default_rng(3)
+    beats = 0.5 + np.arange(64) * 0.3                                   # 200 BPM
+    on2 = beats[2::4] + rng.uniform(-0.03, 0.03, 16)                    # another tracker's jitter
+    assert downbeat_vote(beats, on2) == (2, 1.0, [0, 0, 16, 0], 16)
+    stray = beats[[1, 5, 9]] + 0.1                                      # a third of a beat off: no vote
+    two = beats[[0, 4]] + 0.07                                          # within a quarter: votes for phase 0
+    assert downbeat_vote(beats, np.concatenate([on2, stray, two])) == (2, round(14 / 18, 4), [2, 0, 16, 0], 18)
+    assert downbeat_vote(beats, beats[[1, 3, 5, 7]]) == (1, 0.0, [0, 2, 0, 2], 4)        # a tie
+    for none in (beats[:-1:4] + 0.15, np.array([])):                                     # midpoints, nothing
+        assert downbeat_vote(beats, none) == (None, 0.0, [0, 0, 0, 0], 0)
+    # the window follows the local period: 0.09 s votes where beats are 0.4 s apart, not where they are 0.3 s
+    slow = np.concatenate([beats[:32], beats[31] + 0.4 * np.arange(1, 33)])
+    assert downbeat_vote(slow, slow[[8, 48]] + 0.09) == (0, 1.0, [1, 0, 0, 0], 1)
+
+
+def test_allin1s_downbeats_set_the_bar_on_a_kick_on_every_beat():
+    """A kick on every beat gives the kick's bar phase no margin (a guess, flagged); downbeats from another tracker
+    (allin1's, at half the grid's rate as on the fast stress songs: every 8th beat) set it, here two beats from the
+    kick's guess. The kick's own phase stays in the stats."""
+    _, y = skank()
+    g = beat_grid(y, SR, bpm=198.0, bpm_range=DOUBLED, half_beat=True)
+    kick = g.stats["downbeats"]
+    assert kick["uncertain"] and kick["margin"] < DOWNBEAT_MIN_MARGIN and kick["source"] == "kick"
+    want = (kick["phase"] + 2) % 4
+    allin1 = g.beats[want::8] + 0.012
+    out = with_downbeats(g, allin1)
+    assert np.array_equal(out.downbeats, np.arange(want, len(g.beats), 4))
+    db = out.stats["downbeats"]
+    assert (db["phase"], db["margin"], db["uncertain"], db["source"]) == (want, 1.0, False, "allin1")
+    assert db["kick"] == {"phase": kick["phase"], "margin": kick["margin"], "uncertain": True}
+    assert db["vote"] == {"counts": [len(allin1) if p == want else 0 for p in range(4)], "given": len(allin1),
+                          "voting": len(allin1), "window": 0.25}
+    assert db["scores"] == kick["scores"] and db["windows"] == kick["windows"]
+    assert np.array_equal(out.beats, g.beats) and out.mode == g.mode and g.stats["downbeats"] is kick  # a copy
+
+
+def test_allin1s_downbeats_on_an_ordinary_song(steady):
+    """On a rock beat the kick's phase is sure, and downbeats that agree keep it; with none, or none near a beat,
+    the grid keeps the kick's phase (the same grid when none are given)."""
+    truth, y = steady
+    g = beat_grid(y, SR)
+    kick = int(np.argmin(np.abs(g.beats - truth[0]))) % 4  # the kick is on truth[0]
+    assert g.stats["downbeats"]["phase"] == kick and not g.stats["downbeats"]["uncertain"]
+    out = with_downbeats(g, truth[0::4] - 0.02)
+    assert np.array_equal(out.downbeats, g.downbeats) and out.stats["downbeats"]["source"] == "allin1"
+    assert out.stats["downbeats"]["phase"] == out.stats["downbeats"]["kick"]["phase"] == kick
+    assert out.stats["downbeats"]["margin"] == 1.0 and not out.stats["downbeats"]["uncertain"]
+    assert with_downbeats(g, None) is g
+    away = with_downbeats(g, truth[0::4] + 0.25)                         # every one half a beat off
+    assert np.array_equal(away.downbeats, g.downbeats) and away.stats["downbeats"]["source"] == "kick"
+    assert away.stats["downbeats"]["vote"]["voting"] == 0 and "kick" not in away.stats["downbeats"]
+    p = 1 if kick != 1 else 3                                             # a kick phase that is not 0 ...
+    g1 = BeatGrid(g.beats, np.arange(p, len(g.beats), 4), g.mode,
+                  {**g.stats, "downbeats": {**g.stats["downbeats"], "phase": p}})
+    away1 = with_downbeats(g1, truth[0::4] + 0.25)                       # ... kept when no downbeat votes
+    assert np.array_equal(away1.downbeats, g1.downbeats) and away1.stats["downbeats"]["phase"] == p
+
+
+def test_a_split_vote_keeps_a_sure_kick_phase(steady):
+    """Downbeats split between the sure kick's phase and another (here one more on the other, a margin of 1/9)
+    keep the kick's phase, recorded as a split; split between two other phases, the vote's top phase is taken and
+    flagged."""
+    truth, y = steady
+    g = beat_grid(y, SR)
+    kick, other = g.stats["downbeats"]["phase"], (g.stats["downbeats"]["phase"] + 2) % 4
+    assert not g.stats["downbeats"]["uncertain"]
+    times = np.sort(np.concatenate([g.beats[other::4][:5], g.beats[kick::4][1:5]]))
+    out = with_downbeats(g, times)
+    db = out.stats["downbeats"]
+    assert np.array_equal(out.downbeats, g.downbeats) and db["source"] == "kick" and not db["uncertain"]
+    assert db["phase"] == kick and db["vote"]["phase"] == other and db["vote"]["margin"] == round(1 / 9, 4)
+    assert db["vote"]["why"] == (f"split between beats {other} and {kick} of the bar, one of them the sure kick's: "
+                                 "the kick's phase")
+    a, b = (kick + 1) % 4, (kick + 3) % 4
+    times = np.sort(np.concatenate([g.beats[a::4][:5], g.beats[b::4][:4]]))
+    out = with_downbeats(g, times)
+    db = out.stats["downbeats"]
+    assert (db["phase"], db["source"], db["uncertain"]) == (a, "allin1", True)
+    assert np.array_equal(out.downbeats, np.arange(a, len(g.beats), 4))

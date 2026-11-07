@@ -7,7 +7,7 @@ import pytest
 
 from songcharter.errors import InputError
 from songcharter.sections import (Segment, clean_name, label_name, read_allin1, read_allin1_beats,
-                                  sections_from_chart, sections_from_segments)
+                                  read_allin1_downbeats, sections_from_chart, sections_from_segments)
 from songcharter.tempo import TempoMap
 
 RES = 192
@@ -67,6 +67,27 @@ def test_read_allin1_beats(tmp_path):
     p.write_text('{"segments": [], "beats": [0.0, NaN]}', encoding="utf-8")
     with pytest.raises(InputError, match="finite"):
         read_allin1_beats(p)
+
+
+def test_read_allin1_downbeats(tmp_path):
+    """allin1's downbeats, read as its beats are: sorted, repeats dropped, None when there are none (the librosa
+    fallback), anything but a list of finite times a bad input."""
+    p = tmp_path / "segments.json"
+    segments = [[0.0, 4.0, "intro"]]
+    p.write_text(json.dumps({"segments": segments, "beats": [0.0, 0.6], "downbeats": [2.4, 0.0, 2.4]}),
+                 encoding="utf-8")
+    assert read_allin1_downbeats(p).tolist() == [0.0, 2.4] and read_allin1_beats(p).tolist() == [0.0, 0.6]
+    for none in ({"segments": segments, "beats": [0.0]}, {"segments": segments, "downbeats": []},
+                 {"segments": segments, "downbeats": None}):
+        p.write_text(json.dumps(none), encoding="utf-8")
+        assert read_allin1_downbeats(p) is None
+    for bad in (["x", 1.0], [[0.0, 1.0]], 3.0):
+        p.write_text(json.dumps({"segments": segments, "downbeats": bad}), encoding="utf-8")
+        with pytest.raises(InputError, match="'downbeats' is not a list of"):
+            read_allin1_downbeats(p)
+    p.write_text('{"segments": [], "downbeats": [Infinity]}', encoding="utf-8")
+    with pytest.raises(InputError, match="'downbeats' is not a list of finite times"):
+        read_allin1_downbeats(p)
 
 
 def test_starts_snap_to_the_nearest_measure_and_silence_is_dropped():

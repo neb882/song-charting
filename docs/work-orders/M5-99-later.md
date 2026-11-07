@@ -106,14 +106,30 @@ them at 200 BPM (0.84 times); the span's beats are now counted at most at 160 BP
 two 200-BPM power-metal songs (the 20-song set measures it again), and a grid at twice the humans' tempo under 160 BPM
 (the shred song's, 154) keeps its doubled count until a halving rule (above).
 
-## Downbeats when the kick is on every beat (M5-01's follow-up)
+## Downbeats when the kick is on every beat (M5-01's follow-up; narrowed by M6-03)
 
-`beatgrid.bar_phase` puts beat 1 where the kick band most outweighs the snare band. With a kick on every beat, as on
-the power-metal stress song's fast beat (the snare on every "and"), it has no margin: 0.013 on the doubled grid,
-which is flagged uncertain, and downbeat F1 0.000 against all three human charts while the beats are at 1.000
-(M5-01's probe, 1 CPU take). Measures, sections, star power and solos all start on the wrong beat there. A
-candidate: the crash or the snare pattern over 4 bars (a crash on beat 1 after a fill, the longest kick or the bass's
-note changes), measured on the stress set. Downbeat F1 is reported, not a pass line. Half a day to measure.
+Since M6-03 the bar phase is the one allin1's downbeats vote for, when the sections file holds them (DESIGN 2.3 step
+4): the two fast stress songs from downbeat F1 0.000 to 0.98-1.00, Kimochi Warui 0.000 to 1.000, the other
+references unchanged. Left:
+- A bar phase that changes inside a song: Lucretia 0.660 and Take Me Out 0.706 with one phase. allin1's bars taken
+  one by one give 0.927 and 0.973, but allin1 skips downbeats (bars of 5-30 beats on six songs) and the chart would
+  leave 4/4: with the meter (DESIGN 2.4).
+- A song without allin1's downbeats (the librosa fallback, an imported chart's sections) still takes the kick's
+  phase (`beatgrid.bar_phase`), whose margin is under 0.15 on 9 of the 11 measured songs. A candidate there: the
+  crash or the snare pattern over 4 bars (a crash on beat 1 after a fill, the longest kick or the bass's note
+  changes).
+- The shred song's grid is at twice the humans' tempo (M6-06), so its 4-beat bars are half of theirs (0.297).
+- The vote has no threshold: allin1's phase was right on all eleven songs. The 20-song set measures it again.
+- On the first power-metal stress song the measures moved two beats and its Medium levels fell by 0.013-0.018
+  against the primary (guitar 0.717 to 0.699); Expert is unchanged. The review found why: our Medium keeps three
+  beats of a bar and thins its last, which on the old phase was the humans' beat 2 and is now their beat 4, which
+  they play a little more (192 against 175 notes; guitar 177 notes dropped on beat 4, 157 added on beat 2). The
+  old phase scored higher by accident: which beat of the bar a lower level thins is the ladder's calibration
+  (reduce.py), to measure against the humans' lower levels.
+- pm2's drums Medium and Easy fell under M6-05 (0.579 -> 0.459, 0.553 -> 0.378), not with its bar phase: on the
+  right grid our Medium keeps on-beat hits under the hi-hat rule at 140 BPM and up, where the humans' Medium drums
+  sit on beat 1 and the off-beat 8ths (M6-03's review); the old grid, half a beat off over part of the song, put its
+  on-beat picks on human off-beats. The lower drum levels' rule on fast songs, measured against the humans'.
 
 ## The octave pass's threshold and guard, provisional (M5-01, M5-11)
 
