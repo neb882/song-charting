@@ -243,8 +243,8 @@ def estimate_tempo(env: np.ndarray, fps: float, bpm_range: tuple[float, float] =
     one to four periods, weighted by their height (the frame grid alone would be 0.7 % coarse at 142 BPM). A refined
     tempo that is not a positive finite number takes the winner's (_fold): three points that are no peak (the middle
     one the highest of five, a neighbour outside them higher) can put a vertex hundreds of frames away, and a
-    negative period's octave fold doubled it for ever (M6-08; the vertex is not bounded, so that every other
-    estimate stays as it was: bounding it changes 357 of 2,865 estimates on the kept songs, M5-99).
+    negative period's octave fold doubled it for ever (v0.2.1). The vertex is left unbounded so that every other
+    estimate stays as it was.
     """
     lo, hi = bpm_range
     ac = _autocorrelation(env, fps, int(4.5 * 60 * fps / lo))
