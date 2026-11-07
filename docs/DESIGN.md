@@ -3429,13 +3429,14 @@ a review of its engine.
 
 *Sections*
 - **Q29. allin1 on CUDA: the 8-fold ensemble (the code's default until M6-10) or fold 0?** **Fold 0, in the code
-  since M6-10** (v0.3.0's gate review: M6's grid rules read allin1's beats, measured on fold 0 only, §2.5); the
-  owner approves it with the release. The evidence before it: after the rules the ensemble measured no gain over
+  since M6-10** (v0.3.0's gate review: M6's grid rules read allin1's beats, measured on fold 0 only, §2.5). **Settled
+  2026-11-07:** on the owner's GPU, fold 0 gave the same beats, downbeats, halving record and sections as the CPU on
+  two songs (docs/reports/v0.3.0-gate.md, the owner's GPU check). The evidence before it: after the rules the ensemble measured no gain over
   fold 0 (−0.004 at ±3 s, CI [−0.07, +0.05]); its raw boundaries are slightly better (+0.05, CI
   [+0.006, +0.096]); the CUDA path is untested (§2.5). The solo evaluation adds one song's evidence for fold 0: with
   the solos default ("labels") the ensemble misses the test song's Solo 1 entirely (it calls it Chorus 2B) and makes
   4 false solos on the references against fold 0's 2 (§2.10) [here, solo evaluation; the ensemble as allin1 1.1.0 on
-  the CPU]. Neither has run on a GPU yet.
+  the CPU]. The ensemble has never run on a GPU in a checked chart; fold 0 has (above).
 
 *Pipeline* [here, pipeline run]
 - **Q30. Where does the pipeline's work folder belong?** **Answered** (the owner: "do what you think is best"): in
