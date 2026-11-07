@@ -47,6 +47,7 @@ ones then, but the CI runs they link still name the old ones.
 | `M6-03-fast-downbeats.md` | the bar phase from allin1's downbeats (troop, pm2 and Kimochi Warui right, the others unchanged); a split vote keeps a sure kick; the review and its fixes |
 | `M6-04-fast-run-chords.md` | a guitar chord inside a fast run (both neighbours under 120 ms) becomes its top note, from 18 human charts; the review and its two test fixes |
 | `M6-05-doubled-tempo-changes.md` | a doubled grid whose straight line misses a tempo change starts from allin1's beats doubled (pm2's beat F1 0.598 -> 0.987); its lower levels' bar phase; the review and its fixes |
+| `M6-06-halving.md` | a first grid at twice allin1's beats, under the fold's floor, halved and rebuilt from them (the shred song at 77 BPM: beat F1 0.644 -> 0.985, downbeats 0.989, every F1@50 up); the quantizer's shared midpoint; the review and its fixes |
 | `M6-07-build-ref.md` | build_ref reads every package: the MIDI strip walked byte by byte (Phase Shift sysex events mido refused), the chart by exact name; the 20-song set's 50 charts built (songs as s01-s13); the review and its fixes |
 | `feel.md` | how a chart should feel to play: nine parts, each with a measure, revised after the advisor (M5) |
 | `m5-plan-review.md` | the advisor's review of the M5 plan and the three skeptics' verdicts |
