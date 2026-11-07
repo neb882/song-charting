@@ -253,7 +253,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | Engine A ticks | through the quantizer with an "already on our grid" flag (§2.7) | absent | add with Engine A (M2) |
 | `diff_band` | written (§2.12) | not writable | add a band rating to `write_ini` and `build_song_folder` |
 | `beat_grid(start=...)` | click/free tests on that path; low evidence returns the start beats flagged (§2.3) | always free; raises `InputError` (a `ValueError`) on low evidence | §2.3 step 6 |
-| downbeats | the Viterbi decides (§2.4) | kick phase only | add a downbeats input |
+| downbeats | the Viterbi decides (§2.4) | allin1's downbeats vote (`beatgrid.with_downbeats`, M6-03), else the kick phase | the Viterbi, with Goal 2 (§2.4) |
 
 ### Stage overview
 
@@ -446,7 +446,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
    - **The golden charts** (main after M6-05, a89d6a0, against the branch; `--rerun bass,sections` on both,
      `--expect none`). Only Kimochi Warui changed: its 12 tracks moved with its measures, two beats later (the
      lead-in, the measures, star power, sections and the lower levels follow them). Its downbeat F1 went
-     0.000 → 1.000, its Expert onsets and F1@50 stayed the same, and its lower levels moved by 0–6 onsets. The other
+     0.000 → 1.000, its Expert onsets and F1@50 stayed the same, and its lower levels moved by 0–8 onsets. The other
      six songs are byte-identical, the test song's phase 0 now coming from allin1's vote, and the pooled F1 is the
      same on every part and level. The diff also flags the drums' kept output, because `beatgrid.py` is in the drums
      engine's file list. That flag is the file-level check's: the engine reads only `estimate_tempo` and
@@ -865,7 +865,7 @@ start has been tried, the bar phase failed on 2 of 4 references, and Lucretia ha
 - free maps causing trouble in the Moonscraper polish or the playtest.
 
 ### 2.4 Meter
-- **Goal 1:** 4/4 throughout, with the bar phase from allin1's downbeats where the sections file holds them (`beatgrid.with_downbeats`, §2.3 step 4, M6-03), else from kick vs snare energy (`beatgrid.bar_phase`): phase 0, margin 0.58 on the test song either way [here, beatgrid run; M6-03].
+- **Goal 1:** 4/4 throughout, with the bar phase from allin1's downbeats where the sections file holds them (`beatgrid.with_downbeats`, §2.3 step 4, M6-03), else from kick vs snare energy (`beatgrid.bar_phase`): phase 0 on the test song either way, the kick's at margin 0.616 and allin1's vote at 231/0/0/0, margin 1.000, the margin report.json's `grid.downbeat_margin` and the summary give since M6-03 (§2.3 step 4) [here, M6-03's measurement].
 - **Goal 2:** v1's downbeat/meter Viterbi on Beat This downbeat logits **decides** the bar lines; the kick phase only cross-checks [decision].
   - States: (meter 2–7, position in bar). Per-bar −log prior {4: 0, 3: 1.5, 2: 4, 6: 4, 5: 5, 7: 5}; meter-change cost 12.
   - x/4 only in this version. Time signatures are placed at beat indices, so `misalignedTimeSignature` cannot happen [here, critique verdict].
@@ -1138,7 +1138,8 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
      level (`assemble.offset_map`). The triplet rule's one shared line (the halved beat's midpoint, 4/8 = 3/6)
      leans triplet, so a run of 16th-note triplets there can go triplet. A halved beat is straight or triplet as a
      whole: a triplet half beside a straight half (a first-grid beat of triplets next to one of 16ths) gets the
-     beat's one choice, which can move the triplets up to a 1/24 of the first grid's beat (about 32 ms at 154).
+     beat's one choice, which can move the triplets up to 1/24 of the halved beat, 1/12 of the first grid's (about
+     32 ms at 154).
      `SLOT_PRIOR` is keyed by the slot's level on the chart's own grid, so on a halved grid the first grid's odd
      16ths take the 1/32 prior (0.020 for 0.17): the humans' mix at their level.
    - **The bass on a doubled grid** (M5-01; decided 2026-11-05, an amendment to the order's "no change to the slot
@@ -1756,10 +1757,11 @@ own tempo map, first to last Expert onset), phrases per song (per 40 of the char
     stress score: 14 of 882 numeric fields differ, all our star power a minute. A few drum onsets on the lower levels of the
     two fast songs moved with the fills (the reducer keeps a note in each phrase and fill: troop Hard 1782 → 1776,
     Medium 901 → 900, Easy 745 → 748; pm2 Hard 2339 → 2340, Easy 952 → 950); `stress.py compare`: no regression.
-  - **Not fixed:** the shred song's grid is at twice its humans' tempo (154 against 77 BPM, the octave pass never
-    halves), so its 35 phrases (3.89 a minute) stay above its two charts' 2.34–3.23; a halving rule would fix it
-    (M5-99). report.json's `phrases.<part>.star_power_count` has the rules, the span in beats and seconds, the beats
-    counted, the target K and the phrases placed [code].
+  - **The shred song:** this rule left it above its two charts (35 phrases, 3.89 a minute, against 2.33–3.23), its
+    grid at twice their tempo (154 against 77 BPM). M6-06's halving (§2.3 step 7) builds it at 77 BPM, and the rule,
+    which counts beats, then places 1.89 a minute, under the humans': the open problem there is a beat-counted rule
+    at a slow tempo (M5-99), not the grid's octave. report.json's `phrases.<part>.star_power_count` has the rules,
+    the span in beats and seconds, the beats counted, the target K and the phrases placed [code].
 
 **Drums: activation lanes first, then star power** (critique G16, E11):
 1. **Activation lanes (`S 64`):**
@@ -1872,8 +1874,9 @@ own tempo map, first to last Expert onset), phrases per song (per 40 of the char
      larger part beside it, so the solo overlapped the human one by only 0.43.]
   2. `max_seconds` **100**: the same in seconds rounded up to the next 10 s (within 30–120), since the measures are
      counted on our map, which need not be the humans': on the shred song the owner's v0.1 map runs at about twice
-     their tempo (154 against 80 BPM; halving is M5-99's), so 56 of our measures there are about 87 s where 56 of
-     theirs are 168 s, and on the power-metal song at about half (100 against 198 BPM), where the seconds cap binds.
+     their tempo (154 against 80 BPM, before M6-06 halved it: §2.3 step 7), so 56 of our measures there are about
+     87 s where 56 of theirs are 168 s, and on the power-metal song at about half (100 against 198 BPM), where the
+     seconds cap binds.
   3. `max_share` **0.40**: the largest human share rounded up to the next 0.05 (at least 0.15), set by the shred
      song's alt chart itself: about 3.6 minutes of markers on the shred song against one human chart's 3.2. The
      owner may want a tighter share for songs with vocals (M5-00 section 8).
@@ -1928,7 +1931,7 @@ own tempo map, first to last Expert onset), phrases per song (per 40 of the char
 
 - **Not chosen:** imported star power (autochart has none; STRUM's 8 phrases placed on the densest Expert windows come out empty on Easy); chartgen's 19 phrases.
 - **Confidence:** low-medium: the rules now run on the test song (`starpower.py`), but nobody has played the result.
-- **Would change it:** M2 counts and coverage against Encore references; the playtest; the owner choosing to omit fills (then `noDrumActivationLanes` needs a gate exemption). For solos: references with more human solos, outside allin1's training data; the friend saying whether the test song's third "solo" (317.8 s on) is one. For the star-power ceiling (M6-01): fast songs of other styles in the 20-song set (the two that set it are 200-BPM power metal), and a halving rule (a grid at twice the humans' tempo stays under it).
+- **Would change it:** M2 counts and coverage against Encore references; the playtest; the owner choosing to omit fills (then `noDrumActivationLanes` needs a gate exemption). For solos: references with more human solos, outside allin1's training data; the friend saying whether the test song's third "solo" (317.8 s on) is one. For the star-power ceiling (M6-01): fast songs of other styles in the 20-song set (the two that set it are 200-BPM power metal), and slow songs: the halved shred song (M6-06) falls under the humans' (1.89 a minute against 2.33–3.23), since the rule counts beats (M5-99).
 
 ### 2.11 Difficulty reductions
 Each level is built from the one above, so the tiers are nested by construction. `reduce.py` implements this [code]; it re-implements the ideas of Onyx and the RBN authoring guide (GPL; no code copied). autochart's own tiers are not used: they are not nested, and they triple its run time [here, 5070].
@@ -3215,7 +3218,7 @@ Omit `delay`, `song_length`, `hopo_frequency`, `eighthnote_hopo` and `sustain_cu
 
 | gap | what happens today | plan |
 |---|---|---|
-| Songs above 185 BPM; picked 16ths (critique G1) | M5-01: a grid too slow for its notes is doubled (§2.3 step 7: note density since M5-11; the backbeat recorded), no chord is made of notes distinct in time and the spacing floors are 20 ms (§2.6 step 3). Not built: halving (a pulse under 85 BPM stays at double); the second grid's beat phase on a drum stem whose loudest 8ths are the off-beats (§2.3 step 7, open). | The second grid's beat phase (M5-01, open); halving, burst slots, the HOPO-state mode and the guard on the 20-song set (M5-99); a forced-strum rule for rule engines. |
+| Songs above 185 BPM; picked 16ths (critique G1) | M5-01: a grid too slow for its notes is doubled (§2.3 step 7: note density since M5-11; the backbeat recorded), no chord is made of notes distinct in time and the spacing floors are 20 ms (§2.6 step 3). A first grid at twice allin1's beat rate whose halved tempo is under 85 BPM is built again at the pulse (M6-06, §2.3 step 7); a pulse at 85–92.5 BPM stays doubled, and the rules that count beats (star power, the sustain floor) fall under the humans' on the halved song. Open: the second grid's beat phase on a drum stem whose loudest 8ths are the off-beats (§2.3 step 7, open). | The second grid's beat phase (M5-01, open); the beat-counted rules at a slow tempo, a pulse at 85–92.5 BPM, burst slots, the HOPO-state mode and the guard on the 20-song set (M5-99); a forced-strum rule for rule engines. |
 | Compound meters and shuffles (G2) | Only octave moves, x/4 only (`TempoMap.from_beats` writes denominator 4); a 6/8 ballad's 16ths land 64 ticks apart. | M5: ternary-level test (inter-beat-interval ratios near 1.5), `TS 6 3` / `TS 12 3` and denominators in `tempo.py`; 6/8 and shuffle songs in the stress set. Until then, flag "check time signature". |
 | Drumless songs (G3) | Designed (refine on bass/guitar onsets; a low-evidence flag instead of `beat_grid`'s `ValueError`; gate ADTOF mix hits by stem energy; omit absent parts). Built: the ADTOF engine's hat gate (G3, §2.9; untested on a drumless song), and the pipeline leaves out a part whose engine finds no note [code]. The rest is unimplemented and without thresholds. Inside a drummed song, drumless beats now follow a second stem calibrated on the same song (§2.3); a song with no drums at all still cannot calibrate the second stem. The −22 ms phase offset is calibrated on drums only. | Implement in M3; calibrate the offset for bass and guitar onsets; set thresholds on drumless stress songs in M5. |
 | Fretformer driving (G5) | Level mismatch with autochart's grid untested; descriptor knobs (chords, HOPOs, speed) and the Fill-in model unused; a section that fails its checks is only flagged. | M2: ×1 vs ×2 level test, and 1 knob-conditioned take vs seeded takes. M5: regenerate failed windows. |

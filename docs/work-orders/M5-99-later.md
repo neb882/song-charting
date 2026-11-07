@@ -91,11 +91,14 @@ the drums, its slots (8/6) and offset at the first grid's level. The shred song 
 - **A pulse at 85-92.5 BPM** that the first pass doubles to 170-185 stays doubled: the floor guard halves only a
   tempo the fold could not hold, since allin1 halves fast songs (both 200 BPM stress songs). A statistic that tells
   those apart is needed first.
-- **The halved grid's downbeats** (downbeat F1 0.278 -> 0.000 on the shred song, margin 0.029): M6-03's rule on fast
-  songs reaches it through `beat_grid`; measure it there.
+- **The halved grid's downbeats** are measured, with nothing left: `assemble.assemble` applies allin1's vote
+  (`with_downbeats`, M6-03) once, to the grid `_octave_pass` returns, halved or not (`beatgrid.beat_grid` never
+  calls it). On the merged head the shred song's downbeat F1 is 0.000 -> 0.989 against both charts (172 voting
+  downbeats on one phase, margin 1.000; DESIGN 2.3 step 7).
 - **The beat-counted rules on a halved grid**: the sustain floor and the star power rate (the next item).
-- **A triplet half beside a straight half** of one halved beat gets the beat's one choice (DESIGN 2.6), up to a
-  1/24 of the first grid's beat off; and no `grid_octave` value forces a halving.
+- **A triplet half beside a straight half** of one halved beat gets the beat's one choice (DESIGN 2.6), up to
+  1/24 of the halved beat off (1/12 of the first grid's beat, about 32 ms at 154); and no `grid_octave` value forces
+  a halving.
 - The guitar's HOPO share 0.35 -> 0.65 against the humans' 0.55 and 0.39 (the natural threshold at 77 BPM); its
   play-state agreement 0.56 / 0.67 -> 0.60 / 0.45 (primary / alt1).
 
@@ -147,7 +150,7 @@ references unchanged. Left:
   phase (`beatgrid.bar_phase`), whose margin is under 0.15 on 9 of the 11 measured songs. A candidate there: the
   crash or the snare pattern over 4 bars (a crash on beat 1 after a fill, the longest kick or the bass's note
   changes).
-- The shred song's grid is at twice the humans' tempo (M6-06), so its 4-beat bars are half of theirs (0.297).
+- The shred song's bars, half of the humans' at 154 BPM (0.297), match theirs on the halved grid (M6-06: 0.989).
 - The vote has no threshold: allin1's phase was right on all eleven songs. The 20-song set measures it again.
 - On the first power-metal stress song the measures moved two beats and its Medium levels fell by 0.013-0.018
   against the primary (guitar 0.717 to 0.699); Expert is unchanged. The review found why: our Medium keeps three

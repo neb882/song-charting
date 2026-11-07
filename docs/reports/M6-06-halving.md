@@ -84,7 +84,8 @@ lower, met (measured with the scorer's scan, numbers only, under the score's own
 matches, 0.801/0.808); troop, pm2 and break unchanged, met. **The star power line fails**: the phrase rule counts
 beats (about one phrase per 40 beats), so at 77 BPM the rate halves, to under the humans' 2.33-3.23. That is
 `starpower.py`'s rule, outside this order: put in M5-99 (a slow-tempo rate). Downbeat F1 falls from 0.278 to 0.000:
-`bar_phase` has no margin on the halved grid. It is M6-03's area; its rule reaches this grid through `beat_grid`.
+`bar_phase` has no margin on the halved grid. It is M6-03's area; its vote runs on the grid `_octave_pass` returns
+(`assemble.assemble`, not `beat_grid`: M6-10's correction), and on the merged head gives 0.989 (DESIGN 2.3 step 7).
 
 ## Checks
 
@@ -117,9 +118,10 @@ beats (about one phrase per 40 beats), so at 77 BPM the rate halves, to under th
 
 - One positive in eleven songs; the rule's margin is wide, the sample thin (M5-99).
 - Star power under the humans' on the halved song; downbeats on it (M6-03).
-- A triplet half beside a straight half of one halved beat gets the beat's one choice (up to a 1/24 of the first
-  grid's beat off): guitar triplet notes 116 -> 92 on sooth. `SLOT_PRIOR` reads the halved grid's levels (the first
-  grid's odd 16ths take the 1/32 prior): left as the humans' mix at their level, not tuned.
+- A triplet half beside a straight half of one halved beat gets the beat's one choice (up to 1/24 of the halved
+  beat off, 1/12 of the first grid's; M6-10's correction): guitar triplet notes 116 -> 92 on sooth. `SLOT_PRIOR`
+  reads the halved grid's levels (the first grid's odd 16ths take the 1/32 prior): left as the humans' mix at their
+  level, not tuned.
 - The report's `quantize.measured_offset` (inside `quantize_part`) is still measured on the halved map; the applied
   offset is `offset_map`'s (report.json's `parts.*.offset`).
 - No `grid_octave` value forces a halving. A pulse at 85-92.5 BPM that the first pass doubled stays doubled (the
