@@ -99,6 +99,18 @@ the drums, its slots (8/6) and offset at the first grid's level. The shred song 
 - The guitar's HOPO share 0.35 -> 0.65 against the humans' 0.55 and 0.39 (the natural threshold at 77 BPM); its
   play-state agreement 0.56 / 0.67 -> 0.60 / 0.45 (primary / alt1).
 
+## The tempo refinement's vertex (M6-08)
+
+`beatgrid.estimate_tempo` refines the winning period from parabolas through the autocorrelation at one to four
+periods, each through the highest of five frames and its two neighbours. A neighbour outside those five can be
+higher, and then the three points are no peak and the vertex lands anywhere: once hundreds of frames away, a negative
+period, and an octave fold that never ended (the owner's build stopped for an hour; M6-08 falls back to the unrefined
+tempo when the refined one is not a positive finite number, and changes nothing else). Bounding the vertex to half a
+frame, where a peak's always is, changes 357 of the 2,865 estimates on the kept songs (the whole song and every 20-s
+window of the drum, guitar and mix envelopes, three tempo ranges): by 0.19 % at the median, more than 5 % on 12, 96 %
+at most. Measure whether the bounded estimates are nearer the humans' tempi (the local periods, the tempo check, the
+drums engine's tempo) before adopting it; an hour.
+
 ## Beat-counted rules at a slow tempo (M6-06)
 
 Two rules our code counts in beats read fewer at a slow pulse, and on the shred song, halved to 77 BPM by M6-06,

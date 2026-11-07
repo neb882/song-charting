@@ -42,6 +42,7 @@ The output feeds the tempo map directly:
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -242,13 +243,18 @@ def estimate_tempo(env: np.ndarray, fps: float, bpm_range: tuple[float, float] =
     Each candidate tempo scores the autocorrelation at its beat period plus half that at twice the period, so a
     half-time pulse (kick and snare a bar apart) still votes for the beat level, and pulses faster than the range
     land on half their rate. The winner's period is then refined from the parabolic peaks of the autocorrelation at
-    one to four periods, weighted by their height (the frame grid alone would be 0.7 % coarse at 142 BPM).
+    one to four periods, weighted by their height (the frame grid alone would be 0.7 % coarse at 142 BPM). A refined
+    tempo that is not a positive finite number takes the winner's (_fold): three points that are no peak (the middle
+    one the highest of five, a neighbour outside them higher) can put a vertex hundreds of frames away, and a
+    negative period's octave fold doubled it for ever (M6-08; the vertex is not bounded, so that every other
+    estimate stays as it was: bounding it changes 357 of 2,865 estimates on the kept songs, M5-99).
     """
     lo, hi = bpm_range
     ac = _autocorrelation(env, fps, int(4.5 * 60 * fps / lo))
     bpms = np.arange(lo, hi, 0.05)
     score = _tempo_score(ac, 60.0 * fps / bpms)
-    period = 60.0 * fps / float(bpms[int(np.argmax(score))])
+    coarse = float(bpms[int(np.argmax(score))])
+    period = 60.0 * fps / coarse
     num = den = 0.0
     for m in (1, 2, 3, 4):
         c = int(round(m * period))
@@ -262,7 +268,14 @@ def estimate_tempo(env: np.ndarray, fps: float, bpm_range: tuple[float, float] =
         num, den = num + w * m * peak, den + w * m * m
     if den > 0:
         period = num / den
-    bpm = 60.0 * fps / period
+    return _fold(60.0 * fps / period, bpm_range, coarse)
+
+
+def _fold(bpm: float, bpm_range: tuple[float, float], fallback: float) -> float:
+    """bpm folded by octaves into [lo, hi); `fallback` (already inside) when bpm is not a positive finite number."""
+    lo, hi = bpm_range
+    if not (math.isfinite(bpm) and bpm > 0):
+        return float(fallback)
     while bpm < lo:
         bpm *= 2
     while bpm >= hi:
