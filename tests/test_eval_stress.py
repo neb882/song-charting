@@ -197,6 +197,40 @@ def test_build_refs_builds_every_song_of_a_two_song_list_strips_the_words_and_sk
         "ok aaa primary", "ok aaa alt", "ok bbb primary"]
 
 
+def test_make_songs_json_prints_ids_and_numbers_only(tmp_path):
+    """make_songs_json's lines, which end up in agents' reports, for a built song with a built alt and an alt not
+    built, and a song not built: ids, numbers and instruments, never a title, an artist, a charter or a package md5
+    (nor a prefix of one), which stay in the local list (M6-07)."""
+    refs = tmp_path / "stress"
+    primary, alt, unbuilt, other = ("ab12cd34" * 4, "ef56ab78" * 4, "9a8b7c6d" * 4, "1f2e3d4c" * 4)
+
+    def built(d: Path) -> None:
+        d.mkdir(parents=True)
+        (d / "build_meta.json").write_text(json.dumps({"duration_s": 12.0, "mix_gain": 1.0, "stems_skipped": []}))
+        (d / "ref_notes.json").write_text(json.dumps({"tracks": [{"instrument": "guitar", "difficulty": "expert",
+                                                                  "notes": [{"ms": 0}]}],
+                                                      "tempoMarkerCount": 1, "chartIssues": []}))
+        (d / "offset_check.json").write_text(json.dumps({"guitar": {"median_offset_ms": 1.0}}))
+
+    built(refs / "aaa")
+    built(refs / "aaa" / "alt" / alt)
+    who = {"title": "Made Up Song", "artist": "Made Up Band", "charter": "madeupcharter"}
+    songs = [{"id": "aaa", "md5": primary, **who,
+              "alts": [{"md5": alt, "charter": "madeupaltcharter"}, {"md5": unbuilt, "charter": "madeupcharter3"}]},
+             {"id": "bbb", "md5": other, **who}]
+    (tmp_path / "list.json").write_text(json.dumps(songs))
+    p = subprocess.run([sys.executable, "-I", str(ROOT / "eval" / "refs" / "make_songs_json.py"), str(refs),
+                        str(tmp_path / "list.json")], capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                       timeout=60)
+    assert p.returncode == 0, p.stderr[-2000:]
+    assert p.stdout.splitlines() == ["skipping (not built): aaa alt2", "skipping (not built): bbb",
+                                     "aaa | 12.0s | ['guitar'] | tempo markers 1 | offset check 1.0 ms | alt1: "
+                                     "['guitar']"]
+    assert not any(m[:4] in p.stdout for m in (primary, alt, unbuilt, other))
+    assert "madeup" not in p.stdout and "Made Up" not in p.stdout
+    assert [s["id"] for s in json.loads((refs / "songs.json").read_text())] == ["aaa"]
+
+
 # ------------------------------------------------------------------------------------------------ build_ref.py
 
 def vlq(v: int) -> bytes:
@@ -267,6 +301,18 @@ def test_strip_mid_drops_the_vocal_tracks_and_lyrics_events_and_changes_no_other
     assert SL.strip_mid(str(src), str(dst)) == (2, 1)                 # two vocal tracks, one lyrics event elsewhere
     assert dst.read_bytes() == mid_file(MID_TEMPO, GUITAR_WITHOUT)    # the sysex 0xFF and every running status intact
     assert not any(w.encode() in dst.read_bytes() for w in WORDS) and b"VOCALS" not in dst.read_bytes()
+
+
+def test_strip_mid_carries_the_ticks_of_lyrics_in_a_row_to_the_next_kept_event(tmp_path):
+    """Lyrics events in a row on a kept track hand all their deltas on (80 + 120 + 0 ticks here, then 220 to the
+    note): the next note keeps its tick, as the one-lyric case does."""
+    from eval.refs import strip_lyrics as SL
+    guitar = mid_track(*GUITAR_HEAD, LYRIC_80, mid_meta(120, 5, WORDS[1].encode()), mid_meta(0, 5, WORDS[2].encode()),
+                       vlq(220) + b"\x62\x64", *GUITAR_TAIL)
+    src, dst = tmp_path / "in.mid", tmp_path / "out.mid"
+    src.write_bytes(mid_file(MID_TEMPO, guitar))
+    assert SL.strip_mid(str(src), str(dst)) == (0, 3)
+    assert dst.read_bytes() == mid_file(MID_TEMPO, GUITAR_WITHOUT)
 
 
 def test_strip_mid_drops_every_vocal_track_name_and_keeps_every_other_event(tmp_path):
