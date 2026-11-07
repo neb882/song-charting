@@ -50,7 +50,7 @@ only) and agent usage as a share of a week's meter, from the size of earlier ord
 | M7-05 | [take-margin](M7-05-take-margin.md) | `takes.MARGIN` set from the 4-take charts against the humans | part C: a margin +0.005 pooled F1@50 with its CI above 0 | 2 hours | 1-2 % |
 | M7-06 | [instrumental-solos](M7-06-instrumental-solos.md) | the solos' share cap from the 23 songs' humans, for every song or for instrumentals | part B: the humans' shares on at least two songs over 0.40, and our spans' overlap with theirs up | half a day | 2 % |
 | M7-07 | [drumless-sync](M7-07-drumless-sync.md) | a second evidence source for the beats in a drumless stretch instead of the straight line | part B: the straight line measurably off in those stretches and a source 0.05 beat F1 better there | 1-1.5 days | 4-6 % |
-| M7-08 | [thin-runs](M7-08-thin-runs.md) | the engine-thinning spike (M5-99) on the owner's GPU, scored here; measurement only, the setting's adoption is M8's | the owner's GPU time [owner] | his GPU about 3.5 hours unattended; 2 hours here | 1 % |
+| M7-08 | [thin-runs](M7-08-thin-runs.md) | the engine-thinning spike (M5-99) on the owner's GPU, scored here; measurement only, the setting's adoption is M8's | the owner's GPU time [owner] | his GPU about 2.5 hours unattended; 2 hours here | 1 % |
 
 **Left out of this version, and why:**
 - **The review's fix #1** (no halving, finer slots at true tempo): refuted by the check above; nothing to build.
@@ -154,6 +154,9 @@ four of the note's nine parts, and M7-01 measures each the way the note says:
   The human charts of such songs mix the two too (the review's "jarring" is the viewer's taste, not measured).
   **Deferred** (M5-99 gains it): a lead/rhythm split would need a stem model that separates them or a pitch-register
   rule, and a measure (the humans' chords against single notes in such passages) nobody has made.
+- **The drums blank under an audible hi-hat** (the review's Part 1, 1b: the drum engine's recall in quiet
+  passages). M7-01's B-a reports the drums' per-window F1 where the drum stem is quiet, numbers only; a change is
+  the drum engine's and M5-99's unless those numbers single out a rule of ours (the silent-edge trim, a level floor).
 - **The take score's bias toward fewer notes** (the review's fix #3.3) is half the model's: the splice prefers the
   takes that agree, and the engine's takes agree most where they all write little. Part C reports, per window, the
   onsets of the chosen take against the humans' count; a recall term in the score is M5-99's unless part C shows the
@@ -214,8 +217,8 @@ Decided here [decision]:
 
 Left for the owner [owner], with the recommendation:
 - **Part D, his GPU time** (eval/gpu.sh on his PC; nothing else needed from him): (a) 4 takes of the six references
-  (`eval/gpu.sh takes`, about an hour, as on 2026-11-02; or none, if the takes of that day are still in his
-  `runs/takes/` with today's install key: `eval/gpu.sh results` alone), recommended; (b) the thinning spike on his
+  (`eval/gpu.sh takes`, about an hour, as on 2026-11-02; the takes of that day are unlikely to match today's install
+  key, since M5-02 changed the driver whose hash is in it: expect the hour), recommended; (b) the thinning spike on his
   sooth file (`eval/gpu.sh thin-spike`, about 2.5 hours unattended, M7-08), optional.
 - **The HOPO mode, if M7-01's numbers are mixed** (a rule better on halved and doubled songs only): recommended, the
   per-octave rule M7-02 describes, if it clears the bar on those songs and leaves the rest unchanged.

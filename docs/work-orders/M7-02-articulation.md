@@ -5,7 +5,8 @@ the order is closed and its numbers go to `dead_ends`. **Branch:** `m7-02-articu
 report is committed. **Agent:** `sc-builder`, then `sc-reviewer`. May push its branch to run CI. **Files:**
 `songcharter/quantize.py` (the sustain floor; a tap rule; a HOPO rule if it needs the quantizer),
 `songcharter/assemble.py` (`HOPO_RULES` and the part rules only), `songcharter/pipeline.py` (the guitar part's
-`hopo` only), `eval/scorer/score.py` (a measure the bar reads that it lacks: tap precision, sustain agreement), their
+`hopo` only), `eval/scorer/score.py` (a measure the bar reads that it lacks: tap precision, sustain agreement; and M7-03's two,
+the same-lane repeat share and the lane spread, since score.py is this order's alone in wave 2), their
 tests, `docs/DESIGN.md` 2.6 (steps 4 and 5), 2.7, `docs/work-orders/M5-99-later.md`. Not `engines/`, not the stem
 stage of assemble.py (M7-04's). **Time budget:** a day. **Rough cost:** 4-6 % of a week's meter.
 

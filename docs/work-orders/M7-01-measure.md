@@ -27,11 +27,21 @@ beats today's rule.
 - **Today's charts** (the base arm, charting code identical to a5895ff's): the references `$SONGCHARTER_GOLDEN/v031`
   (the v0.3.1 golden run, identical to v0.3.0's), the stress set `gate3-final-stress`, the 20-song set
   `set20-main`. Their `stress_scores.json` and `scores/` already hold F1, the HOPO, tap and sustain shares and the
-  per-note state agreement (`score.py`'s `state_agreement`, matched at 100 ms).
+  per-note state agreement (`score.py`'s `state_agreement`, matched at 100 ms); `gate3-final-stress` has no
+  `stress_scores.json`: score it (`stress.py score`) before using it.
+- **The base arm is built like the others** (the plan's advisor, 2026-11-07): those runs were made with `--rerun
+  drums,bass,sections` (set20-main without), while A1-A3 run without a rerun from the folders kept at 8ba3cbd, so a
+  difference between the two code paths would read as an arm's effect. Build `base` as part A builds A1-A3 (main
+  unpatched, about 50 minutes), compare it with the runs above (expect identical: say if not), and use it as every
+  arm's base and as part C's one-take arm.
 - **A song's value** is its mean over its human charts (F1: the primary as well); **pooled**, the mean over the
   songs with the part; the humans' own agreement (each other chart against the primary) beside each number; a song
-  whose humans agree under 0.6 on a measure is reported and left out of its pooled figure, named. A paired
-  bootstrap over songs (10,000 resamples) gives each difference's 95 % CI.
+  whose humans agree under 0.6 on a measure is reported and left out of its pooled figure, named. The six
+  references have one human chart each, so that rule cannot reach them: report every pooled figure with and without
+  them. A paired bootstrap over songs (10,000 resamples) gives each difference's 95 % CI.
+- **A rule that touches few songs** (a grid under 100 BPM: 6 songs, 3 of them single-chart; an octave other than 1:
+  7 songs, 3 halved and 4 doubled) is reported per song on the songs it touches, beside the pooled figure: a 23-song
+  CI over mostly unchanged songs says little.
 - **Privacy:** numbers only. Never print, save or report a lyric, a chart's events or text, a title, an artist, a
   charter or an md5; the stress songs are troop, sooth, break, pm2, the 20-song ones s01-s13 (their ids sorted, as
   `docs/reports/set20-v03.md` labels them) in everything the report and the JSON hold. A song's vocal track and lyric
@@ -59,7 +69,7 @@ alone.
 | A3 | "forced" | max(200 ms, min(0.75 beat, 500 ms)) |
 
 The floor's cap applies to the guitar and the bass alike (`quantize.sustain_kept`); report each part. Machine time:
-about 50 minutes an arm (references 7, stress 5, 20-song set about 37), 2.5 hours in all.
+about 50 minutes an arm (references 7, stress 5, 20-song set about 37), 3.3 hours in all with the base arm.
 
 **A-a. The HOPO rule.** Per song and part (guitar; bass on one line), against every human chart: the per-note state
 agreement under base, A1 and A2, and under two rules computed per note from those builds, with no build of their own:
@@ -102,7 +112,7 @@ part's stem's P95, with `assemble.silent_onsets` on the stem levels assemble com
 (`SILENT_DB`, today's warning), 30 and 35: count and share of their notes. Ours: `report.json`'s `silent_onsets` (and
 the same test at 30 and 35) and the share no human chart has within 50 ms. Candidates: remove (i) every silent onset,
 (ii) only those inside a stretch of at least 1 s where the stem stays silent, at each D: the notes removed, the
-removal precision, the human notes the same rule would have removed (per song, not pooled), the F1@50 change.
+removal precision, the human notes the same rule would have removed (per song, not pooled), the F1@50 change. Also, for the drums: the per-window F1 (a section's windows) where the drum stem is quiet against the rest of the song (the review's drums blank under an audible hi-hat), numbers only.
 
 **B-b. The bass.** Per song: the same-lane repeat share and the lane spread (each lane's share; the largest lane's
 share) ours and the humans'; the humans' open notes (share); the notes ratio (ours over the primary's); our repeats'
@@ -139,17 +149,19 @@ the kept take (seed 20260609), with `songcharter.engines.autochart.generate(inst
 seeds, device="cpu", work=<scratch>)` and 2 threads, one `tools/heavy.sh` job per song so part A's builds interleave,
 the cheapest songs first (by the kept take's `generationSeconds`), sooth, troop and pm2 last. Out:
 `$SONGCHARTER_GOLDEN/m7-takes/<id>/seed_<seed>/` (each take's `song.ogg` deleted: about 0.5 MB a take, 40 MB in all);
-the engine's scratch (its separation and beat map, made once a song) deleted after each song, its size measured on
-the first song (put the long songs where the scratch fits: on disk with 0.5 GB to spare, else `/dev/shm` when 6 GB of
-RAM is free). Check that each new take's `inputSha256` equals the kept take's. Resumable (a finished take is reused);
+the engine's scratch (its separation and beat map, made once a song) always in `/dev/shm` (a 9-minute song's
+separation is about 1 GB: on a disk with about 2 GB free it could make tools/heavy.sh refuse the next queued job),
+deleted after each song, its size measured on the first song; a song waits until 6 GB of RAM is free. Check that each new take's `inputSha256` equals the kept take's. Resumable (a finished take is reused);
 progress to a log with a DONE line, watched by a tracked waiter (PIPELINE, Long runs). Machine time: about 6.5 hours
 (three times the kept takes' generation, 5.7 hours: the references 0.6, the stress set 2.0, the 20-song set 3.2;
 plus the engine's separation and beat map once a song, 0.8) [here: the kept takes' summaries].
 
 **C-b. The splice arms.** For each song, Expert guitar built from the four takes at `takes.MARGIN` 0, 0.02, 0.05
 (today), 0.10, and the one-take chart (today's CPU default, the base arm); each single take scored alone (the oracle,
-reported only). Build them the simplest faithful way and say which: a copy of the kept folder by hard links (`cp -al`
-into `/dev/shm`, never into the kept folder) with the three takes added under `guitar/`, built with `songcharter
+reported only). Build them the simplest faithful way and say which: a copy of the kept folder by hard links on the same
+file system (`cp -al` to `$SONGCHARTER_GOLDEN/m7-copy/<id>`, beside the kept folders, never into a kept folder, deleted
+after each song: `/dev/shm` is another file system, where `cp -al` fails and a real copy is 0.6-0.9 GB a song), with
+the three takes added under `guitar/seed_<seed>/`, built with `songcharter
 chart <its input.wav> --work <the copy> --takes 4 --device cpu --no-preview` (Expert only, the default) from a patched
 checkout whose MARGIN reads an environment variable, or `assemble` in process with the part's takes and the margin
 set. An arm whose windows pick what another's pick is not

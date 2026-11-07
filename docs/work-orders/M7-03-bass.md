@@ -3,8 +3,9 @@
 **Conditional on M7-01 part B-b** (below, Bar): build the candidate the measured cause points to and that cleared its
 bar; with none, the order is closed and its numbers go to `dead_ends`. **Branch:** `m7-03-bass`, from `main` after
 M7-01's report is committed. **Agent:** `sc-builder`, then `sc-reviewer`. May push its branch to run CI. **Files:**
-`songcharter/engines/bass.py` (and its rules' version in the engine's cache key), `eval/scorer/score.py` (the
-same-lane repeat share and lane spread, if the bar reads them), their tests, `docs/DESIGN.md` 2.8. Nothing else.
+`songcharter/engines/bass.py` (and its rules' version in the engine's cache key), their tests (not
+`eval/scorer/score.py`: M7-02 adds the bass's two measures there, the same-lane repeat share and the lane spread;
+until M7-02 merges, this order reads its bar with M7-01's script), `docs/DESIGN.md` 2.8. Nothing else.
 **Time budget:** a day and a half. **Rough cost:** 4-6 % of a week's meter.
 
 *Written by the M7 planner on 2026-11-07 from the video review's finding 5 (M7-00 section 1) and M7-01's plan.*

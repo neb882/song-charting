@@ -26,7 +26,7 @@ experiment); the margin itself was never measured against the humans.
 ## Bar (M7-01 part C)
 
 The margin's pooled guitar F1@50 against the primaries at least +0.005 over 0.05's, its paired-bootstrap CI above 0,
-no song down by more than 0.01; and on part D's GPU arm, if it arrived, the same sign.
+no song down by more than 0.01; and on part D's GPU arm, the same sign if it arrived before wave 3 (the order does not wait for it).
 
 ## Evaluation
 
