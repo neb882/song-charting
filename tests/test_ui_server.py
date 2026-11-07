@@ -2040,6 +2040,9 @@ const out = {};
   ctx.again();
   out.again = { paused: els["listen-audio"].paused, src: els["listen-audio"].src === undefined,
                 player: els["listen-audio"].hidden };
+  ctx.renderListen({ parts: { bass: ["medium", "easy"], drums: ["expert"] } }, "job 2");   // the next song's chart
+  out.next = { parts: opts("listen-part"), levels: opts("listen-level"), part: els["listen-part"].value,
+               level: els["listen-level"].value, box: els["listen-box"].hidden };
   ctx.renderListen({ parts: {}, why: "cannot read the chart" }, "job 2");
   out.none = { box: els["listen-box"].hidden };
   ctx.renderListen(null, "job 3");
@@ -2077,6 +2080,8 @@ def test_the_page_offers_the_charts_parts_and_plays_the_render(tmp_path):
     assert out["refused"] == {"msg": "the chart in /x has no drums on Expert", "player": True, "src": True,
                               "paused": True}
     assert out["again"] == {"paused": True, "src": True, "player": True}
+    assert out["next"] == {"parts": [["bass", "Bass"], ["drums", "Drums"]], "levels": [["medium", "Medium"],
+                           ["easy", "Easy"]], "part": "bass", "level": "medium", "box": False}
     assert out["none"] == {"box": True} and out["nothing"] == {"box": True}
     html = files["index.html"].decode()
     assert '<audio id="listen-audio" controls preload="auto" hidden></audio>' in html
