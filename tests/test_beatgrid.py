@@ -120,15 +120,6 @@ def test_a_sparse_window_gives_a_tempo_in_range_and_ends():
     assert BPM_RANGE[0] <= float(p.stdout) < BPM_RANGE[1]
 
 
-def test_the_vertex_is_within_half_a_frame():
-    """A parabola's vertex through three points: exact for a peak, within half a frame for three points that are no
-    peak (their curvature near 0 put it hundreds of frames away), 0 when they do not curve down."""
-    assert B._vertex(0.5, 1.0, 0.7) == pytest.approx(0.5 * (0.5 - 0.7) / (0.5 - 2.0 + 0.7))
-    assert B._vertex(0.30, 0.20, 0.0999) == -0.5          # no peak, curvature -0.0001: the old offset was -1000.5
-    assert B._vertex(0.0999, 0.20, 0.30) == 0.5
-    assert B._vertex(0.2, 0.2, 0.2) == 0.0 and B._vertex(0.1, 0.0, 0.1) == 0.0
-
-
 def test_the_octave_fold_ends_on_any_tempo():
     """A tempo folds by octaves into the range; one that is not a positive finite number takes the fallback (in a
     subprocess with a time limit: without the guard the fold never ends)."""

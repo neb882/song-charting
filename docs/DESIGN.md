@@ -334,12 +334,14 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 **Goal 1:** `songcharter.beatgrid.beat_grid` on the test song's drum stem, as written [code]:
 1. **Start line.** Use the hints (142.0009 BPM, first beat near 0.047–0.050 s) or the onset envelope's
    autocorrelation, folded into [85, 185) BPM, with a comb-fitted phase (the period refined from parabolas through
-   the autocorrelation's peaks at one to four periods, each vertex within half a frame of its point; a refined tempo
-   that is not a positive number takes the unrefined one: M6-08, after a quiet window's flat autocorrelation gave a
-   negative period whose octave fold never ended and a build on the owner's PC stopped for an hour). `beat_grid` also
-   runs an internal Ellis-style DP tracker on the same envelope (`track_beats`). Its beats become the start grid when
-   they find at least 10 percentage points more confident evidence than the line (`TRACKER_MARGIN`). On the test song
-   the line won, with or without hints (0.66 vs 0.67 confident) [here, beatgrid run].
+   the autocorrelation's peaks at one to four periods; a refined tempo that is not a positive finite number takes the
+   unrefined one: M6-08, after a quiet window's three points that were no peak put a vertex hundreds of frames away,
+   the period came out negative, its octave fold never ended and a build on the owner's PC stopped for an hour. The
+   vertex is not bounded, so every other estimate stays as it was; bounding it to half a frame would change 357 of
+   2,865 estimates on the kept songs: M5-99). `beat_grid` also runs an internal Ellis-style DP tracker on the same
+   envelope (`track_beats`). Its beats become the start grid when they find at least 10 percentage points more
+   confident evidence than the line (`TRACKER_MARGIN`). On the test song the line won, with or without hints (0.66 vs
+   0.67 confident) [here, beatgrid run].
    - **Local periods.** The tracker uses the line's period, except in 20-s windows (every 5 s) whose own
      autocorrelation tempo clearly differs: by more than 10 %, with a score at least 0.5 above the line's period there
      (`local_periods`, `LOCAL_TEMPO_MARGIN`). A neighbouring window within 5 % of a kept one joins on any positive
