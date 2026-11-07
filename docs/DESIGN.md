@@ -2387,8 +2387,9 @@ charts changes. What each sound means:
 - **The mix:** the song 12 dB down under the tones, or the tones alone. The levels leave room for a song at full scale
   under 16th-note chords [here, a test with a square wave]; a render that passes -1 dBFS anyway is turned down whole,
   once (said in the command's line), never limited note by note. On a golden run's song folder (a 4:53 song) the
-  three parts peak at 0.51 (guitar), 0.47 (bass) and 0.80 (drums) of full scale, not turned down, and a render took
-  about 7 s on the dev machine, most of it ffmpeg's Vorbis encoder [here].
+  three parts peak at 0.53 (guitar), 0.44 (bass) and 0.78 (drums) of full scale, not turned down; every render is
+  song.ogg's length to the sample, each of the first 8 notes' tones starts on its note's sample (within 0.03 ms of the
+  chart's time), and a render took 8 to 9 s on the dev machine, most of it ffmpeg's Vorbis encoder [here].
 - **Deterministic:** fixed seeds for the noises, one sound per kind of note, and ffmpeg's bitexact flags: without them
   its Ogg muxer writes a random stream serial, so two renders of the same folder differed [here].
 - **Where it goes:** the command writes where `--out` says (default `<folder name>-<part>-<level>.ogg` in the current
