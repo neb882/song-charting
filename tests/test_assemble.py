@@ -2000,6 +2000,11 @@ def test_halving_test_reads_the_rate_against_allin1s_with_its_guards():
     assert assemble_module.halving_test(154.0, beats(77.0, 40), duration=inside)[0]
     assert not assemble_module.halving_test(154.0, beats(77.0, 40), duration=inside - 0.2)[0]
     assert assemble_module.halving_test(154.0, np.repeat(beats(77.0, 16), 2))[1]["allin1_beats"] == 16
+    # allin1's rate is its intervals' median: a break with no beats (80 s here) leaves it at 77 BPM, where their
+    # mean (57.4 BPM, a ratio of 2.68) would refuse the halving
+    gap = np.concatenate([np.arange(1.0, 120.0, 60 / 77), np.arange(200.0, 319.0, 60 / 77)])
+    yes, rec = assemble_module.halving_test(154.0, gap, duration=330.0)
+    assert yes and (rec["allin1_bpm"], rec["rate_ratio"], rec["allin1_beats"]) == (77.0, 2.0, len(gap))
 
 
 def _halving_case(first_bpm=154.0, allin1_bpm=77.0, share=0.8, halved=None):
@@ -2266,6 +2271,14 @@ def test_a_song_at_twice_its_pulse_is_charted_at_the_pulse(pulse_song):
     tm, pad, off = a.chart.tempo, a.lead.pad_seconds, part["offset"]["applied"]
     got = np.array([tm.tick_to_sec(n.tick) - pad + off for n in a.chart.tracks[0].notes])
     assert np.max(np.abs(got - times)) < 0.006
+    # the halved grid's bars are allin1's (its downbeats on every 4th of its beats), not the kick's guess (a kick on
+    # every halved beat): each of allin1's downbeats starts a measure of the chart
+    assert (ga["downbeat_source"], ga["downbeat_phase"], ga["downbeats_uncertain"]) == ("allin1", 0, False)
+    assert ga["stats"]["downbeats"]["kick"]["uncertain"]
+    bar = 4 * tm.resolution
+    downbeats = json.loads((root / "allin1.json").read_text(encoding="utf-8"))["downbeats"]
+    ticks = np.array([tm.sec_to_tick(d + pad) for d in downbeats])
+    assert len(ticks) > 8 and np.max(np.abs((ticks + bar / 2) % bar - bar / 2)) < tm.resolution / 4
 
 
 def test_a_halved_songs_words_keep_the_first_grids_slots_and_its_pass_skips_the_half_beat_test(pulse_song,

@@ -106,7 +106,7 @@ So expect a playable, in-sync, complete chart that still needs a polish pass in 
 
 | PC | guitar route | estimate | basis |
 |---|---|---|---|
-| RTX 4070 | B2 (our driver on the CPU execution provider) | about 3–7 min [est.]; target ≤ 8 min | decoding 107–204 s per take on 3 threads [here, critique]; 6s on GPU 10–20 s [est., untested]; ADTOF 13–30 s, pYIN 20–50 s [here]; sections about 1–2 min (all-in-one-infer fold 0, CPU, 2 threads) [here, sections engine run] or seconds (ensemble, GPU) [doc] |
+| RTX 4070 | B2 (our driver on the CPU execution provider) | about 3–7 min [est.]; target ≤ 8 min | decoding 107–204 s per take on 3 threads [here, critique]; 6s on GPU 10–20 s [est., untested]; ADTOF 13–30 s, pYIN 20–50 s [here]; sections about 1–2 min (all-in-one-infer fold 0, CPU, 2 threads) [here, sections engine run] or seconds on a GPU (the ensemble's figure [doc]; CUDA runs fold 0 since M6-10) |
 | RTX 4070 | B1 (autochart's engine) | about 5–7 min [est.] | its Expert job took 228.8 s on the 5070, its own htdemucs_6s pass included, so separation runs twice [here, 5070]; plus our other stages as above |
 | CPU-only desktop | B2 only | about 5–10 min [est.] | the same stages on the CPU: 6s 143 s for the test song on 3 threads [here, ADTOF test]; Beat This 34–45 s on 2 threads [here, v1] |
 | CPU-only desktop | B1 | over 10 min [est.] | autochart's Expert job alone took 426 s on the dev CPU [here] |
@@ -131,7 +131,8 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
  ├─ Beat This final0 ─► fold to [85,185) BPM + v1's DP ─► beatgrid: refine on drum onsets (else bass/guitar)
  │        ─► free / click (+ free islands) ─► downbeat Viterbi ✕ kick-phase flag
  │        ─► plan_lead_in ─► TempoMap.from_beats(tolerance=0.003)
- ├─ sections: allin1 fed our stems (ensemble on GPU, fold 0 on CPU) or librosa ─► bar-snapped, numbered names
+ ├─ sections: allin1 fed our stems (fold 0 on any device) or librosa ─► bar-snapped, numbered names; its beats
+ │            and downbeats feed the grid's octave and bar phase (M6)
  ├─ note sources, each returning a TimedSong in seconds of the unpadded decode:
  │     drums:  ADTOF (BD/SD/TT from stem, HH/CY from mix) ─► lane mapper ─► collision resolution
  │     bass:   HFC onsets + pYIN rank frets              (STRUM onsets + pYIN re-lane: benchmark only)
@@ -223,7 +224,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | `engines/autochart.py` | Lead guitar by route B1 (§2.7, decided in §9 Q3): our job driver `eval/tools/autochart/ac_headless.cjs` runs autochart's engine once per seed, Expert only, behind a process boundary (no AGPL code is imported). `generate(install, audio, out, seeds)` writes one song folder per take (`seed_<seed>/`), reused when its `take.json`, written after the run, matches: the input's SHA-256, the seed, the sampling settings, the difficulty and the install (`engine/manifest.json`'s engineVersion and a SHA-256 over the engine's manifest and catalog, the models' manifest, onnxruntime-node's `package.json` and the driver), so an updated engine, model set or driver runs every take again; the takes share one engine work folder, so takes after the first pay only for the transcription. `find_install` names whatever is missing (node, the engine, the models, onnxruntime-node). |
 | `engines/adtof.py`, `engines/drumlanes.py` | The drums engine of §2.9 (Goal 2). `adtof.generate(mix, drums, out, settings)` runs ADTOF's Frame_RNN, our own PyTorch module and a separate component treated as BY-NC-SA, on the drum stem and on the mix. The weights come from xavriley/ADTOF-pytorch at commit 85c192e7, are checked against their SHA-256, are downloaded on first use to `models_dir()/adtof/` and are loaded with `weights_only=True`. drumlanes.py holds the fusion, the G3 hat gate, drummap2's lanes, the two-hands and shared-pad rules and the 2x kicks. The output is notes.chart (Expert only, 120 BPM at resolution 480), song.ini (pro_drums = True) and engine.json, cached by a key of the samples, the weights, the settings and the beat period used (beatgrid's tempo estimate of the mix unless `beat_s` is given, so a hit still estimates it: a few seconds). The activations are cached apart (`activations.npz`), so a change to the lane settings alone does not rerun the model. Optional dependency `songcharter[drums]`. |
 | `engines/bass.py` | The bass rule engine of §2.8: HFC onsets on the bass stem (delta 0.07), the leakage gate of §2.2 (stem within 30 dB of the mix from 50 ms before to 200 ms after the onset), `librosa.pyin` at 22.05 kHz (fmin 30, fmax 400, frame 2048, hop 220) in 30-s chunks, v1's `map_v2` lanes (identical to the prototype), sustains where the pitch track holds the note. `generate(mix, bass, out)` writes `notes.chart` (Expert bass on a constant 120 BPM map at resolution 480) and `engine.json`; the folder is reused when its key (samples, settings, rules and library versions) and chart match. Optional dependency `songcharter[bass]` (librosa). |
-| `engines/sections.py`, `engines/allin1_runner.py` | `find_sections(mix, stems, out, settings)`: `out/segments.json` (allin1 format: what `sections.read_allin1` and assemble's `"sections"` read) and `out/engine.json` (backend, why, versions, timings, key), cached by a key of the samples the backend read and every setting; a hit rewrites engine.json's why and settings for the call that hit. `backend="auto"`: allin1 when a Python with it is configured (`$SONGCHARTER_ALLIN1_PYTHON`, or this one) and its probe and run succeed, else the librosa fallback, with the reason recorded. allin1 runs as `allin1_runner.py` in that Python under its own import rules (user site and PYTHONPATH count), all-in-one-infer first, else allin1 1.x, fed our stems folded to its four, as int16 on stdin: no second separation, no stem files. Fold 0 on the CPU, the 8-fold ensemble on CUDA. The probe runs a CUDA kernel; with device auto, a failed CUDA run is redone with fold 0 on the CPU. Checkpoints from `taejunkim/allinone` @379e5fd0, SHA-256 checked. The fallback's `beats=` drops times outside the audio. allin1 failing with librosa absent is a `ToolError` that names both. The runner reports its own peak RSS (VmHWM on Linux, PeakWorkingSetSize on Windows), kept in engine.json. Optional dependency `songcharter[sections]` (librosa). |
+| `engines/sections.py`, `engines/allin1_runner.py` | `find_sections(mix, stems, out, settings)`: `out/segments.json` (allin1 format: what `sections.read_allin1` and assemble's `"sections"` read) and `out/engine.json` (backend, why, versions, timings, key), cached by a key of the samples the backend read and every setting; a hit rewrites engine.json's why and settings for the call that hit. `backend="auto"`: allin1 when a Python with it is configured (`$SONGCHARTER_ALLIN1_PYTHON`, or this one) and its probe and run succeed, else the librosa fallback, with the reason recorded. allin1 runs as `allin1_runner.py` in that Python under its own import rules (user site and PYTHONPATH count), all-in-one-infer first, else allin1 1.x, fed our stems folded to its four, as int16 on stdin: no second separation, no stem files. Fold 0 on every device (`AUTO_MODEL`; a model asked for wins, the 8-fold `harmonix-all` among them; M6-10: before it CUDA ran the ensemble). The probe runs a CUDA kernel; with device auto, a failed CUDA run is redone on the CPU with the same model. Checkpoints from `taejunkim/allinone` @379e5fd0, SHA-256 checked. The fallback's `beats=` drops times outside the audio. allin1 failing with librosa absent is a `ToolError` that names both. The runner reports its own peak RSS (VmHWM on Linux, PeakWorkingSetSize on Windows), kept in engine.json. Optional dependency `songcharter[sections]` (librosa). |
 | `lyrics.py`, `engines/lyrics.py` | Lyrics (§2.15, M4-10), only with `--lyrics FILE` / `Options.lyrics`. `lyrics.py`: the text as Clone Hero reads it (lines as phrases, blank lines and [headings] as section gaps, hyphens as syllables written with `=`, the markup the game acts on left out and counted), `place` (syllables snapped as the notes are, phrases split at lines and at rests over 3.0 s), `events`, `read_events`, `shown_lines`. `engines/lyrics.py`: `align(text, vocals, out)`, CTC forced alignment with torchaudio's English 960 h large bundle on the vocal stem, a star before every line and at every section gap, weights pinned and hash-checked in `models_dir()/lyrics/`, `out/lyrics.json` the cache (the key and the times by syllable index, never the text); `Unavailable` when torch or torchaudio is missing or the weights cannot be had. assemble writes the events and the gate reads them back (`lyricsReadBack`) and has scan-chart find them (`noLyrics`). Optional dependency `songcharter[lyrics]` (torchaudio 2.11.1, in `app` and in every lane). |
 | `art.py` | Album art and a background image (§2.16, M4-11): `prepare(song, album_art, background)` makes album.jpg (the given image, else the song file's embedded cover picture; centre-cropped to 512x512) and background.jpg (the given image, scaled down to fit 1920x1080), re-encoded with no metadata; a bad given image is an `InputError` before any audio work, an embedded picture that fails a warning. The pipeline writes them into the work folder's `art/`; assemble's config keys `album_art` and `background` copy them into the song folder. |
 | `cache.py` | The per-user cache (§2, work folder; §9 Q30): `%LOCALAPPDATA%\songcharter` on Windows, `$XDG_CACHE_HOME/songcharter` or `~/.cache/songcharter` elsewhere (`user_cache`, shared with ADTOF's `models_dir()`, whose paths and `$SONGCHARTER_MODELS` are unchanged); `$SONGCHARTER_CACHE` moves the work folders only. A song's work folder is `<cache>/work/<name>-<key>`: the key is the first 16 hex characters of the song file's SHA-256, the name its stem made safe for Windows (ASCII-folded where it can be, no reserved characters or device names, no trailing dots or spaces, at most 40 UTF-16 units, cut at a word within 12 of them: §2.13, Names); with no folder of that name, the work folder whose marker holds the key is the song's (`by_key`, M5-12: a v0.1 folder of a long stem, a renamed copy). autochart's scratch folder is `<cache>/ac/<8 hex>`: the files its own layout leaves reach 188 characters below it on Windows, so inside the work folder its deepest file would be 319 characters with `C:\Users\<20 characters>\AppData\Local` and a 40-character name, and here it is 256 (the work folder's deepest, a take's report, 182); autochart's staging files beside them go past 259 on every profile (`DEEPEST["staging"]`: 309 with that profile), which only Node writes, and pruning deletes in Windows' `\\?\` form (`long_path`). After each run that finishes, the least recently used work folders (with our marker, `songcharter-work.json`, written when a run starts) go, with their scratch folders, until the rest fit 5 GB (`$SONGCHARTER_CACHE_GB`); never the run's own, one used in the last 24 hours or one a `--work` run used (pinned in its marker, which later default runs keep, with its scratch folder). Each goes whole into `<cache>/trash` in one rename, scratch folder first, its marker read again before and after the move (a run that marked it in between gets it back), and is deleted there; a folder that cannot be moved stays whole, and what cannot be deleted in the trash waits for the next prune, each with a warning; a `trash` folder without our `songcharter-trash.json` is left alone. |
@@ -252,7 +253,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | Engine A ticks | through the quantizer with an "already on our grid" flag (§2.7) | absent | add with Engine A (M2) |
 | `diff_band` | written (§2.12) | not writable | add a band rating to `write_ini` and `build_song_folder` |
 | `beat_grid(start=...)` | click/free tests on that path; low evidence returns the start beats flagged (§2.3) | always free; raises `InputError` (a `ValueError`) on low evidence | §2.3 step 6 |
-| downbeats | the Viterbi decides (§2.4) | kick phase only | add a downbeats input |
+| downbeats | the Viterbi decides (§2.4) | allin1's downbeats vote (`beatgrid.with_downbeats`, M6-03), else the kick phase | the Viterbi, with Goal 2 (§2.4) |
 
 ### Stage overview
 
@@ -261,8 +262,8 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | 1 | Decode (§2.1) | one gapless decode is the only timeline; chart the friend's exact file | same; pin the bundled ffmpeg on Windows | high | a decoder disagreement on the friend's file |
 | 2 | Separation (§2.2) | reuse the existing ft and 6s stems (lag 0) | htdemucs_6s, one shared pass, shift seeded; weights treated as non-commercial | high (default), medium (licence) | the owner opts into SW; the M2 stem comparison; a permissively licensed separator |
 | 3 | Beat grid (§2.3) | `beatgrid` on the drum stem; it chose free mode | Beat This proposes, `beatgrid` refines (code changes needed) | medium-low / low | beat F1 with `score.py` on the references (§5.6, task 2); the detector offset on the test song (M1a) |
-| 4 | Meter (§2.4) | 4/4, beat 1 from allin1's downbeats, else the kick (margin 0.58) | Viterbi x/4 decides; the kick phase and `beatgrid`'s uncertainty flag drive review; 6/8 later | high / low | a listening check; downbeat F on songs with time-signature changes |
-| 5 | Sections (§2.5) | allin1's segments (v1's fold-0 result), merged and split per run: 26 sections | allin1 by default (fold 0 on the CPU, the ensemble on CUDA), librosa as the fallback [here, M2 row 7] | low / medium-low | section scores on more references; the owner's call on fold 0 for CUDA; the friend's feedback |
+| 4 | Meter (§2.4) | 4/4, beat 1 from allin1's downbeats (the test song: margin 1.000), else the kick (0.616) | Viterbi x/4 decides; the kick phase and `beatgrid`'s uncertainty flag drive review; 6/8 later | high / low | a listening check; downbeat F on songs with time-signature changes |
+| 5 | Sections (§2.5) | allin1's segments (v1's fold-0 result), merged and split per run: 26 sections | allin1 by default, fold 0 on every device (the CUDA ensemble measured no gain, and M6's grid rules read allin1's beats and downbeats, measured on fold 0: M6-10), librosa as the fallback [here, M2 row 7] | low / medium-low | section scores on more references; the friend's feedback |
 | 6 | Quantizer (§2.6) | remove offsets, snap to 1/16 + 1/12 (a 1/32-grid source's odd 1/32s to the coarser slot), keep the HOPO states the source forced | same | medium | snapping moves > 2 % of onsets by > 25 ms; HOPO κ in M2 |
 | 7 | Lead guitar (§2.7) | four autochart Expert takes, imported and spliced per section by agreement between takes | autochart's engine as a separate program (B1, decided §9 Q3; built: `engines/autochart.py`); by default 4 takes spliced on CUDA, 1 on the CPU; `--takes N` (1, or N ≥ 3) on any device | medium / low | B1's seed spread over ≥ 3 seeds on the references; the friend's playtest |
 | 8 | Bass (§2.8) | STRUM onsets, offset removed by the quantizer, re-laned by pYIN | our rules (built: `engines/bass.py`), scored on 5 references; STRUM a benchmark only | low / medium-low | more references; the friend asking for bass (§9 Q1 answered: he plays Guitar) |
@@ -445,7 +446,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
    - **The golden charts** (main after M6-05, a89d6a0, against the branch; `--rerun bass,sections` on both,
      `--expect none`). Only Kimochi Warui changed: its 12 tracks moved with its measures, two beats later (the
      lead-in, the measures, star power, sections and the lower levels follow them). Its downbeat F1 went
-     0.000 → 1.000, its Expert onsets and F1@50 stayed the same, and its lower levels moved by 0–6 onsets. The other
+     0.000 → 1.000, its Expert onsets and F1@50 stayed the same, and its lower levels moved by 0–8 onsets. The other
      six songs are byte-identical, the test song's phase 0 now coming from allin1's vote, and the pooled F1 is the
      same on every part and level. The diff also flags the drums' kept output, because `beatgrid.py` is in the drums
      engine's file list. That flag is the file-level check's: the engine reads only `estimate_tempo` and
@@ -864,7 +865,7 @@ start has been tried, the bar phase failed on 2 of 4 references, and Lucretia ha
 - free maps causing trouble in the Moonscraper polish or the playtest.
 
 ### 2.4 Meter
-- **Goal 1:** 4/4 throughout, with the bar phase from allin1's downbeats where the sections file holds them (`beatgrid.with_downbeats`, §2.3 step 4, M6-03), else from kick vs snare energy (`beatgrid.bar_phase`): phase 0, margin 0.58 on the test song either way [here, beatgrid run; M6-03].
+- **Goal 1:** 4/4 throughout, with the bar phase from allin1's downbeats where the sections file holds them (`beatgrid.with_downbeats`, §2.3 step 4, M6-03), else from kick vs snare energy (`beatgrid.bar_phase`): phase 0 on the test song either way, the kick's at margin 0.616 and allin1's vote at 231/0/0/0, margin 1.000, the margin report.json's `grid.downbeat_margin` and the summary give since M6-03 (§2.3 step 4) [here, M6-03's measurement].
 - **Goal 2:** v1's downbeat/meter Viterbi on Beat This downbeat logits **decides** the bar lines; the kick phase only cross-checks [decision].
   - States: (meter 2–7, position in bar). Per-bar −log prior {4: 0, 3: 1.5, 2: 4, 6: 4, 5: 5, 7: 5}; meter-change cost 12.
   - x/4 only in this version. Time signatures are placed at beat indices, so `misalignedTimeSignature` cannot happen [here, critique verdict].
@@ -895,12 +896,14 @@ start has been tried, the bar phase failed on 2 of 4 references, and Lucretia ha
 - **Goal 2:** allin1 through all-in-one-infer 3.1.0 (or the original allin1 1.x), with librosa as the fallback.
   - **Built** (`engines/sections.py` [code]). allin1 runs in its own Python (`$SONGCHARTER_ALLIN1_PYTHON`, or
     songcharter's own Python when it has the package; user-site and PYTHONPATH installs count), through
-    all-in-one-infer 3.1.0 or the original allin1 1.x, behind a process boundary. Fold 0 on the CPU, the
-    `harmonix-all` ensemble on CUDA. Otherwise the librosa fallback, with the reason recorded in `engine.json`.
+    all-in-one-infer 3.1.0 or the original allin1 1.x, behind a process boundary. Fold 0 on every device (the
+    decision below; before M6-10 the `harmonix-all` ensemble on CUDA), a model asked for in its place. Otherwise the
+    librosa fallback, with the reason recorded in `engine.json`.
     - CUDA: the probe runs a CUDA kernel (`is_available()` is also true on a GPU the torch build has no kernels for).
-      Out of memory is retried on the CPU. With device auto, any other failed CUDA run is redone with fold 0 on the
-      CPU, and engine.json records the fallback [code; untested on a GPU]. The pipeline asks for auto also when the
-      user asks for CUDA, since allin1's own Python may have none, and warns when allin1 then ran on the CPU [code].
+      Out of memory is retried on the CPU. With device auto, any other failed CUDA run is redone on the CPU with the
+      same model, and engine.json records the fallback [code; untested on a GPU]. The pipeline asks for auto also
+      when the user asks for CUDA, since allin1's own Python may have none, and warns when allin1 then ran on the CPU
+      [code].
   - It is fed our cached stems, folded from 6s, as the int16 arrays allin1 reads from Demucs-written WAVs.
     `allin1.analyze()` is not called, so `keep_byproducts` no longer matters.
   - all-in-one-infer 3.1.0 and allin1 1.1.0 (with v1's pure-PyTorch NATTEN shim) gave byte-identical fold-0
@@ -920,10 +923,19 @@ start has been tried, the bar phase failed on 2 of 4 references, and Lucretia ha
     - ensemble − fold 0: −0.004 [−0.07, +0.05]. The ensemble buys nothing measurable here.
     - Lucretia is in the Harmonix Set, so it is in fold 0's training data. Without it: fold 0 0.600 / 0.716,
       librosa 0.372 / 0.459.
-  - **Decision:** allin1 by default (fold 0 on the CPU, the ensemble on CUDA, as planned), librosa only as the
-    fallback. **Open (owner, §9 Q29):** whether CUDA should use fold 0 too. After the rules, the ensemble measured no
+  - **Decision:** allin1 by default, fold 0 on the CPU and on CUDA, librosa only as the fallback. M2 chose the
+    ensemble for CUDA, as planned, and left fold 0 there open (§9 Q29). After the rules, the ensemble measured no
     gain over fold 0 (−0.004 at ±3 s, CI [−0.07, +0.05]; −0.034 at ±1 s, CI [−0.14, +0.06]). Its raw boundaries are
     slightly better (+0.05 at ±3 s, CI [+0.006, +0.096]). The CUDA path is untested.
+    - **Fold 0 on CUDA too** (M6-10, from v0.3.0's gate review). Since M6, allin1's beats and downbeats set the grid,
+      not only the sections: the bar phase (`with_downbeats`, §2.3 step 4), the doubled grid's start
+      (`allin1_start`) and the halving test (`halving_test`, §2.3 step 7). Every measurement of those rules read fold
+      0 on the CPU (the golden and stress runs' 11 cached results). On a 150-s clip of a 200 BPM stress song the
+      ensemble's beats run at twice fold 0's rate (361 beats at a median 193.6 BPM, against 249 at 100.0), which would
+      turn `allin1_start` from used to refused and the halving test's ratio from 1.00 to 0.52; on the other three
+      stress songs every M6 decision came out the same, and no chart was shown to change [here, the gate review's
+      comparison, allin1's CPU]. So CUDA runs what the gate measured; `Settings.model` still takes the ensemble. The
+      install still fetches its 8 folds (11.2 MB, §4.2).
   - **In the pipeline** [here, pipeline run]: all-in-one-infer fold 0 gave the same segments as the sections engine
     run on both songs, so 27 sections on the test song and 12 on Take Me Out after the rules. Its runner peaked at
     7.8 GB RSS on the test song and 4.8 GB on Take Me Out, the largest process of the pipeline (§7).
@@ -964,8 +976,8 @@ start has been tried, the bar phase failed on 2 of 4 references, and Lucretia ha
   - librosa: 2–8 s.
   - On GPU, the ensemble processed 10 songs (33 min of audio) in 73 s on an RTX 4090 [doc].
 - **Confidence:** medium-low (5 references, n = 5 bootstrap, Lucretia in allin1's training data). **Would change
-  it:** section scores on the M2 row-8 set; the friend's feedback in practice mode; the ensemble on GPU disagreeing
-  with fold 0; the 6s-vs-ft comparison on more songs than the test song (F 0.865 there).
+  it:** section scores on the M2 row-8 set; the friend's feedback in practice mode; fold 0 on a GPU disagreeing
+  with the CPU's; the 6s-vs-ft comparison on more songs than the test song (F 0.865 there).
 
 ### 2.6 Grid snapping (the quantizer)
 The quantizer is the only place where seconds become ticks (Resolution 192). It exists as `quantize.py` [code]; this section is its design, and §2.0 lists where the code still differs.
@@ -1126,7 +1138,8 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
      level (`assemble.offset_map`). The triplet rule's one shared line (the halved beat's midpoint, 4/8 = 3/6)
      leans triplet, so a run of 16th-note triplets there can go triplet. A halved beat is straight or triplet as a
      whole: a triplet half beside a straight half (a first-grid beat of triplets next to one of 16ths) gets the
-     beat's one choice, which can move the triplets up to a 1/24 of the first grid's beat (about 32 ms at 154).
+     beat's one choice, which can move the triplets up to 1/24 of the halved beat, 1/12 of the first grid's (about
+     32 ms at 154).
      `SLOT_PRIOR` is keyed by the slot's level on the chart's own grid, so on a halved grid the first grid's odd
      16ths take the 1/32 prior (0.020 for 0.17): the humans' mix at their level.
    - **The bass on a doubled grid** (M5-01; decided 2026-11-05, an amendment to the order's "no change to the slot
@@ -1744,10 +1757,11 @@ own tempo map, first to last Expert onset), phrases per song (per 40 of the char
     stress score: 14 of 882 numeric fields differ, all our star power a minute. A few drum onsets on the lower levels of the
     two fast songs moved with the fills (the reducer keeps a note in each phrase and fill: troop Hard 1782 → 1776,
     Medium 901 → 900, Easy 745 → 748; pm2 Hard 2339 → 2340, Easy 952 → 950); `stress.py compare`: no regression.
-  - **Not fixed:** the shred song's grid is at twice its humans' tempo (154 against 77 BPM, the octave pass never
-    halves), so its 35 phrases (3.89 a minute) stay above its two charts' 2.34–3.23; a halving rule would fix it
-    (M5-99). report.json's `phrases.<part>.star_power_count` has the rules, the span in beats and seconds, the beats
-    counted, the target K and the phrases placed [code].
+  - **The shred song:** this rule left it above its two charts (35 phrases, 3.89 a minute, against 2.33–3.23), its
+    grid at twice their tempo (154 against 77 BPM). M6-06's halving (§2.3 step 7) builds it at 77 BPM, and the rule,
+    which counts beats, then places 1.89 a minute, under the humans': the open problem there is a beat-counted rule
+    at a slow tempo (M5-99), not the grid's octave. report.json's `phrases.<part>.star_power_count` has the rules,
+    the span in beats and seconds, the beats counted, the target K and the phrases placed [code].
 
 **Drums: activation lanes first, then star power** (critique G16, E11):
 1. **Activation lanes (`S 64`):**
@@ -1810,17 +1824,17 @@ own tempo map, first to last Expert onset), phrases per song (per 40 of the char
   - Through the pipeline itself (the defaults, the CPU take, the same fold-0 sections) the test song got these three:
     [167.346, 180.709], [234.966, 258.419] and [317.782, 361.726] s, the third ending on the CPU take's last onset in
     Solo 3D [here, pipeline-defaults runs; §5 M3].
-  - The ensemble (what CUDA runs) misses Solo 1 entirely (it calls it Chorus 2B) and places [234.966, 258.419] and
-    [304.256, 385.176]; librosa misses both. "union" equals "labels" on the test song and gains no solo anywhere;
-    "intersection" equals "stems" on all seven songs and three sections sources.
+  - The ensemble (what CUDA ran before M6-10) misses Solo 1 entirely (it calls it Chorus 2B) and places
+    [234.966, 258.419] and [304.256, 385.176]; librosa misses both. "union" equals "labels" on the test song and
+    gains no solo anywhere; "intersection" equals "stems" on all seven songs and three sections sources.
 - **Decision** (`pipeline.Options.solos`, `--solos`) [decision, on this evidence]: **"labels" by default**: every
   section allin1 labels Solo, within the placement rules below. The friend asked for trackers, and a missed solo costs
   him one where a false one is a tracker he can ignore. The cost depends on the sections allin1 gives. On fold 0
-  (the CPU): 2 false solos against the stems' 1 in six songs, one extra false tracker every six songs, for trackers
-  on all of Solo 2 and half of Solo 1 on the one song he plays. On the ensemble, which his CUDA PC would run (allin1
-  on Windows is untested): 4 against 1, one extra about every two songs, and Solo 2 alone on the test song, Solo 1
-  missed (§9 Q29; the ensemble measured as allin1 1.1.0 on the CPU). Even so "labels" gives
-  that song a tracker where "stems" gives none. A list of names (`--solos "Solo 1,Solo 2"`) overrides it; "stems"
+  (what every device runs since M6-10, his CUDA PC too): 2 false solos against the stems' 1 in six songs, one extra
+  false tracker every six songs, for trackers on all of Solo 2 and half of Solo 1 on the one song he plays. On the
+  ensemble, which CUDA ran before M6-10: 4 against 1, one extra about every two songs, and Solo 2 alone on the test
+  song, Solo 1 missed (§9 Q29; the ensemble measured as allin1 1.1.0 on the CPU). Even so "labels" gives that song a
+  tracker where "stems" gives none. A list of names (`--solos "Solo 1,Solo 2"`) overrides it; "stems"
   and "off" remain, and both "stems" and names need the guitar charted (refused without it, like `--takes`).
   assemble's own default stays "off". No new mode was needed: the union would only add false solos.
 - **The evidence is weak:** 2 human solos in 6 songs; Lucretia is in allin1's Harmonix training data, so the label's
@@ -1860,8 +1874,9 @@ own tempo map, first to last Expert onset), phrases per song (per 40 of the char
      larger part beside it, so the solo overlapped the human one by only 0.43.]
   2. `max_seconds` **100**: the same in seconds rounded up to the next 10 s (within 30–120), since the measures are
      counted on our map, which need not be the humans': on the shred song the owner's v0.1 map runs at about twice
-     their tempo (154 against 80 BPM; halving is M5-99's), so 56 of our measures there are about 87 s where 56 of
-     theirs are 168 s, and on the power-metal song at about half (100 against 198 BPM), where the seconds cap binds.
+     their tempo (154 against 80 BPM, before M6-06 halved it: §2.3 step 7), so 56 of our measures there are about
+     87 s where 56 of theirs are 168 s, and on the power-metal song at about half (100 against 198 BPM), where the
+     seconds cap binds.
   3. `max_share` **0.40**: the largest human share rounded up to the next 0.05 (at least 0.15), set by the shred
      song's alt chart itself: about 3.6 minutes of markers on the shred song against one human chart's 3.2. The
      owner may want a tighter share for songs with vocals (M5-00 section 8).
@@ -1916,7 +1931,7 @@ own tempo map, first to last Expert onset), phrases per song (per 40 of the char
 
 - **Not chosen:** imported star power (autochart has none; STRUM's 8 phrases placed on the densest Expert windows come out empty on Easy); chartgen's 19 phrases.
 - **Confidence:** low-medium: the rules now run on the test song (`starpower.py`), but nobody has played the result.
-- **Would change it:** M2 counts and coverage against Encore references; the playtest; the owner choosing to omit fills (then `noDrumActivationLanes` needs a gate exemption). For solos: references with more human solos, outside allin1's training data; the friend saying whether the test song's third "solo" (317.8 s on) is one. For the star-power ceiling (M6-01): fast songs of other styles in the 20-song set (the two that set it are 200-BPM power metal), and a halving rule (a grid at twice the humans' tempo stays under it).
+- **Would change it:** M2 counts and coverage against Encore references; the playtest; the owner choosing to omit fills (then `noDrumActivationLanes` needs a gate exemption). For solos: references with more human solos, outside allin1's training data; the friend saying whether the test song's third "solo" (317.8 s on) is one. For the star-power ceiling (M6-01): fast songs of other styles in the 20-song set (the two that set it are 200-BPM power metal), and slow songs: the halved shred song (M6-06) falls under the humans' (1.89 a minute against 2.33–3.23), since the rule counts beats (M5-99).
 
 ### 2.11 Difficulty reductions
 Each level is built from the one above, so the tiers are nested by construction. `reduce.py` implements this [code]; it re-implements the ideas of Onyx and the RBN authoring guide (GPL; no code copied). autochart's own tiers are not used: they are not nested, and they triple its run time [here, 5070].
@@ -3203,7 +3218,7 @@ Omit `delay`, `song_length`, `hopo_frequency`, `eighthnote_hopo` and `sustain_cu
 
 | gap | what happens today | plan |
 |---|---|---|
-| Songs above 185 BPM; picked 16ths (critique G1) | M5-01: a grid too slow for its notes is doubled (§2.3 step 7: note density since M5-11; the backbeat recorded), no chord is made of notes distinct in time and the spacing floors are 20 ms (§2.6 step 3). Not built: halving (a pulse under 85 BPM stays at double); the second grid's beat phase on a drum stem whose loudest 8ths are the off-beats (§2.3 step 7, open). | The second grid's beat phase (M5-01, open); halving, burst slots, the HOPO-state mode and the guard on the 20-song set (M5-99); a forced-strum rule for rule engines. |
+| Songs above 185 BPM; picked 16ths (critique G1) | M5-01: a grid too slow for its notes is doubled (§2.3 step 7: note density since M5-11; the backbeat recorded), no chord is made of notes distinct in time and the spacing floors are 20 ms (§2.6 step 3). A first grid at twice allin1's beat rate whose halved tempo is under 85 BPM is built again at the pulse (M6-06, §2.3 step 7); a pulse at 85–92.5 BPM stays doubled, and the rules that count beats (star power, the sustain floor) fall under the humans' on the halved song. Open: the second grid's beat phase on a drum stem whose loudest 8ths are the off-beats (§2.3 step 7, open). | The second grid's beat phase (M5-01, open); the beat-counted rules at a slow tempo, a pulse at 85–92.5 BPM, burst slots, the HOPO-state mode and the guard on the 20-song set (M5-99); a forced-strum rule for rule engines. |
 | Compound meters and shuffles (G2) | Only octave moves, x/4 only (`TempoMap.from_beats` writes denominator 4); a 6/8 ballad's 16ths land 64 ticks apart. | M5: ternary-level test (inter-beat-interval ratios near 1.5), `TS 6 3` / `TS 12 3` and denominators in `tempo.py`; 6/8 and shuffle songs in the stress set. Until then, flag "check time signature". |
 | Drumless songs (G3) | Designed (refine on bass/guitar onsets; a low-evidence flag instead of `beat_grid`'s `ValueError`; gate ADTOF mix hits by stem energy; omit absent parts). Built: the ADTOF engine's hat gate (G3, §2.9; untested on a drumless song), and the pipeline leaves out a part whose engine finds no note [code]. The rest is unimplemented and without thresholds. Inside a drummed song, drumless beats now follow a second stem calibrated on the same song (§2.3); a song with no drums at all still cannot calibrate the second stem. The −22 ms phase offset is calibrated on drums only. | Implement in M3; calibrate the offset for bass and guitar onsets; set thresholds on drumless stress songs in M5. |
 | Fretformer driving (G5) | Level mismatch with autochart's grid untested; descriptor knobs (chords, HOPOs, speed) and the Fill-in model unused; a section that fails its checks is only flagged. | M2: ×1 vs ×2 level test, and 1 knob-conditioned take vs seeded takes. M5: regenerate failed windows. |
@@ -3230,9 +3245,9 @@ The other critique gaps are designed in this version: G4 (§2.3, code change pen
     re-scored, §2.8, §2.9);
   - the de-duplicated drum fusion.
 - **Scaffolding:** the star-power, fill and reducer rules on a real song checked by a person (the first-chart review
-  checked them on the test song, but nobody has played the result); the allin1 ensemble on GPU (and any CUDA run of
-  allin1); section quality beyond 5 references (4 of them unseen by allin1); 6s-folded vs ft stems beyond the test
-  song.
+  checked them on the test song, but nobody has played the result); any CUDA run of allin1 (fold 0 since M6-10,
+  the ensemble before it); section quality beyond 5 references (4 of them unseen by allin1); 6s-folded vs ft stems
+  beyond the test song.
 - **Windows and hardware:**
   - any Windows run; RTX 4070 speed and VRAM; host RAM on the friend's PC (the pipeline's peak on the dev CPU:
     §5, M3), STRUM's peak RSS; the friend's RAM;
@@ -3365,12 +3380,14 @@ a review of its engine.
   to the next note is ≥ 0.75 beat) in the quantizer for rule sources? M2.
 
 *Sections*
-- **Q29. allin1 on CUDA: the 8-fold ensemble (the code's default) or fold 0?** After the rules the ensemble measured
-  no gain over fold 0 (−0.004 at ±3 s, CI [−0.07, +0.05]); its raw boundaries are slightly better (+0.05, CI
+- **Q29. allin1 on CUDA: the 8-fold ensemble (the code's default until M6-10) or fold 0?** **Fold 0, in the code
+  since M6-10** (v0.3.0's gate review: M6's grid rules read allin1's beats, measured on fold 0 only, §2.5); the
+  owner approves it with the release. The evidence before it: after the rules the ensemble measured no gain over
+  fold 0 (−0.004 at ±3 s, CI [−0.07, +0.05]); its raw boundaries are slightly better (+0.05, CI
   [+0.006, +0.096]); the CUDA path is untested (§2.5). The solo evaluation adds one song's evidence for fold 0: with
   the solos default ("labels") the ensemble misses the test song's Solo 1 entirely (it calls it Chorus 2B) and makes
   4 false solos on the references against fold 0's 2 (§2.10) [here, solo evaluation; the ensemble as allin1 1.1.0 on
-  the CPU]. No recommendation until it has run on a GPU.
+  the CPU]. Neither has run on a GPU yet.
 
 *Pipeline* [here, pipeline run]
 - **Q30. Where does the pipeline's work folder belong?** **Answered** (the owner: "do what you think is best"): in
@@ -3569,7 +3586,7 @@ decides), and the p95-drift click test (critique G4).
 - **Solos:** `--solos labels|stems|off` or section names, `--solos "Solo 1,Solo 2"`. The default is **"labels"**,
   every section allin1 labels Solo, from the solo evaluation: "stems" (the label and the stem test together) placed
   no solo on the test song, rejecting both solos the friend confirmed (vocals shares 0.561 and 0.863), where "labels"
-  covers Solo 2 and half of Solo 1 with fold-0 sections (the CPU) and Solo 2 alone with the ensemble (CUDA); on the
+  covers Solo 2 and half of Solo 1 with fold-0 sections and Solo 2 alone with the ensemble (CUDA's until M6-10); on the
   six references both find 1 of 2 human solos, "labels" with 2 false solos to 1 on fold 0 and 4 to 1 on the
   ensemble. No new mode: the union of the two only adds false solos (§2.10).
 - **Guitar takes:** 4 by default when the guitar stage runs on CUDA, 1 on the CPU; the first CUDA take alone first,
@@ -3625,8 +3642,8 @@ decides), and the p95-drift click test (critique G4).
   (309 with a 20-character profile name), which only Node writes; pruning deletes in Windows' `\\?\` form
   (`cache.long_path`). Neither is tried on Windows.
 - **The solos decision's cost** is given per sections source: one extra false tracker every six songs on fold 0,
-  about every two on the ensemble the friend's CUDA runs, which also misses Solo 1 (§2.10, §9 Q29); the pipeline's
-  docstring and the summary above say which sections they mean.
+  about every two on the ensemble (CUDA's until M6-10: fold 0 on every device since), which also misses Solo 1 (§2.10,
+  §9 Q29); the pipeline's docstring and the summary above say which sections they mean.
 - **Docs:** M1a's status and the stage overview's bass row no longer call Q1 open; the strumming section quotes the
   friend's 2:32–2:35 and gives the window on both clocks; `stem_confirm`'s thresholds are "never tuned", not
   "untested"; the `--work` help and the pipeline's docstring name `$XDG_CACHE_HOME`; the tests row counts main's

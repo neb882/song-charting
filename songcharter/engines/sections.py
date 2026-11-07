@@ -15,13 +15,14 @@ after the music. songcharter.sections snaps them to measures, merges, splits and
     $SONGCHARTER_ALLIN1_PYTHON, else this Python when it has one of them): no second separation, no stem files.
     The runner starts under that Python's own import rules, user site and PYTHONPATH included, as a plain
     `python -c "import allin1_infer"` would (RUNNER_BOOT), so a `pip install --user` counts.
-    `model="auto"` is fold 0 on the CPU and the 8-fold ensemble on CUDA. The checkpoints come from the Hugging Face
-    hub at a pinned revision, downloaded on first use; each is checked against its SHA-256 before the runner loads
-    it (they are pickles: the check is what makes loading them safe).
+    `model="auto"` is fold 0 on every device (AUTO_MODEL): the 8-fold ensemble measured no better (DESIGN.md 2.5),
+    and the grid's rules that read allin1's beats and downbeats were measured on fold 0 (M6-10). The checkpoints
+    come from the Hugging Face hub at a pinned revision, downloaded on first use; each is checked against its
+    SHA-256 before the runner loads it (they are pickles: the check is what makes loading them safe).
   * **CUDA.** The probe runs a CUDA kernel rather than trusting `torch.cuda.is_available()`, which is also true on a
     GPU the torch build has no kernels for; `device="auto"` takes CUDA only when the kernel ran. CUDA out of memory
     is retried on the CPU by the runner. A CUDA run that fails any other way is run again on the CPU when the
-    device was "auto" (fold 0 when `model="auto"`), and raises when it was "cuda". engine.json records either
+    device was "auto" (with the same model), and raises when it was "cuda". engine.json records either
     fallback.
   * **librosa** (numpy, scipy and librosa only), for when allin1 is not available. Laplacian structural
     segmentation (McFee and Ellis 2014, as in librosa's gallery) on beat-synchronous CQT and MFCC; the cluster
@@ -99,6 +100,10 @@ ALLIN1_FOLDS = {  # model name -> (file, SHA-256): the Harmonix folds allin1's l
                        "b888b7fba95efa3d5a37ca013fe7efe2741621ea9ca335e6b2723e4fd0fade57"),
 }
 ALLIN1_MODELS = {**{name: [name] for name in ALLIN1_FOLDS}, "harmonix-all": list(ALLIN1_FOLDS)}
+# model "auto" on every device. Not the ensemble on CUDA: it measured no gain (ensemble - fold 0: -0.004 at +-3 s,
+# DESIGN.md 2.5), and since M6 allin1's beats and downbeats set the grid (the bar phase, the doubled grid's start,
+# the halving test), measured on fold 0 only, where the ensemble's beats can sit at another octave (M6-10)
+AUTO_MODEL = "harmonix-fold0"
 ALLIN1_STEMS = ("bass", "drums", "other", "vocals")   # allin1's four; every other stem folds into "other"
 PROBE_TIMEOUT_S = 300
 
@@ -137,7 +142,7 @@ class _RunFailed(Allin1Error):
 @dataclass(frozen=True)
 class Settings:
     backend: str = "auto"              # "auto" (allin1 if it works, else librosa), "allin1" or "librosa"
-    model: str = "auto"                # allin1: "auto" (fold 0 on the CPU, the ensemble on CUDA), or a name in
+    model: str = "auto"                # allin1: "auto" (AUTO_MODEL, fold 0, on every device), or a name in
                                        # ALLIN1_MODELS ("harmonix-fold0", ..., "harmonix-all")
     device: str = "auto"               # allin1: "auto" (CUDA if the allin1 Python has it), "cpu" or "cuda"
     python: str | None = None          # the Python with allin1 (default $SONGCHARTER_ALLIN1_PYTHON)
@@ -386,7 +391,7 @@ def _allin1(mix, stems, out: Path, s: Settings, run, download) -> SectionsResult
 def _allin1_job(mix, stems, payload: np.ndarray, out: Path, s: Settings, python: str, found: dict, device: str,
                 why: str, fallback: str | None, run, download) -> SectionsResult:
     """One allin1 run on `device` (or the cached result of one); _RunFailed when the runner exits with an error."""
-    model = s.model if s.model != "auto" else ("harmonix-all" if device == "cuda" else "harmonix-fold0")
+    model = s.model if s.model != "auto" else AUTO_MODEL
     weights = {ALLIN1_FOLDS[f][0]: ALLIN1_FOLDS[f][1] for f in ALLIN1_MODELS[model]}
     key = cache_key({"stems": payload}, {"backend": "allin1", "engine": ENGINE_VERSION, "package": found.get("package"),
                            "version": found.get("version"), "model": model, "weights": weights, "device": device,

@@ -639,3 +639,25 @@ def test_a_split_vote_keeps_a_sure_kick_phase(steady):
     db = out.stats["downbeats"]
     assert (db["phase"], db["source"], db["uncertain"]) == (a, "allin1", True)
     assert np.array_equal(out.downbeats, np.arange(a, len(g.beats), 4))
+
+
+@pytest.mark.parametrize("sure, on_kick, on_other, want", [
+    (False, 22, 28, 2),   # a split vote (margin 0.12) against an unsure kick (a kick on every beat): the vote's
+    (True, 16, 34, 2),    # a clear vote (margin 0.36) against a sure kick: the vote's
+    (True, 17, 23, 2),    # margin 0.15, DOWNBEAT_MIN_MARGIN itself: not a split, the vote's
+    (True, 43, 57, 0),    # margin 0.14: a split holding the sure kick's phase, the kick's
+])
+def test_a_split_vote_keeps_only_a_sure_kick_and_only_under_the_threshold(sure, on_kick, on_other, want):
+    """The split rule's two conditions on a made-up 200 BPM grid with its kick on phase 0: the kick's phase is
+    kept against a vote whose two top phases hold it only when the kick is sure and the vote's margin is under
+    DOWNBEAT_MIN_MARGIN (0.15); otherwise the vote's phase (2) is taken, flagged when its margin is under 0.15."""
+    beats = 0.5 + np.arange(400) * 0.3
+    kick = {"phase": 0, "margin": 0.4 if sure else 0.02, "uncertain": not sure, "source": "kick"}
+    g = BeatGrid(beats, np.arange(0, 400, 4), "fixed", {"downbeats": kick})
+    times = np.sort(np.concatenate([beats[0::4][:on_kick], beats[2::4][:on_other]]))
+    margin = round((on_other - on_kick) / (on_kick + on_other), 4)
+    assert DOWNBEAT_MIN_MARGIN == 0.15 and downbeat_vote(beats, times)[:2] == (2, margin)
+    db = with_downbeats(g, times).stats["downbeats"]
+    assert (db["phase"], db["source"]) == ((0, "kick") if want == 0 else (2, "allin1"))
+    assert db["uncertain"] is (not sure if want == 0 else margin < 0.15)
+    assert np.array_equal(with_downbeats(g, times).downbeats, np.arange(want, 400, 4))

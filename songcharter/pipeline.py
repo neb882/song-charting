@@ -75,8 +75,9 @@
     (`--solos "Solo 1,Solo 2"`) puts them exactly there instead. Not "stems", the label confirmed by the stems
     (vocals quiet, guitar loud), which the solo evaluation (DESIGN.md 2.10) found rejecting the very solos the
     friend confirmed on the test song (vocals active in 0.561 and 0.863 of their frames; the test allows 0.25), so
-    it placed none there. With fold-0 sections (allin1 on the CPU) "labels" covers all of Solo 2 and the first half
-    of Solo 1 and adds one span nobody has confirmed; with the ensemble CUDA runs it covers Solo 2 only. On the six
+    it placed none there. With fold-0 sections (what allin1 runs on either device, M6-10) "labels" covers all of
+    Solo 2 and the first half of Solo 1 and adds one span nobody has confirmed; with the ensemble (a model asked
+    for, which CUDA ran before M6-10) it covers Solo 2 only. On the six
     references both find 1 of the 2 human solos (Lucretia's; Kimochi Warui's is called a chorus), and "labels"
     makes 2 false solos to the stems' 1 with fold 0, 4 to 1 with the ensemble (one extra false tracker every six
     songs, or about every two). The friend asked for solo trackers, and a missed solo costs him one where a false

@@ -139,9 +139,9 @@ fails the ordinary one.
 - **Golden** (`python -m eval.golden run --code <wt>/m6-03 --out $G/m6-03-new --threads 2 --rerun bass,sections`;
   diff against `$G/main-m605` with `--expect none`): exit 1, 13 UNEXPECTED.
   - **Kimochi Warui's 12 tracks.** The bar phase moved two beats, as this order intends. Expert onsets and F1@50
-    are identical (guitar 0.827, bass 0.758, drums 0.977). The lower levels moved 0–6 onsets: guitar Hard
-    771→770, Easy 336→335; bass Easy 110→104; drums Hard 689→697, Medium 448→449, Easy 380→381. Downbeat F1 went
-    0.000 → 1.000.
+    are identical (guitar 0.827, bass 0.758, drums 0.977). The lower levels moved 0–8 onsets (M6-10's
+    correction): guitar Hard 771→770, Easy 336→335; bass Easy 110→104; drums Hard 689→697, Medium 448→449, Easy
+    380→381. Downbeat F1 went 0.000 → 1.000.
   - **The other six songs are unchanged** in every hash, count and score. The test song keeps phase 0, now from
     allin1. The pooled F1 is +0.0000 on every part and level, and beat F1 is 0.8755 → 0.8755.
   - **The run-level flag:** "the new run's drums answered from the kept folders (made by 8ba3cbd), but drums's
