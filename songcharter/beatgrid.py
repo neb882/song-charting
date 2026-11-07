@@ -42,6 +42,7 @@ The output feeds the tempo map directly:
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -242,13 +243,17 @@ def estimate_tempo(env: np.ndarray, fps: float, bpm_range: tuple[float, float] =
     Each candidate tempo scores the autocorrelation at its beat period plus half that at twice the period, so a
     half-time pulse (kick and snare a bar apart) still votes for the beat level, and pulses faster than the range
     land on half their rate. The winner's period is then refined from the parabolic peaks of the autocorrelation at
-    one to four periods, weighted by their height (the frame grid alone would be 0.7 % coarse at 142 BPM).
+    one to four periods, weighted by their height (the frame grid alone would be 0.7 % coarse at 142 BPM). A
+    parabola's vertex is moved at most half a frame from its middle point (_vertex), and a refined tempo that is not
+    a positive number falls back to the winner's (_fold): a flat stretch of the autocorrelation once gave a negative
+    period, and the octave fold then doubled it for ever.
     """
     lo, hi = bpm_range
     ac = _autocorrelation(env, fps, int(4.5 * 60 * fps / lo))
     bpms = np.arange(lo, hi, 0.05)
     score = _tempo_score(ac, 60.0 * fps / bpms)
-    period = 60.0 * fps / float(bpms[int(np.argmax(score))])
+    coarse = float(bpms[int(np.argmax(score))])
+    period = 60.0 * fps / coarse
     num = den = 0.0
     for m in (1, 2, 3, 4):
         c = int(round(m * period))
@@ -256,13 +261,29 @@ def estimate_tempo(env: np.ndarray, fps: float, bpm_range: tuple[float, float] =
             break
         i = c - 2 + int(np.argmax(ac[c - 2:c + 3]))
         y0, y1, y2 = ac[i - 1:i + 2]
-        curv = y0 - 2 * y1 + y2
-        peak = i + (0.5 * (y0 - y2) / curv if curv < 0 else 0.0)
+        peak = i + _vertex(y0, y1, y2)
         w = max(float(y1), 0.0)
         num, den = num + w * m * peak, den + w * m * m
     if den > 0:
         period = num / den
-    bpm = 60.0 * fps / period
+    return _fold(60.0 * fps / period, bpm_range, coarse)
+
+
+def _vertex(y0: float, y1: float, y2: float) -> float:
+    """The offset from the middle point of the vertex of the parabola through three equally spaced points, within
+    half a frame: 0 when they do not curve down. (The middle point is the highest of five, but a neighbour outside
+    those five can be higher, and three points that are no peak put the vertex anywhere.)"""
+    curv = y0 - 2 * y1 + y2
+    if not curv < 0:
+        return 0.0
+    return min(max(0.5 * (y0 - y2) / curv, -0.5), 0.5)
+
+
+def _fold(bpm: float, bpm_range: tuple[float, float], fallback: float) -> float:
+    """bpm folded by octaves into [lo, hi); `fallback` (already inside) when bpm is not a positive finite number."""
+    lo, hi = bpm_range
+    if not (math.isfinite(bpm) and bpm > 0):
+        return float(fallback)
     while bpm < lo:
         bpm *= 2
     while bpm >= hi:

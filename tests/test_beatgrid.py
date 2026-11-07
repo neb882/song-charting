@@ -1,4 +1,8 @@
 """The beat grid on synthetic drum tracks: kick, snare and hat hits placed on known beats."""
+import subprocess
+import sys
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -10,6 +14,8 @@ from songcharter.beatgrid import (BPM_RANGE, DOWNBEAT_MIN_MARGIN, HALF_BEAT_SHIF
                                   track_beats, window_tempi, with_downbeats)
 from songcharter.errors import InputError
 from songcharter.tempo import TempoMap, plan_lead_in
+
+ROOT = Path(__file__).resolve().parent.parent
 
 SR = 22050  # the onset envelope's reference rate; one test runs at 44100
 
@@ -98,6 +104,40 @@ def test_tempo_folds_into_one_octave():
     assert estimate_tempo(pulses(142.0), fps) == pytest.approx(142.0, abs=0.3)
     assert estimate_tempo(pulses(71.0), fps) == pytest.approx(142.0, abs=0.3)   # half-time pulse: doubled
     assert estimate_tempo(pulses(200.0), fps) == pytest.approx(100.0, abs=0.3)  # too fast: halved
+
+
+SPARSE = ([216, 1118, 1397, 1400, 1403, 1694, 1699, 1732], [0.32, 0.18, 0.45, 0.07, 0.98, 0.7, 0.06, 0.66])  # made up
+
+
+def test_a_sparse_window_gives_a_tempo_in_range_and_ends():
+    """Eight scattered onsets in 20 s (a quiet window): the refined period came out negative here, and folding the
+    negative tempo by octaves never ended (a build stuck for an hour). In a subprocess with a time limit, so a hang
+    fails the test instead of stopping the suite."""
+    code = ("import numpy as np; from songcharter.beatgrid import estimate_tempo; env = np.zeros(2000); "
+            f"env[{SPARSE[0]}] = {SPARSE[1]}; print(estimate_tempo(env, 100.0))")
+    p = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=60)
+    assert p.returncode == 0, p.stderr[-500:]
+    assert BPM_RANGE[0] <= float(p.stdout) < BPM_RANGE[1]
+
+
+def test_the_vertex_is_within_half_a_frame():
+    """A parabola's vertex through three points: exact for a peak, within half a frame for three points that are no
+    peak (their curvature near 0 put it hundreds of frames away), 0 when they do not curve down."""
+    assert B._vertex(0.5, 1.0, 0.7) == pytest.approx(0.5 * (0.5 - 0.7) / (0.5 - 2.0 + 0.7))
+    assert B._vertex(0.30, 0.20, 0.0999) == -0.5          # no peak, curvature -0.0001: the old offset was -1000.5
+    assert B._vertex(0.0999, 0.20, 0.30) == 0.5
+    assert B._vertex(0.2, 0.2, 0.2) == 0.0 and B._vertex(0.1, 0.0, 0.1) == 0.0
+
+
+def test_the_octave_fold_ends_on_any_tempo():
+    """A tempo folds by octaves into the range; one that is not a positive finite number takes the fallback (in a
+    subprocess with a time limit: without the guard the fold never ends)."""
+    assert [B._fold(b, BPM_RANGE, 120.0) for b in (60.0, 240.0, 100.0, 184.9)] == [120.0, 120.0, 100.0, 184.9]
+    code = ("from songcharter.beatgrid import _fold, BPM_RANGE; "
+            "print([_fold(b, BPM_RANGE, 120.0) for b in (-3.6e-9, -200.0, 0.0, float('inf'), float('-inf'), "
+            "float('nan'))])")
+    p = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=60)
+    assert p.returncode == 0 and p.stdout.strip() == str([120.0] * 6), p.stderr[-500:]
 
 
 def test_steady_drums_give_a_straight_grid_and_the_kick_bar_phase(steady):
