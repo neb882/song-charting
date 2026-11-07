@@ -3586,7 +3586,7 @@ decides), and the p95-drift click test (critique G4).
 - **Solos:** `--solos labels|stems|off` or section names, `--solos "Solo 1,Solo 2"`. The default is **"labels"**,
   every section allin1 labels Solo, from the solo evaluation: "stems" (the label and the stem test together) placed
   no solo on the test song, rejecting both solos the friend confirmed (vocals shares 0.561 and 0.863), where "labels"
-  covers Solo 2 and half of Solo 1 with fold-0 sections (the CPU) and Solo 2 alone with the ensemble (CUDA); on the
+  covers Solo 2 and half of Solo 1 with fold-0 sections and Solo 2 alone with the ensemble (CUDA's until M6-10); on the
   six references both find 1 of 2 human solos, "labels" with 2 false solos to 1 on fold 0 and 4 to 1 on the
   ensemble. No new mode: the union of the two only adds false solos (§2.10).
 - **Guitar takes:** 4 by default when the guitar stage runs on CUDA, 1 on the CPU; the first CUDA take alone first,
@@ -3642,8 +3642,8 @@ decides), and the p95-drift click test (critique G4).
   (309 with a 20-character profile name), which only Node writes; pruning deletes in Windows' `\\?\` form
   (`cache.long_path`). Neither is tried on Windows.
 - **The solos decision's cost** is given per sections source: one extra false tracker every six songs on fold 0,
-  about every two on the ensemble the friend's CUDA runs, which also misses Solo 1 (§2.10, §9 Q29); the pipeline's
-  docstring and the summary above say which sections they mean.
+  about every two on the ensemble (CUDA's until M6-10: fold 0 on every device since), which also misses Solo 1 (§2.10,
+  §9 Q29); the pipeline's docstring and the summary above say which sections they mean.
 - **Docs:** M1a's status and the stage overview's bass row no longer call Q1 open; the strumming section quotes the
   friend's 2:32–2:35 and gives the window on both clocks; `stem_confirm`'s thresholds are "never tuned", not
   "untested"; the `--work` help and the pipeline's docstring name `$XDG_CACHE_HOME`; the tests row counts main's
