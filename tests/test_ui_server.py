@@ -1982,6 +1982,34 @@ def test_listen_renders_caches_and_serves_only_its_own_files(finished):
     assert any("listen: guitar on expert rendered in" in line for line in ctx.lines)
 
 
+def test_two_renders_of_one_part_at_once_both_answer(finished, monkeypatch):
+    """Two tabs asking for the same part and level at once: one renders, the other waits for it and finds it (without
+    the lock both render into the same temporary file, and one of them fails)."""
+    from songcharter import listen
+    ctx = finished
+    job = ctx.run()
+    listen_chart(job.out)
+    real, calls = listen.render, []
+
+    def slow(*a, **k):
+        calls.append(a[1:3])
+        time.sleep(0.5)
+        return real(*a, **k)
+    monkeypatch.setattr(listen, "render", slow)
+    answers = [None, None]
+
+    def ask(i):
+        answers[i] = post(ctx, "/api/jobs/current/listen", {"part": "guitar", "level": "expert"})
+    threads = [threading.Thread(target=ask, args=(i,)) for i in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    assert [a[0] for a in answers] == [200, 200], answers
+    assert sorted(a[1]["cached"] for a in answers) == [False, True] and calls == [("guitar", "expert")]
+    assert [p.name[:14] for p in (ctx.work / "listen").iterdir()] == ["guitar-expert-"]
+
+
 def test_a_render_that_cannot_be_written_says_why(finished, monkeypatch):
     from songcharter import listen
     ctx = finished
