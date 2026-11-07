@@ -56,6 +56,7 @@ ones then, but the CI runs they link still name the old ones.
 | `set20-v03.md` | the 20-song set's 13 new songs on v0.3's code (songs as s01-s13): F1@50 against the primary and the humans' ceiling, the beat grid, what to do next |
 | `feel.md` | how a chart should feel to play: nine parts, each with a measure, revised after the advisor (M5) |
 | `m5-plan-review.md` | the advisor's review of the M5 plan and the three skeptics' verdicts |
+| `m7-plan-review.md` | the advisor's review of the M7 plan (the video review's findings measured first) and how each finding was applied |
 | `pipeline-review.md` | an advisor's review of how work is run (2026-11-04), finding by finding, with what was done |
 | `takes-experiment.md`, `takes-experiment-verifier.md` | spliced guitar takes against one take, and the verifier's corrections (which win where they differ) |
 | `strumming-research.json` | the pick-noise detector for sparse guitar stretches, and why no fill was built |
