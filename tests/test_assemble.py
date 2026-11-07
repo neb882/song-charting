@@ -2184,32 +2184,29 @@ def test_a_halved_grids_offset_is_measured_at_the_first_grids_level():
 
 
 HALF_LINE = 0.4  # a 75 BPM pulse (0.8 s) whose first pass folds to 150 BPM: lines on its beats and their 8ths
+PULSE_LATE = 0.010  # the pulse song's guitar tool, this late on the drums: an offset for the part to find
 
 
 def pulse_positions(n_lines: int) -> list[float]:
-    """Onsets in lines of the 150 BPM first grid: 8ths, a run of 16ths on every 4th line (the halved grid's
-    1/32s) and 8th-note triplets over both lines of every 8th pair (a whole halved beat's 16th-note triplets)."""
+    """Onsets in lines of the 150 BPM first grid: its 16ths (the halved grid's 1/32s, half of them between its
+    16ths, so on the halved map itself their phases cancel), and 8th-note triplets over both lines of every 8th
+    pair (a whole halved beat's 16th-note triplets)."""
     out = []
     for k in range(2, n_lines):
-        if k % 8 in (2, 3):
-            out += [k, k + 1 / 3, k + 2 / 3]
-        elif k % 4 == 1:
-            out += [k, k + 0.25, k + 0.5, k + 0.75]
-        else:
-            out += [k, k + 0.5]
+        out += [k, k + 1 / 3, k + 2 / 3] if k % 8 in (2, 3) else [k, k + 0.25, k + 0.5, k + 0.75]
     return out
 
 
 @pytest.fixture(scope="module")
 def pulse_song(tmp_path_factory):
     """A 75 BPM song played at 150 (a kick every 0.8 s, a snare between): the first pass folds it to 150 BPM. A
-    guitar tool chart on pulse_positions; an allin1 result with made-up beats on the kicks (in 10 ms frames, off by
+    guitar tool chart on pulse_positions, PULSE_LATE late; an allin1 result with made-up beats on the kicks (in 10 ms frames, off by
     up to 5 ms), and a second sections file without them."""
     root = tmp_path_factory.mktemp("pulse")
     seconds = 40.0
     lines = FAST_FIRST + np.arange(int((seconds - 1.0) / HALF_LINE)) * HALF_LINE
     drums = fast_drums(beats=lines, seconds=seconds)
-    times = FAST_FIRST + np.array(pulse_positions(len(lines) - 2)) * HALF_LINE
+    times = FAST_FIRST + np.array(pulse_positions(len(lines) - 2)) * HALF_LINE + PULSE_LATE
     tone = np.zeros(drums.shape[1], dtype=np.float32)
     for t in times:
         i = int(t * SR)
@@ -2259,9 +2256,40 @@ def test_a_song_at_twice_its_pulse_is_charted_at_the_pulse(pulse_song):
         "straight": 4, "triplet": 3}
     assert part["offset"]["map"].startswith("the halved grid's beats with their midpoints") and part["offset"][
         "trusted"] and "map" not in b.report["parts"]["guitar"]["offset"]
+    # the offset is the first grid's: measured on the halved map itself, the notes between its 16ths cancel it
+    first_off = b.report["parts"]["guitar"]["offset"]
+    assert first_off["trusted"] and first_off["applied"] > PULSE_LATE - 0.002, first_off
+    assert part["offset"]["applied"] == pytest.approx(first_off["applied"], abs=0.002), (part["offset"], first_off)
     q = part["quantize"]["expert"]
     assert q["notes_in"] == q["notes_out"] == len(times) and q["merged"] == q["dropped_distinct"] == 0
     assert q["moved_25ms"] == 0 and q["triplet_notes"] > 0
     tm, pad, off = a.chart.tempo, a.lead.pad_seconds, part["offset"]["applied"]
     got = np.array([tm.tick_to_sec(n.tick) - pad + off for n in a.chart.tracks[0].notes])
     assert np.max(np.abs(got - times)) < 0.006
+
+
+def test_a_halved_songs_words_keep_the_first_grids_slots_and_its_pass_skips_the_half_beat_test(pulse_song,
+                                                                                                monkeypatch):
+    """Made-up words on the pulse song's first-grid 16ths land on the halved grid's 1/32s, three of them odd
+    (lyric_rules at octave 0.5; report.json's lyrics.slots 8/6), at their own times. The halving pass's beat_grid
+    call (from allin1's beats) runs without the half-beat test, which allin1's phase replaces; the first pass's
+    call never asks for it."""
+    root, config, _, _ = pulse_song
+    real, calls = assemble_module.beat_grid, []
+
+    def grid(*args, **kwargs):
+        calls.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(assemble_module, "beat_grid", grid)
+    sung = tuple(FAST_FIRST + (40 + q / 4) * HALF_LINE for q in range(1, 7))  # lines 40-41, 16ths after the beat
+    words = L.Timed(L.parse("zorp blen quiv fim wob dak"), sung)
+    r = assemble(parse_config({**config, "output": "out/halved-words"}, root), lyrics=words)
+    assert r.ok and r.report["grid"]["octave"] == 0.5
+    assert [k.get("half_beat") for k in calls] == [None, False] and calls[1]["start"] is not None
+    assert r.report["lyrics"]["slots"] == {"straight": 8, "triplet": 6}
+    tm, pad, res = r.chart.tempo, r.lead.pad_seconds, r.chart.tempo.resolution
+    ticks = [t for t, _, text in sorted(r.chart.lyrics) if text.startswith("lyric ")]
+    assert len(ticks) == 6 and all(t % (res // 8) == 0 for t in ticks)
+    assert sum(t % (res // 4) != 0 for t in ticks) == 3  # 40.25, 40.75 and 41.25: the halved grid's odd 1/32s
+    assert [tm.tick_to_sec(t) - pad for t in ticks] == pytest.approx(list(sung), abs=0.012)
