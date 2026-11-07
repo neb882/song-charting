@@ -2409,7 +2409,9 @@ charts changes. What each sound means:
   its Ogg muxer writes a random stream serial, so two renders of the same folder differed [here].
 - **Where it goes:** the command writes where `--out` says (default `<folder name>-<part>-<level>.ogg` in the current
   folder) and refuses any path inside the song folder: Clone Hero reads the audio files there by name, and no extra
-  file may risk that. The page renders into the job's work folder, `listen/<part>-<level>-<hash>.ogg`, the hash of the
+  file may risk that. The check follows links and `..` (resolve()) and also compares each existing parent of the
+  output with the song folder by identity (device and inode), which sees what resolve() cannot: the folder spelled in
+  another case on a case-insensitive drive such as WSL's /mnt/c, or reached through a bind mount [the review's R1]. The page renders into the job's work folder, `listen/<part>-<level>-<hash>.ogg`, the hash of the
   song folder's notes.chart (or notes.mid), song.ini and song.ogg, so a new chart of the same song (the same work
   folder) renders again and the older render goes. The server serves only what it rendered for the current job, by
   name (no path from the request reaches the file system), with byte ranges so the player can seek. A chart that

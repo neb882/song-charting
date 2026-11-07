@@ -28,7 +28,9 @@ notes.mid, song.ini, song.ogg) as sound, over the song or alone, into a stereo f
     written with ffmpeg's bitexact flags (without them its Ogg stream serial is random), so the same folder gives the
     same bytes.
   * **Out:** OGG Vorbis (quality 5), or 16-bit WAV for a path ending .wav, written through a temporary file beside it
-    and never inside the song folder (Clone Hero reads the audio files there by name: no extra file may risk it).
+    and never inside the song folder (Clone Hero reads the audio files there by name: no extra file may risk it),
+    checked on the resolved path and by identity (`inside`), so another case on a case-insensitive drive or a bind
+    mount does not get past it.
 
 `cached` is the page's (ui/server.py): one render per part and level in a folder of the job's, named by a hash of
 the song folder's files and VERSION, so a new chart of the same song renders again.
@@ -362,13 +364,23 @@ def write(audio: np.ndarray, path: Path | str) -> Path:
     return path
 
 
-def inside(path: Path, folder: Path) -> bool:
-    """Whether `path` is the song folder or anything under it (links resolved)."""
+def inside(path: Path, folder: Path) -> str | None:
+    """Why `path` is the song folder or under it, or None. Two checks: resolved (links and `..` followed), it lies
+    under the folder; or one of its existing parents is the folder itself by identity (os.path.samefile: the same
+    device and inode), which also sees the aliases resolve() cannot, such as the folder spelled in another case on a
+    case-insensitive drive (WSL's /mnt/c, where the Songs folder is) or reached through a bind mount."""
     try:
         path.resolve().relative_to(folder.resolve())
+        return "is inside the song folder"
     except ValueError:
-        return False
-    return True
+        pass
+    for parent in (path, *path.parents):
+        try:
+            if os.path.samefile(parent, folder):
+                return f"is inside the song folder ({parent} is the song folder under another name)"
+        except OSError:   # not there (yet), or the folder is not
+            continue
+    return None
 
 
 def output_path(folder: Path, out: Path | None, part: str, difficulty: str) -> Path:
@@ -377,9 +389,10 @@ def output_path(folder: Path, out: Path | None, part: str, difficulty: str) -> P
     name = f"{folder.resolve().name}-{part}-{difficulty}.ogg"
     out = None if out is None else out.expanduser()
     path = (Path.cwd() / name if out is None else (out / name if out.is_dir() else out)).absolute()
-    if inside(path, folder):
-        raise InputError(f"{path} is inside the song folder: Clone Hero reads the audio files there, so write it "
-                         "somewhere else (--out FILE)")
+    why = inside(path, folder)
+    if why:
+        raise InputError(f"{path} {why}: Clone Hero reads the audio files there, so write it somewhere else "
+                         "(--out FILE)")
     if path.suffix.lower() not in OUTPUTS:
         raise InputError(f"the output {path} must end .ogg or .wav")
     return path

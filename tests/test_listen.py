@@ -13,7 +13,7 @@ from songcharter import audio as A
 from songcharter import cli
 from songcharter import listen as L
 from songcharter.chart import Chart, DrumHit, FretNote, SongInfo, Track, write_chart
-from songcharter.errors import InputError
+from songcharter.errors import InputError, ToolError
 from songcharter.tempo import Tempo, TempoMap, TimeSignature
 
 SR = 44100
@@ -328,6 +328,69 @@ def test_the_pages_cache_renders_once_per_chart(tmp_path, monkeypatch):
     with pytest.raises(InputError):
         L.cached(song, cache, "../guitar", "expert")
     assert len(calls) == 3
+
+
+def test_the_pages_cache_follows_song_ini_and_song_ogg(tmp_path):
+    """A re-chart that changes only song.ini (its delay moves every note) or only song.ogg renders again."""
+    song = folder(tmp_path / "s", guitar=[FretNote(tick(1.0), (0,))], seconds=3.0)
+    cache = tmp_path / "work" / "listen"
+    first, _ = L.cached(song, cache, "guitar", "expert")
+    ini = (song / "song.ini").read_text(encoding="utf-8")
+    (song / "song.ini").write_text(ini + "delay = 100\n", encoding="utf-8")
+    second, was = L.cached(song, cache, "guitar", "expert")
+    assert not was and second != first and not first.exists()
+    t = np.arange(int(3.0 * SR)) / SR
+    y = (0.1 * np.sin(2 * np.pi * 330 * t)).astype(np.float32)
+    A.encode_ogg(np.stack([y, y]), song / "song.ogg")
+    third, was = L.cached(song, cache, "guitar", "expert")
+    assert not was and third != second and not second.exists()
+    assert L.cached(song, cache, "guitar", "expert") == (third, True)
+
+
+def test_a_render_that_fails_half_way_leaves_nothing_to_serve(tmp_path, monkeypatch):
+    """The file is written beside its name and moved into place whole: an encoder that fails (or is killed) half way
+    leaves no <part>-<level>-<key>.ogg for the cache to take as rendered before."""
+    song = folder(tmp_path / "s", guitar=[FretNote(tick(1.0), (0,))], seconds=2.0)
+    cache = tmp_path / "work" / "listen"
+    real = L._write_ogg
+
+    def half(audio, path):
+        Path(path).write_bytes(b"OggS half a file")
+        raise ToolError("made-up encoder failure")
+    monkeypatch.setattr(L, "_write_ogg", half)
+    with pytest.raises(ToolError):
+        L.cached(song, cache, "guitar", "expert")
+    assert list(cache.iterdir()) == []
+    with pytest.raises(ToolError):
+        L.write(np.zeros((2, 10), np.float32), tmp_path / "out.ogg")
+    assert not (tmp_path / "out.ogg").exists() and not list(tmp_path.glob(".*.part"))
+    monkeypatch.setattr(L, "_write_ogg", real)
+    path, was = L.cached(song, cache, "guitar", "expert")
+    assert not was and A.decode(path).shape[1] == A.decode(song / "song.ogg").shape[1]
+
+
+def test_an_output_in_the_song_folder_is_refused_under_any_name(tmp_path, monkeypatch, capsys):
+    song = folder(tmp_path / "s", guitar=[FretNote(tick(1.0), (0,))], seconds=2.0)
+    (tmp_path / "link").symlink_to(song, target_is_directory=True)
+    (tmp_path / "here").mkdir()
+    before = sorted(p.name for p in song.iterdir())
+    # a link into the song folder, and a path through `..`: the resolved path is in it
+    for out in (tmp_path / "link" / "x.ogg", tmp_path / "link", tmp_path / "here" / ".." / "s" / "x.ogg"):
+        with pytest.raises(InputError) as e:
+            L.output_path(song, out, "guitar", "expert")
+        assert " is inside the song folder: " in str(e.value), out
+    assert L.output_path(song, tmp_path / "here" / "x.ogg", "guitar", "expert") == tmp_path / "here" / "x.ogg"
+    # an alias resolve() cannot see (the folder in another case on WSL's /mnt/c, a bind mount), stood in for by the
+    # link with resolve() made blind: the folder is found by identity
+    monkeypatch.setattr(Path, "resolve", lambda self, strict=False: self.absolute())
+    for out in (tmp_path / "link" / "x.ogg", tmp_path / "link" / "new" / "x.ogg"):
+        with pytest.raises(InputError, match=r"is inside the song folder \(.*link is the song folder under another "
+                                             r"name\): "):
+            L.output_path(song, out, "guitar", "expert")
+    assert cli.main(["listen", str(song), "--out", str(tmp_path / "link" / "y.ogg")]) == 2
+    assert "under another name" in capsys.readouterr().err
+    assert L.output_path(song, tmp_path / "here" / "x.ogg", "guitar", "expert") == tmp_path / "here" / "x.ogg"
+    assert sorted(p.name for p in song.iterdir()) == before
 
 
 def test_songcharter_listen(tmp_path, monkeypatch, capsys):
