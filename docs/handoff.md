@@ -14,10 +14,12 @@ holds the known gaps) and docs/PIPELINE.md first. This note adds what only the r
   install line.
 - **v0.3.0** (M6) was published by the owner on 2026-11-07 as a pre-release (tag v0.3.0, b609b40; its gate:
   docs/reports/v0.3.0-gate.md). Its three assets are byte-identical to `packaging/release/build.sh 0.3.0` at the tag.
-  Still to come from the owner: three songs re-charted on his GPU, their grid records against the CPU's (the gate
-  report lists both), since allin1 fold 0 had not run on a GPU before. M6-09 (a chart you can hear) is for v0.3.1:
-  v0.3.0 is tagged, so it merges once reviewed. Releases are built from a clean clone at the tagged commit and
-  published by the owner (the session's proxy refuses tag pushes).
+  His GPU check passed after it (two songs: allin1 fold 0 reads as on the CPU; Q29 settled; the gate report). M6-09
+  (a chart you can hear) followed as **v0.3.1** (tag v0.3.1, a5895ff, published 2026-11-07; assets byte-identical
+  to the build at the tag). Releases are built from a clean clone at the tagged commit and published by the owner (the
+  session's proxy refuses tag pushes).
+- **M7 (v0.4.0)** is planned (docs/work-orders/M7-00-plan.md, from the owner's video reviews of his GPU charts) and
+  its measurement M7-01 runs; the build orders follow it, after the weekly usage reset (2026-11-09 13:00 UTC).
 - **The owner's earlier questions are settled:** the history was rewritten on 2026-11-06 to remove a report's md5
   prefixes and a stress song's artist (his decision), and the stale remote branch `m5-01-fast-grid` is gone.
 
