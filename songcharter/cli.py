@@ -9,6 +9,8 @@
     songcharter doctor [--json PATH] [--quick]
     songcharter ui [--port N] [--no-browser] [--from-shortcut]
     songcharter diagnostics --out PATH
+    songcharter listen <song folder> [--part guitar|bass|drums] [--difficulty expert|hard|medium|easy]
+                       [--out FILE] [--tones-only]
 
 `chart` runs the whole pipeline on one song file (pipeline.py): decode, separation, the engines, then assemble's
 build and gate, then the preview of the built folder; progress goes to stderr, a line per stage with its time, and
@@ -19,7 +21,9 @@ components), then the problems and notes, and `doctor: OK` or `doctor: N problem
 (doctor.json) too, and --quick skips the CUDA matmul, autochart's CUDA provider check and allin1's probe. `ui`
 (ui/server.py) serves the local page on 127.0.0.1 and opens it in the browser. `diagnostics` (diagnostics.py) writes
 the zip to send when something went wrong: logs, settings and the reports, never audio; it prints the zip's path, and
-in WSL also its Windows path.
+in WSL also its Windows path. `listen` (listen.py) renders one part and level of a built song folder as
+sound over the song (or alone), so a wrong, late or missing note can be heard: an OGG (or a WAV) written where
+--out says, by default <folder name>-<part>-<level>.ogg in the current folder, never inside the song folder.
 
 `chart --events` also writes the run's events (pipeline.py's module docstring) to stderr, each as one line
 `@@songcharter <json>` (ASCII), for the UI's job (ui/jobs.py); then, after the summary, `result` {"ok", "exit",
@@ -46,6 +50,8 @@ summary's warnings list them when a name matches none).
 
 Exit status of `doctor`: 0 no problem, 1 problems (listed), 2 bad usage or the report could not be written, 3 a bug.
 Exit status of `diagnostics`: 0 written, 2 it could not be written, 3 a bug.
+Exit status of `listen`: 0 written; 2 a bad input (no such folder, part or level in the chart, no song.ogg,
+an output inside the song folder) or ffmpeg failing; 3 a bug.
 
 Exit status (`chart` and `assemble`):
   0  the song folder passed the gate and is in the output folder;
@@ -240,6 +246,33 @@ def _diagnostics(args) -> int:
     return 0
 
 
+def _listen(args) -> int:
+    """`songcharter listen`: the render's line, its path and, in WSL, its Windows path."""
+    from . import listen
+    from .clonehero import windows_path
+    folder = args.folder.expanduser()
+    try:
+        out = listen.output_path(folder, args.out, args.part, args.difficulty)
+        rendered = listen.render(folder, args.part, args.difficulty, tones_only=args.tones_only)
+        listen.write(rendered.audio, out)
+    except KeyboardInterrupt:
+        print("songcharter: interrupted", file=sys.stderr)
+        return 130
+    except (SongcharterError, OSError) as e:
+        print(f"songcharter: error: {e}", file=sys.stderr)
+        return 2
+    except Exception:  # noqa: BLE001  a bug
+        traceback.print_exc()
+        print("songcharter: internal error (a bug, please report it with the traceback above)", file=sys.stderr)
+        return 3
+    print(listen.summary(rendered))
+    print(out)
+    winpath = windows_path(out)
+    if winpath:
+        print(f"in Windows: {winpath}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     # a song name or path the console's code page cannot show (cp1252 when Windows redirects stdout) must not turn
     # a finished build into a crash; stderr already escapes such characters
@@ -334,6 +367,20 @@ def main(argv: list[str] | None = None) -> int:
                                    "logs, and the reports of the newest work folders. It never holds audio, stems, "
                                    "charts or pictures.")
     g.add_argument("--out", type=Path, required=True, metavar="PATH", help="the zip to write")
+    lp = sub.add_parser("listen", help="hear a chart: one part and level as tones over the song",
+                       description="Render one part and level of a built song folder (notes.chart, song.ini, "
+                                   "song.ogg) as sound over the song, so a wrong, late, missing or extra note can be "
+                                   "heard: guitar and bass a tone per lane (green lowest to orange highest, an open "
+                                   "note lower still), HOPOs and taps softer than strums, sustains held; drums a "
+                                   "thump for the kick, a noise burst for the snare, pitched toms and high noise "
+                                   "for the cymbals. The song plays 12 dB down under them.")
+    lp.add_argument("folder", type=Path, help="the song folder (as songcharter chart wrote it)")
+    lp.add_argument("--part", choices=("guitar", "bass", "drums"), default="guitar", help="default: guitar")
+    lp.add_argument("--difficulty", choices=DIFFICULTIES, default="expert", help="default: expert")
+    lp.add_argument("--out", type=Path, metavar="FILE",
+                   help="the file to write, .ogg or .wav (default: <folder name>-<part>-<level>.ogg in the current "
+                        "folder; a folder: that name in it); never inside the song folder")
+    lp.add_argument("--tones-only", action="store_true", help="the tones alone, without the song")
     args = parser.parse_args(argv)
     if args.command is None:
         parser.print_help()
@@ -345,6 +392,8 @@ def main(argv: list[str] | None = None) -> int:
         return server.main(port=args.port, browser=not args.no_browser, from_shortcut=args.from_shortcut)
     if args.command == "diagnostics":
         return _diagnostics(args)
+    if args.command == "listen":
+        return _listen(args)
     events = args.command == "chart" and args.events
 
     def failed(code: int, kind: str, message: str) -> int:
