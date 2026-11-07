@@ -57,6 +57,8 @@ ones then, but the CI runs they link still name the old ones.
 | `feel.md` | how a chart should feel to play: nine parts, each with a measure, revised after the advisor (M5) |
 | `m5-plan-review.md` | the advisor's review of the M5 plan and the three skeptics' verdicts |
 | `m7-plan-review.md` | the advisor's review of the M7 plan (the video review's findings measured first) and how each finding was applied |
+| `m7-video-review-check.md` | a second model's check of the owner's video reviews and the orchestrator's verdicts: corrections, the halved grid's tempo shape |
+| `m7-ui-review.md` | a second model's review of the web UI: twelve improvements, the quick wins for v0.4 |
 | `pipeline-review.md` | an advisor's review of how work is run (2026-11-04), finding by finding, with what was done |
 | `takes-experiment.md`, `takes-experiment-verifier.md` | spliced guitar takes against one take, and the verifier's corrections (which win where they differ) |
 | `strumming-research.json` | the pick-noise detector for sparse guitar stretches, and why no fill was built |

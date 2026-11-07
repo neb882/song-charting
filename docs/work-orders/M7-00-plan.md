@@ -232,3 +232,43 @@ Left for the owner [owner], with the recommendation:
   `eval/m7/`; every build order built and merged, or closed with its numbers in `dead_ends`.
 - Every merged order's "Done means" passes and CI is green on `main`; the release gate of section 8 holds.
 - PROGRESS: M7 "built" at the gate, "done" when the friend has the release; M5-99 gains what M7 deferred.
+
+## 11. Changes, 2026-11-07 evening (the orchestrator, the owner's "I'll leave it up to you")
+
+From M7-01 part B (`docs/reports/M7-01-measure.md` when committed), a third video review (a 150 BPM rock ballad of
+the owner's, ntl, on v0.3.1) and two second-model reviews (`docs/reports/m7-video-review-check.md`,
+`docs/reports/m7-ui-review.md`):
+
+- **New: M7-09, the halved grid's tempo shape** (wave 4, in M7-07's slot; M7-07 is closed by part B-d). The
+  halved grid starts from allin1's beats (`beat_grid(start=...)`, beatgrid.py's tracker-start path) and follows them
+  where the drums give no evidence: ntl's drumless intro warps 75 -> 86.9 -> 74.3 BPM (about 1.5 beats too many at
+  19-33 s; the same tempo map on the owner's GPU and on this machine's CPU), and the owner's audio file of sooth runs
+  at 160 BPM for its last 28 s where both human charts stay at 77 (the same on CPU and GPU for that file; the stress
+  set's audio does not do it). No warning fired: `tempo_check` runs in the halved fold, and `drift_ms` is recorded,
+  not tested. **First a measurement** (an sc-measurer, in process from kept folders and ntl's work folder, no engine,
+  about half a day, ~2 %): on every halved song (sooth, the 20-song set's two, ntl), today's halved grid against (a)
+  every other beat of the first grid's line, its parity from allin1's beats, (b) the halved start's line against the
+  tracker by the same `TRACKER_MARGIN` evidence test the first pass uses, (c) allin1's curve faded to the line where
+  the drums give no evidence: beat F1 against the humans whole-song and per straight-line stretch, ntl's off-grid
+  intro onsets (8 of 42 today against 3 of 407 elsewhere) and the guitar stem's onset phase over 0-35 s. **Then the
+  build**, whichever candidate clears (no halved song's beat F1 down 0.01, ntl's intro onsets on the grid), with two
+  guards whatever wins: `tempo_check` at the first grid's fold on a halved grid, and a warning when `drift_ms` p95
+  passes about two beats. About a day, 3-4 %.
+- **New: M7-10, the web UI's quick wins** (any wave; nothing that charts; `songcharter/ui/` and the guide only):
+  the second-model review's items 1 (the Done screen's result above the fold: the stages folded, the page scrolled to
+  it, the tab title), 2 ("Install into Clone Hero" first under "Ready"), 3 (the time estimate DESIGN 4.5 promised,
+  from the song's length, the takes and the device, against the golden and the owner's runs), 4 (a screen wake lock
+  while a job runs and the sentence that he may close the tab), 11 (the drop zone's keyboard) and 12 (the update box
+  hidden while a job runs). About a day, 3-4 %. Item 8 (a quick/best choice) and 5-7, 9-10 wait for a UI pass after
+  v0.4 (M5-99).
+- **M7-06 becomes `max_solos` 4** (part B-c2: pm2 and s06 gain a fourth solo, coverage +0.012, no song moves away
+  from its humans' range; `max_share` stays 0.40): an hour, with the golden expectation for those two songs.
+- **M7-03 stays open until one more rule is measured** (the second model's 4): a run rule for held notes (6 or more
+  same-lane onsets 110 ms or less apart over one voiced pitch: one sustained note), on part B's scripts, a few hours;
+  closed if it misses M7-03's bar.
+- **M7-04 is closed** (B-a: removing notes over a silent stem would remove human notes; A-d: every repeat-removal
+  rule lowers F1). The sustain floor in seconds stays M7-02's.
+- **Open notes on guitar** come from the GPU takes (the CPU takes write none): the question needs part D's GPU takes
+  of the references; until then nothing is built for them.
+- **The release gate's GPU check** (section 8) compares each re-charted song's whole tempo map and `drift_ms` with a
+  CPU chart of the same audio file, not only the grid's headline numbers.
