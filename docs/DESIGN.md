@@ -697,8 +697,11 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
        guitar's Expert notes (27.9 % of the bass's) sit on odd 16ths and 5.3 % (1.9 %) on 8th-note triplets. The
        lyrics get the same (no song with words halves yet). A part's offset is measured on the halved grid's beats
        with their midpoints (`assemble.offset_map`), whose 16ths are the slots the notes keep: on the halved map
-       itself half the notes sit between its 16ths and the phases cancel. The natural-HOPO threshold and the beat-
-       counted rules (sustain floors, star power, reductions) read the halved grid, the humans' level, as they should.
+       itself half the notes sit between its 16ths and the phases cancel. The natural-HOPO threshold (Clone Hero's
+       65/192 beat) reads the halved grid as it reads the humans' charts at 77 BPM. The rules our code counts in
+       beats read fewer there: the sustain floor (`quantize.SUSTAIN_MIN_BEATS`, 0.75 beat on Expert: 584 ms at 77
+       BPM, 292 ms on the first grid) and the star power rate (about one phrase per 40 beats). Both fall under the
+       humans' on `sooth` (below).
      - **The quantizer's triplet rule, one condition** (`quantize.SnapGrid.from_ticks`; outside the order's file
        list, approved by the orchestrator 2026-11-06). An off-beat onset leaned triplet only when strictly nearer its
        triplet slot than its straight slot. With 8/6 slots the midpoint of a beat is both (4/8 = 3/6), and a run of
@@ -721,15 +724,22 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
        | guitar solo time overlapping alt1's (the primary has none) | 0.794 → 0.887 (IoU 0.602 → 0.728) | — |
        | guitar HOPO share; play-state agreement | 0.35 → 0.65; 0.56 / 0.67 → 0.60 / 0.45 | 0.55 / 0.39 |
        | guitar median timing error (ms) | 39.6 / 8.0 → 37.1 / 6.5 | — |
+       | sustain share, guitar / bass (Expert sustains dropped: 27 → 217 / 45 → 218) | 0.14 → **0.05** / 0.15 → **0.07** | 0.07 / 0.14; 0.15 |
 
        `troop`, `pm2` and `break` keep every track's hash (`halving.why`: the density test doubles the first two;
        `break` reads 1.001). The seven references read 0.994–1.009 and are identical (the golden diff against main
        a89d6a0, `--expect none`, `--rerun bass,sections`: exit 0, every hash, count and score), so the quantizer's
-       shared-line rule moves nothing on a 4/3 grid either. The guitar's offset, measured at the first grid's level, is 2.5 ms (0.3 before), the
-       bass's 57.9 ms (56.0); 92 guitar notes take triplet slots (116 before). Two lines fall short:
+       shared-line rule moves nothing on a 4/3 grid either. The guitar's offset, measured at the first grid's
+       level, is 2.5 ms (0.3 before), the bass's 57.9 ms (56.0); 92 guitar notes take triplet slots (116 before).
+       Three lines fall short:
        - **Star power** counts beats (§2.10, M6-01: about one phrase per 40 beats, the span counted at most at 160
          BPM), so at 77 BPM it halves, to under the humans' 2.33–3.23 a minute. The humans place more phrases per
-         beat at this tempo. That is the phrase rule's, not the grid's (M5-99).
+         beat at this tempo. That is the phrase rule's, not the grid's.
+       - **Sustains.** The floor counts beats too: 0.75 beat is 584 ms at 77 BPM, so both parts drop about eight
+         times the sustains they did, and their sustain shares fall under the humans', which matched before. The
+         humans at the same 77 BPM keep more, so it is our beat-counted rule, not the tempo. Both rules are one
+         M5-99 item ("beat-counted rules at a slow tempo"), to measure on the 20-song set's slow songs, not on
+         `sooth` alone (the orchestrator, 2026-11-07: no code change in this order).
        - **The downbeats.** With a kick on most 8ths, `bar_phase` on the halved grid has no margin, and every
          measure line sits off the humans'. On the first grid, half of them coincided by chance. The lower levels
          gain all the same. Downbeats on fast songs are M6-03's (this pass's grid comes from `beat_grid`, so a new

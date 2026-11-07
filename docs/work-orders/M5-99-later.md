@@ -93,12 +93,26 @@ the drums, its slots (8/6) and offset at the first grid's level. The shred song 
   those apart is needed first.
 - **The halved grid's downbeats** (downbeat F1 0.278 -> 0.000 on the shred song, margin 0.029): M6-03's rule on fast
   songs reaches it through `beat_grid`; measure it there.
-- **Star power on a halved grid**: 3.89 -> 1.89 phrases a minute, under the humans' 2.33-3.23 (the phrase rule counts
-  beats; below).
+- **The beat-counted rules on a halved grid**: the sustain floor and the star power rate (the next item).
 - **A triplet half beside a straight half** of one halved beat gets the beat's one choice (DESIGN 2.6), up to a
   1/24 of the first grid's beat off; and no `grid_octave` value forces a halving.
 - The guitar's HOPO share 0.35 -> 0.65 against the humans' 0.55 and 0.39 (the natural threshold at 77 BPM); its
   play-state agreement 0.56 / 0.67 -> 0.60 / 0.45 (primary / alt1).
+
+## Beat-counted rules at a slow tempo (M6-06)
+
+Two rules our code counts in beats read fewer at a slow pulse, and on the shred song, halved to 77 BPM by M6-06,
+both fall under its humans (DESIGN 2.3 step 7's stress table), which they matched at 154:
+- **The sustain floor** (`quantize.SUSTAIN_MIN_BEATS`, 0.75 beat on Expert, with SUSTAIN_GAP_BEATS 0.25): 584 ms at
+  77 BPM where it was 292 ms. Expert sustains dropped: guitar 27 -> 217, bass 45 -> 218; sustain share guitar 0.14 ->
+  0.05 (the humans 0.07 and 0.14), bass 0.15 -> 0.07 (the human 0.15).
+- **The star power rate** (`starpower.py`, about one phrase per 40 beats, the span counted at most at 160 BPM; M6-01):
+  3.89 -> 1.89 phrases a minute against the humans' 2.33-3.23. At 77-80 BPM they place a phrase about every 24-34
+  beats.
+The humans at the same tempo keep more of both, so the cause is our rules, not the tempo. A cap or floor in seconds
+for each (a sustain floor of at most some ms; the span counted at least at some BPM) wants the 20-song set's slow
+songs, measured on every human chart; not tuned on the shred song alone. No code change in M6-06 (the orchestrator,
+2026-11-07). Half a day to measure.
 
 ## Star power on a doubled grid (closed by M6-01)
 
@@ -106,10 +120,8 @@ The phrase rule counts beats (`starpower.py`, about one phrase per 40 beats), so
 phrases: the power-metal song went from 2.42 to 5.04 a minute against the humans' 3.03-4.44 (M5-01's stress run).
 **M6-01:** measured on every human chart, the rate follows the beats (a count in seconds fits worse), a little under
 them at 200 BPM (0.84 times); the span's beats are now counted at most at 160 BPM (DESIGN 2.10). Left: the 160 rests on
-two 200-BPM power-metal songs (the 20-song set measures it again). The shred song, halved by M6-06 (above), went from
-its doubled count (3.89 a minute) to 1.89, under its humans' 2.33-3.23: at 77-80 BPM the humans place a phrase about
-every 24-34 beats, not 40. A rate for slow tempi (a floor in seconds, or the span counted at least at some BPM) wants
-the 20-song set's slow songs.
+two 200-BPM power-metal songs (the 20-song set measures it again). At a slow tempo the rate falls under the humans'
+(the shred song halved by M6-06: 1.89 a minute against 2.33-3.23): "Beat-counted rules at a slow tempo", above.
 
 ## Downbeats when the kick is on every beat (M5-01's follow-up; narrowed by M6-03)
 
