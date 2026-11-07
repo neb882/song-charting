@@ -1,6 +1,6 @@
 [project]
 name = "songcharter"
-version = "0.2.0"
+version = "0.2.1"
 description = "Make Clone Hero charts from audio"
 readme = "README.md"
 license = "MIT"
