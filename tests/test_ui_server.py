@@ -173,7 +173,7 @@ def test_a_post_needs_the_header_and_our_origin(served):
                     {"X-Songcharter": "1", "Origin": f"https://127.0.0.1:{port}"},
                     {"X-Songcharter": "1", "Origin": "null"}):
         for path in ("/api/upload", "/api/jobs", "/api/jobs/current/cancel", "/api/jobs/current/export/zip",
-                     "/api/clonehero", "/api/jobs/current/install", "/api/open"):
+                     "/api/clonehero", "/api/jobs/current/install", "/api/open", "/api/jobs/current/listen"):
             status, h, _ = call(port, "POST", path, b"{}", {"X-Filename": "a.mp3", **headers})
             assert status == 403 and secure(h), (path, headers)
     # a CORS preflight is refused, and nothing ever grants CORS
@@ -185,6 +185,8 @@ def test_a_post_needs_the_header_and_our_origin(served):
     assert call(port, "POST", "/api/jobs/current/cancel", b"", guarded(port, "localhost"))[0] == 409   # passed
     for path in ("/api/jobs/current/export/zip", "/api/jobs/current/install"):   # passed too: no chart yet
         assert call(port, "POST", path, b"{}", guarded(port))[0] == 400
+    assert call(port, "POST", "/api/jobs/current/listen", b'{"part": "guitar", "level": "expert"}',
+                guarded(port))[0] == 400
     assert served.app.jobs.current is None and not (served.home / "exports").exists()
 
 
@@ -348,7 +350,7 @@ const vm = require("vm"), fs = require("fs");
 const els = {};
 const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [],
   replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); },
-  addEventListener() {}, classList: { add() {}, remove() {} } });
+  addEventListener() {}, classList: { add() {}, remove() {} }, removeAttribute() {}, pause() {} });
 const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node,
   addEventListener() {} };
 let xhr = null;
@@ -1899,3 +1901,231 @@ def test_the_page_shows_the_update_notice_copies_the_line_and_later_hides_it(tmp
     html = files["index.html"].decode()
     assert '<input id="update-line" type="text" readonly spellcheck="false" aria-label="The install line">' in html
     assert html.index("</header>") < html.index('<section id="update" hidden>') < html.index('id="drop-screen"')
+
+
+# ------------------------------------------------------------------------------------------------ Listen (M6-09)
+
+def listen_chart(folder: Path, seconds: float = 3.0) -> None:
+    """A made-up chart (Expert and Hard guitar, Expert drums) and a real song.ogg in place of BUILT's stand-ins."""
+    from songcharter.chart import Chart, DrumHit, FretNote, SongInfo, Track, write_chart
+    from songcharter.tempo import Tempo, TempoMap, TimeSignature
+    tm = TempoMap(192, [Tempo(0, 120000)], [TimeSignature(0, 4)])
+    guitar = [FretNote(192 * (i + 1), (i % 5,)) for i in range(4)]
+    tracks = [Track("Expert", "Single", guitar), Track("Hard", "Single", guitar[:2]),
+              Track("Expert", "Drums", [DrumHit(192, 0), DrumHit(384, 1)])]
+    chart = Chart(SongInfo("Made-Up Song", "Made-Up Band"), tm, [(0, "intro")], tracks)
+    (folder / "notes.chart").write_text(write_chart(chart), encoding="utf-8", newline="")
+    t = np.arange(int(seconds * A.SAMPLE_RATE)) / A.SAMPLE_RATE
+    y = (0.1 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    A.encode_ogg(np.stack([y, y]), folder / "song.ogg")
+
+
+def test_listen_renders_caches_and_serves_only_its_own_files(finished):
+    ctx = finished
+    job = ctx.run()
+    res = json.loads(get(ctx, "/api/jobs/current/results")[2])
+    assert res["listen"]["parts"] == {} and "cannot read the chart" in res["listen"]["why"]   # BUILT's stand-in
+    assert post(ctx, "/api/jobs/current/listen", {"part": "guitar", "level": "expert"})[0] == 400
+    listen_chart(job.out)
+    before = sorted(p.name for p in job.out.iterdir())
+    res = json.loads(get(ctx, "/api/jobs/current/results")[2])
+    assert res["listen"] == {"parts": {"guitar": ["expert", "hard"], "drums": ["expert"]}}
+    base = "/api/jobs/current/listen/"
+    assert get(ctx, base + "guitar-expert.ogg")[0] == 404             # not rendered yet
+    status, answer = post(ctx, "/api/jobs/current/listen", {"part": "guitar", "level": "expert"})
+    assert status == 200 and answer["url"] == base + "guitar-expert.ogg" and answer["cached"] is False, answer
+    made = list((ctx.work / "listen").iterdir())
+    assert [p.name[:len("guitar-expert-")] for p in made] == ["guitar-expert-"] and made[0].suffix == ".ogg"
+    assert sorted(p.name for p in job.out.iterdir()) == before          # nothing written into the song folder
+    data = made[0].read_bytes()
+    status, headers, body = get(ctx, answer["url"] + "?job=1")
+    assert status == 200 and body == data and headers["Content-Type"] == "audio/ogg" and secure(headers)
+    assert headers["Accept-Ranges"] == "bytes" and body[:4] == b"OggS"
+    size = len(data)
+    for spec, start, end in (("bytes=0-99", 0, 99), ("bytes=100-", 100, size - 1), ("bytes=-10", size - 10, size - 1),
+                             (f"bytes=10-{size + 50}", 10, size - 1), ("bytes=-999999999", 0, size - 1)):
+        status, headers, body = call(ctx.port, "GET", answer["url"], headers={"Range": spec})
+        assert status == 206 and body == data[start:end + 1], spec
+        assert headers["Content-Range"] == f"bytes {start}-{end}/{size}", spec
+    for spec in (f"bytes={size}-", "bytes=-0", "bytes=50-10"):
+        status, headers, _ = call(ctx.port, "GET", answer["url"], headers={"Range": spec})
+        assert status == 416 and headers["Content-Range"] == f"bytes */{size}", spec
+    for spec in ("bytes=0-1,5-6", "items=0-1", "bytes=-"):   # not one byte range: the whole file
+        status, _, body = call(ctx.port, "GET", answer["url"], headers={"Range": spec})
+        assert status == 200 and body == data, spec
+    mtime = made[0].stat().st_mtime_ns
+    status, again = post(ctx, "/api/jobs/current/listen", {"part": "guitar", "level": "expert"})
+    assert status == 200 and again["cached"] is True and made[0].stat().st_mtime_ns == mtime
+    # only parts, levels and names the server knows: a part or level the chart lacks, or any other value, is refused
+    for value, why in (({"part": "bass", "level": "expert"}, "no bass on Expert"),
+                       ({"part": "drums", "level": "hard"}, "no drums on Hard"),
+                       ({"part": "../guitar", "level": "expert"}, "part is one of"),
+                       ({"part": "guitar", "level": "expert/../../x"}, "part is one of"),
+                       ({"part": ["guitar"], "level": "expert"}, "part is one of"), ({}, "part is one of")):
+        status, answer = post(ctx, "/api/jobs/current/listen", value)
+        assert status == 400 and why in answer["error"], value
+    # a file in the work folder is served only when this server rendered it for this job, by its name
+    (ctx.work / "listen" / "drums-expert-0123456789abcdef.ogg").write_bytes(b"OggS planted")
+    (ctx.work / "listen" / "drums-expert.ogg").write_bytes(b"OggS planted")
+    for name in ("drums-expert.ogg", "guitar-hard.ogg", made[0].name, "guitar-expert.ogg%00", "../pipeline.json",
+                 "..%2Fpipeline.json", "%2e%2e%2fguitar-expert.ogg", "listen/guitar-expert.ogg", "",
+                 "/etc/passwd", "GUITAR-EXPERT.OGG", "guitar-expert.ogg/", "guitar-expert"):
+        assert get(ctx, base + name)[0] == 404, name
+    status, answer = post(ctx, "/api/jobs/current/listen", {"part": "drums", "level": "expert"})
+    assert status == 200 and answer["cached"] is False
+    status, _, body = get(ctx, base + "drums-expert.ogg")
+    assert status == 200 and body != b"OggS planted" and body[:4] == b"OggS"
+    assert get(ctx, base + "guitar-expert.ogg")[0] == 200                # both of this job's
+    # the next job's page does not get the last job's renders
+    ctx.run()
+    assert get(ctx, base + "guitar-expert.ogg")[0] == 404
+    assert any("listen: guitar on expert rendered in" in line for line in ctx.lines)
+
+
+def test_two_renders_of_one_part_at_once_both_answer(finished, monkeypatch):
+    """Two tabs asking for the same part and level at once: one renders, the other waits for it and finds it (without
+    the lock both render into the same temporary file, and one of them fails)."""
+    from songcharter import listen
+    ctx = finished
+    job = ctx.run()
+    listen_chart(job.out)
+    real, calls = listen.render, []
+
+    def slow(*a, **k):
+        calls.append(a[1:3])
+        time.sleep(0.5)
+        return real(*a, **k)
+    monkeypatch.setattr(listen, "render", slow)
+    answers = [None, None]
+
+    def ask(i):
+        answers[i] = post(ctx, "/api/jobs/current/listen", {"part": "guitar", "level": "expert"})
+    threads = [threading.Thread(target=ask, args=(i,)) for i in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    assert [a[0] for a in answers] == [200, 200], answers
+    assert sorted(a[1]["cached"] for a in answers) == [False, True] and calls == [("guitar", "expert")]
+    assert [p.name[:14] for p in (ctx.work / "listen").iterdir()] == ["guitar-expert-"]
+
+
+def test_a_render_that_cannot_be_written_says_why(finished, monkeypatch):
+    from songcharter import listen
+    ctx = finished
+    job = ctx.run()
+    listen_chart(job.out)
+
+    def full(*a, **k):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(listen, "cached", full)
+    status, answer = post(ctx, "/api/jobs/current/listen", {"part": "guitar", "level": "expert"})
+    assert status == 500 and answer["error"] == ("the guitar on Expert could not be made into sound: [Errno 28] No "
+                                                 "space left on device"), answer
+    assert not any("internal error" in line for line in ctx.lines)   # not logged as a bug
+
+
+def test_a_chart_that_failed_its_gate_can_be_listened_to(finished):
+    ctx = finished
+    ctx.mode = "fail"
+    job = ctx.run()
+    listen_chart(job.out)
+    res = json.loads(get(ctx, "/api/jobs/current/results")[2])
+    assert res["ok"] is False and res["listen"]["parts"]["drums"] == ["expert"]
+    status, answer = post(ctx, "/api/jobs/current/listen", {"part": "drums", "level": "expert"})
+    assert status == 200 and get(ctx, answer["url"])[0] == 200
+
+
+LISTEN_PAGE = r"""
+const vm = require("vm"), fs = require("fs");
+const els = {};
+const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [],
+  value: "", attrs: {}, paused: true, played: 0,
+  replaceChildren(...c) {   // a select keeps its value when an option has it, else takes the first
+    this.children = c;
+    if (this.tag === "listen-part" || this.tag === "listen-level") {
+      if (!c.some((o) => o.value === this.value)) this.value = c.length ? c[0].value : "";
+    }
+  },
+  append(...c) { this.children.push(...c); }, addEventListener() {}, classList: { add() {}, remove() {} },
+  removeAttribute(k) { if (k === "src") this.src = undefined; },
+  pause() { this.paused = true; }, play() { this.paused = false; this.played += 1; return Promise.resolve(); } });
+const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node,
+  addEventListener() {} };
+const sent = [];
+let answer = { status: 200, body: { url: "/api/jobs/current/listen/drums-expert.ogg", cached: false } };
+const ctx = { document, window: { addEventListener() {} }, encodeURIComponent, console,
+  fetch: async (path, init) => { sent.push({ path, method: init.method, headers: init.headers, body: init.body });
+    return { status: answer.status, json: async () => answer.body }; },
+  setInterval() {}, clearInterval() {}, setTimeout() {}, sessionStorage: { setItem() {}, getItem() { return null; } } };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(process.argv[2], "utf8"), ctx);
+const opts = (id) => els[id].children.map((o) => [o.value, o.textContent]);
+const out = {};
+(async () => {
+  ctx.renderListen({ parts: { guitar: ["expert", "hard"], drums: ["expert"] } }, "job 1");
+  out.shown = { box: els["listen-box"].hidden, parts: opts("listen-part"), levels: opts("listen-level"),
+                part: els["listen-part"].value, level: els["listen-level"].value, player: els["listen-audio"].hidden };
+  els["listen-level"].value = "hard";
+  els["listen-part"].value = "drums";
+  ctx.listenLevels();
+  out.drums = { levels: opts("listen-level"), level: els["listen-level"].value };
+  await ctx.listenTo();
+  out.sent = sent.slice();
+  out.playing = { src: els["listen-audio"].src, hidden: els["listen-audio"].hidden, played: els["listen-audio"].played,
+                  msg: els["listen-msg"].textContent, button: els.listen.disabled };
+  answer = { status: 400, body: { error: "the chart in /x has no drums on Expert" } };
+  await ctx.listenTo();
+  out.refused = { msg: els["listen-msg"].textContent, player: els["listen-audio"].hidden,
+                  src: els["listen-audio"].src === undefined, paused: els["listen-audio"].paused };
+  answer = { status: 200, body: { url: "/api/jobs/current/listen/drums-expert.ogg", cached: true } };
+  await ctx.listenTo();
+  ctx.again();
+  out.again = { paused: els["listen-audio"].paused, src: els["listen-audio"].src === undefined,
+                player: els["listen-audio"].hidden };
+  ctx.renderListen({ parts: { bass: ["medium", "easy"], drums: ["expert"] } }, "job 2");   // the next song's chart
+  out.next = { parts: opts("listen-part"), levels: opts("listen-level"), part: els["listen-part"].value,
+               level: els["listen-level"].value, box: els["listen-box"].hidden };
+  ctx.renderListen({ parts: {}, why: "cannot read the chart" }, "job 2");
+  out.none = { box: els["listen-box"].hidden };
+  ctx.renderListen(null, "job 3");
+  out.nothing = { box: els["listen-box"].hidden };
+  console.log(JSON.stringify(out));
+})();
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_page_offers_the_charts_parts_and_plays_the_render(tmp_path):
+    """The Done screen's Listen control (app.js in node with a stand-in DOM): the parts and levels the results
+    name, the guitar first; the levels follow the part; the button posts the part and level with the guard's header
+    and plays the answer's URL (this job's); a refusal shows why and no player; "Chart another song" stops it; no
+    parts, no control."""
+    files = S.static_files()
+    script = tmp_path / "listen.cjs"
+    script.write_text(LISTEN_PAGE, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(files["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["shown"] == {"box": False, "parts": [["guitar", "Guitar"], ["drums", "Drums"]],
+                            "levels": [["expert", "Expert"], ["hard", "Hard"]], "part": "guitar", "level": "expert",
+                            "player": True}
+    assert out["drums"] == {"levels": [["expert", "Expert"]], "level": "expert"}
+    assert len(out["sent"]) == 1 and out["sent"][0]["path"] == "/api/jobs/current/listen"
+    assert out["sent"][0]["method"] == "POST" and out["sent"][0]["headers"]["X-Songcharter"] == "1"
+    assert json.loads(out["sent"][0]["body"]) == {"part": "drums", "level": "expert"}
+    assert out["playing"] == {"src": "/api/jobs/current/listen/drums-expert.ogg?job=job%201", "hidden": False,
+                              "played": 1, "button": False,
+                              "msg": "Drums on Expert, over the song. Listen for a tone that comes late or not at "
+                                     "all, or tones where the song is quiet."}
+    assert out["refused"] == {"msg": "the chart in /x has no drums on Expert", "player": True, "src": True,
+                              "paused": True}
+    assert out["again"] == {"paused": True, "src": True, "player": True}
+    assert out["next"] == {"parts": [["bass", "Bass"], ["drums", "Drums"]], "levels": [["medium", "Medium"],
+                           ["easy", "Easy"]], "part": "bass", "level": "medium", "box": False}
+    assert out["none"] == {"box": True} and out["nothing"] == {"box": True}
+    html = files["index.html"].decode()
+    assert '<audio id="listen-audio" controls preload="auto" hidden></audio>' in html
+    assert html.index('id="preview"') < html.index('id="listen-box"') < html.index('id="export-box"')

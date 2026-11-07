@@ -153,6 +153,17 @@
         </div>
       </div>
       <p id="no-preview" hidden></p>
+      <div id="listen-box" hidden>
+        <h3>Listen</h3>
+        <p class="small">The chart as sound over the song, to hear a note that is wrong, late or missing. Guitar and bass: a tone for each note, green lowest to orange highest (an open note lower still), a chord's tones together, HOPOs and taps softer than strums, sustains held. Drums: the kick a thump, the snare a burst, the toms pitched, the cymbals a hiss.</p>
+        <div class="listen-row">
+          <label>Part <select id="listen-part"></select></label>
+          <label>Level <select id="listen-level"></select></label>
+        </div>
+        <p class="actions"><button type="button" id="listen">Listen</button></p>
+        <p id="listen-msg" class="small" hidden></p>
+        <audio id="listen-audio" controls preload="auto" hidden></audio>
+      </div>
       <div id="export-box" hidden>
         <h3>Play it</h3>
         <div id="ch-box">

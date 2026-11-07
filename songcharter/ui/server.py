@@ -75,10 +75,12 @@ install need one that passed its gate (else 400): a .failed folder is for a look
 is still exiting (a second or more, with its state still `running`): the page asks for the results the moment it
 reads that event (the release gate's finding: the Done screen once hid "Install into Clone Hero" after a normal chart).
   * GET /api/jobs/current/results: {"job", "state", "ok", "folder", "name", "installable", "preview", "lyrics",
-    "art"}: the preview's overview and pages as URLs with its flags and remarks, or {"why"} there is none;
+    "art", "listen"}: the preview's overview and pages as URLs with its flags and remarks, or {"why"} there is none;
     pipeline.json's lyrics as counts ({"given", "added", "words", "phrases", "why", "low"}), null when none were
     given; the folder's art ({"album_art": its URL or null, "album_from": "embedded", "given" or null,
-    "background": whether there is one}). 404 before the first job.
+    "background": whether there is one}); what the Listen control offers ({"parts": {"guitar": ["expert", ...],
+    ...}}, the parts with notes and their levels, with "why" when the chart could not be read). 404 before the first
+    job.
   * GET /api/jobs/current/art/album.jpg: the result's album art (image/jpeg), that one name only; anything else 404.
   * GET /api/jobs/current/preview/<name>: only overview.png and page_NN.png from the result's preview folder (the
     work folder's preview/), by an exact pattern; anything else 404.
@@ -97,6 +99,13 @@ reads that event (the release gate's finding: the Done screen once hid "Install 
   * POST /api/open {"what": "song" | "exports"}: explorer.exe on the last installed song's folder or the exports
     folder (wsl.open_url with its Windows path), only those two; {"opened", "path", "windows_path"}.
   * GET /api/diagnostics: the diagnostics bundle (diagnostics.py) as a download, songcharter-diagnostics-<stamp>.zip.
+  * POST /api/jobs/current/listen {"part", "level"} (M6-09): listen.cached renders that part and level of the
+    result's chart (a gate that failed too: it is for a look) over the song, into the work folder's listen/ (a few
+    seconds; the same chart's render is there already the next time), one render at a time; 200 {"url", "part",
+    "level", "cached", "seconds"}; 400 for a part or level not among INSTRUMENTS and DIFFICULTIES, or not in the
+    chart, or no finished chart yet; 500 with why when ffmpeg fails or the render cannot be written. GET /api/jobs/current/listen/<part>-<level>.ogg (audio/ogg, with byte ranges,
+    so the player can seek) serves only a file this server rendered for the current job, looked up by that name
+    in what the POST recorded: no path from the request reaches the file system; anything else 404.
 
 **The lyrics** a job is given never reach a log, a record or an answer here: the request's body is never logged, the
 job's options say only whether there are some, and its errors name the option, never the text (jobs.py).
@@ -128,7 +137,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Iterable
 from urllib.parse import quote, unquote, urlsplit
 
-from .. import __version__, cache, clonehero, device, diagnostics, updates, wsl
+from .. import __version__, cache, clonehero, device, diagnostics, listen, updates, wsl
 from .. import art as ART
 from ..errors import InputError, ToolError
 from ..timed import DIFFICULTIES, INSTRUMENTS
@@ -158,6 +167,7 @@ PREVIEW_PAGE = re.compile(r"^page_\d{2,3}\.png$")
 OPEN = ("song", "exports")         # POST /api/open's only two folders
 IMAGE_OPTIONS = {"album_art": "album art", "background": "background image"}   # the options that name an image upload
 ART_FILES = (ART.ALBUM,)           # GET /api/jobs/current/art/<name>: only these
+RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")   # one byte range (the audio player's); anything else: the whole file
 
 
 def console_line(text: str) -> None:
@@ -223,6 +233,8 @@ class App:
         self._updates = updates
         self._update_asked = False
         self.update: dict | None = None        # what the update check found: {"version", "line", "url"}
+        self.listen_lock = threading.Lock()    # one render at a time (M6-09)
+        self.listened: tuple[str, dict[str, Path]] | None = None   # (job id, {"<part>-<level>.ogg": its render})
 
     # --- the update notice (M5-07)
     def page_served(self) -> None:
@@ -522,6 +534,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._art(unquote(path[len("/api/jobs/current/art/"):]))
         if path.startswith("/api/exports/"):
             return self._export(unquote(path[len("/api/exports/"):]))
+        if path.startswith("/api/jobs/current/listen/"):
+            return self._listened(unquote(path[len("/api/jobs/current/listen/"):]))
         if path == "/api/clonehero":
             return self._json(200, app.clonehero())
         if path == "/api/diagnostics":
@@ -589,6 +603,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._install(self._read_json().get("replace") is True)
         if path == "/api/open":
             return self._open(self._read_json().get("what"))
+        if path == "/api/jobs/current/listen":
+            body = self._read_json()
+            return self._listen(body.get("part"), body.get("level"))
         raise Refused(404, "not found")
 
     # --- after the build
@@ -630,6 +647,64 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             return self._refuse(404, "not found")
         return self._send(200, data, "image/jpeg")
+
+    def _listen(self, part: Any, level: Any) -> None:
+        """Render (or find) one part and level of the current chart and record it as this job's (the module
+        docstring)."""
+        app = self.app
+        if part not in INSTRUMENTS or level not in DIFFICULTIES:
+            raise Refused(400, f"part is one of {', '.join(INSTRUMENTS)} and level one of {', '.join(DIFFICULTIES)}")
+        job = app.jobs.current
+        result = job.result() if job is not None else None
+        if result is None or not result.get("work"):
+            raise Refused(400, "no finished chart yet")
+        folder = Path(str(result.get("folder")))
+        if not folder.is_dir():
+            raise Refused(400, f"the chart's folder {folder} is not there any more")
+        name = f"{part}-{level}.ogg"
+        began = time.monotonic()
+        with app.listen_lock:
+            try:
+                path, was = listen.cached(folder, Path(str(result["work"])) / "listen", part, level)
+            except InputError as e:
+                raise Refused(400, str(e)) from None
+            except (ToolError, OSError) as e:   # ffmpeg failing, a full disk: no bug, said as it is
+                raise Refused(500, f"the {part} on {level.capitalize()} could not be made into sound: {e}") from None
+            held = app.listened if app.listened is not None and app.listened[0] == job.id else (job.id, {})
+            held[1][name] = path
+            app.listened = held
+        took = round(time.monotonic() - began, 1)
+        app.log(f"listen: {part} on {level}" + (" (rendered before)" if was else f" rendered in {took} s"))
+        return self._json(200, {"url": "/api/jobs/current/listen/" + name, "part": part, "level": level,
+                                "cached": was, "seconds": took})
+
+    def _listened(self, name: str) -> None:
+        """A render of the current job's, by the name the POST recorded it under; anything else 404."""
+        job = self.app.jobs.current
+        held = self.app.listened
+        path = held[1].get(name) if job is not None and held is not None and held[0] == job.id else None
+        if path is None:
+            return self._refuse(404, "not found")
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return self._refuse(404, "not found")
+        return self._ranged(data, "audio/ogg")
+
+    def _ranged(self, data: bytes, ctype: str) -> None:
+        """The whole file, or the one byte range a Range header asks for (206; 416 when it lies past the end)."""
+        size = len(data)
+        m = RANGE.match((self.headers.get("Range") or "").strip())
+        if m is None or not (m[1] or m[2]):
+            return self._send(200, data, ctype, {"Accept-Ranges": "bytes"})
+        if m[1]:
+            start, end = int(m[1]), min(int(m[2]) if m[2] else size - 1, size - 1)
+        else:
+            start, end = max(0, size - int(m[2])), size - 1 if int(m[2]) else -1
+        if start >= size or start > end:
+            return self._send(416, b"", ctype, {"Accept-Ranges": "bytes", "Content-Range": f"bytes */{size}"})
+        return self._send(206, data[start:end + 1], ctype,
+                          {"Accept-Ranges": "bytes", "Content-Range": f"bytes {start}-{end}/{size}"})
 
     def _export(self, name: str) -> None:
         folder = self.app.home / clonehero.EXPORTS
@@ -872,7 +947,8 @@ def results(job) -> dict:
     """GET /api/jobs/current/results (the module docstring), from the job's result event and its pipeline.json."""
     result = job.result()
     out: dict[str, Any] = {"job": job.id, "state": job.state, "ok": None, "folder": None, "name": None,
-                           "installable": False, "preview": None, "lyrics": None, "art": None}
+                           "installable": False, "preview": None, "lyrics": None, "art": None,
+                           "listen": None}
     if result is None:
         return out
     folder = Path(str(result.get("folder")))
@@ -901,6 +977,10 @@ def results(job) -> dict:
     album = pictures.get("album_art") if isinstance(pictures.get("album_art"), dict) else {}
     out["art"] = {"album_art": "/api/jobs/current/art/" + ART.ALBUM if (folder / ART.ALBUM).is_file() else None,
                   "album_from": album.get("from"), "background": (folder / ART.BACKGROUND).is_file()}
+    try:
+        out["listen"] = {"parts": listen.available(folder)}
+    except InputError as e:
+        out["listen"] = {"parts": {}, "why": str(e)}
     ly = pipeline.get("lyrics")
     if isinstance(ly, dict):
         out["lyrics"] = {"given": bool(ly.get("given")), "added": bool(ly.get("added")), "words": ly.get("words"),

@@ -1,7 +1,7 @@
-// songcharter's page (M4-04, M4-06, M4-11, M5-07): drop a song, choose the options (the lyrics and the pictures too),
-// follow the chart, cancel it; then the album art, the preview, the zip, the install into Clone Hero, and the
-// diagnostics in the footer; above it all, the update notice when a newer version is out. No framework, no build
-// step. Every request sends X-Songcharter: 1 (the server's guard for anything but a GET). The job's events come over
+// songcharter's page (M4-04, M4-06, M4-11, M5-07, M6-09): drop a song, choose the options (the lyrics and the pictures
+// too), follow the chart, cancel it; then the album art, the preview, the chart to listen to, the zip, the install
+// into Clone Hero, and the diagnostics in the footer; above it all, the update notice when a newer version is out. No
+// framework, no build step. Every request sends X-Songcharter: 1 (the server's guard for anything but a GET). The job's events come over
 // a streamed fetch of /api/jobs/current/events (Server-Sent Events), which can send that header too, and which
 // resumes after the last event it saw when the connection drops; a reload reattaches to the current job.
 "use strict";
@@ -19,7 +19,11 @@ const UPDATE_ASKS = [2000, 6000, 15000];
 
 const $ = (id) => document.getElementById(id);
 const state = { status: null, upload: null, job: null, stages: {}, offset: 0, ticker: null, follow: 0, ch: null,
-  images: { album_art: null, background: null }, sending: 0, version: null, update: null, later: false };
+  images: { album_art: null, background: null }, sending: 0, version: null, update: null, later: false,
+  listen: { parts: {}, job: null } };
+// the Listen control's names for the parts and levels the chart has (the results' `listen`)
+const PART_NAMES = { guitar: "Guitar", bass: "Bass", drums: "Drums" };
+const LEVEL_NAMES = { expert: "Expert", hard: "Hard", medium: "Medium", easy: "Easy" };
 // the pictures' pickers: the option each sets (an image upload's id) and what its line says when none is chosen
 const PICTURES = { album_art: "None chosen: the song file's own picture, if it has one", background: "None chosen" };
 
@@ -523,6 +527,7 @@ function again() {
   state.follow += 1;
   state.job = null;
   state.upload = null;
+  stopListening();
   dropError("");
   show("drop-screen");
   refreshStatus();   // a session of charts fills the disk: the header measures it again for the next song
@@ -550,6 +555,7 @@ async function loadResults() {
   renderArt(res.art, res.name, res.job);
   renderLyrics(res.lyrics);
   renderPreview(res.preview, res.job);
+  renderListen(res.listen, res.job);
   $("export-box").hidden = !res.installable;
   text($("export-msg"), "").hidden = true;
   $("open-exports").hidden = true;
@@ -605,6 +611,69 @@ function renderPreview(pv, job) {
   const flags = pv.flags.length ? pv.flags : ["Nothing flagged."];
   $("flags").replaceChildren(...flags.map((f) => make("li", null, f)));
   $("remarks").replaceChildren(...pv.remarks.map((f) => make("li", null, f)));
+}
+
+// Listen: the part and the level (those the chart has), a button that has the server make them into sound over
+// the song (a few seconds, kept for the next time), and the player
+function option(value, label) {
+  const o = make("option", null, label);
+  o.value = value;
+  return o;
+}
+
+function stopListening() {
+  const player = $("listen-audio");
+  player.pause();
+  player.removeAttribute("src");
+  player.hidden = true;
+}
+
+function renderListen(ls, job) {
+  const parts = (ls && ls.parts) || {};
+  const names = Object.keys(parts).filter((p) => parts[p] && parts[p].length);
+  state.listen = { parts, job };
+  stopListening();
+  text($("listen-msg"), "").hidden = true;
+  $("listen-box").hidden = !names.length;
+  if (!names.length) return;
+  $("listen-part").replaceChildren(...names.map((p) => option(p, PART_NAMES[p] || p)));
+  $("listen-part").value = names[0];   // the guitar when the chart has it
+  listenLevels();
+}
+
+function listenLevels() {
+  const levels = state.listen.parts[$("listen-part").value] || [];
+  const keep = $("listen-level").value;
+  $("listen-level").replaceChildren(...levels.map((l) => option(l, LEVEL_NAMES[l] || l)));
+  $("listen-level").value = levels.includes(keep) ? keep : levels[0];
+}
+
+async function listenTo() {
+  const part = $("listen-part").value;
+  const level = $("listen-level").value;
+  const what = `${PART_NAMES[part] || part} on ${LEVEL_NAMES[level] || level}`;
+  const msg = $("listen-msg");
+  const player = $("listen-audio");
+  stopListening();
+  $("listen").disabled = true;
+  text(msg, `Making the ${what} into sound: a few seconds…`).hidden = false;
+  try {
+    const r = await api("POST", "/api/jobs/current/listen", { part, level });
+    if (r.status === 200) {
+      text(msg, `${what}, over the song. Listen for a tone that comes late or not at all, ` +
+                "or tones where the song is quiet.");
+      player.src = `${r.data.url}?job=${encodeURIComponent(state.listen.job)}`;   // this chart's, not a cached one
+      player.hidden = false;
+      const playing = player.play();
+      if (playing && playing.catch) playing.catch(() => { /* the browser wants a click on the player first */ });
+    } else {
+      text(msg, r.data.error || `It could not be made (${r.status}).`);
+    }
+  } catch (x) {
+    text(msg, "songcharter does not answer: is it still running?");
+  } finally {
+    $("listen").disabled = false;
+  }
 }
 
 function installMessage(message, opts) {
@@ -755,6 +824,8 @@ async function start() {
   $("install").addEventListener("click", () => install(false));
   $("replace").addEventListener("click", () => install(true));
   $("zip").addEventListener("click", exportZip);
+  $("listen-part").addEventListener("change", listenLevels);
+  $("listen").addEventListener("click", listenTo);
   $("open-song").addEventListener("click", () => openFolder("song", $("open-msg")));
   $("open-exports").addEventListener("click", () => openFolder("exports", $("export-msg")));
   $("update-copy").addEventListener("click", copyLine);

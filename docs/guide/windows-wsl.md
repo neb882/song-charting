@@ -88,6 +88,10 @@ page.
   WebP). To see song backgrounds in Clone Hero, turn on Settings > Gameplay > "Use Song Backgrounds".
 - When it is done, look at the preview, then press "Install into Clone Hero". The first time, it may ask where your
   Clone Hero Songs folder is.
+- **Listen to the chart** without playing it: under the preview, choose a part and a level and press "Listen". After
+  a few seconds the page plays the chart over the song, a tone for each note (green lowest, orange highest; HOPOs
+  softer than strums) or a drum sound for each hit. Listen for a note that comes late or not at all, a part playing
+  where the song is quiet, or a sustain that ends too early.
 - In Clone Hero: Settings > General > Scan Songs.
 - **Before you play, close the songcharter window** (and any Ubuntu window). WSL keeps the memory it took while one
   is open; once they are closed, WSL stops and Windows gets that memory back. That can take a minute.
