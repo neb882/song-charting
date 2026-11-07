@@ -576,3 +576,31 @@ def test_allin1s_downbeats_on_an_ordinary_song(steady):
     away = with_downbeats(g, truth[0::4] + 0.25)                         # every one half a beat off
     assert np.array_equal(away.downbeats, g.downbeats) and away.stats["downbeats"]["source"] == "kick"
     assert away.stats["downbeats"]["vote"]["voting"] == 0 and "kick" not in away.stats["downbeats"]
+    p = 1 if kick != 1 else 3                                             # a kick phase that is not 0 ...
+    g1 = BeatGrid(g.beats, np.arange(p, len(g.beats), 4), g.mode,
+                  {**g.stats, "downbeats": {**g.stats["downbeats"], "phase": p}})
+    away1 = with_downbeats(g1, truth[0::4] + 0.25)                       # ... kept when no downbeat votes
+    assert np.array_equal(away1.downbeats, g1.downbeats) and away1.stats["downbeats"]["phase"] == p
+
+
+def test_a_split_vote_keeps_a_sure_kick_phase(steady):
+    """Downbeats split between the sure kick's phase and another (here one more on the other, a margin of 1/9)
+    keep the kick's phase, recorded as a split; split between two other phases, the vote's top phase is taken and
+    flagged."""
+    truth, y = steady
+    g = beat_grid(y, SR)
+    kick, other = g.stats["downbeats"]["phase"], (g.stats["downbeats"]["phase"] + 2) % 4
+    assert not g.stats["downbeats"]["uncertain"]
+    times = np.sort(np.concatenate([g.beats[other::4][:5], g.beats[kick::4][1:5]]))
+    out = with_downbeats(g, times)
+    db = out.stats["downbeats"]
+    assert np.array_equal(out.downbeats, g.downbeats) and db["source"] == "kick" and not db["uncertain"]
+    assert db["phase"] == kick and db["vote"]["phase"] == other and db["vote"]["margin"] == round(1 / 9, 4)
+    assert db["vote"]["why"] == (f"split between beats {other} and {kick} of the bar, one of them the sure kick's: "
+                                 "the kick's phase")
+    a, b = (kick + 1) % 4, (kick + 3) % 4
+    times = np.sort(np.concatenate([g.beats[a::4][:5], g.beats[b::4][:4]]))
+    out = with_downbeats(g, times)
+    db = out.stats["downbeats"]
+    assert (db["phase"], db["source"], db["uncertain"]) == (a, "allin1", True)
+    assert np.array_equal(out.downbeats, np.arange(a, len(g.beats), 4))

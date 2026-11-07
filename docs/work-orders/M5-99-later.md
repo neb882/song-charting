@@ -121,7 +121,15 @@ references unchanged. Left:
 - The shred song's grid is at twice the humans' tempo (M6-06), so its 4-beat bars are half of theirs (0.297).
 - The vote has no threshold: allin1's phase was right on all eleven songs. The 20-song set measures it again.
 - On the first power-metal stress song the measures moved two beats and its Medium levels fell by 0.013-0.018
-  against the primary (guitar 0.717 to 0.699), unexplained (DESIGN 2.3 step 4); Expert is unchanged.
+  against the primary (guitar 0.717 to 0.699); Expert is unchanged. The review found why: our Medium keeps three
+  beats of a bar and thins its last, which on the old phase was the humans' beat 2 and is now their beat 4, which
+  they play a little more (192 against 175 notes; guitar 177 notes dropped on beat 4, 157 added on beat 2). The
+  old phase scored higher by accident: which beat of the bar a lower level thins is the ladder's calibration
+  (reduce.py), to measure against the humans' lower levels.
+- pm2's drums Medium and Easy fell under M6-05 (0.579 -> 0.459, 0.553 -> 0.378), not with its bar phase: on the
+  right grid our Medium keeps on-beat hits under the hi-hat rule at 140 BPM and up, where the humans' Medium drums
+  sit on beat 1 and the off-beat 8ths (M6-03's review); the old grid, half a beat off over part of the song, put its
+  on-beat picks on human off-beats. The lower drum levels' rule on fast songs, measured against the humans'.
 
 ## The octave pass's threshold and guard, provisional (M5-01, M5-11)
 

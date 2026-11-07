@@ -261,7 +261,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | 1 | Decode (§2.1) | one gapless decode is the only timeline; chart the friend's exact file | same; pin the bundled ffmpeg on Windows | high | a decoder disagreement on the friend's file |
 | 2 | Separation (§2.2) | reuse the existing ft and 6s stems (lag 0) | htdemucs_6s, one shared pass, shift seeded; weights treated as non-commercial | high (default), medium (licence) | the owner opts into SW; the M2 stem comparison; a permissively licensed separator |
 | 3 | Beat grid (§2.3) | `beatgrid` on the drum stem; it chose free mode | Beat This proposes, `beatgrid` refines (code changes needed) | medium-low / low | beat F1 with `score.py` on the references (§5.6, task 2); the detector offset on the test song (M1a) |
-| 4 | Meter (§2.4) | 4/4, kick on beat 1 (margin 0.58) | Viterbi x/4 decides; the kick phase and `beatgrid`'s uncertainty flag drive review; 6/8 later | high / low | a listening check; downbeat F on songs with time-signature changes |
+| 4 | Meter (§2.4) | 4/4, beat 1 from allin1's downbeats, else the kick (margin 0.58) | Viterbi x/4 decides; the kick phase and `beatgrid`'s uncertainty flag drive review; 6/8 later | high / low | a listening check; downbeat F on songs with time-signature changes |
 | 5 | Sections (§2.5) | allin1's segments (v1's fold-0 result), merged and split per run: 26 sections | allin1 by default (fold 0 on the CPU, the ensemble on CUDA), librosa as the fallback [here, M2 row 7] | low / medium-low | section scores on more references; the owner's call on fold 0 for CUDA; the friend's feedback |
 | 6 | Quantizer (§2.6) | remove offsets, snap to 1/16 + 1/12 (a 1/32-grid source's odd 1/32s to the coarser slot), keep the HOPO states the source forced | same | medium | snapping moves > 2 % of onsets by > 25 ms; HOPO κ in M2 |
 | 7 | Lead guitar (§2.7) | four autochart Expert takes, imported and spliced per section by agreement between takes | autochart's engine as a separate program (B1, decided §9 Q3; built: `engines/autochart.py`); by default 4 takes spliced on CUDA, 1 on the CPU; `--takes N` (1, or N ≥ 3) on any device | medium / low | B1's seed spread over ≥ 3 seeds on the references; the friend's playtest |
@@ -387,7 +387,9 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
      bars, 4/4 as before. The margin is the top phase's votes minus the next one's, over the votes; under 0.15 the
      downbeats are flagged ("allin1's downbeats fall on more than one beat of the bar"). A vote against a sure kick
      phase (margin 0.15 or more) is warned about ("downbeats follow allin1's ..."); none of the eleven songs has
-     one. Without allin1's downbeats (the librosa fallback, an imported chart's sections, no sections), or when none
+     one. A split vote (margin under 0.15) whose two top phases hold a sure kick phase keeps the kick's (allin1's
+     downbeats on every other beat of a bar say no more than the kick; the review's case, on none of the eleven
+     songs). Without allin1's downbeats (the librosa fallback, an imported chart's sections, no sections), or when none
      falls near a beat, the kick's phase stays. assemble applies it after the octave pass (step 7), to whichever
      grid that pass returns. report.json's `grid.downbeat_source` says which phase was used, `stats.downbeats.kick`
      keeps the kick's phase, margin and flag, and `stats.downbeats.vote` the votes.
@@ -456,8 +458,10 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 
      `pm2`'s Easy guitar and bass come back past where they were before M6-05 (0.515, 0.559), so their fall under
      M6-05 was the bar phase. Its drums Medium and Easy do not come back (0.579 and 0.553 before M6-05): their fall
-     was not the bar phase. On `troop` the measures moved two beats and its Medium levels fell by 0.013–0.018,
-     unexplained; the stress check reads Expert only.
+     was not the bar phase (on the right grid our Medium keeps on-beat hits under the hi-hat rule, where the humans'
+     sit on beat 1 and the off-beat 8ths: M6-03's review; M5-99). On `troop` the measures moved two beats and its
+     Medium levels fell by 0.013–0.018: our Medium thins the bar's last beat, now the humans' beat 4, which they play
+     a little more than their beat 2 (the review; the ladder's calibration, M5-99); the stress check reads Expert.
 5. **Phase convention.** Beats move −22 ms from the envelope peaks (`ONSET_TO_BEAT_MS`), calibrated on the drum stems of All the Small Things and Take Me Out (§2.14, C8).
 6. **Hand-off:** `plan_lead_in(min_lead=2.5)` → `TempoMap.from_beats(tolerance=0.003)`; the code default is 0.002.
    - Markers at 0.003: 81 in free mode and 1 in click mode on the test song; 67–104 on four references whose human
@@ -748,7 +752,7 @@ start has been tried, the bar phase failed on 2 of 4 references, and Lucretia ha
 - free maps causing trouble in the Moonscraper polish or the playtest.
 
 ### 2.4 Meter
-- **Goal 1:** 4/4 throughout, with the bar phase from kick vs snare energy (`beatgrid.bar_phase`): phase 0, margin 0.58 on the test song [here, beatgrid run].
+- **Goal 1:** 4/4 throughout, with the bar phase from allin1's downbeats where the sections file holds them (`beatgrid.with_downbeats`, §2.3 step 4, M6-03), else from kick vs snare energy (`beatgrid.bar_phase`): phase 0, margin 0.58 on the test song either way [here, beatgrid run; M6-03].
 - **Goal 2:** v1's downbeat/meter Viterbi on Beat This downbeat logits **decides** the bar lines; the kick phase only cross-checks [decision].
   - States: (meter 2–7, position in bar). Per-bar −log prior {4: 0, 3: 1.5, 2: 4, 6: 4, 5: 5, 7: 5}; meter-change cost 12.
   - x/4 only in this version. Time signatures are placed at beat indices, so `misalignedTimeSignature` cannot happen [here, critique verdict].

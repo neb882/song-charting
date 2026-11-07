@@ -940,7 +940,9 @@ def with_downbeats(grid: BeatGrid, times: np.ndarray | None, source: str = "alli
     holds the vote's phase, margin and flag (its margin under DOWNBEAT_MIN_MARGIN), the source, the vote (counts per
     phase, the downbeats given and voting, the window) and the kick's own phase, margin and flag under "kick"; the
     kick's per-phase scores and windows stay as they were. With no times the grid is returned as it is; when none
-    falls near a beat, a copy keeps the kick's phase and records the vote."""
+    falls near a beat, a copy keeps the kick's phase and records the vote. A split vote (its margin under
+    DOWNBEAT_MIN_MARGIN) whose two top phases hold a sure kick phase keeps the kick's too: the downbeats then say
+    no more than the kick does (allin1's on every other beat of a bar, say), and the kick is sure."""
     if times is None:
         return grid
     phase, margin, counts, n = downbeat_vote(grid.beats, times)
@@ -948,6 +950,12 @@ def with_downbeats(grid: BeatGrid, times: np.ndarray | None, source: str = "alli
     vote = {"counts": counts, "given": int(np.asarray(times).size), "voting": n, "window": DOWNBEAT_SNAP}
     if phase is None:
         db["vote"] = {**vote, "source": source, "why": "no downbeat within the window of a beat: the kick's phase"}
+        return BeatGrid(grid.beats, grid.downbeats, grid.mode, {**grid.stats, "downbeats": db})
+    top = sorted(range(len(counts)), key=lambda q: (-counts[q], q))[:2]
+    if margin < DOWNBEAT_MIN_MARGIN and not db["uncertain"] and db["phase"] in top:
+        db["vote"] = {**vote, "source": source, "phase": phase, "margin": margin,
+                      "why": f"split between beats {top[0]} and {top[1]} of the bar, one of them the sure kick's: "
+                             "the kick's phase"}
         return BeatGrid(grid.beats, grid.downbeats, grid.mode, {**grid.stats, "downbeats": db})
     db["kick"] = {k: db[k] for k in ("phase", "margin", "uncertain")}
     db.update(phase=phase, margin=margin, uncertain=margin < DOWNBEAT_MIN_MARGIN, source=source, vote=vote)

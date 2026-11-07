@@ -439,8 +439,19 @@ def test_the_bar_phase_follows_allin1s_downbeats(built, tmp_path):
     assert [w for w in r.report["warnings"] if w.startswith("downbeats")] == [
         f"downbeats follow allin1's, 2 beat(s) after the kick's beat 1 (bar-phase margin "
         f"{g['stats']['downbeats']['kick']['margin']:.3f}): check where beat 1 is"]
-    split = [beat(k) for k in range(0, BEATS, 4)][::2] + on3[1::2]
+    on2 = [beat(k) + 0.01 for k in range(1, BEATS, 4)]   # one beat after the kick's beat 1, not three
+    g = build(on2, "on2").report
+    assert [w for w in g["warnings"] if w.startswith("downbeats")] == [
+        f"downbeats follow allin1's, 1 beat(s) after the kick's beat 1 (bar-phase margin "
+        f"{g['grid']['stats']['downbeats']['kick']['margin']:.3f}): check where beat 1 is"]
+    split = [beat(k) for k in range(0, BEATS, 4)][::2] + on3[1::2]   # the sure kick's beat 1 and its beat 3
     g = build(sorted(split), "split").report
+    assert (g["grid"]["downbeat_source"], g["grid"]["downbeat_phase"], g["grid"]["downbeats_uncertain"]) == (
+        "kick", 0, False)
+    assert not [w for w in g["warnings"] if w.startswith("downbeats")]
+    on4 = [beat(k) + 0.01 for k in range(3, BEATS, 4)]
+    split = on2[::2] + on4[1::2]                                       # beats 2 and 4: neither is the kick's
+    g = build(sorted(split), "split2").report
     assert g["grid"]["downbeat_source"] == "allin1" and g["grid"]["downbeats_uncertain"]
     assert [w for w in g["warnings"] if w.startswith("downbeats")] == [
         f"downbeats uncertain (bar-phase margin {g['grid']['downbeat_margin']:.3f}): allin1's downbeats fall on "
@@ -1927,6 +1938,13 @@ def test_a_doubled_grid_follows_a_tempo_change_from_allin1s_beats(stretch_song):
     assert not any("is not followed by the grid" in w for w in a.report["warnings"])
     assert any("is not followed by the grid" in w for w in b.report["warnings"])
     assert not any("allin1" in w for w in b.report["warnings"])
+    # the bar phase lands on the doubled grid the octave pass returned: allin1's downbeats (every 8th beat of it)
+    downbeats = json.loads((root / "allin1.json").read_text(encoding="utf-8"))["downbeats"]
+    assert ga["downbeat_source"] == "allin1" and not ga["downbeats_uncertain"]
+    vote = ga["stats"]["downbeats"]["vote"]
+    assert vote["voting"] == len(downbeats) and max(vote["counts"]) == len(downbeats)
+    bars = np.asarray(a.lead.beats)[a.lead.first_beat::4] - a.lead.pad_seconds
+    assert np.mean([np.min(np.abs(bars - d)) < 0.05 for d in downbeats]) > 0.95
 
 
 def test_allin1s_beats_change_nothing_when_the_doubled_grid_misses_no_tempo_change(fast_song):
