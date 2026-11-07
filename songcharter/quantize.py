@@ -323,8 +323,11 @@ class SnapGrid:
 
         The triplet rule, with tol = min(25 ms, 1/4 of a triplet slot):
           * an onset is off-beat when it does not snap to its beat line. An off-beat onset leans triplet when it is
-            nearer its triplet slot than its 1/16 slot, and within tol of it. An on-beat onset is aligned when it is
-            within tol of its beat line;
+            nearer its triplet slot than its 1/16 slot, or the two are one line, and within tol of it. An on-beat
+            onset is aligned when it is within tol of its beat line. (The two slots are one line only at the
+            midpoint of a halved grid's beat, 8 straight and 6 triplet slots, M6-06: the first grid's beat line,
+            which a run of 16th-note triplets there plays. With 4/3, 2/3 or no triplet slots no off-beat line is
+            shared);
           * a beat is a candidate when it has off-beat onsets, all of them lean triplet and all its on-beat onsets
             are aligned. A beat with an off-beat onset that does not lean triplet, or an on-beat onset that is not
             aligned (the timing there is off, so nothing near it can be read as a triplet), ends any run;
@@ -356,7 +359,8 @@ class SnapGrid:
         err_t = np.abs(sec(beat * res + kt * res / n) - t)
         tol = np.minimum(rules.triplet_max_error_s, (sec(beat * res + res / n) - sec(beat * res)) / 4)
         off = ks != 0
-        ok = np.where(off, (err_t < err_s) & (err_t <= tol), err_s <= tol)  # leans triplet / aligned
+        shared = ks * n == kt * s  # its straight and triplet slots are one line (only a halved grid's midpoint: 8/6)
+        ok = np.where(off, ((err_t < err_s) | shared) & (err_t <= tol), err_s <= tol)  # leans triplet / aligned
         beats: dict[int, list] = {}  # beat -> [off-beat onsets, all ok, aligned on-beat onset, Σ err_t², Σ err_s²]
         for b, o, good, et, es in zip(beat.astype(int), off, ok, err_t, err_s):
             v = beats.setdefault(int(b), [0, True, False, 0.0, 0.0])

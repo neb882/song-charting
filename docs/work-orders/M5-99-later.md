@@ -80,22 +80,39 @@ Its ranked gaps 1-3, 5 and 6 are M5-01, M5-02 and M5-03; part of 9 and 10 are M5
 - **DESIGN's contradictions** (the report's section 11, ten items): fold the resolved ones into DESIGN at the doc
   pass that follows this version (task 41's restructure), each with the report as its source.
 
-## The grid at double the humans' tempo
+## The grid at double the humans' tempo (narrowed by M6-06)
 
-The shred instrumental's grid came out at twice the human charts' tempo (octave-tolerant beat F1 0.94-0.96).
-M5-01 doubles a grid that is too slow and never halves one: this version builds the doubling pass only, and the
-first pass still folds into 85-185 BPM, so a pulse under 85 stays at double with its effects on the HOPO states,
-the star-power count (about twice the phrases; M6-01's ceiling at 160 BPM does not reach a 154-BPM grid) and the
-solo measures (M5-03 caps solos in seconds for that reason).
-A halving rule needs its own statistic (the share of onsets on beat lines, the backbeat ratio M5-01 records for
-every song, the HOPO shares) and a check that the natural HOPO threshold (in ticks) still reads right; measure on
-the stress set first. Half a day to measure, a day to build. M5-01's statistics for the shred song on its first
-grid (153.97 BPM, twice the humans'): density shares guitar 0.059, bass 0.121, drums 0.000 (pooled 0.062, the
-right grids' range); backbeat ratio 0.003, the snare on the lines as at the pulse. So neither of M5-01's tests sees
-a grid that is too fast, and halving needs another (the snare on every other line, the onsets on odd 8ths). HOPO
-share ours 0.34 against the humans' 0.55 and 0.39; star power 3.88 phrases a minute against 2.33 and 3.23. A
-side finding of M6-05's measurement: allin1's beats at their own rate are at the humans' level on the shred song,
-beat F1 0.967 against our grid's 0.643, so allin1's tempo is one candidate statistic for halving (M6-06).
+**M6-06** (DESIGN 2.3 step 7, the halving pass): a first grid the density test keeps at 1 whose median beat rate is
+twice allin1's (within 10 %), under the fold's 85 BPM floor halved, is built again from allin1's beats refined onto
+the drums, its slots (8/6) and offset at the first grid's level. The shred song now charts at 77 BPM: beat F1
+0.644 -> 0.985, every guitar and bass level's F1@50 up, the other stress songs and the references unchanged. Left:
+- **One positive in eleven songs.** The ratio separates 2.002 from 0.994-1.009; the 20-song set measures it again,
+  with any song whose pulse is under 85 BPM.
+- **A pulse at 85-92.5 BPM** that the first pass doubles to 170-185 stays doubled: the floor guard halves only a
+  tempo the fold could not hold, since allin1 halves fast songs (both 200 BPM stress songs). A statistic that tells
+  those apart is needed first.
+- **The halved grid's downbeats** (downbeat F1 0.278 -> 0.000 on the shred song, margin 0.029): M6-03's rule on fast
+  songs reaches it through `beat_grid`; measure it there.
+- **The beat-counted rules on a halved grid**: the sustain floor and the star power rate (the next item).
+- **A triplet half beside a straight half** of one halved beat gets the beat's one choice (DESIGN 2.6), up to a
+  1/24 of the first grid's beat off; and no `grid_octave` value forces a halving.
+- The guitar's HOPO share 0.35 -> 0.65 against the humans' 0.55 and 0.39 (the natural threshold at 77 BPM); its
+  play-state agreement 0.56 / 0.67 -> 0.60 / 0.45 (primary / alt1).
+
+## Beat-counted rules at a slow tempo (M6-06)
+
+Two rules our code counts in beats read fewer at a slow pulse, and on the shred song, halved to 77 BPM by M6-06,
+both fall under its humans (DESIGN 2.3 step 7's stress table), which they matched at 154:
+- **The sustain floor** (`quantize.SUSTAIN_MIN_BEATS`, 0.75 beat on Expert, with SUSTAIN_GAP_BEATS 0.25): 584 ms at
+  77 BPM where it was 292 ms. Expert sustains dropped: guitar 27 -> 217, bass 45 -> 218; sustain share guitar 0.14 ->
+  0.05 (the humans 0.07 and 0.14), bass 0.15 -> 0.07 (the human 0.15).
+- **The star power rate** (`starpower.py`, about one phrase per 40 beats, the span counted at most at 160 BPM; M6-01):
+  3.89 -> 1.89 phrases a minute against the humans' 2.33-3.23. At 77-80 BPM they place a phrase about every 24-34
+  beats.
+The humans at the same tempo keep more of both, so the cause is our rules, not the tempo. A cap or floor in seconds
+for each (a sustain floor of at most some ms; the span counted at least at some BPM) wants the 20-song set's slow
+songs, measured on every human chart; not tuned on the shred song alone. No code change in M6-06 (the orchestrator,
+2026-11-07). Half a day to measure.
 
 ## Star power on a doubled grid (closed by M6-01)
 
@@ -103,8 +120,8 @@ The phrase rule counts beats (`starpower.py`, about one phrase per 40 beats), so
 phrases: the power-metal song went from 2.42 to 5.04 a minute against the humans' 3.03-4.44 (M5-01's stress run).
 **M6-01:** measured on every human chart, the rate follows the beats (a count in seconds fits worse), a little under
 them at 200 BPM (0.84 times); the span's beats are now counted at most at 160 BPM (DESIGN 2.10). Left: the 160 rests on
-two 200-BPM power-metal songs (the 20-song set measures it again), and a grid at twice the humans' tempo under 160 BPM
-(the shred song's, 154) keeps its doubled count until a halving rule (above).
+two 200-BPM power-metal songs (the 20-song set measures it again). At a slow tempo the rate falls under the humans'
+(the shred song halved by M6-06: 1.89 a minute against 2.33-3.23): "Beat-counted rules at a slow tempo", above.
 
 ## Downbeats when the kick is on every beat (M5-01's follow-up; narrowed by M6-03)
 

@@ -470,14 +470,14 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
    - Marker count is cosmetic: a few ms of jitter does not move notes [here, comparison claims audit].
 - **Cost:** onset features 4.4 s for the test song's drum stem; `beat_grid` itself 0.6–1.1 s [here, beatgrid run].
 
-7. **The octave pass** (M5-01; doubling only) [code]. The first pass still folds into [85, 185) BPM
+7. **The octave pass** (M5-01 doubling, M6-06 halving) [code]. The first pass still folds into [85, 185) BPM
    (`BPM_RANGE`). After it, `assemble.grid_octave` asks whether the grid is an octave too slow for the notes, and
    if so the grid is built again at twice the first grid's click tempo. That pass doubles the fold range
    (`beat_grid(bpm_range=(170, 370))`, which reaches every fold), drops the first-beat hint, keeps its hinted line
    (`keep_line=True`) and runs the half-beat test (`half_beat=True`). The tempo map, lead-in, downbeats, sections, star power and the HOPO threshold follow
-   the chosen grid. Halving is not built: a pulse under 85 BPM stays at double, as on the shred instrumental; its
-   statistics are in M5-99. There allin1's beats, at their own rate, are at the humans' level: beat F1 0.967 against
-   our grid's 0.643 (M6-05's measurement; M6-06 measures a halving).
+   the chosen grid. A grid the density test keeps at 1 can be an octave too fast instead: the fold forces a pulse
+   under 85 BPM to double, as on the shred instrumental (154 BPM against the humans' 77–80). The halving pass
+   (below, M6-06) builds such a grid again from allin1's beats.
    - **Why the fold is wrong** (the charting-conventions report, section 11 item 1): charters chart the musical
      tempo, anywhere in Magma's 40–300 BPM, and then force the HOPO states. Every rule songcharter counts in beats
      or ticks only comes out right at that pulse: the HOPO threshold, the 1/16 slots, the sustain floors, star
@@ -644,6 +644,113 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
        `bar_phase` has no margin (0.125 → 0.014, both flagged), and the downbeat F1 was 0.014 and is 0.000. Since
        M6-03 the bar phase is allin1's (step 4): downbeat F1 0.979, Easy guitar 0.767 and Easy bass 0.897; the drums'
        Medium and Easy stay where M6-05 left them.
+   - **A grid at twice the pulse: the halving pass** (M6-06) [code; here, M6-06's measurement on the kept runs of
+     main after M6-05, `report.json` against `sections/segments.json`, and its stress runs below]. The shred
+     instrumental (`sooth`) is charted at 154 BPM, its two human charts at 77–80 (a median 760 ms beat). Its first
+     grid has no dense notes (pooled share 0.062), so the density test cannot see it, and neither can the backbeat
+     ratio, the onsets on lines or midpoints, the snare's or kick's alternation, the HOPO share or the guitar's gaps
+     (the measurer's report; each sits inside the other songs' range or flags a doubled song as well).
+     - **The statistic: the first grid's median beat rate over allin1's** (its beats in the sections file, read at
+       the first grid, before the doubling pass):
+
+       | song | octave (density test) | first grid BPM | allin1 BPM | ratio |
+       |---|---|---|---|---|
+       | `sooth` | 1 | 153.97 | 76.92 | **2.002** |
+       | `troop`, `pm2` (doubled after) | 2 | 100.01, 99.99 | 100.00, 100.00 | 1.000, 1.000 |
+       | `break` | 1 | 115.50 | 115.38 | 1.001 |
+       | the seven references | 1 | 92.3–147.6 | 92.3–146.3 | 0.994–1.009 |
+
+       At the doubled songs' charted grids the ratio is 2.00 too (allin1 sits at half the humans' tempo on both), so
+       it is read at the first grid, and only when the density test said 1.
+     - **The rule** (`assemble.halving_test`, `assemble._halving_pass`). Under `grid_octave` "auto", a first grid the
+       density test keeps at 1 is built again from allin1's beats when the ratio is 2 within 10 % (`HALVE_TOLERANCE`;
+       the gap is 1.009 to 2.002 on these songs, one positive in eleven), over at least 16 of allin1's beats inside
+       the audio (`HALVE_MIN_BEATS`), and the halved tempo is under the fold's 85 BPM floor: a pulse the first pass
+       could not hold. A song at 170 where allin1 says 85 is not halved, since allin1 halves fast songs (both 200 BPM
+       stress songs) and the first pass could have chosen 85. The pass runs `beat_grid` with `start=` allin1's
+       beats (moved to onset times, minus `ONSET_TO_BEAT_MS`), at the fold range halved (42.5, 92.5) and without the
+       half-beat test (allin1's beats give the phase). `beat_grid` refines them onto the drums (free mode) and finds
+       the downbeats as for any grid. The halved grid is kept when its confident share is at least 0.7 times the
+       first's (the doubling's guard; `sooth` 0.798 against 0.682), else the first stays with a warning.
+       report.json's `octave_stats.halving` holds the numbers and why. `grid.octave` is 0.5, and the build warns
+       "tempo halved to ...: check sync". `grid_octave` 1 forces the first grid (no halving).
+     - **Not every other line of the first grid** (the order's wording; decided 2026-11-06 by the orchestrator on
+       these numbers). On `sooth` the first grid's lines on allin1's beats switch parity at about 300 s (even lines
+       0.81–1.00 of each 30-s window before, odd 0.78–1.00 after). The cause is our grid: a tempo dip at 297–315 s
+       (its beat 380 → 570 → 380 ms) that neither the humans (a steady 760 ms) nor allin1 have, which leaves it one
+       line off. Beat F1 against the two human charts (the scorer's matcher, 70 ms; today's grid 0.652/0.649 there):
+
+       | halved grid | beat F1 | median \|human − ours\| |
+       |---|---|---|
+       | every other line, one phase (the more allin1 beats) | 0.536 / 0.527 | — |
+       | every other line, the phase from allin1 per ±16 lines (2 odd steps) | 0.972 / 0.962 | 13.1 ms |
+       | allin1's beats refined onto the drums (built) | 0.972 / 0.969 | 14.8 ms |
+       | allin1's beats as they are | 0.984 / 0.982 | — |
+
+       The local phase was the closer reading of "every other beat line" and keeps our lines' timing, but it needs a
+       switch rule and a window. allin1's refined beats are one mechanism with M6-05's, need no new parameter, and
+       get their own downbeats, evidence and tempo check from `beat_grid`; 84 % of them lie within 5 ms of a first
+       grid's line (92.5 % within 15 ms).
+     - **The slots and the offset follow the octave.** On a halved grid every part gets twice the first grid's slots
+       per beat, 8 straight and 6 triplet (`assemble._halved_slots`, report.json's `parts.*.slots`): its 16ths and
+       8th-note triplets are the halved grid's 1/32s and 16th-note triplets. On `sooth`'s first grid 16.7 % of the
+       guitar's Expert notes (27.9 % of the bass's) sit on odd 16ths and 5.3 % (1.9 %) on 8th-note triplets. The
+       lyrics get the same (no song with words halves yet). A part's offset is measured on the halved grid's beats
+       with their midpoints (`assemble.offset_map`), whose 16ths are the slots the notes keep: on the halved map
+       itself half the notes sit between its 16ths and the phases cancel. The natural-HOPO threshold (Clone Hero's
+       65/192 beat) reads the halved grid as it reads the humans' charts at 77 BPM. The rules our code counts in
+       beats read fewer there: the sustain floor (`quantize.SUSTAIN_MIN_BEATS`, 0.75 beat on Expert: 584 ms at 77
+       BPM, 292 ms on the first grid) and the star power rate (about one phrase per 40 beats). Both fall under the
+       humans' on `sooth` (below).
+     - **The quantizer's triplet rule, one condition** (`quantize.SnapGrid.from_ticks`; outside the order's file
+       list, approved by the orchestrator 2026-11-06). An off-beat onset leaned triplet only when strictly nearer its
+       triplet slot than its straight slot. With 8/6 slots the midpoint of a beat is both (4/8 = 3/6), and a run of
+       16th-note triplets plays it (the first grid's beat line), so no beat could go triplet. It now leans when the
+       two slots are one line. On 4/3, 2/3 and 2/0 no off-beat line is shared, so nothing moves there (a test, and
+       the golden diff below).
+     - **Measured** [here, M6-06's stress runs: main a89d6a0 (after M6-05) against the branch 4b58f06, `--rerun
+       bass,sections` both, 1 CPU take, `stress.py score` and `compare`: exit 0, no regressions]. `sooth`'s grid goes
+       from 153.97 BPM (octave 1) to 77.03 BPM (octave 0.5; 689 beats from allin1's 689, confident share 0.682 →
+       0.798, the guard's ratio 1.17):
+
+       | `sooth` (primary / alt1) | before → after | the humans |
+       |---|---|---|
+       | beat F1 | 0.644 / 0.654 → **0.985 / 0.986** | 1.000 |
+       | downbeat F1 | 0.278 / 0.281 → 0.000 / 0.000 (the kick's bar phase, margin 0.029); with M6-03's (merged): 0.297 / 0.297 → **0.989 / 0.989** | 1.000 |
+       | guitar F1@50, Expert | 0.658 / 0.770 → 0.704 / 0.777 | 0.712 (alt1 against the primary) |
+       | guitar F1@50, Hard / Medium / Easy (primary) | 0.655 / 0.594 / 0.439 → 0.721 / 0.674 / 0.542 | — |
+       | bass F1@50, Expert / Hard / Medium / Easy (primary) | 0.692 / 0.825 / 0.842 / 0.634 → 0.710 / 0.855 / 0.883 / 0.693 | — |
+       | guitar star power a minute | 3.89 → **1.89** (under the humans') | 2.33 / 3.23 |
+       | guitar solo time overlapping alt1's (the primary has none) | 0.794 → 0.887 (IoU 0.602 → 0.728) | — |
+       | guitar HOPO share; play-state agreement | 0.35 → 0.65; 0.56 / 0.67 → 0.60 / 0.45 | 0.55 / 0.39 |
+       | guitar median timing error (ms) | 39.6 / 8.0 → 37.1 / 6.5 | — |
+       | sustain share, guitar / bass (Expert sustains dropped: 27 → 217 / 45 → 218) | 0.14 → **0.05** / 0.15 → **0.07** | 0.07 / 0.14; 0.15 |
+
+       `troop`, `pm2` and `break` keep every track's hash (`halving.why`: the density test doubles the first two;
+       `break` reads 1.001). The seven references read 0.994–1.009 and are identical (the golden diff against main
+       a89d6a0, `--expect none`, `--rerun bass,sections`: exit 0, every hash, count and score), so the quantizer's
+       shared-line rule moves nothing on a 4/3 grid either. On the merged head against M6-03's golden run every
+       song's results are identical again; that diff's only UNEXPECTED entries are its run-level drums flag on both
+       runs (`beatgrid.py`, one of the drums engine's files, differs from the kept folders' commit: a false positive,
+       the orchestrator's decision on M6-03). The guitar's offset, measured at the first grid's
+       level, is 2.5 ms (0.3 before), the bass's 57.9 ms (56.0); 92 guitar notes take triplet slots (116 before).
+       Two lines fall short (and the downbeats did until M6-03 merged):
+       - **Star power** counts beats (§2.10, M6-01: about one phrase per 40 beats, the span counted at most at 160
+         BPM), so at 77 BPM it halves, to under the humans' 2.33–3.23 a minute. The humans place more phrases per
+         beat at this tempo. That is the phrase rule's, not the grid's.
+       - **Sustains.** The floor counts beats too: 0.75 beat is 584 ms at 77 BPM, so both parts drop about eight
+         times the sustains they did, and their sustain shares fall under the humans', which matched before. The
+         humans at the same 77 BPM keep more, so it is our beat-counted rule, not the tempo. Both rules are one
+         M5-99 item ("beat-counted rules at a slow tempo"), to measure on the 20-song set's slow songs, not on
+         `sooth` alone (the orchestrator, 2026-11-07: no code change in this order).
+       - **The downbeats.** With a kick on most 8ths, `bar_phase` on the halved grid has no margin (0.029), and
+         alone it put every measure line off the humans' (downbeat F1 0.000; on the first grid half of them had
+         coincided by chance). M6-03's vote of allin1's downbeats (step 4) runs on the grid this pass returns: on the
+         merged head (b279d13, against M6-03's stress run, `--rerun bass,sections`) all 172 voting downbeats pick one
+         phase (margin 1.000) over the kick's, and the downbeat F1 is 0.989 against both charts (0.297 at 154 BPM
+         with the vote). Beat F1, every F1@50, star power and the sustain shares are as in the table; the solo time
+         overlapping alt1's is 0.903 (0.824 on M6-03's run). `troop`, `break` and `pm2` keep every track's hash
+         there too, and the references against M6-03's golden run (below).
 
 **Whole-song runs tonight** [here, beatgrid run].
 
@@ -1009,6 +1116,14 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
        So the percentile rule is a coin toss on tempo errors of 0.0005 %, 74 ms survives clean grids but breaks at
        drum-like jitter, and 20 ms drops nothing anywhere. The other power-metal charts lost 23.5–26.0 % of their
        guitar notes (and 11.4 % of the bass) to the old floors on their own maps.
+   - **Every part on a halved grid** (M6-06, §2.3 step 7): twice the first grid's slots, 8 straight and 6 triplet
+     a beat, so each note keeps the slot the first grid gave it; a part's offset is measured at the first grid's
+     level (`assemble.offset_map`). The triplet rule's one shared line (the halved beat's midpoint, 4/8 = 3/6)
+     leans triplet, so a run of 16th-note triplets there can go triplet. A halved beat is straight or triplet as a
+     whole: a triplet half beside a straight half (a first-grid beat of triplets next to one of 16ths) gets the
+     beat's one choice, which can move the triplets up to a 1/24 of the first grid's beat (about 32 ms at 154).
+     `SLOT_PRIOR` is keyed by the slot's level on the chart's own grid, so on a halved grid the first grid's odd
+     16ths take the 1/32 prior (0.020 for 0.17): the humans' mix at their level.
    - **The bass on a doubled grid** (M5-01; decided 2026-11-05, an amendment to the order's "no change to the slot
      levels"; its triplet slots removed by M6-02): on a grid the octave pass doubled (§2.3 step 7), the bass part
      snaps one slot level coarser, to the grid's 8ths only (`assemble.DOUBLED_BASS_SLOTS` (2, 0), report.json's
@@ -2158,7 +2273,8 @@ DOUBLED_LYRIC_SLOTS: 2 and 3 slots a beat), so the words keep the straight slots
 triplet slots are a finer superset of its 8th-note triplets; report.json's `lyrics.slots` records them. On a first grid
 (octave 1) nothing changes: the references' grids are all first grids, and Take Me Out's and Kimochi Warui's checks are
 unchanged (0.567 / 0.684 / 0.870 and 0.289 / 0.289 / 0.850 within 50 / 100 / 250 ms, no warning, before and after); the
-golden charts, built without lyrics, do not move.
+golden charts, built without lyrics, do not move. On a halved grid (octave 0.5, §2.3 step 7, M6-06) the lyrics take the
+first grid's slots again, 8 and 6 a beat, as every part does; no song with words halves yet, so it is unmeasured.
 
 | the power-metal song, on the chart | median error | within 50 / 100 / 250 ms | signed error p10 / 25 / 50 / 75 / 90 | phrase starts > 500 ms | warning |
 |---|---|---|---|---|---|

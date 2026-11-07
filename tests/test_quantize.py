@@ -640,3 +640,30 @@ def test_an_empty_part_and_a_note_before_tick_zero():
     track, rep = quantize_part(part([TimedNote(-PAD - 0.2, (0,)), TimedNote(at(tm, 4), (1,))]), tm, PAD, offset=0.0)
     assert [n.tick for n in track.notes] == [4 * RES] and rep.dropped == 1
     check(rep)
+
+
+def test_the_shared_line_rule_moves_nothing_on_the_other_grids():
+    """quantize's shared-line rule (an off-beat onset whose straight and triplet slots are one line leans triplet,
+    M6-06) can only act where a grid's two slot sets share an off-beat line: the halved grid's 8/6 at its midpoint.
+    On the 16ths and 8th-note triplets (4/3), a doubled grid's lyric slots (2/3) and its bass (2/0) no off-beat
+    position has one line for both, and a dense made-up part of every figure, jittered, lands where it did."""
+    for s, n in ((4, 3), (2, 3), (8, 6)):
+        r = np.arange(1, 10 * RES) / 10 - RES / (2 * s)  # every position in a beat, from half a slot early
+        ks, kt = np.floor(r * s / RES + 0.5), np.floor(r * n / RES + 0.5)
+        shared = sorted({float(k / s) for k in ks[(ks != 0) & (ks * n == kt * s)]})
+        assert shared == ([0.5] if (s, n) == (8, 6) else []), (s, n)
+    figures = [[0, 0.5], [0, 0.25, 0.5, 0.75], [0, 1 / 3, 2 / 3], [0, 0.75], [0, 2 / 3], [0, 0.5, 0.75], [0]]
+    pos = [b + f for b in range(120) for f in figures[(b // 2) % len(figures)]]
+    want = {(4, 3): [round(p * RES) for p in pos]}  # the 8th-note triplet beats and the swung ones go triplet
+    for bpm in (95.0, 142.0, 180.0):
+        tm = const_map(bpm)
+        ticks, rep = snapped(tm, pos, jitter_ms=10, seed=int(bpm))
+        assert ticks == want[(4, 3)] and rep.triplet_notes == sum(t % (RES // 4) != 0 for t in ticks) > 40, bpm
+    eighths = [b + h for b in range(120) for h in ((0, 0.5) if b % 3 else (0, 1 / 3, 2 / 3))]
+    for rules, octave_ok in ((QuantizeRules(straight=2, triplet=3), True), (QuantizeRules(straight=2, triplet=0),
+                                                                             False)):
+        ticks, rep = snapped(const_map(200.0), eighths, jitter_ms=6, seed=9, rules=rules)
+        if octave_ok:
+            assert ticks == [round(p * RES) for p in eighths] and rep.triplet_notes == 2 * 40
+        else:
+            assert rep.triplet_notes == 0 and all(t % (RES // 2) == 0 for t in ticks)

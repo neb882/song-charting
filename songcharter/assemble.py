@@ -16,7 +16,9 @@ own difficulties, star power, fills and sections, and a Clone Hero folder that i
      hold a clear 8th/16th phase (`grid_secondary`: by default the guitar stem, else "other"; none when the grid
      comes from the mix). The octave pass (`_octave_pass`, DESIGN.md 2.3) builds the grid again at twice the tempo
      when the notes are too dense for it; when that doubled grid's straight line misses a tempo change and the
-     sections file holds allin1's beats, the doubled grid starts from them instead (`allin1_start`). The bar phase
+     sections file holds allin1's beats, the doubled grid starts from them instead (`allin1_start`). A grid the
+     notes leave at 1 that runs at twice allin1's beats, under the fold's 85 BPM floor halved, is built again from
+     allin1's beats (`halving_test`, `_halving_pass`), its slots and offset at the first grid's level. The bar phase
      of the grid chosen is the one allin1's downbeats vote for, when the sections file holds them
      (beatgrid.with_downbeats; else the kick's, beatgrid.bar_phase; DESIGN.md 2.3 step 4). A window whose
      tempo the grid does not follow (stats["tempo_check"]), and a stretch of 16 or more beats that neither the drums
@@ -231,7 +233,8 @@ class AssembleConfig:
     first_beat: float | None = None
     grid_mode: str | None = None                   # "free" or "click" overrides beat_grid's choice
     grid_octave: str | int = "auto"                # "auto": doubled when the notes are too dense for the grid
-                                                   # (grid_octave, DESIGN.md 2.3); 1 or 2 forces it
+                                                   # (grid_octave, DESIGN.md 2.3), halved at twice allin1's beats
+                                                   # (halving_test); 1 (no halving) or 2 forces it
     grid_source: str | None = None                 # a stem name or "mix" (default: the drum stem, else the mix)
     grid_secondary: str | None = None              # the stem drumless beats follow: a stem name, "mix", or "" for
                                                    # none (default: the guitar stem, else other; none from the mix)
@@ -706,7 +709,8 @@ def clip_to_audio(tracks: dict[str, Track], tempo: TempoMap, audio_end: float, m
 
 # ------------------------------------------------------------------------------------------------ the grid's octave
 
-# DESIGN.md 2.3, the octave pass (doubling only): a grid whose 1/16 slots cannot hold the notes is an octave too slow
+# DESIGN.md 2.3, the octave pass: a grid whose 1/16 slots cannot hold the notes is an octave too slow (doubling);
+# one at twice allin1's beats, under the fold's floor halved, an octave too fast (halving, after the constants below)
 OCTAVE_SHORT = 0.75        # an interval between onsets is short under this share of a 1/16 of its beat: the ones
                            # the quantizer would merge, move or drop (its `separate` is 0.75 slot)
 OCTAVE_SHARE = 0.35        # the grid doubles when this share of the intervals, pooled over the parts, is short
@@ -726,7 +730,15 @@ DOUBLED_LYRIC_SLOTS = (2, 3)  # the doubled grid's 8ths and their triplets for t
                               # run up to 75 ms early on a fast song, which the doubled grid's 16ths (75 ms at 200
                               # BPM) put a 1/16 before the human's, where the first grid's 16ths put them on it
 OCTAVE_EVIDENCE_MIN = 0.7  # the doubled grid is kept when its confident share is at least this times the first's
-                           # (PROVISIONAL, M5-01's open question: 0.5 is no evidence between the first grid's beats)
+                           # (PROVISIONAL, M5-01's open question: 0.5 is no evidence between the first grid's beats);
+                           # the halved grid by the same guard
+# The halving pass (M6-06, DESIGN.md 2.3): a first grid at twice the pulse (the fold forces one on a pulse under
+# BPM_RANGE's floor) is built again from allin1's beats when the density test kept it at 1 and ...
+HALVE_TOLERANCE = 0.1      # ... its median beat rate is twice allin1's within this share of 2 (the shred stress
+                           # song 2.002, the ten other songs 0.994-1.009) ...
+HALVE_MIN_BEATS = 16       # ... over at least this many of allin1's beats inside the audio, and the halved tempo
+                           # is under BPM_RANGE's floor: a pulse the first pass could not hold (allin1 sits at half
+                           # the humans' tempo on both 200 BPM stress songs, so it alone is no reason to halve)
 
 
 @dataclass(frozen=True)
@@ -738,6 +750,8 @@ class OctaveRules:
     window_s: float = BACKBEAT_WINDOW_S
     min_beats: int = BACKBEAT_MIN_BEATS
     evidence_min: float = OCTAVE_EVIDENCE_MIN
+    halve_tolerance: float = HALVE_TOLERANCE
+    halve_min_beats: int = HALVE_MIN_BEATS
 
 
 OCTAVE_RULES = OctaveRules()
@@ -782,9 +796,10 @@ def backbeat_ratio(features: OnsetFeatures, beats: np.ndarray, window_s: float =
 
 def grid_octave(onsets_by_part: dict[str, Any], beats: np.ndarray, features: OnsetFeatures | None,
                 rules: OctaveRules = OCTAVE_RULES) -> tuple[int, dict]:
-    """(octave, stats): 2 when the grid is an octave too slow for the notes, else 1 (DESIGN.md 2.3; halving is not
-    built). onsets_by_part: each charted part's distinct Expert onset times (input seconds, before quantizing);
-    beats: the grid's beats (input seconds); features: the drum stem's OnsetFeatures, None without drums.
+    """(octave, stats): 2 when the grid is an octave too slow for the notes, else 1 (DESIGN.md 2.3; a grid too fast
+    is halving_test's, which reads allin1's beats, not the notes). onsets_by_part: each charted part's distinct
+    Expert onset times (input seconds, before quantizing); beats: the grid's beats (input seconds); features: the
+    drum stem's OnsetFeatures, None without drums.
 
     The density test: per part, the share of intervals between onsets shorter than `rules.short` of a 1/16 of
     their beat (short_intervals), pooled weighted by the parts' onset counts. The octave is 2 when the pooled share
@@ -822,6 +837,43 @@ def grid_octave(onsets_by_part: dict[str, Any], beats: np.ndarray, features: Ons
              "bpm": round(bpm, 4), "thresholds": {"short": rules.short, "share": rules.share,
                                                   "max_bpm": rules.max_bpm, "min_onsets": rules.min_onsets}}
     return octave, stats
+
+
+def halving_test(first_bpm: float, allin1: np.ndarray | None, duration: float = math.inf,
+                 rules: OctaveRules = OCTAVE_RULES) -> tuple[bool, dict]:
+    """(halve, record): whether a first grid at first_bpm (its median tempo) is at twice the pulse (DESIGN.md 2.3,
+    M6-06). The statistic is its beat rate over allin1's, both medians, allin1's from its beats inside the audio
+    (the sections file's, seconds of the input). It halves when that ratio is 2 within rules.halve_tolerance of 2,
+    over at least rules.halve_min_beats of allin1's beats, and the halved tempo is under BPM_RANGE's floor: a pulse
+    the first pass's fold could not hold. A tempo it could hold stays (allin1 halves fast songs: both 200 BPM stress
+    songs). The record holds the numbers, the thresholds and why."""
+    lo = BPM_RANGE[0]
+    rec: dict[str, Any] = {"allin1_beats": None, "allin1_bpm": None, "rate_ratio": None,
+                           "halved_bpm": round(first_bpm / 2, 4),
+                           "thresholds": {"tolerance": rules.halve_tolerance, "min_beats": rules.halve_min_beats,
+                                          "floor_bpm": lo, "evidence_min": rules.evidence_min}}
+    if allin1 is None:
+        return False, {**rec, "halve": False, "why": "the sections have no allin1 beats"}
+    b = np.unique(np.asarray(allin1, dtype=np.float64))
+    b = b[(b >= 0) & (b <= duration)]
+    rec["allin1_beats"] = int(len(b))
+    if len(b) < rules.halve_min_beats:
+        return False, {**rec, "halve": False,
+                       "why": f"{len(b)} allin1 beats inside the audio (under {rules.halve_min_beats})"}
+    a1 = 60.0 / float(np.median(np.diff(b)))
+    ratio = first_bpm / a1
+    rec.update(allin1_bpm=round(a1, 4), rate_ratio=round(ratio, 4))
+    why_not = []
+    if abs(ratio / 2 - 1) > rules.halve_tolerance:
+        why_not.append(f"the grid's beat rate is {ratio:.3f} times allin1's (not 2 within "
+                       f"{rules.halve_tolerance:.0%})")
+    if first_bpm / 2 >= lo:
+        why_not.append(f"halved it would be {first_bpm / 2:.1f} BPM, not under the first pass's floor ({lo:.0f} BPM)")
+    if why_not:
+        return False, {**rec, "halve": False, "why": "; ".join(why_not)}
+    return True, {**rec, "halve": True, "why": f"the grid's beat rate is {ratio:.3f} times allin1's ({a1:.1f} BPM), "
+                                               f"and halved it is {first_bpm / 2:.1f} BPM, under the first pass's "
+                                               f"floor ({lo:.0f} BPM)"}
 
 
 # ------------------------------------------------------------------------------------------------ ratings
@@ -1360,9 +1412,20 @@ def _splice_takes(part: PartConfig, song: TimedSong, takes: list[TimedSong], sec
     return replace(song, parts={**song.parts, key: spliced}), info
 
 
+def offset_map(tempo: TempoMap, beats, octave: float = 1, tolerance: float = 0.003) -> TempoMap:
+    """The map a part's offset is measured on (estimate_offset reads 16th-note phases): the chart's, and on a halved
+    grid (octave 0.5) its beats (`beats`, the map's, from tick 0) with a midpoint between each two, the first grid's
+    level, whose 16ths are the halved grid's 1/32 slots: so the phases are those of the slots the notes keep."""
+    if octave != 0.5:
+        return tempo
+    b = np.asarray(beats, dtype=np.float64)
+    return TempoMap.from_beats(np.sort(np.concatenate([b, 0.5 * (b[:-1] + b[1:])])), resolution=tempo.resolution,
+                               tolerance=tolerance)
+
+
 def _offset(part: PartConfig, song: TimedSong, tempo: TempoMap, pad: float) -> tuple[float, dict, list[str]]:
-    """The part's offset against our grid (measured on its source's Expert; one for all its levels and its takes,
-    which share the source's clock), its report and warnings."""
+    """The part's offset against our grid (measured on its source's Expert, on `tempo`: offset_map's; one for all
+    its levels and its takes, which share the source's clock), its report and warnings."""
     times = [n.time for n in song.parts[(part.from_instrument, "expert")].notes]
     n = len(set(times))
     measured, conc = estimate_offset(times, tempo, pad)
@@ -1378,30 +1441,43 @@ def _offset(part: PartConfig, song: TimedSong, tempo: TempoMap, pad: float) -> t
     return applied, info, warnings
 
 
-def part_rules(part: PartConfig, octave: int = 1):
-    """The quantizer's rules for a part: its HOPO rule (HOPO_RULES), and on a doubled grid (octave 2) the bass one
+def _halved_slots(rules: QuantizeRules) -> QuantizeRules:
+    """A halved grid's slots (M6-06, DESIGN.md 2.6): twice the first grid's per beat, its 1/16s and 8th-note
+    triplets the halved grid's 1/32s and 16th-note triplets, so the notes keep the slots the first grid gave them
+    (on the shred stress song 17 % of the guitar's notes and 28 % of the bass's sit on the first grid's odd 16ths)."""
+    return replace(rules, straight=2 * rules.straight, triplet=2 * rules.triplet)
+
+
+def part_rules(part: PartConfig, octave: float = 1):
+    """The quantizer's rules for a part: its HOPO rule (HOPO_RULES); on a doubled grid (octave 2) the bass one
     slot level coarser and with no triplet slots (DOUBLED_BASS_SLOTS, DESIGN.md 2.6): the bass engine's onsets spread
     about a 16th either side of the notes at 200 BPM, which the doubled grid's 16ths cannot resolve, and its 8ths that
-    far off lie nearer the doubled grid's triplets than its 8ths."""
+    far off lie nearer the doubled grid's triplets than its 8ths; on a halved grid (octave 0.5) every part one slot
+    level finer (_halved_slots)."""
     rules = HOPO_RULES[part.hopo]
     if octave == 2 and part.instrument == "bass":
         rules = replace(rules, straight=DOUBLED_BASS_SLOTS[0], triplet=DOUBLED_BASS_SLOTS[1])
+    elif octave == 0.5:
+        rules = _halved_slots(rules)
     return rules
 
 
-def lyric_rules(octave: int = 1) -> QuantizeRules:
+def lyric_rules(octave: float = 1) -> QuantizeRules:
     """The rules the lyrics snap by (lyrics.place): the quantizer's, and on a doubled grid (octave 2) one slot level
     coarser (DOUBLED_LYRIC_SLOTS, DESIGN.md 2.15), the doubled grid's 8ths and their triplets, which are the first
     grid's 16ths and its 16th-note triplets: so the words keep the straight slots the first grid gave them (its
     8th-note triplets are a subset of the triplet slots). On the power-metal stress song the aligner puts 0.29 of the
     words 38-75 ms early, and the doubled grid's 75 ms 16ths snap them to the slot before the human's (M5-04: a median
-    67 ms off, against 7 ms on the first grid)."""
+    67 ms off, against 7 ms on the first grid). On a halved grid (octave 0.5) one level finer, the first grid's slots
+    again (_halved_slots; no song with words halves yet)."""
     if octave == 2:
         return replace(RULES, straight=DOUBLED_LYRIC_SLOTS[0], triplet=DOUBLED_LYRIC_SLOTS[1])
+    if octave == 0.5:
+        return _halved_slots(RULES)
     return RULES
 
 
-def _quantize(part: PartConfig, song: TimedSong, tempo: TempoMap, pad: float, offset: float, octave: int = 1
+def _quantize(part: PartConfig, song: TimedSong, tempo: TempoMap, pad: float, offset: float, octave: float = 1
               ) -> dict[str, tuple[Track, QuantizeReport]]:
     """The part's taken difficulties on our grid, every one moved by the part's offset (_offset), with its rules
     (part_rules); on the guitar a chord inside a fast run becomes one note (quantize.run_chords, DESIGN.md 2.6)."""
@@ -1491,10 +1567,49 @@ def allin1_start(allin1: np.ndarray | None, grid_bpm: float, duration: float = m
     return start, {**rec, "why": f"allin1's beats doubled: {len(start)} beats at {bpm:.1f} BPM"}
 
 
+def _halving_pass(first: BeatGrid, stats: dict, second_pass, allin1: np.ndarray | None, duration: float,
+                  rules: OctaveRules) -> tuple[BeatGrid, float, dict, str, list[str]]:
+    """The halving (DESIGN.md 2.3, M6-06) of a first grid the density test kept at 1: _octave_pass's return. When
+    halving_test says the grid is at twice allin1's beats, under the fold's floor halved, the grid is built again
+    from allin1's beats: moved to onset times (minus ONSET_TO_BEAT_MS, beat_grid's start= convention), at the fold
+    range halved, without the half-beat test (allin1's beats give the phase), `second_pass(bpm, bpm_range,
+    start=..., half_beat=False)`, which refines them onto the drums (free mode) and finds their downbeats as for any
+    grid. Not every other line of the first grid: on the shred stress song the first grid slips a line in a tempo
+    dip the humans and allin1 do not have, so its parity on allin1's beats flips at 300 s. The halved grid is kept,
+    octave 0.5, when its confident share is at least rules.evidence_min times the first's (the doubling's guard);
+    otherwise the first stays, with a warning. stats["halving"] records it all."""
+    halve, rec = halving_test(first.bpm, allin1, duration, rules)
+    stats["halving"] = rec
+    if not halve:
+        return first, 1, stats, stats["reason"], []
+    lo, hi = BPM_RANGE
+    start = np.unique(np.asarray(allin1, dtype=np.float64)) - ONSET_TO_BEAT_MS / 1000.0
+    try:
+        halved = second_pass(first.bpm / 2, (lo / 2, hi / 2), start=start, half_beat=False)
+    except InputError as e:  # beatgrid: no confident drum evidence around them
+        halved, rec["failed"] = None, str(e)
+    s1 = first.stats["evidence"]["confident_share"]
+    s2 = halved.stats["evidence"]["confident_share"] if halved is not None else 0.0
+    ratio = s2 / s1 if s1 > 0 else (math.inf if s2 > 0 else 0.0)
+    rec["halved"] = None if halved is None else _grid_record(halved)
+    rec["evidence_ratio"] = round(ratio, 4) if math.isfinite(ratio) else None
+    rec["kept"] = halved is not None and ratio >= rules.evidence_min
+    share = f"the halved grid's confident share {s2:.2f} against {s1:.2f} (ratio {ratio:.2f}"
+    if rec["kept"]:
+        return halved, 0.5, stats, f"{stats['reason']}; {rec['why']}; {share}, at least {rules.evidence_min})", [
+            f"tempo halved to {halved.bpm:.1f} BPM: the first grid's {first.bpm:.1f} BPM is twice allin1's beats "
+            f"({rec['allin1_bpm']:.1f} BPM), and the grid follows them: check sync"]
+    return first, 1, stats, f"{stats['reason']}; {rec['why']}; but {share}, under {rules.evidence_min}): the " \
+        "first grid stays", [f"tempo: the first grid's {first.bpm:.1f} BPM is twice allin1's beats "
+                             f"({rec['allin1_bpm']:.1f} BPM) but the drums give no evidence at that tempo: check "
+                             "the tempo"]
+
+
 def _octave_pass(cfg: AssembleConfig, first: BeatGrid, onsets: dict[str, list[float]],
                  drum_features: OnsetFeatures | None, second_pass, allin1: np.ndarray | None = None,
-                 duration: float = math.inf) -> tuple[BeatGrid, int, dict, str, list[str]]:
-    """The grid's octave (DESIGN.md 2.3, doubling only): (grid, octave, stats, reason, warnings). grid_octave
+                 duration: float = math.inf) -> tuple[BeatGrid, float, dict, str, list[str]]:
+    """The grid's octave (DESIGN.md 2.3): (grid, octave, stats, reason, warnings), the octave 2 (doubled), 1 or 0.5
+    (halved: _halving_pass, when grid_octave says 1 under auto; stats["halving"] says why or why not). grid_octave
     decides on the first grid unless the config forces it; a 2 builds the grid again at twice the first grid's
     click tempo, with the fold range doubled, no first-beat hint and the half-beat phase test
     (`second_pass(bpm, bpm_range)`; beatgrid.half_beat_phase). When that grid's tempo check (its stats["tempo_check"],
@@ -1515,8 +1630,12 @@ def _octave_pass(cfg: AssembleConfig, first: BeatGrid, onsets: dict[str, list[fl
         if want == 2 and 2 * first.bpm > rules.max_bpm:
             raise InputError(f"grid_octave 2: the doubled tempo, {2 * first.bpm:.1f} BPM, passes "
                              f"{rules.max_bpm:.0f} BPM")
+    if want == 1 and not forced:
+        return _halving_pass(first, stats, second_pass, allin1, duration, rules)
+    stats["halving"] = {"halve": False, "why": f"forced: grid_octave {want}" if forced else
+                        "the notes are too dense for the first grid: the density test doubles it"}
     if want == 1:
-        return first, 1, stats, ("forced: grid_octave 1" if forced else stats["reason"]), []
+        return first, 1, stats, "forced: grid_octave 1", []
     lo, hi = BPM_RANGE
     bpm2, range2 = 2 * first.stats["click"]["bpm"], (2 * lo, 2 * hi)
     try:
@@ -1625,14 +1744,15 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
               for p in cfg.parts}
     grid, octave, octave_stats, octave_reason, warn = _octave_pass(
         cfg, grid, onsets, features if src == "drums" else None,
-        lambda bpm, bpm_range, start=None: beat_grid(grid_audio, sr, duration=duration, bpm=bpm, mode=cfg.grid_mode,
-                                                     secondary=second_stem, features=features, bpm_range=bpm_range,
-                                                     half_beat=True, keep_line=True, start=start),
+        lambda bpm, bpm_range, start=None, half_beat=True: beat_grid(
+            grid_audio, sr, duration=duration, bpm=bpm, mode=cfg.grid_mode, secondary=second_stem, features=features,
+            bpm_range=bpm_range, half_beat=half_beat, keep_line=True, start=start),
         _read_allin1_beats(cfg), duration)
     warnings += warn
     grid = with_downbeats(grid, _read_allin1_beats(cfg, downbeats=True))  # the bar phase (DESIGN.md 2.3 step 4)
     lead = plan_lead_in(grid.beats, grid.downbeats, sr, min_lead=cfg.lead_in, duration=duration)
     tm = TempoMap.from_beats(lead.beats, bars=lead.bars, tolerance=cfg.tempo_tolerance)
+    tm_offset = offset_map(tm, lead.beats, octave, cfg.tempo_tolerance)
     pad = lead.pad_seconds
     song_end = (mix.shape[1] + lead.pad_samples) / sr  # song.ogg's length on the map: the decode after the pad
     res = tm.resolution
@@ -1695,7 +1815,9 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
     report["parts"] = {}
     for part in cfg.parts:
         song, spliced = songs[part.key], None
-        applied, offset, warn = _offset(part, song, tm, pad)
+        applied, offset, warn = _offset(part, song, tm_offset, pad)
+        if tm_offset is not tm:
+            offset["map"] = "the halved grid's beats with their midpoints: the first grid's level (offset_map)"
         warnings += warn
         if takes[part.key]:
             song, spliced = _splice_takes(part, song, takes[part.key],
