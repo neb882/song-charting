@@ -82,7 +82,7 @@
     },
     {
       "id": "M6",
-      "status": "started 2026-11-06 at the owner's go-ahead; orders written by the orchestrator from v0.2.0's gate, M5-99 and measurements: M6-01 (star power and solo caps on fast songs) merged 2026-11-06 at 0c63090, M6-02 (the bass's triplet slots on a doubled grid) merged 2026-11-06 at 80a3c1f, M6-04 (chords in fast runs) merged 2026-11-06 at f84b0e0; M6-05 (a tempo change under a doubled grid, from allin1's beats) merged 2026-11-06 at ee2fdb3; M6-07 (build_ref reads every package; the 20-song set's 50 charts all build) merged 2026-11-06 at 8d92be8; M6-03 (downbeats) and M6-06 (the halving rule) building, side by side, from one shared before run of main after M6-05; the 20-song reference set being built from the owner's audio",
+      "status": "started 2026-11-06 at the owner's go-ahead; orders written by the orchestrator from v0.2.0's gate, M5-99 and measurements: M6-01 (star power and solo caps on fast songs) merged 2026-11-06 at 0c63090, M6-02 (the bass's triplet slots on a doubled grid) merged 2026-11-06 at 80a3c1f, M6-04 (chords in fast runs) merged 2026-11-06 at f84b0e0; M6-05 (a tempo change under a doubled grid, from allin1's beats) merged 2026-11-06 at ee2fdb3; M6-07 (build_ref reads every package; the 20-song set's 50 charts all build) merged 2026-11-06 at 8d92be8; M6-03 (downbeats, from allin1's) merged 2026-11-07 at 35dab63; M6-06 (the halving rule) in review; the 20-song reference set being built from the owner's audio",
       "what": "v0.3.0: fast songs charted more like the humans' (star power, solos, the bass, downbeats; then the chords in fast runs, tempo changes, the 20-song set, M5-99's other items)"
     }
   ],
@@ -107,17 +107,10 @@
       "then": "the owner sends the friend the release link with the guide's update line; the friend's notes count most"
     },
     {
-      "order": "M6-03 downbeats on fast songs",
-      "branch": "m6-03-fast-downbeats",
-      "worktree": "wt/m6-03 beside the checkout (dev machine)",
-      "stage": "building (2026-11-06), from main after M6-05: pm2's bar phase moved one beat under M6-05 (its lower levels fell)",
-      "report": "<scratchpad>/briefs/m6-03.report.md, then docs/reports/M6-03-fast-downbeats.md"
-    },
-    {
       "order": "M6-06 a grid at twice the humans' tempo, halved",
       "branch": "m6-06-halving",
       "worktree": "wt/m6-06 beside the checkout (dev machine)",
-      "stage": "building (2026-11-06), step 1 measured (our first grid's rate over allin1's: the shred song 2.00, the other ten 0.99-1.01)",
+      "stage": "built 2026-11-07 (ef1e020, CI green): sooth at 77 BPM, beat F1 0.644 -> 0.985, every F1@50 up, the other songs identical; star power 3.89 -> 1.89 a minute (the humans 2.33-3.23); in review; then main (M6-03) merged in and sooth rerun for its downbeats",
       "report": "<scratchpad>/briefs/m6-06.report.md, then docs/reports/M6-06-halving.md"
     }
   ],
@@ -212,7 +205,8 @@
     "[M5-13] clonehero.install reads report.json in every top-level folder of Songs on each install: unmeasured on a large library over drvfs (the owner's PC check times it). A v0.1.0 chart whose song.ini name or artist differ from today's for the same file is not matched (two differently named entries). songcharter/ui/server.py's install docstring still says the 409 comes when the same-name folder is there; it can name an older folder now.",
     "[gate] tests/test_art.py::test_without_pillow_a_given_image_is_a_tool_error_and_an_embedded_one_a_warning failed once in a local full suite (M5-13's first run) and passed five reruns and both CI suites: a flaky test, cause unchecked (perhaps art.py's ffmpeg probe of the embedded picture).",
     "[M6-07] eval/lyrics_timing.py (stress.py lyrics) still reads a MIDI with mido, which refuses the Phase Shift sysex events with a 0xFF data byte that M6-07's strip now walks: the lyrics timing check cannot run on those packages (eight of the 20-song set's 50). Read the lyric events with the same walk.",
-    "[M6-07] The 20-song set (the owner's audio and list, in $DEV/eval-set20, outside the repository): its ids spell the songs' titles, which stay private until the owner says otherwise, so committed files label the songs s01-s13 and name no package. privacy_check reads one local list ($EVAL_DATA/stress.local.json); checking the 20-song list too needs a rule for an artist's name that is a common English word (it flags that word everywhere)."
+    "[M6-07] The 20-song set (the owner's audio and list, in $DEV/eval-set20, outside the repository): its ids spell the songs' titles, which stay private until the owner says otherwise, so committed files label the songs s01-s13 and name no package. privacy_check reads one local list ($EVAL_DATA/stress.local.json); checking the 20-song list too needs a rule for an artist's name that is a common English word (it flags that word everywhere).",
+    "[M6-03] The lower levels' bar: on troop our Medium thins the bar's last beat, the humans' beat 4 since M6-03 (they play it a little more than beat 2: Medium F1@50 0.013-0.018 lower); on pm2 our Medium and Easy drums keep on-beat hits under the hi-hat rule where the humans' sit on beat 1 and the off-beat 8ths (0.579 -> 0.459 and 0.553 -> 0.378 under M6-05). The ladder's calibration (reduce.py), measured against the humans' lower levels on the stress set and the 20-song set; Expert is unchanged."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
   "how_work_is_run": "docs/PIPELINE.md. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices, /prompt-caching, /sub-agents, /settings",

@@ -415,6 +415,49 @@ def test_the_grid_gets_a_second_stem_and_the_quantizer_the_source_beats(built, t
             assert all(abs(stats[k] - old[k]) < 0.002 for k in ("first_note", "last_note")), (inst, d)
 
 
+def test_the_bar_phase_follows_allin1s_downbeats(built, tmp_path):
+    """With allin1's downbeats in the sections file, the measures start where they fall (here on the kick's beat 3,
+    against its sure beat 1: warned), and the report says so; downbeats split between two beats of the bar are
+    flagged with allin1's reason. The fixture's sections file holds none: the kick's phase, 0."""
+    root, result, _ = built
+    assert result.report["grid"]["downbeat_source"] == "kick" and result.report["grid"]["downbeat_phase"] == 0
+    segments = json.loads((root / "allin1.json").read_text(encoding="utf-8"))["segments"]
+
+    def build(downbeats, name):
+        (tmp_path / f"{name}.json").write_text(json.dumps({"segments": segments, "downbeats": downbeats}),
+                                               encoding="utf-8")
+        return assemble(parse_config({**CONFIG, "sections": str(tmp_path / f"{name}.json")}, root,
+                                     tmp_path / name))
+
+    on3 = [beat(k) + 0.01 for k in range(2, BEATS, 4)]
+    r = build(on3, "on3")
+    g, tm, pad = r.report["grid"], r.chart.tempo, r.lead.pad_seconds
+    assert (g["downbeat_phase"], g["downbeat_source"], g["downbeats_uncertain"]) == (2, "allin1", False)
+    assert g["stats"]["downbeats"]["kick"]["phase"] == 0 and r.report["gate"]["ok"]
+    first = tm.tick_to_sec(r.lead.first_beat * tm.resolution)
+    assert abs(first - pad - beat(2)) < 0.03 and (r.lead.first_beat * tm.resolution) % (4 * tm.resolution) == 0
+    assert [w for w in r.report["warnings"] if w.startswith("downbeats")] == [
+        f"downbeats follow allin1's, 2 beat(s) after the kick's beat 1 (bar-phase margin "
+        f"{g['stats']['downbeats']['kick']['margin']:.3f}): check where beat 1 is"]
+    on2 = [beat(k) + 0.01 for k in range(1, BEATS, 4)]   # one beat after the kick's beat 1, not three
+    g = build(on2, "on2").report
+    assert [w for w in g["warnings"] if w.startswith("downbeats")] == [
+        f"downbeats follow allin1's, 1 beat(s) after the kick's beat 1 (bar-phase margin "
+        f"{g['grid']['stats']['downbeats']['kick']['margin']:.3f}): check where beat 1 is"]
+    split = [beat(k) for k in range(0, BEATS, 4)][::2] + on3[1::2]   # the sure kick's beat 1 and its beat 3
+    g = build(sorted(split), "split").report
+    assert (g["grid"]["downbeat_source"], g["grid"]["downbeat_phase"], g["grid"]["downbeats_uncertain"]) == (
+        "kick", 0, False)
+    assert not [w for w in g["warnings"] if w.startswith("downbeats")]
+    on4 = [beat(k) + 0.01 for k in range(3, BEATS, 4)]
+    split = on2[::2] + on4[1::2]                                       # beats 2 and 4: neither is the kick's
+    g = build(sorted(split), "split2").report
+    assert g["grid"]["downbeat_source"] == "allin1" and g["grid"]["downbeats_uncertain"]
+    assert [w for w in g["warnings"] if w.startswith("downbeats")] == [
+        f"downbeats uncertain (bar-phase margin {g['grid']['downbeat_margin']:.3f}): allin1's downbeats fall on "
+        "more than one beat of the bar: check where beat 1 is"]
+
+
 def test_cli_rebuilds_the_same_chart(built, tmp_path, monkeypatch):
     """Byte-identical notes.chart and song.ini from the command line, a config with a UTF-8 BOM (Windows
     PowerShell's), and a folder name stdout's code page cannot show (cp1252, as on Windows when stdout is a pipe)."""
@@ -939,6 +982,11 @@ def test_check_inputs(tmp_path):
     check_inputs(cfg)  # allin1's beats (the second pass's start on a tempo change, _octave_pass)
     (tmp_path / "allin1.json").write_text(json.dumps({"segments": [], "beats": ["x"]}), encoding="utf-8")
     with pytest.raises(InputError, match="not an allin1 result .*'beats' is not a list of times"):
+        check_inputs(cfg)
+    (tmp_path / "allin1.json").write_text(json.dumps({"segments": [], "downbeats": [0.5]}), encoding="utf-8")
+    check_inputs(cfg)  # allin1's downbeats (the bar phase, beatgrid.with_downbeats)
+    (tmp_path / "allin1.json").write_text(json.dumps({"segments": [], "downbeats": [None]}), encoding="utf-8")
+    with pytest.raises(InputError, match="not an allin1 result .*'downbeats' is not a list of finite times"):
         check_inputs(cfg)
     (tmp_path / "allin1.json").write_text(json.dumps({"sections": []}), encoding="utf-8")
     with pytest.raises(ValueError, match="not an allin1 result"):
@@ -1890,6 +1938,13 @@ def test_a_doubled_grid_follows_a_tempo_change_from_allin1s_beats(stretch_song):
     assert not any("is not followed by the grid" in w for w in a.report["warnings"])
     assert any("is not followed by the grid" in w for w in b.report["warnings"])
     assert not any("allin1" in w for w in b.report["warnings"])
+    # the bar phase lands on the doubled grid the octave pass returned: allin1's downbeats (every 8th beat of it)
+    downbeats = json.loads((root / "allin1.json").read_text(encoding="utf-8"))["downbeats"]
+    assert ga["downbeat_source"] == "allin1" and not ga["downbeats_uncertain"]
+    vote = ga["stats"]["downbeats"]["vote"]
+    assert vote["voting"] == len(downbeats) and max(vote["counts"]) == len(downbeats)
+    bars = np.asarray(a.lead.beats)[a.lead.first_beat::4] - a.lead.pad_seconds
+    assert np.mean([np.min(np.abs(bars - d)) < 0.05 for d in downbeats]) > 0.95
 
 
 def test_allin1s_beats_change_nothing_when_the_doubled_grid_misses_no_tempo_change(fast_song):

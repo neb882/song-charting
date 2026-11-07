@@ -23,7 +23,9 @@ lands. The grid comes from the drum stem (or the mix when the song has no drums)
      following a live drummer costs nothing in play. (DESIGN.md's p95-drift click test is only reported, as
      stats["drift_ms"].)
   4. **Downbeats.** 4/4 for v1, in the bar phase that puts the most kick (40-160 Hz, against the snare's 150-400 Hz)
-     on beat 1. A small margin (kick on 1 and 3 alike) is flagged in stats["downbeats"]["uncertain"].
+     on beat 1. A small margin (kick on 1 and 3 alike) is flagged in stats["downbeats"]["uncertain"]. assemble then
+     takes the phase from allin1's downbeats when the sections file holds them (with_downbeats: the phase most of
+     them fall on), which the kick cannot give when it plays every beat or both 1 and 3 (DESIGN.md 2.3 step 4).
 
 The onset envelope is librosa's `onset_strength` (mel spectral flux in dB, 2048-point frames, hop 128 at 22050 Hz),
 computed at the input rate with the same frames in seconds. Its peaks sit after the beat lines of human charts: on
@@ -65,6 +67,7 @@ LOCAL_TEMPO_HOP_S = 5.0    # ... every 5 s, ...
 LOCAL_TEMPO_CHANGE = 0.10  # ... kept where it differs from the global tempo by more than 10 % ...
 LOCAL_TEMPO_MARGIN = 0.5   # ... and scores this much higher than the global period there
 DOWNBEAT_MIN_MARGIN = 0.15  # below this bar-phase margin the downbeats are flagged for review
+DOWNBEAT_SNAP = 0.25       # an external downbeat votes for its nearest beat when within this share of a beat
 HALF_BEAT_SHIFT = 1.25     # the beats move half a beat when the midpoints carry more than this x the lines' kick;
 HALF_BEAT_UNSURE = 0.8     # from this ratio up to the shift the beat phase is unsure (no shift, flagged)
 SECONDARY_DELTA = 0.12     # a second stem's onsets: peaks this far above the normalised envelope's local mean
@@ -112,8 +115,8 @@ class BeatGrid:
     (confident share and count, local peaks against the grid), drift_ms (the smoothed drummer against the line:
     p50, p95, max), mode (and why), free (largest beat-to-beat period change), secondary (given a second stem: its
     lag, calibration, beats timed; in free mode, with or without one, the drumless stretches), tempo_check (windows
-    whose tempo the grid misses), downbeats (phase, margin, uncertain, per-phase scores, per 16 bars),
-    onset_to_beat_ms. Times in stats are onset times, before the onset_to_beat shift.
+    whose tempo the grid misses), downbeats (phase, margin, uncertain, source; the kick's per-phase scores and per
+    16 bars; after with_downbeats the vote and the kick's own phase), onset_to_beat_ms. Times in stats are onset times, before the onset_to_beat shift.
     """
     beats: np.ndarray      # beat times, seconds of input audio, strictly increasing
     downbeats: np.ndarray  # indices into beats that start a measure (4/4)
@@ -897,8 +900,64 @@ def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None
     rot = lambda p: (p - first_kept) % 4  # noqa: E731  phases of the untrimmed beats, renumbered
     downbeats = np.arange(rot(phase), len(beats), 4)
     stats["downbeats"] = {"phase": rot(phase), "margin": round(margin, 4), "uncertain": margin < DOWNBEAT_MIN_MARGIN,
-                          "scores": [scores[(p + first_kept) % 4] for p in range(4)],
+                          "source": "kick", "scores": [scores[(p + first_kept) % 4] for p in range(4)],
                           "windows": [(t, rot(p), m) for t, p, m in windows],
                           "windows_disagreeing": sum(1 for _, p, _ in windows if p != phase)}
     stats["onset_to_beat_ms"] = onset_to_beat_ms
     return BeatGrid(beats, downbeats, chosen, stats)
+
+
+# ---------------------------------------------------------------------------------------------------- downbeats
+
+def downbeat_vote(beats: np.ndarray, times: np.ndarray, window: float = DOWNBEAT_SNAP, beats_per_bar: int = 4
+                  ) -> tuple[int | None, float, list[int], int]:
+    """(phase, margin, counts, n): the beat index mod beats_per_bar that most of `times` fall on (downbeats from
+    another tracker, in the beats' convention). Each time votes for its nearest beat when it lies within `window`
+    of that beat's local period (the mean of its neighbouring intervals) of it; n is how many voted, counts the
+    votes per phase. The margin is the top phase's votes minus the next one's, over n (0 = a tie, 1 = every vote on
+    one phase); a tie goes to the lower phase. (None, 0.0, counts, 0) when none votes."""
+    b = np.asarray(beats, dtype=np.float64)
+    t = np.asarray(times, dtype=np.float64).reshape(-1)
+    counts = np.zeros(beats_per_bar, dtype=int)
+    if len(b) < 2 or not len(t):
+        return None, 0.0, counts.tolist(), 0
+    j = np.clip(np.searchsorted(b, t), 1, len(b) - 1)
+    j = np.where(np.abs(b[j - 1] - t) <= np.abs(b[j] - t), j - 1, j)
+    lo, hi = np.maximum(j - 1, 0), np.minimum(j + 1, len(b) - 1)
+    period = (b[hi] - b[lo]) / (hi - lo)
+    near = np.abs(b[j] - t) <= window * period
+    counts = np.bincount(j[near] % beats_per_bar, minlength=beats_per_bar)
+    n = int(near.sum())
+    if n == 0:
+        return None, 0.0, counts.tolist(), 0
+    order = np.argsort(-counts, kind="stable")
+    return int(order[0]), round(float(counts[order[0]] - counts[order[1]]) / n, 4), counts.tolist(), n
+
+
+def with_downbeats(grid: BeatGrid, times: np.ndarray | None, source: str = "allin1") -> BeatGrid:
+    """The grid with its bar phase from external downbeats (`times`, seconds in the beats' convention: allin1's,
+    DESIGN.md 2.3 step 4): every 4th beat from the phase downbeat_vote finds on its beats. stats["downbeats"] then
+    holds the vote's phase, margin and flag (its margin under DOWNBEAT_MIN_MARGIN), the source, the vote (counts per
+    phase, the downbeats given and voting, the window) and the kick's own phase, margin and flag under "kick"; the
+    kick's per-phase scores and windows stay as they were. With no times the grid is returned as it is; when none
+    falls near a beat, a copy keeps the kick's phase and records the vote. A split vote (its margin under
+    DOWNBEAT_MIN_MARGIN) whose two top phases hold a sure kick phase keeps the kick's too: the downbeats then say
+    no more than the kick does (allin1's on every other beat of a bar, say), and the kick is sure."""
+    if times is None:
+        return grid
+    phase, margin, counts, n = downbeat_vote(grid.beats, times)
+    db = dict(grid.stats["downbeats"])
+    vote = {"counts": counts, "given": int(np.asarray(times).size), "voting": n, "window": DOWNBEAT_SNAP}
+    if phase is None:
+        db["vote"] = {**vote, "source": source, "why": "no downbeat within the window of a beat: the kick's phase"}
+        return BeatGrid(grid.beats, grid.downbeats, grid.mode, {**grid.stats, "downbeats": db})
+    top = sorted(range(len(counts)), key=lambda q: (-counts[q], q))[:2]
+    if margin < DOWNBEAT_MIN_MARGIN and not db["uncertain"] and db["phase"] in top:
+        db["vote"] = {**vote, "source": source, "phase": phase, "margin": margin,
+                      "why": f"split between beats {top[0]} and {top[1]} of the bar, one of them the sure kick's: "
+                             "the kick's phase"}
+        return BeatGrid(grid.beats, grid.downbeats, grid.mode, {**grid.stats, "downbeats": db})
+    db["kick"] = {k: db[k] for k in ("phase", "margin", "uncertain")}
+    db.update(phase=phase, margin=margin, uncertain=margin < DOWNBEAT_MIN_MARGIN, source=source, vote=vote)
+    downbeats = np.arange(phase, len(grid.beats), 4)
+    return BeatGrid(grid.beats, downbeats, grid.mode, {**grid.stats, "downbeats": db})
