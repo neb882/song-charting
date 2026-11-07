@@ -52,6 +52,7 @@ ones then, but the CI runs they link still name the old ones.
 | `M6-07-build-ref.md` | build_ref reads every package: the MIDI strip walked byte by byte (Phase Shift sysex events mido refused), the chart by exact name; the 20-song set's 50 charts built (songs as s01-s13); the review and its fixes |
 | `M6-08-tempo-hang.md` | a tempo estimate always ends (a build stuck for an hour on the owner's PC: a negative period's octave fold); v0.2.1 |
 | `M6-10-gate-fixes.md` | v0.3.0's gate fixes: the full review's 12 minors (tests, allin1's model auto = fold 0 on every device, docs); the review |
+| `M6-09-listen.md` | a chart you can hear: `songcharter listen` and the Done screen's Listen box (tones per lane and pad over the song); the review's five minors and their fixes |
 | `set20-v03.md` | the 20-song set's 13 new songs on v0.3's code (songs as s01-s13): F1@50 against the primary and the humans' ceiling, the beat grid, what to do next |
 | `feel.md` | how a chart should feel to play: nine parts, each with a measure, revised after the advisor (M5) |
 | `m5-plan-review.md` | the advisor's review of the M5 plan and the three skeptics' verdicts |
