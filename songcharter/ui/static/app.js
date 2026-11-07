@@ -623,7 +623,7 @@ function option(value, label) {
 
 function stopListening() {
   const player = $("listen-audio");
-  if (typeof player.pause === "function") player.pause();
+  player.pause();
   player.removeAttribute("src");
   player.hidden = true;
 }

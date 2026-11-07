@@ -350,7 +350,7 @@ const vm = require("vm"), fs = require("fs");
 const els = {};
 const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [],
   replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); },
-  addEventListener() {}, classList: { add() {}, remove() {} } });
+  addEventListener() {}, classList: { add() {}, remove() {} }, removeAttribute() {}, pause() {} });
 const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node,
   addEventListener() {} };
 let xhr = null;
