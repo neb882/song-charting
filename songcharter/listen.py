@@ -375,8 +375,8 @@ def output_path(folder: Path, out: Path | None, part: str, difficulty: str) -> P
     """Where the command writes: --out, or <folder name>-<part>-<level>.ogg in the current folder (or in --out when
     that is a folder); never inside the song folder."""
     name = f"{folder.resolve().name}-{part}-{difficulty}.ogg"
-    path = Path.cwd() / name if out is None else (out / name if out.is_dir() else out)
-    path = path.expanduser().absolute()
+    out = None if out is None else out.expanduser()
+    path = (Path.cwd() / name if out is None else (out / name if out.is_dir() else out)).absolute()
     if inside(path, folder):
         raise InputError(f"{path} is inside the song folder: Clone Hero reads the audio files there, so write it "
                          "somewhere else (--out FILE)")

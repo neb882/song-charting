@@ -1982,6 +1982,21 @@ def test_listen_renders_caches_and_serves_only_its_own_files(finished):
     assert any("listen: guitar on expert rendered in" in line for line in ctx.lines)
 
 
+def test_a_render_that_cannot_be_written_says_why(finished, monkeypatch):
+    from songcharter import listen
+    ctx = finished
+    job = ctx.run()
+    listen_chart(job.out)
+
+    def full(*a, **k):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(listen, "cached", full)
+    status, answer = post(ctx, "/api/jobs/current/listen", {"part": "guitar", "level": "expert"})
+    assert status == 500 and answer["error"] == ("the guitar on Expert could not be made into sound: [Errno 28] No "
+                                                 "space left on device"), answer
+    assert not any("internal error" in line for line in ctx.lines)   # not logged as a bug
+
+
 def test_a_chart_that_failed_its_gate_can_be_listened_to(finished):
     ctx = finished
     ctx.mode = "fail"

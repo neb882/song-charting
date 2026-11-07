@@ -103,7 +103,7 @@ reads that event (the release gate's finding: the Done screen once hid "Install 
     result's chart (a gate that failed too: it is for a look) over the song, into the work folder's listen/ (a few
     seconds; the same chart's render is there already the next time), one render at a time; 200 {"url", "part",
     "level", "cached", "seconds"}; 400 for a part or level not among INSTRUMENTS and DIFFICULTIES, or not in the
-    chart, or no finished chart yet. GET /api/jobs/current/listen/<part>-<level>.ogg (audio/ogg, with byte ranges,
+    chart, or no finished chart yet; 500 with why when ffmpeg fails or the render cannot be written. GET /api/jobs/current/listen/<part>-<level>.ogg (audio/ogg, with byte ranges,
     so the player can seek) serves only a file this server rendered for the current job, looked up by that name
     in what the POST recorded: no path from the request reaches the file system; anything else 404.
 
@@ -668,8 +668,8 @@ class Handler(BaseHTTPRequestHandler):
                 path, was = listen.cached(folder, Path(str(result["work"])) / "listen", part, level)
             except InputError as e:
                 raise Refused(400, str(e)) from None
-            except ToolError as e:
-                raise Refused(500, str(e)) from None
+            except (ToolError, OSError) as e:   # ffmpeg failing, a full disk: no bug, said as it is
+                raise Refused(500, f"the {part} on {level.capitalize()} could not be made into sound: {e}") from None
             held = app.listened if app.listened is not None and app.listened[0] == job.id else (job.id, {})
             held[1][name] = path
             app.listened = held

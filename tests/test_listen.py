@@ -343,6 +343,10 @@ def test_songcharter_listen(tmp_path, monkeypatch, capsys):
     assert made.is_file() and str(made) in out and "listen: guitar on Expert, 1 notes over the song at -12 dB" in out
     assert cli.main(["listen", str(song), "--part", "drums", "--out", str(here)]) == 0
     assert (here / "Made-Up Band - Song-drums-expert.ogg").is_file()
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))   # a quoted ~ (the shell left it): the home folder's
+    (tmp_path / "home").mkdir()
+    assert cli.main(["listen", str(song), "--part", "drums", "--out", "~"]) == 0
+    assert (tmp_path / "home" / "Made-Up Band - Song-drums-expert.ogg").is_file()
     assert cli.main(["listen", str(song), "--tones-only", "--out", str(here / "t.wav")]) == 0
     assert "the notes alone" in capsys.readouterr().out and wav(here / "t.wav")[1] == SR
     for args, why in ((["--part", "bass"], "no bass on Expert"), (["--difficulty", "hard"], "no guitar on Hard"),
