@@ -1,6 +1,7 @@
 # M6-09: a chart you can hear
 
-**Branch:** `m6-09-listen`, from `main` at cb157b2 or later. **Agent:** `sc-builder`, then `sc-reviewer`. May push its
+**Release:** v0.3.1, after v0.3.0 (the owner, 2026-11-07): merged into main only after v0.3.0 is tagged, so the
+release the gate reviewed stays as it was. **Branch:** `m6-09-listen`, from `main` at cb157b2 or later. **Agent:** `sc-builder`, then `sc-reviewer`. May push its
 branch to run CI. **Files:** a new `songcharter/listen.py`, `songcharter/cli.py` (a `listen` command),
 `songcharter/ui/server.py` and `songcharter/ui/static/` (the Done screen's player), their tests, `docs/DESIGN.md` (a
 short section), `docs/guide/windows-wsl.md` (one bullet in section 5). Nothing that charts. **Time budget:** half a
