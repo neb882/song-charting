@@ -716,7 +716,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
        | `sooth` (primary / alt1) | before → after | the humans |
        |---|---|---|
        | beat F1 | 0.644 / 0.654 → **0.985 / 0.986** | 1.000 |
-       | downbeat F1 | 0.278 / 0.281 → **0.000 / 0.000** (bar-phase margin 0.029, flagged) | 1.000 |
+       | downbeat F1 | 0.278 / 0.281 → 0.000 / 0.000 (the kick's bar phase, margin 0.029); with M6-03's (merged): 0.297 / 0.297 → **0.989 / 0.989** | 1.000 |
        | guitar F1@50, Expert | 0.658 / 0.770 → 0.704 / 0.777 | 0.712 (alt1 against the primary) |
        | guitar F1@50, Hard / Medium / Easy (primary) | 0.655 / 0.594 / 0.439 → 0.721 / 0.674 / 0.542 | — |
        | bass F1@50, Expert / Hard / Medium / Easy (primary) | 0.692 / 0.825 / 0.842 / 0.634 → 0.710 / 0.855 / 0.883 / 0.693 | — |
@@ -729,9 +729,12 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
        `troop`, `pm2` and `break` keep every track's hash (`halving.why`: the density test doubles the first two;
        `break` reads 1.001). The seven references read 0.994–1.009 and are identical (the golden diff against main
        a89d6a0, `--expect none`, `--rerun bass,sections`: exit 0, every hash, count and score), so the quantizer's
-       shared-line rule moves nothing on a 4/3 grid either. The guitar's offset, measured at the first grid's
+       shared-line rule moves nothing on a 4/3 grid either. On the merged head against M6-03's golden run every
+       song's results are identical again; that diff's only UNEXPECTED entries are its run-level drums flag on both
+       runs (`beatgrid.py`, one of the drums engine's files, differs from the kept folders' commit: a false positive,
+       the orchestrator's decision on M6-03). The guitar's offset, measured at the first grid's
        level, is 2.5 ms (0.3 before), the bass's 57.9 ms (56.0); 92 guitar notes take triplet slots (116 before).
-       Three lines fall short:
+       Two lines fall short (and the downbeats did until M6-03 merged):
        - **Star power** counts beats (§2.10, M6-01: about one phrase per 40 beats, the span counted at most at 160
          BPM), so at 77 BPM it halves, to under the humans' 2.33–3.23 a minute. The humans place more phrases per
          beat at this tempo. That is the phrase rule's, not the grid's.
@@ -740,10 +743,14 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
          humans at the same 77 BPM keep more, so it is our beat-counted rule, not the tempo. Both rules are one
          M5-99 item ("beat-counted rules at a slow tempo"), to measure on the 20-song set's slow songs, not on
          `sooth` alone (the orchestrator, 2026-11-07: no code change in this order).
-       - **The downbeats.** With a kick on most 8ths, `bar_phase` on the halved grid has no margin, and every
-         measure line sits off the humans'. On the first grid, half of them coincided by chance. The lower levels
-         gain all the same. Downbeats on fast songs are M6-03's (this pass's grid comes from `beat_grid`, so a new
-         downbeat rule reaches it).
+       - **The downbeats.** With a kick on most 8ths, `bar_phase` on the halved grid has no margin (0.029), and
+         alone it put every measure line off the humans' (downbeat F1 0.000; on the first grid half of them had
+         coincided by chance). M6-03's vote of allin1's downbeats (step 4) runs on the grid this pass returns: on the
+         merged head (b279d13, against M6-03's stress run, `--rerun bass,sections`) all 172 voting downbeats pick one
+         phase (margin 1.000) over the kick's, and the downbeat F1 is 0.989 against both charts (0.297 at 154 BPM
+         with the vote). Beat F1, every F1@50, star power and the sustain shares are as in the table; the solo time
+         overlapping alt1's is 0.903 (0.824 on M6-03's run). `troop`, `break` and `pm2` keep every track's hash
+         there too, and the references against M6-03's golden run (below).
 
 **Whole-song runs tonight** [here, beatgrid run].
 
