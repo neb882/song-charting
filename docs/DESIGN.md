@@ -375,7 +375,89 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
      272–304 s; it stays available as `grid_secondary="mix"`. Bass timed nothing in the intro [here, review].
    - The fix matters most for guitar, which has 233 notes in those stretches, against 39 for bass and 18 for drums.
      Not measured: `score.py`'s beat F1, any Beat This start, Drunk Drivers; nobody has listened to it [here, review].
-4. **Bar phase.** The phase that puts the most kick (40–160 Hz against the snare's 150–400 Hz) on beat 1. A margin below 0.15 is flagged (`DOWNBEAT_MIN_MARGIN`) [code]. On the test song: phase 0, margin 0.58, no 16-bar window disagreeing [here, beatgrid run].
+4. **Bar phase: allin1's downbeats, else the kick** (M6-03) [code; here, M6-03's measurement and runs].
+   - **The kick's phase** (`bar_phase`): the phase that puts the most kick (40–160 Hz against the snare's 150–400 Hz)
+     on beat 1; a margin below 0.15 is flagged (`DOWNBEAT_MIN_MARGIN`). On the test song: phase 0, margin 0.58, no
+     16-bar window disagreeing [here, beatgrid run]. It has no margin when the kick plays every beat (the fast
+     stress songs) or 1 and 3 alike (most rock beats): 9 of the 11 songs below are under 0.15, and on three of them
+     the bars were one or two beats off (downbeat F1 0.000).
+   - **The rule** (`beatgrid.with_downbeats`, `downbeat_vote`). When the sections file holds allin1's downbeats
+     (`sections.read_allin1_downbeats`; allin1 writes them beside its beats), each votes for its nearest beat of the
+     grid within a quarter of the local beat period (`DOWNBEAT_SNAP`), and the phase most votes fall on starts the
+     bars, 4/4 as before. The margin is the top phase's votes minus the next one's, over the votes; under 0.15 the
+     downbeats are flagged ("allin1's downbeats fall on more than one beat of the bar"). A vote against a sure kick
+     phase (margin 0.15 or more) is warned about ("downbeats follow allin1's ..."); none of the eleven songs has
+     one. Without allin1's downbeats (the librosa fallback, an imported chart's sections, no sections), or when none
+     falls near a beat, the kick's phase stays. assemble applies it after the octave pass (step 7), to whichever
+     grid that pass returns. report.json's `grid.downbeat_source` says which phase was used, `stats.downbeats.kick`
+     keeps the kick's phase, margin and flag, and `stats.downbeats.vote` the votes.
+   - **The measurement.** Four candidates, each scored as downbeat F1 (±70 ms, score.py's) against every human
+     chart's measure lines:
+     - the kick's phase (today's);
+     - the first grid's downbeats carried onto the doubled grid (each to its nearest beat, the phase most of them
+       fall on);
+     - allin1's phase (the rule);
+     - a vote of the three (two that agree, else the kick's).
+
+     The grids were rebuilt from the kept stems with M6-05's code and checked against each run's report.json (M6-05's
+     runs; the references again on main after M6-05, identical). Ranges are over a song's human charts; "bar by bar"
+     is allin1's downbeats each taken as a bar line, not a candidate (below).
+
+     | song (charts) | grid BPM (octave) | kick: phase, margin | allin1's votes per phase, margin | kick (today) | carried | allin1 | vote | bar by bar |
+     |---|---|---|---|---|---|---|---|---|
+     | All the Small Things (1) | 147.6 (1) | 3, 0.001 | 0/0/0/99, 1.000 | 0.980 | = | 0.980 | 0.980 | 0.985 |
+     | Creep (1) | 92.3 (1) | 0, 0.194 | 89/0/0/0, 1.000 | 0.972 | = | 0.972 | 0.972 | 0.989 |
+     | Drunk Drivers (1) | 117.0 (1) | 0, 0.000 | 103/0/0/0, 1.000 | 1.000 | = | 1.000 | 1.000 | 0.986 |
+     | Kimochi Warui (1) | 107.0 (1) | 2, 0.014 | 125/0/0/0, 1.000 | **0.000** | = | **1.000** | 0.000 | 0.996 |
+     | Lucretia (1) | 98.2 (1) | 3, 0.110 | 2/0/22/63, 0.471 | 0.660 | = | 0.660 | 0.660 | 0.927 |
+     | Take Me Out (1) | 105.3 (1) | 3, 0.010 | 30/0/0/77, 0.439 | 0.706 | = | 0.706 | 0.706 | 0.973 |
+     | test song (none) | 142.0 (1) | 0, 0.616 | 231/0/0/0, 1.000 | — | = | — | — | — |
+     | `troop` (3) | 200.0 (2) | 2, 0.013 | 121/0/0/0, 1.000 | **0.000** | 0.000 (margin 0.095) | **0.998–1.000** | 0.000 | 0.984–0.986 |
+     | `sooth` (2) | 154.0 (1) | 1, 0.040 | 77/73/0/20, 0.024 | 0.278–0.281 | = | 0.297 | 0.278–0.281 | 0.657–0.664 |
+     | `break` (2) | 115.5 (1) | 1, 0.009 | 0/85/0/0, 1.000 | 0.988–1.000 | = | 0.988–1.000 | 0.988–1.000 | 0.975–0.988 |
+     | `pm2` (5) | 199.9 (2) | 3, 0.013 | 177/0/0/0, 1.000 | **0.000** | 0.000 (margin 0.898) | **0.978–0.985** | 0.000 | 0.980–0.986 |
+
+     ("=": the first grid is the grid, so the carried phase is the kick's.)
+   - **Why allin1's.** Its phase is each song's best single phase against every chart (19 of 19), and it is the only
+     candidate that fixes the fast songs: `troop` and `pm2` from 0.000 to 0.98–1.00, and Kimochi Warui from 0.000
+     to 1.000 (the kick on 1 and 3 alike, two beats off). Every other reference and `break` keep their phase, so
+     their F1 is unchanged. The test song keeps phase 0, the downbeat §6 records. `sooth` goes from 0.278–0.281
+     to 0.297: its grid is at twice the humans' tempo, so a 4-beat bar is half of theirs (M6-06 halves it, which
+     changes this row).
+
+     The other candidates fail. The carried phase is as wrong as the kick's on both doubled songs (one and two
+     beats off). The vote is the kick's wherever the first grid is the grid (there the carried phase is the kick's),
+     and on the doubled songs it takes the kick's or the carried phase.
+
+     Nothing was tuned. A window of 0.1, 0.25 or 0.5 of a beat gives the same phase on every song. No threshold is
+     set on the vote: allin1's phase is right on all eleven, with a margin of 1.000 on eight, 0.44–0.47 on Lucretia
+     and Take Me Out (whose bar phase changes inside the song), and 0.024 on `sooth` (flagged).
+   - **Not adopted: allin1's bars one by one** (each of its downbeats a bar line, so bars may change length). It
+     scores 0.927 on Lucretia, 0.973 on Take Me Out and 0.66 on `sooth`. But allin1 skips downbeats (bars of 5–30
+     beats on six songs, the test song among them), and the chart would leave 4/4: the meter is §2.4's (M5-99).
+   - **The golden charts** (main after M6-05, a89d6a0, against the branch; `--rerun bass,sections` on both,
+     `--expect none`). Only Kimochi Warui changed: its 12 tracks moved with its measures, two beats later (the
+     lead-in, the measures, star power, sections and the lower levels follow them). Its downbeat F1 went
+     0.000 → 1.000, its Expert onsets and F1@50 stayed the same, and its lower levels moved by 0–6 onsets. The other
+     six songs are byte-identical, the test song's phase 0 now coming from allin1's vote, and the pooled F1 is the
+     same on every part and level. The diff also flags the drums' kept output, because `beatgrid.py` is in the drums
+     engine's file list. That flag is the file-level check's: the engine reads only `estimate_tempo` and
+     `onset_features` from it, which this change leaves alone, and its cache key (which holds that tempo) answered.
+   - **The stress set** (main after M6-05 against the branch, the same reruns, `stress.py compare`: no regression).
+     Every Expert F1@50, star power phrases a minute and solo share is the same against every human chart. The
+     downbeat F1 against the primary:
+
+     | song | downbeat F1 | lower levels (F1@50 against the primary) |
+     |---|---|---|
+     | `troop` | 0.000 → **1.000** | guitar Medium 0.717 → 0.699, bass Medium 0.565 → 0.549, drums Medium and Easy 0.920 → 0.907 and 0.870 → 0.857; the others within ±0.006 |
+     | `pm2` | 0.000 → **0.979** | Easy guitar 0.113 → **0.767**, Easy bass 0.089 → **0.897**; drums Easy 0.378 → 0.392 and Medium 0.459 → 0.456; the rest within ±0.003 |
+     | `sooth` | 0.278 → 0.297 | within ±0.007 (its bars moved one beat, on a vote of margin 0.024) |
+     | `break` | 0.988 → 0.988 | identical (the same phase) |
+
+     `pm2`'s Easy guitar and bass come back past where they were before M6-05 (0.515, 0.559), so their fall under
+     M6-05 was the bar phase. Its drums Medium and Easy do not come back (0.579 and 0.553 before M6-05): their fall
+     was not the bar phase. On `troop` the measures moved two beats and its Medium levels fell by 0.013–0.018,
+     unexplained; the stress check reads Expert only.
 5. **Phase convention.** Beats move −22 ms from the envelope peaks (`ONSET_TO_BEAT_MS`), calibrated on the drum stems of All the Small Things and Take Me Out (§2.14, C8).
 6. **Hand-off:** `plan_lead_in(min_lead=2.5)` → `TempoMap.from_beats(tolerance=0.003)`; the code default is 0.002.
    - Markers at 0.003: 81 in free mode and 1 in click mode on the test song; 67–104 on four references whose human
@@ -464,11 +546,11 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
      | hinted line, no test (residuals 3 ms; half a beat off all song) | 0.000 | 0.666 | — |
      | hinted line, then the half-beat test (built; the stress run) | 1.000 | 1.000 | — |
 
-     The downbeats stay wrong there (downbeat F1 0.000): with a kick on every beat, `bar_phase` has no margin
-     (0.013). That is M5-99's. The stress run's other results on that song are in M5-01's report: guitar F1@50
-     0.784–0.808 against 0.614–0.632 before, its matched notes 3–4 ms off against 62–69, chord share 0.09 against
-     0.33 (the humans 0.03–0.05). The shred and the rock stress songs, and all seven references, keep octave 1 and
-     their grids bit for bit.
+     The downbeats stayed wrong there (downbeat F1 0.000): with a kick on every beat, `bar_phase` has no margin
+     (0.013). Since M6-03 the bar phase is allin1's (step 4): 0.998–1.000. The stress run's other results on that
+     song are in M5-01's report: guitar F1@50 0.784–0.808 against 0.614–0.632 before, its matched notes 3–4 ms off
+     against 62–69, chord share 0.09 against 0.33 (the humans 0.03–0.05). The shred and the rock stress songs, and
+     all seven references, keep octave 1 and their grids bit for bit.
    - **M5-11 on the second power-metal song** (`pm2`, 7:20, five human charts) [here, M5-11's stress runs: the
      merge base cfc7d5d against the branch, 1 CPU take, `stress.py score`]. The grid doubles, 99.99 → 199.99 BPM
      (the guard's ratio 0.943; the half-beat test leaves the lines on the kick, 0.148). Four of the order's seven
@@ -555,9 +637,9 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
        0.524 → 0.783) and bass (0.585 → 0.694, 0.568 → 0.874) rise. The cause is the bar phase, not the beats: our
        measure lines sat 2 beats off the primary's before 235 s (so Easy's half-measure lines fell on its measure
        lines) and now sit 1 beat off over the whole song (on its beats 2 and 4). With a kick on every beat
-       `bar_phase` has no margin (0.125 → 0.014, both flagged), and the downbeat F1 was 0.014 and is 0.000. The
-       downbeats on fast songs are M6-03's; allin1's own downbeats (in the same file) are a candidate there, not
-       measured.
+       `bar_phase` has no margin (0.125 → 0.014, both flagged), and the downbeat F1 was 0.014 and is 0.000. Since
+       M6-03 the bar phase is allin1's (step 4): downbeat F1 0.979, Easy guitar 0.767 and Easy bass 0.897; the drums'
+       Medium and Easy stay where M6-05 left them.
 
 **Whole-song runs tonight** [here, beatgrid run].
 
