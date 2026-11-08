@@ -68,6 +68,7 @@ ones then, but the CI runs they link still name the old ones.
 | `M8-01-gpu-takes.md` | M8-01: GPU takes of the 23 measured songs on the owner's installed app (`eval/gpu.sh takes refs\|stress\|set20`, `results`), a results zip with no audio or names and its guard; the review and the privacy re-check |
 | `v0.4.0-gate.md` | v0.4.0's release gate: the golden, stress and 20-song compares, the full review and its fixes, the advisor's report, the owner's PC check and decisions |
 | `M8-03-measure-cpu.md` | M8-03: allin1's memory against the song's length, freeing the parent's arrays (clears) and allin1 in chunks (misses); the bass's pitch gate and slow star power (both miss) |
+| `M8-video-review2.md` | The owner's second video review (pm2's v0.4.0 GPU chart): its claims checked; solos' remainder, HOPO chords and the GPU intro's taps measured |
 | `M8-spike-contour.md` | M8's spike: pitch trackers on the guitar stem against the humans' fret direction in fast runs (none clears); the GPU charts differ from the CPU charts M7 measured |
 | `M8-spike-takescore.md` | M8's spike: window scores for the take splice from the guitar stem's evidence (none clears; a per-window oracle shows +0.042 of headroom) |
 | `pipeline-review.md` | an advisor's review of how work is run (2026-11-04), finding by finding, with what was done |
