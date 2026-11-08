@@ -253,7 +253,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | taps | only inside fast runs: 8+ onsets at 0.125 s or less (§2.6 step 4, M7-02) | same (`QuantizeRules.tap_run`; any other tap takes its natural state, no flip); `reduce.py` drops them below Expert | none |
 | Engine A ticks | through the quantizer with an "already on our grid" flag (§2.7) | absent | add with Engine A (M2) |
 | `diff_band` | written (§2.12) | not writable | add a band rating to `write_ini` and `build_song_folder` |
-| `beat_grid(start=...)` | click/free tests on that path; low evidence returns the start beats flagged (§2.3) | always free; raises `InputError` (a `ValueError`) on low evidence | §2.3 step 6 |
+| `beat_grid(start=...)` | click/free tests on that path; low evidence returns the start beats flagged (§2.3) | free on the start beats; with `line_test` (the halving pass's, M7-09) the straight line through them unless they find `TRACKER_MARGIN` more evidence, then click or free by `FREE_SHARE` as on the first pass (`ntl`: click, §2.3 step 7); the doubling's start (M6-05) takes no line test and stays free; raises `InputError` (a `ValueError`) on low evidence | §2.3 step 6 |
 | downbeats | the Viterbi decides (§2.4) | allin1's downbeats vote (`beatgrid.with_downbeats`, M6-03), else the kick phase | the Viterbi, with Goal 2 (§2.4) |
 
 ### Stage overview
@@ -674,15 +674,16 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
        the gap is 1.009 to 2.002 on these songs, one positive in eleven), over at least 16 of allin1's beats inside
        the audio (`HALVE_MIN_BEATS`), and the halved tempo is under the fold's 85 BPM floor: a pulse the first pass
        could not hold. A song at 170 where allin1 says 85 is not halved, since allin1 halves fast songs (both 200 BPM
-       stress songs) and the first pass could have chosen 85. The pass runs `beat_grid` with `start=` allin1's
-       beats (moved to onset times, minus `ONSET_TO_BEAT_MS`), at the fold range halved (42.5, 92.5) and without the
-       half-beat test (allin1's beats give the phase). `beat_grid` refines them onto the drums (free mode) and finds
-       the downbeats as for any grid. The halved grid is kept when its confident share is at least 0.7 times the
-       first's (the doubling's guard; `sooth` 0.798 against 0.682), else the first stays with a warning.
-       report.json's `octave_stats.halving` holds the numbers and why. `grid.octave` is 0.5, and the build warns
-       "tempo halved to ...: check sync". `grid_octave` 1 forces the first grid (no halving). Since M7-09 the pass
-       tests a straight line through allin1's beats against them first, and warns where the halved grid runs at the
-       first grid's tempo (the halved grid's tempo shape, below).
+       stress songs) and the first pass could have chosen 85. The pass runs `beat_grid` with `start=` allin1's beats
+       (moved to onset times, minus `ONSET_TO_BEAT_MS`), at the fold range halved (42.5, 92.5) and without the
+       half-beat test (allin1's beats give the phase). `beat_grid` refines them onto the drums (free mode; since M7-09
+       the straight line through them when it wins the line test, click or free by `FREE_SHARE`, below) and finds the
+       downbeats as for any grid. The halved grid is kept when its confident share is at least 0.7 times the first's
+       (the doubling's guard; `sooth` 0.798 against 0.682), else the first stays with a warning. report.json's
+       `octave_stats.halving` holds the numbers and why. `grid.octave` is 0.5, and the build warns "tempo halved to
+       ...: check sync". `grid_octave` 1 forces the first grid (no halving). Since M7-09 the pass tests a straight
+       line through allin1's beats against them first, and warns where the halved grid runs at the first grid's tempo
+       (the halved grid's tempo shape, below).
      - **Not every other line of the first grid** (the order's wording; decided 2026-11-06 by the orchestrator on
        these numbers). On `sooth` the first grid's lines on allin1's beats switch parity at about 300 s (even lines
        0.81–1.00 of each 30-s window before, odd 0.78–1.00 after). The cause is our grid: a tempo dip at 297–315 s
