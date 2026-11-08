@@ -285,3 +285,7 @@ about half a day. With section 11, v0.4's builds are M7-02 (taps), M7-03 if its 
 `TRACKER_MARGIN` evidence test) changes nothing on the halved songs with human charts and fixes ntl's intro; the ratio
 warning (a halved window back at the first grid's tempo) flags the owner's sooth file's outro. M7-09 builds those two;
 its scripts are in eval/m7/m709/.
+
+**M7-03 is closed** (B-b2, docs/reports/M7-01-measure.md's addendum: the run rule removes mostly real notes, precision
+0.21-0.46). v0.4 builds M7-02 (taps), M7-06 (`max_solos` 4), M7-09 (candidate b and the ratio warning) and M7-10 (the
+UI's quick wins).

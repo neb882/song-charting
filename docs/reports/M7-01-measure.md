@@ -1461,3 +1461,26 @@ Privacy check: `eval/privacy_check.py` on report.md, results.json, deltas.json e
 $DEV/eval-set20 it flags 4 lines of results.json, each a 4-decimal F1 whose digits happen to equal a 4-hex md5 prefix
 (false positives: numbers, no names); report.md and deltas.json pass. Round results.json to 3 decimals before any
 commit if the check must pass. <shm>/m7/code-C (worktree), C-arms and C-work removed; <shm>/m7 is gone.
+
+---
+
+## Addendum (2026-11-08): B-b2, a run rule for held bass notes (M7-03's last candidate)
+
+L or more consecutive same-lane bass onsets, each G or less after the one before, over one voiced pitch, merged into
+the first (L 4, 6, 8; G 110, 150 ms), on the 23 songs (s06, s08 and s10 out of the pooled F1: their humans agree
+under 0.6):
+
+| rule | songs | removed | precision | F1@50 change [CI] | songs down > 0.01 |
+|---|---|---|---|---|---|
+| L4 G110 | 9 | 151 | 0.437 | +0.001 [-0.000, 0.002] | none |
+| L4 G150 | 14 | 310 | 0.368 | -0.001 [-0.003, 0.001] | pm2 (-0.017) |
+| L6 G110 | 5 | 33 | 0.455 | +0.000 [-0.000, 0.001] | none |
+| L6 G150 | 7 | 99 | 0.212 | -0.001 [-0.002, 0.000] | pm2 (-0.012) |
+| L8 G110 | 0 | 0 | - | 0 | none |
+| L8 G150 | 1 | 17 | 0.000 | -0.000 | none |
+
+The repeat share stays at 0.582-0.585 (the humans' 0.487). Against M7-03's bar (precision 0.75, F1 +0.005 with the CI
+above 0): no. On ntl (no human chart) the rule merges 23 of 787 onsets at L4: its 29 runs of 6 or more fast same-lane
+onsets hold 254 onsets, but only 28 of them sit in runs where every onset has an engine pitch (559 of the 787 do over
+the chart): the bass engine's onsets there are not pitched notes, which is the engine's to fix (M8). **M7-03 is
+closed.** Scripts: eval/m7/B/bb2.py, bb2_ntl_diag.py, make_bb2.py.
