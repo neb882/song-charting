@@ -193,6 +193,16 @@ def test_the_20_song_set_is_named_by_its_labels_in_every_line(data, tmp_path, en
     info = (st / "set.json").read_text()
     assert no_id(info) and [s["label"] for s in json.loads(info)] == ["s01", "s02", "s03"]
     assert json.loads(info)[2] == {"label": "s03", "slot": "made-up slot 0", "charts": 2, "duration_s": 100.0}
+    # the records: fields takes.py writes, a failure as its type, never its message or a path
+    text = (data / "runs" / "takes" / "takes.jsonl").read_text()
+    records = [json.loads(line) for line in text.splitlines()]
+    assert no_id(text) and str(root) not in text and "cannot read" not in text
+    assert [r["event"] for r in records] == ["start"] + ["take"] * 6 + ["done"]
+    assert records[4] == {"event": "take", "set": "set20", "label": "s02", "seed": 2, "status": "failed",
+                          "error": "RuntimeError", "time": records[4]["time"]}
+    assert {k: v for k, v in records[1].items() if k != "time"} == {
+        "event": "take", "set": "set20", "label": "s01", "seed": 1, "status": "made", "seconds": 0.0, "tokens": 7,
+        "beats": None, "devices": {"transcriber": "cpu"}, "reused": ["demucs"], "cut_short": None}
 
 
 def test_a_finished_take_is_reused_and_only_a_missing_one_runs(data, tmp_path, engine, monkeypatch):
@@ -251,9 +261,9 @@ def test_scrub_puts_labels_for_ids_and_hides_md5s(data, tmp_path, monkeypatch, c
 
 # ------------------------------------------------------------------------------------------------ --app
 
-def app_home(tmp_path: Path, lane="cu132", provider=True, python=None) -> Path:
+def app_home(tmp_path: Path, lane="cu132", provider=True, python=None, home=None) -> Path:
     """An installed songcharter as runtime.json describes it: its autochart (made up), Node and ffmpeg (paths)."""
-    home = tmp_path / "app"
+    home = home or tmp_path / "app"
     root = ac_root(home / "runtime" / "autochart")
     if provider:
         d = root / "node_modules" / "onnxruntime-node" / "bin" / "napi-v6" / "linux" / "x64"
@@ -301,6 +311,7 @@ def test_app_takes_run_on_the_apps_autochart_node_ffmpeg_and_cuda_libraries(data
     ({"lane": "cu126"}, "the app is on the cu126 lane"),
     ({"provider": False}, "onnxruntime-node has no CUDA provider"),
     ({"libs": []}, "this Python has no CUDA 13 and cuDNN wheels"),
+    ({"libs": ["/made/up/nvidia/cudnn/lib"]}, "this Python has no CUDA 13 and cuDNN wheels"),
 ])
 def test_the_app_check_names_each_problem(tmp_path, monkeypatch, app_env, capsys, change, problem):
     home = app_home(tmp_path, lane=change.get("lane", "cu132"), provider=change.get("provider", True))
@@ -369,55 +380,121 @@ def test_gpu_takes_run_passes_each_set_and_the_app_through(tmp_path, app):
 
 @pytest.fixture
 def three_sets(data, tmp_path, engine, monkeypatch):
-    """Takes of a made-up reference set, stress set and 20-song set (the stand-in engine), under a made-up home."""
+    """Takes of a made-up reference set, stress set and 20-song set (the stand-in engine), under a made-up home; the
+    engine's summary holds the input's path (an id in it), and gpu_run.log a traceback-like line."""
     refs(data, ids=("aaa",), test_song=False)
     stress(data, tmp_path, monkeypatch, ids=("ttt",), built=("ttt",))
-    root = data / "set20"
-    set20(root)
+    set20(data / "set20")
     for args in (["--set", "refs"], ["--set", "stress"], ["--set", "set20"]):
         assert T.main([*args, "--device", "cpu", "--seeds", "1"]) == 0
     (data / "runs" / "takes" / "set20" / "stray" / "seed_1").mkdir(parents=True)   # a folder labels.json does not name
     (data / "runs" / "takes" / "set20" / "stray" / "seed_1" / "notes.chart").write_text("x")
-    (data / "runs" / "gpu_run.log").write_text(f"made up line {data}/runs/takes/set20/zorblat/work\n")
+    (data / "runs" / "gpu_run.log").write_text(f"Traceback: made up, {data}/runs/takes/set20/zorblat/work\n")
+    with open(data / "runs" / "takes" / "aaa" / "seed_1" / "song.ini", "a") as f:
+        f.write(f"made_up = {data}/x\n")   # a path in a text file the engine wrote
     return data
 
 
+def take_of(data: Path, label: str) -> Path:
+    sid = {v: k for k, v in LABEL.items()}.get(label, label)
+    return data / "runs" / "takes" / ("set20/" + sid if label in LABEL.values() else "stress/" + sid) / "seed_1"
+
+
+def results(data: Path, home: Path, **env):
+    return gpu(["results"], {**os.environ, "EVAL_DATA": str(data), "HOME": str(home), **env})
+
+
 @bash
-def test_results_zips_every_sets_takes_by_label_with_no_audio_and_no_id(three_sets, tmp_path):
+def test_results_zips_structured_files_by_label_and_no_log(three_sets, tmp_path):
     data = three_sets
-    p = gpu(["results"], {**os.environ, "EVAL_DATA": str(data), "HOME": str(tmp_path)})
+    p = results(data, tmp_path)
     assert p.returncode == 0, p.stdout + p.stderr
     assert "check_no_audio: ok" in p.stdout and "1 song folders left out" in p.stdout and no_id(p.stdout)
+    assert str(tmp_path) not in p.stdout   # the zip's own line too: ~/data/gpu_results.zip
     z = zipfile.ZipFile(data / "gpu_results.zip")
     names = z.namelist()
-    take = ["notes.chart", "song.ini", "take.json", "autochart_run/expert_job.json", "autochart_run/summary.json"]
+    take = ["notes.chart", "song.ini", "take.json", "autochart_run/summary.json"]
     assert sorted(names) == sorted(
-        ["gpu_results/gpu_run.log", "gpu_results/takes/takes.log", "gpu_results/takes/stress/set.json",
-         "gpu_results/takes/set20/set.json"]
+        ["gpu_results/takes/takes.jsonl", "gpu_results/takes/stress/set.json", "gpu_results/takes/set20/set.json"]
         + [f"gpu_results/takes/aaa/seed_1/{f}" for f in take] + [f"gpu_results/takes/stress/ttt/seed_1/{f}" for f in take]
         + [f"gpu_results/takes/set20/{lab}/seed_1/{f}" for lab in ("s01", "s02", "s03") for f in take])
     for n in names:
         text = z.read(n).decode()
-        assert no_id(n) and no_id(text), n
-        assert str(tmp_path) not in text, n   # the home folder is ~
+        assert no_id(n) and no_id(text) and str(tmp_path) not in text, n
+    # the summary and take.json copied field by field: the numbers and names, not the input's path
     summary = json.loads(z.read("gpu_results/takes/set20/s03/seed_1/autochart_run/summary.json"))
-    assert summary["audio"] == "~/data/set20/stress/s03/input.wav"
-    assert json.loads(z.read("gpu_results/takes/set20/s03/seed_1/autochart_run/expert_job.json")) == {
-        "cacheDir": "~/data/runs/takes/set20/s03/work/engine-cache"}
-    assert z.read("gpu_results/gpu_run.log").decode() == "made up line ~/data/runs/takes/set20/s03/work\n"
+    original = json.loads((take_of(data, "s03") / "autochart_run" / "summary.json").read_text())
+    assert "audio" not in summary and original["audio"].endswith("/zorblat/input.wav")
+    assert summary == {k: v for k, v in original.items() if k != "audio"}
+    assert json.loads(z.read("gpu_results/takes/set20/s03/seed_1/take.json")) == json.loads(
+        (take_of(data, "s03") / "take.json").read_text())
+    assert z.read("gpu_results/takes/aaa/seed_1/song.ini").decode().endswith("made_up = ~/data/x\n")
     assert z.read("gpu_results/takes/aaa/seed_1/notes.chart") == (
         data / "runs" / "takes" / "aaa" / "seed_1" / "notes.chart").read_bytes()
+    assert z.read("gpu_results/takes/takes.jsonl") == (data / "runs" / "takes" / "takes.jsonl").read_bytes()
 
 
 @bash
 def test_results_makes_no_zip_that_would_hold_audio(three_sets, tmp_path):
     data = three_sets
     (data / "gpu_results.zip").write_bytes(b"an old zip")
-    (data / "runs" / "takes" / "set20" / "zorblat" / "seed_1" / "notes.chart").write_bytes(b"RIFF\x00\x00WAVEfmt ")
-    p = gpu(["results"], {**os.environ, "EVAL_DATA": str(data), "HOME": str(tmp_path)})
+    (take_of(data, "s03") / "notes.chart").write_bytes(b"RIFF\x00\x00WAVEfmt ")
+    p = results(data, tmp_path)
     assert p.returncode != 0 and "no zip made" in p.stdout
     assert not (data / "gpu_results.zip").exists() and not (data / "gpu_results.zip.part").exists()
-    assert "set20/s03/seed_1/notes.chart" in p.stdout and no_id(p.stdout)
+    assert "set20/s03/seed_1/notes.chart" in p.stdout and no_id(p.stdout) and str(tmp_path) not in p.stdout
+
+
+@bash
+@pytest.mark.parametrize("plant, why", [
+    ("// Zorblat\n", "a 20-song id"),                        # an id in any case, as a whole word
+    (f"made_up = {md5(31)}\n", "a package md5 of the lists"),
+    ("HOME", "the home folder or the Windows profile"),       # the home folder in another case: the scrub misses it
+])
+def test_the_guard_reads_the_finished_zip_apart_from_the_scrub(three_sets, tmp_path, plant, why):
+    data = three_sets
+    (data / "set20" / "stress.local.json").write_text(json.dumps([{"id": "zorblat", "md5": md5(30),
+                                                                   "alts": [{"md5": md5(31)}]}]))
+    with open(take_of(data, "s02") / "song.ini", "a") as f:
+        f.write(f"made_up = {str(tmp_path).upper()}/x\n" if plant == "HOME" else plant)
+    p = results(data, tmp_path)
+    assert p.returncode == 1 and "no zip made, the guard stopped it" in p.stdout
+    assert f"gpu_results/takes/set20/s02/seed_1/song.ini: {why}" in p.stdout
+    assert no_id(p.stdout.lower()) and md5(31) not in p.stdout and not (data / "gpu_results.zip").exists()
+
+
+@bash
+def test_a_common_word_id_is_kept_out_of_the_zip_by_label_and_the_guard(data, tmp_path, engine, monkeypatch):
+    """A 20-song id that is a common word ("run") must not come back in the zip: the summary's path that holds it is
+    not copied, the JSON keys that hold it inside a word ("runs") are not it, and a whole word anywhere stops the zip."""
+    root = data / "set20"
+    set20(root, ids=("run", "zorblat"))
+    assert T.main(["--set", "set20", "--device", "cpu", "--seeds", "1"]) == 0
+    p = results(data, tmp_path)
+    assert p.returncode == 0, p.stdout + p.stderr
+    z = zipfile.ZipFile(data / "gpu_results.zip")
+    word = re.compile(r"(?<![a-z0-9_])run(?![a-z0-9_])")
+    assert not any(word.search((n + z.read(n).decode()).lower()) for n in z.namelist())
+    assert "gpu_results/takes/set20/s01/seed_1/autochart_run/summary.json" in z.namelist()   # "run" sorts first
+    with open(root.parent / "runs" / "takes" / "set20" / "run" / "seed_1" / "notes.chart", "a") as f:
+        f.write("// takes Run started\n")   # the repository's own words around it
+    p = results(data, tmp_path)
+    assert p.returncode == 1 and "gpu_results/takes/set20/s01/seed_1/notes.chart: a 20-song id" in p.stdout
+
+
+@bash
+def test_results_writes_the_windows_profile_as_userprofile(three_sets, tmp_path):
+    data = three_sets
+    with open(take_of(data, "ttt") / "song.ini", "a") as f:
+        f.write("a = C:\\Users\\Made Up\\Music\nb = /mnt/c/Users/Made Up/song-charting\nc = C:\\\\Users\\\\Made Up\n")
+    p = results(data, tmp_path, WINDOWS_PROFILE="C:\\Users\\Made Up")
+    assert p.returncode == 0, p.stdout + p.stderr
+    ini = zipfile.ZipFile(data / "gpu_results.zip").read("gpu_results/takes/stress/ttt/seed_1/song.ini").decode()
+    assert ini.endswith("a = %USERPROFILE%\\Music\nb = %USERPROFILE%/song-charting\nc = %USERPROFILE%\n"), ini
+    with open(take_of(data, "ttt") / "song.ini", "a") as f:
+        f.write("d = c:\\users\\made up\n")   # another case: the guard's
+    p = results(data, tmp_path, WINDOWS_PROFILE="C:\\Users\\Made Up")
+    assert p.returncode == 1 and "song.ini: the home folder or the Windows profile" in p.stdout
 
 
 def app_python(home: Path, log: Path) -> Path:
@@ -482,3 +559,80 @@ def test_app_env_links_the_apps_ffmpeg_when_there_is_none_on_path(tmp_path):
                                          "SONGCHARTER_HOME": str(home)})
     assert p.returncode == 2 and "usage: eval/gpu.sh build" in p.stdout, p.stdout + p.stderr
     assert os.readlink(data / "bin" / "ffmpeg") == "/made/up/app/ffmpeg"
+
+
+# ------------------------------------------------------------------------------------------------ gpu.sh --app
+
+def cli_app(tmp_path: Path, lane="cu132", libs=("cu13", "cudnn"), built=True):
+    """`eval/gpu.sh ... --app` on a made-up PC: HOME, the app where install.sh puts it (its Python is this one, with a
+    made-up nvidia wheel folder holding `libs`), a stand-in nvidia-smi, the reference set built or not."""
+    home = tmp_path / "h"
+    app = app_home(tmp_path, lane=lane, home=home / ".local" / "share" / "songcharter")
+    site = tmp_path / "site"
+    for lib in libs:
+        (site / "nvidia" / lib / "lib").mkdir(parents=True)
+    py = app / "runtime" / "env" / "bin" / "python"
+    py.parent.mkdir(parents=True)
+    py.write_text(f"#!/bin/sh\nPYTHONPATH='{site}' exec '{sys.executable}' \"$@\"\n")
+    py.chmod(0o755)
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    (bin_ / "nvidia-smi").write_text("#!/bin/sh\necho 'Made Up GPU, 1.0, 12288 MiB, 0 MiB'\n")
+    (bin_ / "nvidia-smi").chmod(0o755)
+    data = home / "data"
+    if built:
+        refs(data, ids=("aaa",), test_song=False)
+    data.mkdir(parents=True, exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if k not in ("EVAL_PY", "SONGCHARTER_HOME", "SONGCHARTER_APP",
+                                                             "SET20_DATA", "ALLOW_CPU", "PYTHONPATH")}
+    env.update(HOME=str(home), EVAL_DATA=str(data), PATH=f"{bin_}{os.pathsep}{env['PATH']}")
+    return env, home, data
+
+
+@bash
+def test_check_app_passes_on_a_ready_app_and_prints_no_home(tmp_path):
+    env, home, _ = cli_app(tmp_path)
+    p = gpu(["check", "--app"], env)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "check: ok" in p.stdout and "Made Up GPU" in p.stdout and "1 CUDA 13 and 1 cuDNN folders" in p.stdout
+    assert "app: songcharter 0.3.1 at ~/.local/share/songcharter, the cu132 lane" in p.stdout
+    assert str(home) not in p.stdout + p.stderr
+
+
+@bash
+@pytest.mark.parametrize("change, problem", [
+    ({"lane": "cu126"}, "problem: the app is on the cu126 lane"),
+    ({"libs": ("cudnn",)}, "problem: this Python has no CUDA 13 and cuDNN wheels"),
+    ({"built": False}, "no reference set: build it first"),
+])
+def test_check_app_fails_on_each_problem(tmp_path, change, problem):
+    env, home, _ = cli_app(tmp_path, **change)
+    p = gpu(["check", "--app"], env)
+    assert p.returncode == 1 and problem in p.stdout, p.stdout + p.stderr
+    assert str(home) not in p.stdout + p.stderr
+
+
+@bash
+@pytest.mark.parametrize("change, sets, why", [
+    ({"lane": "cu126"}, ["refs"], "check failed: not starting"),
+    ({"built": False}, [], "check failed: not starting"),
+    ({}, ["set20"], "the set20 set has no song to take: not starting"),
+])
+def test_takes_app_refuses_to_start_without_a_ready_app_or_a_song(tmp_path, change, sets, why):
+    env, home, data = cli_app(tmp_path, **change)
+    set20(data / "set20")
+    for f in (data / "set20" / "stress").glob("*/input.wav"):
+        f.unlink()   # a set listed but not built
+    p = gpu(["takes", "--app", *sets], env)
+    assert p.returncode == 1 and why in p.stdout, p.stdout + p.stderr
+    assert not (data / "runs").exists()   # nothing detached: no pid, no gpu_run.log
+    assert str(home) not in p.stdout + p.stderr and no_id(p.stdout)
+
+
+@bash
+def test_refusals_print_the_home_folder_as_a_tilde(tmp_path):
+    env, home, data = cli_app(tmp_path)
+    p = gpu(["takes", "--app", "set20"], env)   # no 20-song list here
+    assert p.returncode == 1 and "takes: the 20-song set's list ~/data/set20/set20.json cannot be read" in p.stdout + p.stderr
+    p = gpu(["check", "--app"], {**env, "SONGCHARTER_HOME": str(home / "none")})   # no app there
+    assert "no installed songcharter at ~/none" in p.stdout and str(home) not in p.stdout + p.stderr

@@ -10,14 +10,15 @@
 #   eval/gpu.sh build SET [TEST_SONG]   build a set's eval data (eval/build_refs.sh; the 20-song set's in SET20_DATA)
 #   eval/gpu.sh thin-spike AUDIO   run eval/spike/thin_spike.sh detached: Expert takes of one song under several engine
 #                         settings (M6's spike on fast runs; its header has the settings); results in $RUNS/thin_spike
-#   eval/gpu.sh results   zip the scores, the logs, the test-song charts and every set's takes' charts to send back
-#                         (no audio: check_no_audio.py; the 20-song set's songs by their labels only)
+#   eval/gpu.sh results   zip the scores, the test-song charts and every set's takes to send back: structured files
+#                         only (no log, no audio), the 20-song set's songs by their labels, checked by a guard
 # --app (check, takes, build; or SONGCHARTER_APP=1): the installed songcharter's Python, Node, scan-chart, ffmpeg and
 #      autochart (SONGCHARTER_HOME, default ~/.local/share/songcharter) in place of eval/.venv and eval/tools; the
 #      check is then autochart's only (eval/README.md, GPU takes with the installed app).
 # Env: TOOLS (default "autochart chartgen strum", so STRUM's long test song runs last), SKIP (e.g. "strum:test_song"),
 #      MEM_WAIT_MB (default 4000), EVAL_DATA, EVAL_PY, SET20_DATA (default $EVAL_DATA/set20), SEEDS, SONGS (ids or
-#      labels, for one set), ALLOW_CPU=1 (start even if the check fails).
+#      labels, for one set), WINDOWS_PROFILE (the Windows profile results writes %USERPROFILE%; default Windows'
+#      own), ALLOW_CPU=1 (start even if the check fails).
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA="${EVAL_DATA:-$HERE/data}"
@@ -30,6 +31,9 @@ NO_AUDIO="$HERE/../packaging/ci/check_no_audio.py"
 DRIVER_RE='^(/[^ ]*/)?bash [^ ]*drive\.sh'   # a running driver itself, not a command line that mentions it
 
 mem_mb() { awk -v k="$1:" '$1 == k {print int($2/1024)}' /proc/meminfo; }
+# TEXT with the home folder written ~: every path printed, so a line pasted back carries no user name
+tilde() { local text=$1 t='~'; if [ -n "${HOME:-}" ] && [ "$HOME" != / ]; then text=${text//"$HOME"/$t}; fi; printf '%s' "$text"; }
+tilde_lines() { local line; while IFS= read -r line || [ -n "$line" ]; do tilde "$line"; echo; done; }
 
 # onnxruntime-node's CUDA provider needs cuDNN 9 (libcudnn.so.9) and the CUDA 12 libraries. WSL's driver gives libcuda
 # (/usr/lib/wsl/lib); the CUDA toolkit, if installed, gives the CUDA 12 libraries (/usr/local/cuda/lib64); cuDNN comes
@@ -68,7 +72,7 @@ running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
 app_env() {
   local py="$APP_HOME/runtime/env/bin/python" record="$APP_HOME/runtime/runtime.json" vals node scan ff
   if [ ! -x "$py" ] || [ ! -f "$record" ]; then
-    echo "no installed songcharter at $APP_HOME (runtime/env/bin/python, runtime/runtime.json): install it, or set SONGCHARTER_HOME"
+    echo "no installed songcharter at $(tilde "$APP_HOME") (runtime/env/bin/python, runtime/runtime.json): install it, or set SONGCHARTER_HOME"
     return 1
   fi
   vals=$("$py" -I -c 'import json, sys
@@ -117,16 +121,16 @@ check() {   # [SET ...]: the reference set must be built only for refs (the defa
   echo "== CUDA inside each tool"
   for tool in strum chartgen; do
     local py="$T/$tool/venv/bin/python"
-    if [ ! -x "$py" ]; then echo "$tool: not installed (run $T/$tool/setup.sh with TORCH_INDEX=.../cu128)"; bad=1; continue; fi
+    if [ ! -x "$py" ]; then echo "$tool: not installed (run $(tilde "$T/$tool/setup.sh") with TORCH_INDEX=.../cu128)"; bad=1; continue; fi
     local out; out=$(cd /tmp && "$py" -I -c "$TORCH_CHECK" 2>&1) || bad=1
-    echo "$tool: $(echo "$out" | tail -n 1)"
+    echo "$tool: $(tilde "$(echo "$out" | tail -n 1)")"
   done
   if [ -d "$T/autochart/node_modules/onnxruntime-node" ]; then
     if find "$T/autochart/node_modules/onnxruntime-node" -name 'libonnxruntime_providers_cuda.so*' | grep -q .; then
       echo "autochart: ok: onnxruntime-node has its CUDA provider (each run's log names the device it used)"
       local libs
       if libs=$(cuda_libs); then
-        echo "autochart: CUDA libraries for its runs: $libs"
+        echo "autochart: CUDA libraries for its runs: $(tilde "$libs")"
       else
         echo "autochart: no cuDNN 9 (libcudnn.so.9) on the system or in a tool venv: its CUDA provider would fail to load"; bad=1
       fi
@@ -134,7 +138,7 @@ check() {   # [SET ...]: the reference set must be built only for refs (the defa
       echo "autochart: onnxruntime-node has no CUDA provider, so it would run on CPU (reinstall with ONNXRUNTIME_NODE_INSTALL_CUDA=v12)"; bad=1
     fi
   else
-    echo "autochart: not installed (run $T/autochart/setup.sh)"; bad=1
+    echo "autochart: not installed (run $(tilde "$T/autochart/setup.sh"))"; bad=1
   fi
   check_memory
   case " ${*:-refs} " in *" refs "*) [ -f "$DATA/refs/songs.json" ] || { echo "no reference set: run eval/build_refs.sh first"; bad=1; } ;; esac
@@ -188,7 +192,7 @@ _takes() {   # SET ...: takes.py for each set in turn, then results
   else
     py="${EVAL_PY:-$HERE/.venv/bin/python}"
     libs=$(cuda_libs) && [ -n "$libs" ] && export LD_LIBRARY_PATH="$libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}"
+    echo "LD_LIBRARY_PATH=$(tilde "${LD_LIBRARY_PATH:-}")"
   fi
   if command -v nvidia-smi >/dev/null; then
     nvidia-smi --query-gpu=timestamp,utilization.gpu,memory.used,power.draw --format=csv,noheader -l 5 \
@@ -225,10 +229,10 @@ takes() {   # [SET ...]
   SONGCHARTER_APP=$APP setsid nohup "$0" _takes "$@" >> "$RUNS/gpu_run.log" 2>&1 < /dev/null &
   for _ in 1 2 3 4 5 6 7 8 9 10; do running && break; sleep 0.5; done
   if running; then
-    echo; echo "started (pid $(cat "$PIDFILE")). Follow it with: eval/gpu.sh status   (or: tail -f $RUNS/takes/takes.log)"
+    echo; echo "started (pid $(cat "$PIDFILE")). Follow it with: eval/gpu.sh status   (or: tail -f $(tilde "$RUNS/takes/takes.log"))"
     echo "Keep one Ubuntu window open while it runs: WSL may shut down when the last one closes."
   else
-    echo "did not start; see $RUNS/gpu_run.log:"; tail -n 20 "$RUNS/gpu_run.log"; exit 1
+    echo "did not start; see $(tilde "$RUNS/gpu_run.log"):"; tail -n 20 "$RUNS/gpu_run.log" | tilde_lines; exit 1
   fi
 }
 
@@ -253,10 +257,10 @@ thin_spike() {
   setsid nohup "$0" _thin "$(realpath "$1")" >> "$RUNS/gpu_run.log" 2>&1 < /dev/null &
   for _ in 1 2 3 4 5 6 7 8 9 10; do running && break; sleep 0.5; done
   if running; then
-    echo; echo "started (pid $(cat "$PIDFILE")). Follow it with: tail -f $RUNS/thin_spike/thin_spike.log"
+    echo; echo "started (pid $(cat "$PIDFILE")). Follow it with: tail -f $(tilde "$RUNS/thin_spike/thin_spike.log")"
     echo "Keep one Ubuntu window open while it runs: WSL may shut down when the last one closes."
   else
-    echo "did not start; see $RUNS/gpu_run.log:"; tail -n 20 "$RUNS/gpu_run.log"; exit 1
+    echo "did not start; see $(tilde "$RUNS/gpu_run.log"):"; tail -n 20 "$RUNS/gpu_run.log" | tilde_lines; exit 1
   fi
 }
 
@@ -273,17 +277,17 @@ start() {
   setsid nohup "$0" _run >> "$RUNS/gpu_run.log" 2>&1 < /dev/null &
   for _ in 1 2 3 4 5 6 7 8 9 10; do running && break; sleep 0.5; done
   if running; then
-    echo; echo "started (pid $(cat "$PIDFILE")). Follow it with: eval/gpu.sh status   (or: tail -f $RUNS/driver.log)"
+    echo; echo "started (pid $(cat "$PIDFILE")). Follow it with: eval/gpu.sh status   (or: tail -f $(tilde "$RUNS/driver.log"))"
     echo "Keep one Ubuntu window open while it runs: WSL may shut down when the last one closes."
   else
-    echo "did not start; see $RUNS/gpu_run.log:"; tail -n 20 "$RUNS/gpu_run.log"; exit 1
+    echo "did not start; see $(tilde "$RUNS/gpu_run.log"):"; tail -n 20 "$RUNS/gpu_run.log" | tilde_lines; exit 1
   fi
 }
 
 status() {
   if running; then echo "running (pid $(cat "$PIDFILE"))"; else echo "not running"; fi
-  [ -f "$RUNS/driver.log" ] && { echo "--- driver.log"; tail -n "${N:-12}" "$RUNS/driver.log"; }
-  [ -f "$RUNS/takes/takes.log" ] && { echo "--- takes.log"; tail -n "${N:-12}" "$RUNS/takes/takes.log"; }
+  [ -f "$RUNS/driver.log" ] && { echo "--- driver.log"; tail -n "${N:-12}" "$RUNS/driver.log" | tilde_lines; }
+  [ -f "$RUNS/takes/takes.log" ] && { echo "--- takes.log"; tail -n "${N:-12}" "$RUNS/takes/takes.log" | tilde_lines; }
   local oom; oom=$(grep -c 'rc=137' "$RUNS/driver.log" 2>/dev/null)
   [ "${oom:-0}" -gt 0 ] && echo "note: $oom job(s) ended with rc=137 (killed, most likely out of memory)"
   echo "---"
@@ -299,85 +303,159 @@ stop() {
   echo "stopped; the same command (start, or takes with its sets) carries on from the first unfinished job"
 }
 
-# The zip to send back: the scores, the logs, the test-song charts, and every set's takes (each take's notes.chart,
-# song.ini, take.json and autochart_run/*.json; never audio, and check_no_audio.py must pass on the zip). A stress or
-# 20-song set's take folders go in under their labels (runs/takes/<set>/labels.json, which stays here; a song folder
-# it does not name is left out), and in every file each such id is replaced by its label, this PC's home folder by ~
-# and the Windows profile by %USERPROFILE%. A zip still holding an id is not made. Without a zip, no stale one is left.
+# The zip to send back, structured files only, never a log, a traceback or audio: drive.sh's scores and the test-song
+# charts, gpu_samples.csv, runs/takes/takes.jsonl (takes.py's records), and every set's takes: each take's notes.chart
+# and song.ini as the engine wrote them, and its take.json and autochart_run/summary.json copied field by field
+# (numbers, hashes and short names: no path, no message). A stress or 20-song set's take folders go in under their
+# labels (runs/takes/<set>/labels.json, which stays here; a song folder it does not name is left out), with the set's
+# set.json. In the text files this PC's home folder is written ~ and the Windows profile %USERPROFILE%
+# ($WINDOWS_PROFILE, else Windows' own, through cmd.exe). The guard then reads the finished zip, apart from the scrub:
+# a member that holds a 20-song id as a whole word in any case, an md5 of the stress or 20-song lists, or the home
+# folder or the Windows profile in any case stops it, and so does check_no_audio.py. A stopped zip is deleted, and
+# so is the one before it, so no stale zip is left to send.
 results() {
-  local zip="$DATA/gpu_results.zip" win= winp=
+  local zip="$DATA/gpu_results.zip" win winp
   rm -f "$zip" "$zip.part"
-  win=$(cd /mnt/c 2>/dev/null && cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')
-  if [ -n "$win" ] && command -v wslpath >/dev/null; then winp=$(wslpath "$win" 2>/dev/null); fi
-  python3 -I - "$RUNS" "$zip.part" "$HOME" "$win" "$winp" <<'EOF' || { rm -f "$zip.part"; return 1; }
+  win=${WINDOWS_PROFILE:-$(cd /mnt/c 2>/dev/null && cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')}
+  winp=
+  if [ -n "$win" ]; then
+    if command -v wslpath >/dev/null; then winp=$(wslpath "$win" 2>/dev/null); fi
+    if [ -z "$winp" ] && [[ $win == [A-Za-z]:\\* ]]; then   # C:\Users\X -> /mnt/c/Users/X, as wslpath gives it
+      winp="/mnt/${win:0:1}"; winp="${winp,,}${win:2}"; winp=${winp//\\//}
+    fi
+  fi
+  python3 -I - "$RUNS" "$zip.part" "$HOME" "$win" "$winp" "${STRESS_LOCAL:-$DATA/stress.local.json}" \
+    "${SET20_DATA:-$DATA/set20}/stress.local.json" <<'EOF' || { rm -f "$zip.part"; return 1; }
 import glob, json, os, re, sys, time, zipfile
-runs, out, home, win, winp = sys.argv[1:6]
-TAKE = ["notes.chart", "song.ini", "take.json", "autochart_run/*.json"]   # a take's files: never audio
-pats = ["SCORECARD.md", "driver.log", "gpu_run.log", "gpu_samples.csv", "*/*.score.json", "*/*.score.txt", "*/*.log",
-        "*/test_song/notes.chart", "*/test_song/notes.mid", "*/test_song/song.ini", "takes/takes.log",
-        *(f"takes/*/seed_*/{p}" for p in TAKE)]   # the reference set's takes: runs/takes/<id>/seed_<seed>/
-files = {}   # the name in the zip -> the file
-for p in pats:
+runs, out, home, win, winp, *lists = sys.argv[1:]
+SCORES = ["SCORECARD.md", "gpu_samples.csv", "*/*.score.json", "*/*.score.txt", "*/test_song/notes.chart",
+          "*/test_song/notes.mid", "*/test_song/song.ini", "takes/takes.jsonl"]   # drive.sh's and takes.py's own
+TEXT = ["notes.chart", "song.ini"]   # a take's files as the engine writes them (chart data)
+
+# a field-by-field copy: numbers, hashes and short names; anything else (a path, a message) is dropped
+NUM = lambda v: v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+NAME_RX = re.compile(r"[A-Za-z0-9_.+ -]{1,40}")
+NAME = lambda v: v if isinstance(v, str) and NAME_RX.fullmatch(v) else None
+HEX = lambda v: v if isinstance(v, str) and re.fullmatch(r"[0-9a-f]{64}", v) else None
+LIST = lambda f: lambda v: [x for x in map(f, v) if x is not None] if isinstance(v, list) else None
+MAP = lambda f: lambda v: {k: f(x) for k, x in v.items() if NAME(k) and f(x) is not None} if isinstance(v, dict) \
+    else None
+OBJ = lambda spec: lambda v: {k: g(v[k]) for k, g in spec.items() if k in v and g(v[k]) is not None} \
+    if isinstance(v, dict) else None
+PIECE = OBJ({**{k: NUM for k in ("start_s", "keep_from_s", "last_note_s", "nTokens", "nBeats", "seconds")},
+             "devices": MAP(NAME), "cut_short": NAME})
+RUN = OBJ({**{k: NUM for k in ("exitCode", "wallSeconds", "nTokens", "nBeats", "generationSeconds", "noteLines",
+                               "tempoBpm", "audioDuration")},
+           **{k: NAME for k in ("difficulty", "signal", "killedFor", "status", "failedStage")},
+           "devices": MAP(NAME), "cachedStages": LIST(NAME)})
+SUMMARY = OBJ({**{k: NAME for k in ("generatorId", "engineVersion")}, "inputSha256": HEX,
+               **{k: NUM for k in ("seed", "temperature", "topP", "maxTokens", "timeoutS", "stallS")},
+               "difficulties": LIST(NAME), "runs": LIST(RUN),
+               "stitch": OBJ({"cut_short": NAME, "device": NAME, "cut_at_s": NUM, "last_note_s": NUM,
+                              "ended": NAME, "pieces": LIST(PIECE)})})
+TAKE = OBJ({"inputSha256": HEX, "seed": NUM, "difficulties": LIST(NAME), "temperature": NUM, "topP": NUM,
+            "engineVersion": NAME, "install": HEX})
+
+
+def read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+members = {}   # name in the zip -> (bytes, mtime)
+
+
+def add_file(name, path):
+    with open(path, "rb") as f:
+        members[name] = (f.read(), os.path.getmtime(path))
+
+
+def add_take(prefix, folder):
+    for f in TEXT:
+        if os.path.isfile(os.path.join(folder, f)):
+            add_file(f"{prefix}/{f}", os.path.join(folder, f))
+    for f, spec in (("take.json", TAKE), ("autochart_run/summary.json", SUMMARY)):
+        copy = spec(read_json(os.path.join(folder, f)))
+        if copy:
+            members[f"{prefix}/{f}"] = (json.dumps(copy, indent=1).encode(), os.path.getmtime(os.path.join(folder, f)))
+
+
+for p in SCORES:
     for f in glob.glob(os.path.join(runs, p)):
-        files[os.path.join("gpu_results", os.path.relpath(f, runs))] = f
-hidden, left = {}, 0   # id -> label, for the ids that are not labels
+        add_file("gpu_results/" + os.path.relpath(f, runs), f)
+for take in glob.glob(os.path.join(runs, "takes", "*", "seed_*")):   # the reference set's: runs/takes/<id>/seed_<s>/
+    add_take("gpu_results/" + os.path.relpath(take, runs), take)
+hidden, left = set(), 0   # the ids that are not labels
 for name in ("stress", "set20"):
     d = os.path.join(runs, "takes", name)
     if not os.path.isdir(d):
         continue
-    try:
-        with open(os.path.join(d, "labels.json"), encoding="utf-8") as f:
-            labels = json.load(f)
-    except (OSError, ValueError):
-        labels = {}
+    labels = read_json(os.path.join(d, "labels.json"))
     if not isinstance(labels, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in labels.items()):
         labels = {}
     label_of = {sid: label for label, sid in labels.items()}
-    hidden.update({sid: label for sid, label in label_of.items() if sid != label})
+    hidden |= {sid for sid, label in label_of.items() if sid != label}
     for entry in sorted(os.listdir(d)):
-        song = os.path.join(d, entry)
-        if not os.path.isdir(song):
+        if not os.path.isdir(os.path.join(d, entry)):
             continue
         if entry not in label_of:
             left += 1
             continue
-        for p in TAKE:
-            for f in glob.glob(os.path.join(song, "seed_*", p)):
-                files[os.path.join("gpu_results", "takes", name, label_of[entry], os.path.relpath(f, song))] = f
+        for take in sorted(glob.glob(os.path.join(d, entry, "seed_*"))):
+            add_take(f"gpu_results/takes/{name}/{label_of[entry]}/{os.path.basename(take)}", take)
     if os.path.isfile(os.path.join(d, "set.json")):
-        files[os.path.join("gpu_results", "takes", name, "set.json")] = os.path.join(d, "set.json")
-ids = re.compile("(?<![A-Za-z0-9_])(" + "|".join(re.escape(i) for i in sorted(hidden, key=len, reverse=True))
-                 + ")(?![A-Za-z0-9_])") if hidden else None
-paths = [(re.compile(re.escape(v) + r"(?![A-Za-z0-9_.-])"), to)
-         for v, to in sorted({(win.replace("\\", "\\\\"), "%USERPROFILE%"), (win, "%USERPROFILE%"),
-                              (winp, "%USERPROFILE%"), (home, "~")}, key=lambda vt: -len(vt[0])) if len(v) > 1]
+        add_file(f"gpu_results/takes/{name}/set.json", os.path.join(d, "set.json"))
+
+places = [v for v in {home, win, win.replace("\\", "\\\\"), winp} if len(v) > 1]
+tilde = [(re.compile(re.escape(v) + r"(?![A-Za-z0-9_.-])"), "~" if v == home else "%USERPROFILE%")
+         for v in sorted(places, key=len, reverse=True)]
 
 
-def scrub(text):
-    for rx, to in paths:
+def scrub(data):
+    text = data.decode("utf-8", "surrogateescape")
+    for rx, to in tilde:
         text = rx.sub(lambda m: to, text)
-    return ids.sub(lambda m: hidden[m.group(1)], text) if ids else text
+    return text.encode("utf-8", "surrogateescape")
 
 
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-    for name, f in sorted(files.items()):
-        with open(f, "rb") as fh:
-            data = scrub(fh.read().decode("utf-8", "surrogateescape")).encode("utf-8", "surrogateescape")
-        info = zipfile.ZipInfo(scrub(name), time.localtime(max(os.path.getmtime(f), 315619200))[:6])
+    for name, (data, mtime) in sorted(members.items()):
+        info = zipfile.ZipInfo(name, time.localtime(max(mtime, 315619200))[:6])   # 1980-01-02: zip's first date
         info.compress_type = zipfile.ZIP_DEFLATED
-        z.writestr(info, data)
-if ids:   # the guard: nothing that names a 20-song song by its id leaves this PC
-    with zipfile.ZipFile(out) as z:
-        bad = [n for n in z.namelist() if ids.search(n) or ids.search(z.read(n).decode("utf-8", "surrogateescape"))]
-    if bad:
-        sys.exit(f"results: {len(bad)} files still hold an id that is not a label: no zip made")
-print(f"results: {len(files)} files" + (f"; {left} song folders left out (no labels.json names them)" if left else ""))
+        z.writestr(info, scrub(data))
+
+# the guard, apart from the scrub: the finished zip, read back, any case
+md5s = set()
+for path in lists:
+    for song in read_json(path) or []:
+        if isinstance(song, dict):
+            md5s |= {m.lower() for m in [song.get("md5")] + [a.get("md5") for a in song.get("alts") or []
+                                                              if isinstance(a, dict)] if isinstance(m, str)}
+idrx = re.compile("(?<![a-z0-9_])(" + "|".join(re.escape(i.lower()) for i in sorted(hidden)) + ")(?![a-z0-9_])") \
+    if hidden else None
+lowered = [v.lower() for v in places]
+stops = []
+with zipfile.ZipFile(out) as z:
+    for n in z.namelist():
+        text = (n + "\n" + z.read(n).decode("utf-8", "surrogateescape")).lower()
+        why = [w for w, hit in (("a 20-song id", idrx is not None and idrx.search(text)),
+                                ("a package md5 of the lists", any(m in text for m in md5s)),
+                                ("the home folder or the Windows profile", any(v in text for v in lowered))) if hit]
+        if why:
+            stops.append(f"{idrx.sub('<id>', n) if idrx else n}: {', '.join(why)}")
+if stops:
+    print("results: no zip made, the guard stopped it:", *(f"  {s}" for s in stops), sep="\n")
+    sys.exit(1)
+print(f"results: {len(members)} files" + (f"; {left} song folders left out (no labels.json names them)" if left else ""))
 EOF
-  if ! python3 -I "$NO_AUDIO" "$zip.part"; then
+  if ! (cd "$DATA" && python3 -I "$NO_AUDIO" gpu_results.zip.part); then
     rm -f "$zip.part"; echo "results: the zip would hold audio (above): no zip made"; return 1
   fi
   mv "$zip.part" "$zip"
-  echo "$zip: $(( $(stat -c %s "$zip") / 1024 )) KB"
+  echo "$(tilde "$zip"): $(( $(stat -c %s "$zip") / 1024 )) KB"
   # also drop a copy in the Windows Downloads folder, ready to attach in the Claude app
   if [ -n "$winp" ] && [ -d "$winp/Downloads" ]; then
     cp "$zip" "$winp/Downloads/" && echo "copied to your Windows Downloads folder as gpu_results.zip"
@@ -402,7 +480,7 @@ build() {   # SET [TEST_SONG]
       [ $# -eq 0 ] || { echo "eval/gpu.sh build set20: takes no test song"; exit 2; }
       d="${SET20_DATA:-$DATA/set20}"
       for f in set20.json stress.local.json; do
-        [ -f "$d/$f" ] || { echo "no $d/$f: the 20-song set's two lists go there (eval/README.md)"; exit 2; }
+        [ -f "$d/$f" ] || { echo "no $(tilde "$d/$f"): the 20-song set's two lists go there (eval/README.md)"; exit 2; }
       done
       EVAL_DATA="$d" STRESS_JSON="$d/set20.json" STRESS_LOCAL="$d/stress.local.json" "$HERE/build_refs.sh" --set stress 2>&1 \
         | EVAL_DATA="$DATA" SET20_DATA="$d" "$py" "$HERE/takes.py" --set set20 --scrub ;;

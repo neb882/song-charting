@@ -17,9 +17,10 @@ runs/ is always EVAL_DATA's, so eval/gpu.sh results finds every set's takes.
 Labels: every line printed or logged names a song by its label, never by an id that is not one: the id for refs and
 the stress set (generic ids), sNN for the 20-song set, whose ids spell titles: s01, s02, ... in the order of its sorted
 ids (docs/reports/set20-v03.md's names). The take folders keep the ids: they stay on this PC. For stress and set20,
-runs/takes/<set>/labels.json holds the mapping (label -> id; this PC only: eval/gpu.sh results puts the labels in the
-zip's paths and files with it, and never zips it), and runs/takes/<set>/set.json each label's slot, chart count and
-length (no id), so the orchestrator can check the labels against the dev machine's set.
+runs/takes/<set>/labels.json holds the mapping (label -> id; this PC only: eval/gpu.sh results names the zip's take
+folders by it, and never zips it), and runs/takes/<set>/set.json each label's slot, chart count and length (no id),
+so the orchestrator can check the labels against the dev machine's set. A path printed or logged has this PC's home
+folder as ~ (a line pasted back carries no user name).
 
 The engine: eval/tools/autochart (its setup.sh), or with --app the installed songcharter's own (runtime/autochart and
 its Node, from runtime.json, with the launcher's environment: songcharter.launch), the way the app charts a song.
@@ -27,7 +28,11 @@ Run takes.py with the app's Python (runtime/env/bin/python) then: songcharter.en
 CUDA 13 and cuDNN wheels (the cu132 lane's) on the engine's library path for "cuda". songcharter itself is imported
 from this checkout, which is first on sys.path. A song's takes share one work folder, so the takes after the first
 reuse the engine's separation and beat map. Resumable: a finished take is reused (the engine's key: the input, the
-seed, the settings, the install). One line per take on stdout and in runs/takes/takes.log (every set's).
+seed, the settings, the install). One line per take on stdout and in runs/takes/takes.log (every set's; it stays on
+this PC, with each failure's message), and one JSON record per take, run start and missing song in
+runs/takes/takes.jsonl: only fields this script writes (the set, the label, the seed, made/cached/failed, seconds,
+tokens, beats, the devices and reused stages as short names, a failure as its exception's type: never a message or a
+path), the one log the results zip carries.
 
   --songs   ids or labels, comma-separated
   --dry-run the songs found and how many of their takes are made; writes nothing
@@ -61,6 +66,28 @@ ID = re.compile(r"[a-z][a-z0-9_]*")       # eval/stress.py's ids: safe as a fold
 WORD = "A-Za-z0-9_"                       # an id is replaced where no such character is beside it
 MD5 = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}(?![0-9a-fA-F])")
 CUDA_LANE = "cu132"                       # the app's lane whose CUDA 13 wheels load autochart's CUDA provider
+RECORDS = "takes.jsonl"                   # in runs/takes/: the records eval/gpu.sh results zips
+NAME = re.compile(r"[A-Za-z0-9_.+-]{1,40}")   # an engine's stage or device name, as a record may copy it
+
+
+def shown(text: str) -> str:
+    """`text` with this PC's home folder written ~."""
+    home = os.path.expanduser("~")
+    return re.sub(re.escape(home) + r"(?=[/\\\s'\"),:;]|\Z)", "~", text) if len(home) > 1 else text
+
+
+def number(value):
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def names(value):
+    """A record's copy of the engine's devices ({stage: device}) or reused stages ([stage]): short names only."""
+    if isinstance(value, dict):
+        return {k: v for k, v in value.items() if isinstance(k, str) and isinstance(v, str) and NAME.fullmatch(k)
+                and NAME.fullmatch(v)}
+    if isinstance(value, list):
+        return [v for v in value if isinstance(v, str) and NAME.fullmatch(v)]
+    return None
 
 
 class Refused(Exception):
@@ -177,16 +204,17 @@ def check(app: bool, device: str) -> int:
     try:
         install, runtime = engine(app)
     except Refused as e:
-        print(f"takes: {e}")
+        print(shown(f"takes: {e}"))
         return 2
     problems = []
     if app:
-        print(f"app: songcharter {runtime.get('songcharter')} at {runtime.get('home')}, the {runtime.get('lane')} lane")
+        print(shown(f"app: songcharter {runtime.get('songcharter')} at {runtime.get('home')}, "
+                    f"the {runtime.get('lane')} lane"))
         if device == "cuda" and runtime.get("lane") != CUDA_LANE:
             problems.append(f"the app is on the {runtime.get('lane')} lane: autochart's CUDA provider needs "
                             f"{CUDA_LANE}'s CUDA 13 (a driver new enough for it; run the install line again)")
-    print(f"autochart: {install.driver.parent}, node {install.node}; this checkout's songcharter {__version__} "
-          "runs it")
+    print(shown(f"autochart: {install.driver.parent}, node {install.node}; this checkout's songcharter {__version__} "
+                "runs it"))
     if device == "cuda":
         provider = sorted((install.driver.parent / "node_modules" / "onnxruntime-node").rglob(
             "libonnxruntime_providers_cuda.so*"))
@@ -197,8 +225,8 @@ def check(app: bool, device: str) -> int:
         cu13 = [d for d in libs if d.endswith("cu13/lib")]
         cudnn = [d for d in libs if d.endswith("cudnn/lib")]
         wsl = ", and WSL's driver libraries" if any(d.endswith("/wsl/lib") for d in libs) else ""
-        print(f"CUDA libraries for it from this Python ({sys.executable}): {len(cu13)} CUDA 13 and {len(cudnn)} "
-              f"cuDNN folders{wsl}")
+        print(shown(f"CUDA libraries for it from this Python ({sys.executable}): {len(cu13)} CUDA 13 and "
+                    f"{len(cudnn)} cuDNN folders{wsl}"))
         if not (cu13 and cudnn):
             problems.append("this Python has no CUDA 13 and cuDNN wheels (the app's cu132 lane brings them): run "
                             "takes.py with the app's Python, runtime/env/bin/python")
@@ -227,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         every = songs_of(a.set, data)
     except Refused as e:
-        print(f"takes: {e}", file=sys.stderr)
+        print(shown(f"takes: {e}"), file=sys.stderr)
         return 2
     if a.scrub:
         scrub = scrubber(every, md5s=True)
@@ -257,25 +285,35 @@ def main(argv: list[str] | None = None) -> int:
     try:
         install, runtime = engine(a.app)
     except Refused as e:
-        print(f"takes: {e}", file=sys.stderr)
+        print(shown(f"takes: {e}"), file=sys.stderr)
         return 2
     out_root = data / "runs" / "takes"
     out_root.mkdir(parents=True, exist_ok=True)
     if a.set != "refs":
         write_set(out_root / a.set, every)
     failed = 0
-    with open(out_root / "takes.log", "a", encoding="utf-8") as log:
+    with open(out_root / "takes.log", "a", encoding="utf-8") as log, \
+            open(out_root / RECORDS, "a", encoding="utf-8") as records:
         def say(msg: str) -> None:
-            line = scrub(f"{time.strftime('%H:%M:%S')} {msg}")
+            line = shown(scrub(f"{time.strftime('%H:%M:%S')} {msg}"))
             print(line, flush=True)
             log.write(line + "\n")
             log.flush()
 
-        if a.app:   # which install made the takes (no path: the log goes into the results zip)
-            say(f"app: songcharter {runtime.get('songcharter')}, the {runtime.get('lane')} lane")
+        def record(**fields) -> None:   # only fields written here: no message, no path, no id
+            records.write(json.dumps({"set": a.set, "time": time.strftime("%Y-%m-%dT%H:%M:%S"), **fields},
+                                     sort_keys=True) + "\n")
+            records.flush()
+
+        app = {"songcharter": runtime.get("songcharter"), "lane": runtime.get("lane")} if a.app else None
+        if app:   # which install made the takes (no path)
+            say(f"app: songcharter {app['songcharter']}, the {app['lane']} lane")
         say(f"start: {named}{len(found)} songs x {len(seeds)} seeds on {a.device}")
+        record(event="start", songs=len(found), seeds=seeds, device=a.device,
+               app={k: v for k, v in app.items() if isinstance(v, str) and NAME.fullmatch(v)} if app else None)
         for s in missing:
             say(f"{s.label}: no input.wav, skipped (build the set: eval/README.md)")
+            record(event="missing", label=s.label)
         for s in found:
             for seed in seeds:  # one call per seed, so a failure costs one take and the log shows progress
                 try:
@@ -283,10 +321,18 @@ def main(argv: list[str] | None = None) -> int:
                     run = take.summary["runs"][0]
                     say(f"{s.label} seed {seed}: {'cached' if take.cached else f'{take.seconds:.0f} s'}, "
                         f"tokens {run.get('nTokens')}, devices {run.get('devices')}, reused {run.get('cachedStages')}")
+                    record(event="take", label=s.label, seed=seed, status="cached" if take.cached else "made",
+                           seconds=number(take.seconds), tokens=number(run.get("nTokens")),
+                           beats=number(run.get("nBeats")), devices=names(take.devices),
+                           reused=names(run.get("cachedStages")),
+                           cut_short=take.cut_short if take.cut_short in ("tokens", "beats") else None)
                 except Exception as e:  # keep going: the other takes are still worth having
                     failed += 1
                     say(f"{s.label} seed {seed}: FAILED {(str(e).splitlines() or [type(e).__name__])[0]}")
+                    record(event="take", label=s.label, seed=seed, status="failed",
+                           error=type(e).__name__ if NAME.fullmatch(type(e).__name__) else "Exception")
         say("ALL DONE" if not failed else f"ALL DONE, {failed} takes failed")
+        record(event="done", failed=failed)
     return 1 if failed else 0
 
 

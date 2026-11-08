@@ -304,14 +304,19 @@ eval/gpu.sh results                                        # eval/data/gpu_resul
   measured]: the reference set (30 minutes of audio with the test song) 0.5-2 hours, the stress set (25 minutes)
   0.5-1.5 hours, the 20-song set (75 minutes) 1.5-5 hours.
 - **The zip** (`eval/data/gpu_results.zip`, and a copy in Windows' Downloads folder), made at the end of a run or by
-  `results`: per set, each take's `notes.chart`, `song.ini`, `take.json` (its key: the input's SHA-256, the seed,
-  the install) and `autochart_run/*.json` (the engine's summary, devices and timings), and the set's `set.json`
-  (each label's slot, chart count and length); `takes.log`, `gpu_run.log` and `gpu_samples.csv` (the GPU's use every
-  5 s). The reference set's takes are under `takes/<id>/`, the others' under `takes/<set>/<label>/`. No audio:
-  `check_no_audio.py` must pass on the zip, or none is made. No title: a 20-song song's take folder goes in under its
-  label (s01-s13, in the order of the sorted ids, as `set20-v03.md` names them), every such id in every file is
-  replaced by its label, and a zip still holding one is not made; the mapping, `runs/takes/set20/labels.json`, stays
-  on this PC. This PC's home folder is written `~` and the Windows profile `%USERPROFILE%`.
+  `results`, holds structured files only: per set, each take's `notes.chart` and `song.ini` as the engine wrote them,
+  its `take.json` (its key: the input's SHA-256, the seed, the install) and `autochart_run/summary.json` (the engine's
+  devices, tokens, beats and timings), both copied field by field (numbers, hashes and short names: no path, no
+  message), and the set's `set.json` (each label's slot, chart count and length); `takes/takes.jsonl` (takes.py's
+  record of each take: made, cached or failed, a failure by its exception's type) and `gpu_samples.csv` (the GPU's
+  use every 5 s). No log goes in: `takes.log`, which has each failure's message, and `gpu_run.log` stay on this PC
+  (`eval/gpu.sh status` shows them). The reference set's takes are under `takes/<id>/`, the others' under
+  `takes/<set>/<label>/`. A 20-song song's take folder goes in under its label (s01-s13, in the order of the sorted
+  ids, as `set20-v03.md` names them); the mapping, `runs/takes/set20/labels.json`, stays on this PC. In the text
+  files, this PC's home folder is written `~` and the Windows profile `%USERPROFILE%` (`WINDOWS_PROFILE` names it,
+  else Windows' own). Then a guard reads the finished zip: a 20-song id as a whole word in any case, an md5 of the
+  two lists, or the home folder or the Windows profile in any case, in any file, and no zip is made (it names the
+  file by its label path); `check_no_audio.py` must pass too. A path the scripts print is written with `~`.
 
 ## Rebuilding the dev machine
 
