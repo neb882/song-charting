@@ -43,10 +43,12 @@ NO_KERNEL = (b"Traceback (most recent call last):\n  ...\ntorch.AcceleratorError
 
 class FakeAllin1:
     """A Python with allin1: answers the runner's probe and run commands the way allin1_runner.py does. fail:
-    "probe", "run", or "cuda" (every run on cuda fails as on a GPU the torch build has no kernels for)."""
+    "probe", "run", "cuda" (every run on cuda fails as on a GPU the torch build has no kernels for) or "kill" (every
+    run on the CPU, or on cuda with fail_on "cuda", ends by SIGKILL, as the OOM killer ends it). during: called while
+    a run "runs"."""
 
-    def __init__(self, cuda=False, fail=None, cuda_error=None):
-        self.cuda, self.fail, self.cuda_error = cuda, fail, cuda_error
+    def __init__(self, cuda=False, fail=None, cuda_error=None, during=None, fail_on="cpu"):
+        self.cuda, self.fail, self.cuda_error, self.during, self.fail_on = cuda, fail, cuda_error, during, fail_on
         self.calls, self.jobs, self.inputs = [], [], []
 
     def __call__(self, cmd, capture_output, timeout, cwd, text=None, input=None):
@@ -63,6 +65,10 @@ class FakeAllin1:
         job = json.loads(open(cmd[5], encoding="utf-8").read())
         self.jobs.append(job)
         self.inputs.append(np.frombuffer(input, dtype="<i2").reshape(4, job["samples"]))
+        if self.during is not None:
+            self.during()
+        if self.fail == "kill" and job["device"] == self.fail_on:
+            return subprocess.CompletedProcess(cmd, -9, b"", b"")
         if self.fail == "run":
             return subprocess.CompletedProcess(cmd, 1, b"", b"RuntimeError: shapes do not match\n")
         if self.fail == "cuda" and job["device"] == "cuda":
@@ -635,3 +641,117 @@ def test_the_fallback_uses_the_given_beats_inside_the_audio(tmp_path, monkeypatc
     for bad, match in [(np.r_[grid[:10], np.nan, grid[10:]], "1 non-finite"), (grid.reshape(-1, 2), "1-D")]:
         with pytest.raises(ValueError, match=match):  # a NaN or a table is the caller's bug
             find_sections(mix, stems, tmp_path / "bad", settings, beats=bad)
+
+
+# ------------------------------------------------------------------------------------------------ memory (M8-05)
+
+def meminfo(tmp_path, monkeypatch, mem_mib, swap_mib=0.0):
+    """/proc/meminfo saying MemTotal and SwapTotal (MemAvailable 0, never read) in place of this machine's."""
+    path = tmp_path / "meminfo"
+    path.write_text(f"MemTotal:       {round(mem_mib * 1024)} kB\nMemFree:        0 kB\nMemAvailable:   0 kB\n"
+                    f"SwapTotal:      {round(swap_mib * 1024)} kB\nSwapFree:       0 kB\n")
+    monkeypatch.setattr(S, "MEMINFO", path)
+
+
+def test_m8_03s_lines_and_the_longest_song_that_fits():
+    assert S.child_mib(60.0) == pytest.approx(354.5 + 17.443 * 60)   # A-a: about 1.02 GiB a minute
+    assert S.tree_mib(60.0, False) == pytest.approx(853.5 + 20.403 * 60)   # A-b: today's tree
+    assert S.tree_mib(60.0, True) == pytest.approx(853.5 + 17.703 * 60)    # the arrays let go: 162 MiB a minute less
+    assert S.longest_s(S.tree_mib(500.0, True) + S.MARGIN_MIB) == pytest.approx(500.0)
+    assert S.longest_s(100.0) == 0.0
+    assert round(S.longest_s(11.2 * 1024) / 60, 2) == 8.84   # a 16 GB PC's 12 GB of WSL, no swap (M8-03 A-d's 9.0
+    assert round(S.longest_s(10.2 * 1024) / 60, 2) == 7.88   # and 8.1 with a reserve of 1 GiB, without the residual)
+
+
+def test_a_runner_ended_by_sigkill_is_named_as_most_likely_memory(tmp_path, weights, fallback, monkeypatch):
+    monkeypatch.setattr(S, "MEMINFO", tmp_path / "none")   # no /proc/meminfo: nothing is left out before the run
+    mix, stems = song(2.0)
+    line = "allin1 was stopped, most likely for memory (a song of 0:02 needs about 0.4 GiB for it on the CPU)"
+    assert S.stopped_line(2.0) == line
+    r = find_sections(mix, stems, tmp_path / "out", Settings(python="py"), run=FakeAllin1(fail="kill"),
+                      download=weights)
+    assert r.backend == "librosa" and fallback == [[line]]
+    with pytest.raises(Allin1Error, match=re.escape(line)):
+        find_sections(mix, stems, tmp_path / "asked", Settings(backend="allin1", python="py"),
+                      run=FakeAllin1(fail="kill"), download=weights)
+    fake = FakeAllin1(cuda=True, fail="kill", fail_on="cuda")   # killed on CUDA: named, then run on the CPU
+    r = find_sections(mix, stems, tmp_path / "cuda", Settings(python="py"), run=fake, download=weights)
+    assert [j["device"] for j in fake.jobs] == ["cuda", "cpu"] and r.backend == "allin1"
+    assert r.info["allin1"]["fallback"] == f"the CUDA run failed ({line}); analysed on the CPU"
+
+
+def test_allin1_is_left_out_before_its_run_when_the_song_cannot_fit(tmp_path, weights, fallback, monkeypatch):
+    """On the CPU the predicted tree with the margin is compared with MemTotal + SwapTotal: just over, allin1 is left
+    out before any run, just under it runs; swap counts and MemAvailable is never read; with a loader (the arrays let
+    go) the tree is smaller; a cached result and a run on CUDA are not checked."""
+    mix, stems = song(10.0)
+    edge = S.tree_mib(10.0, False) + S.MARGIN_MIB
+    meminfo(tmp_path, monkeypatch, edge - 1000, 1000.01)
+    fake = FakeAllin1()
+    r = find_sections(mix, stems, tmp_path / "fits", Settings(python="py"), run=fake, download=weights)
+    assert r.backend == "allin1" and len(fake.jobs) == 1
+    meminfo(tmp_path, monkeypatch, edge - 1000, 999.5)
+    fake = FakeAllin1()
+    r = find_sections(mix, stems, tmp_path / "over", Settings(python="py"), run=fake, download=weights)
+    assert r.backend == "librosa" and fake.jobs == []
+    assert re.fullmatch(r"allin1 was left out for memory \(a song of 0:10 needs about 0\.5 GiB for it on the CPU, "
+                        r"2\.2 GiB with the rest of the chart and a margin; this PC has 2\.2 GiB of memory and swap\)",
+                        fallback[-1][0]), fallback[-1]
+    held = S.SongArrays(mix, stems, lambda: (mix, stems))   # the arrays let go: under the edge
+    assert find_sections(held, None, tmp_path / "freed", Settings(python="py"), run=fake,
+                         download=weights).backend == "allin1"
+    meminfo(tmp_path, monkeypatch, 100)
+    hit = find_sections(mix, stems, tmp_path / "fits", Settings(python="py"), run=fake, download=weights)
+    assert hit.cached and hit.backend == "allin1"
+    cuda = FakeAllin1(cuda=True)
+    r = find_sections(mix, stems, tmp_path / "cuda", Settings(python="py", device="cuda"), run=cuda, download=weights)
+    assert r.backend == "allin1" and [j["device"] for j in cuda.jobs] == ["cuda"]
+
+
+def test_the_arrays_are_let_go_while_allin1_runs_and_read_again_when_needed(tmp_path, weights, monkeypatch):
+    import gc
+    import weakref
+    mix, stems = song(2.0)
+    keep = mix.copy(), {k: v.copy() for k, v in stems.items()}
+    loads, alive = [], []
+
+    def load():
+        loads.append(1)
+        return keep[0].copy(), {k: v.copy() for k, v in keep[1].items()}
+
+    def counting(refs):
+        def during():
+            gc.collect()
+            alive.append(sum(r() is not None for r in refs))
+        return during
+
+    refs = [weakref.ref(mix)] + [weakref.ref(y) for y in stems.values()]
+    held = S.SongArrays(mix, stems, load)
+    del mix, stems
+    r = find_sections(held, None, tmp_path / "out", Settings(python="py"), run=FakeAllin1(during=counting(refs)),
+                      download=weights)
+    assert r.backend == "allin1" and alive == [0] and held.released and loads == []
+    m, s = held.take()   # read again for the caller
+    assert loads == [1] and np.array_equal(m, keep[0]) and all(np.array_equal(s[k], keep[1][k]) for k in keep[1])
+
+    mix, stems = song(2.0)   # without a loader they stay
+    refs = [weakref.ref(mix)] + [weakref.ref(y) for y in stems.values()]
+    plain = S.SongArrays(mix, stems)
+    del mix, stems
+    find_sections(plain, None, tmp_path / "kept", Settings(python="py"), run=FakeAllin1(during=counting(refs)),
+                  download=weights)
+    assert alive[-1] == 7 and not plain.released
+
+    got = []   # killed: the librosa fallback gets them read again
+    monkeypatch.setattr(S, "_librosa", lambda mix, stems, out, s, beats, why: got.append((mix, stems)) or
+                        S.SectionsResult(out / "segments.json", {"backend": "librosa", "why": "; ".join(why)}, False))
+    held = S.SongArrays(*load(), load)
+    find_sections(held, None, tmp_path / "killed", Settings(python="py"), run=FakeAllin1(fail="kill"),
+                  download=weights)
+    assert loads == [1, 1, 1] and np.array_equal(got[0][0], keep[0]) and np.array_equal(got[0][1]["vocals"],
+                                                                                        keep[1]["vocals"])
+    p = S.allin1_input(keep[1])   # the key reads the runner's bytes: the same key as the payload's own
+    view = np.frombuffer(p.astype("<i2").tobytes(), dtype="<i2").reshape(p.shape)
+    assert S.cache_key({"stems": view}, {"k": 1}) == S.cache_key({"stems": p}, {"k": 1})
+    with pytest.raises(ValueError, match="stems come from the SongArrays"):
+        find_sections(held, keep[1], tmp_path / "x", Settings(python="py"), run=FakeAllin1(), download=weights)

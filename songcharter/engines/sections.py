@@ -24,6 +24,15 @@ after the music. songcharter.sections snaps them to measures, merges, splits and
     is retried on the CPU by the runner. A CUDA run that fails any other way is run again on the CPU when the
     device was "auto" (with the same model), and raises when it was "cuda". engine.json records either
     fallback.
+  * **Memory** (M8-05, DESIGN.md 2.5). allin1's own peak on the CPU grows by about 1 GiB a minute of audio, and the
+    process tree with it (M8-03 part A's lines, CHILD_MIB and PARENT_MIB). Given a SongArrays with a loader (the
+    pipeline's), the mix and stems are let go while the runner runs, once its input bytes and the key are made, and
+    read again only when they are needed (the librosa fallback, or the caller after). Before a run on the CPU the
+    predicted tree, with MARGIN_MIB, is compared with this machine's MemTotal plus SwapTotal (fixed per PC, never
+    MemAvailable): when it does not fit, allin1 is left out at once (memory_skip), instead of being killed minutes
+    later; a runner ended by SIGKILL is named as most likely stopped for memory (stopped_line). On CUDA there is no
+    such check (the host side was measured once, not as a line): a failed or killed CUDA run goes to the CPU, which
+    is checked.
   * **librosa** (numpy, scipy and librosa only), for when allin1 is not available. Laplacian structural
     segmentation (McFee and Ellis 2014, as in librosa's gallery) on beat-synchronous CQT and MFCC; the cluster
     count is the one whose segments, after those under 16 beats merge, come closest to one per
@@ -107,6 +116,17 @@ AUTO_MODEL = "harmonix-fold0"
 ALLIN1_STEMS = ("bass", "drums", "other", "vocals")   # allin1's four; every other stem folds into "other"
 PROBE_TIMEOUT_S = 300
 
+# memory (M8-03 part A, 24 kept songs on the CPU; MiB, d the song's seconds): allin1's own peak (A-a, residuals -233
+# / +202), the pipeline's process while it runs (A-b), and what the parent lets go when its arrays are released (the
+# mix and six stems, 142 MiB a minute, and the int16 payload, 20: A-b); the tree is the sum, 853.5 + 20.4 d, or
+# 853.5 + 17.7 d with the arrays let go. The margin is the child line's largest residual and a reserve of 1 GiB (A-d)
+CHILD_MIB = (354.5, 17.443)
+PARENT_MIB = (499.0, 2.96)
+FREED_MIB_PER_S = 162 / 60
+MARGIN_MIB = 202 + 1024
+MEMINFO = Path("/proc/meminfo")
+KILLED = -9                 # subprocess's returncode for a child ended by SIGKILL (on Linux, the kernel's OOM killer)
+
 # the fallback
 FEATURE_RATE = 22050        # librosa's default rate; the mix is halved to it
 HOP = 512                   # feature frames of 23 ms
@@ -164,6 +184,95 @@ class SectionsResult:
     @property
     def segments(self) -> list[Segment]:
         return read_allin1(self.path)
+
+
+class SongArrays:
+    """The mix and stems find_sections reads, held so that allin1's run can let them go (module docstring, Memory).
+    `load` reads them again, the same arrays (the pipeline's: decode.wav and the stem WAVs, float32 as written);
+    without it they are kept."""
+
+    def __init__(self, mix: np.ndarray, stems: Mapping[str, np.ndarray],
+                 load: Callable[[], tuple[np.ndarray, Mapping[str, np.ndarray]]] | None = None):
+        self.samples, self.names = int(mix.shape[1]), tuple(sorted(stems))
+        self._held: tuple | None = (mix, dict(stems))
+        self._load = load
+
+    @property
+    def can_release(self) -> bool:
+        return self._load is not None
+
+    @property
+    def released(self) -> bool:
+        return self._held is None
+
+    def arrays(self) -> tuple[np.ndarray, Mapping[str, np.ndarray]]:
+        """The mix and stems: those held, or (after release) read again and held again."""
+        if self._held is None:
+            mix, stems = self._load()
+            self._held = (mix, dict(stems))
+        return self._held
+
+    def release(self) -> bool:
+        """Let the arrays go when `load` can read them again; whether this holder now holds none."""
+        if self._load is not None:
+            self._held = None
+        return self._held is None
+
+    def take(self) -> tuple[np.ndarray, Mapping[str, np.ndarray]]:
+        """The arrays (read again if they were let go), which this holder then lets go: the caller holds them."""
+        arrays = self.arrays()
+        self._held = None
+        return arrays
+
+
+def _mmss(seconds: float) -> str:
+    return f"{int(seconds // 60)}:{int(seconds % 60):02d}"
+
+
+def child_mib(seconds: float) -> float:
+    """allin1's own peak on the CPU for a song of `seconds` (M8-03 A-a's line)."""
+    return CHILD_MIB[0] + CHILD_MIB[1] * seconds
+
+
+def tree_mib(seconds: float, freed: bool) -> float:
+    """The process tree's peak while allin1 runs on the CPU (child and parent), `freed`: with the arrays let go."""
+    return child_mib(seconds) + PARENT_MIB[0] + (PARENT_MIB[1] - FREED_MIB_PER_S * freed) * seconds
+
+
+def capacity_mib(path: Path | None = None) -> float | None:
+    """This machine's memory and swap, MemTotal + SwapTotal (in WSL: .wslconfig's memory and swap), in MiB; None
+    where /proc/meminfo does not say. Never MemAvailable, which changes from run to run."""
+    try:
+        text = (path or MEMINFO).read_text(encoding="ascii", errors="replace")
+    except OSError:
+        return None
+    kb = {}
+    for line in text.splitlines():
+        m = re.match(r"(MemTotal|SwapTotal):\s+(\d+)\s*kB", line)
+        if m:
+            kb[m.group(1)] = int(m.group(2))
+    return (kb["MemTotal"] + kb.get("SwapTotal", 0)) / 1024 if "MemTotal" in kb else None
+
+
+def longest_s(capacity: float, freed: bool = True) -> float:
+    """The longest song whose tree, with MARGIN_MIB, fits `capacity` MiB (memory_skip's limit)."""
+    base, per_s = tree_mib(0.0, freed), tree_mib(1.0, freed) - tree_mib(0.0, freed)
+    return max(0.0, (capacity - MARGIN_MIB - base) / per_s)
+
+
+def memory_skip(seconds: float, freed: bool, capacity: float | None) -> str | None:
+    """Why allin1 is left out on the CPU for a song of `seconds` on a machine of `capacity` MiB, else None."""
+    if capacity is None or tree_mib(seconds, freed) + MARGIN_MIB <= capacity:
+        return None
+    return (f"allin1 was left out for memory (a song of {_mmss(seconds)} needs about {child_mib(seconds) / 1024:.1f} "
+            f"GiB for it on the CPU, {(tree_mib(seconds, freed) + MARGIN_MIB) / 1024:.1f} GiB with the rest of the "
+            f"chart and a margin; this PC has {capacity / 1024:.1f} GiB of memory and swap)")
+
+
+def stopped_line(seconds: float) -> str:
+    """What a runner ended by SIGKILL is reported as."""
+    return (f"allin1 was stopped, most likely for memory (a song of {_mmss(seconds)} needs about "
+            f"{child_mib(seconds) / 1024:.1f} GiB for it on the CPU)")
 
 
 def _sha256(path: Path) -> str:
@@ -334,16 +443,25 @@ def find_sections(mix: np.ndarray, stems: Mapping[str, np.ndarray] | None, out: 
     """Segments of the song in out/segments.json and how they were made in out/engine.json (module docstring).
 
     mix:   the decoded song, float32 (channels, n) at 44.1 kHz; stems: name -> array of the same shape (or None).
+           Or `mix` a SongArrays holding both (stems None), which allin1's run lets go (module docstring, Memory).
     beats: beat times in seconds for the fallback's beat-synchronous features (default: librosa's tracker); those
            before 0 s (a tempo map's lead-in) or after the end are left out.
     run, download: stand-ins for subprocess.run and huggingface_hub's hf_hub_download (tests).
     """
-    _check(mix, stems, sample_rate, settings, beats)
+    if isinstance(mix, SongArrays):
+        if stems is not None:
+            raise ValueError("stems come from the SongArrays: pass stems=None")
+        song = mix
+        _check(*song.arrays(), sample_rate, settings, beats)
+    else:
+        _check(mix, stems, sample_rate, settings, beats)
+        song = SongArrays(mix, stems or {})
+    del mix, stems   # the song's arrays are held by `song` alone, so allin1's run can let them go
     out = Path(out)
     why = []
     if settings.backend in ("auto", "allin1"):
         try:
-            return _allin1(mix, stems or {}, out, settings, run, download)
+            return _allin1(song, out, settings, run, download)
         except Allin1Error as e:
             if settings.backend == "allin1":
                 raise
@@ -355,16 +473,18 @@ def find_sections(mix: np.ndarray, stems: Mapping[str, np.ndarray] | None, out: 
             why.append(str(e))
     elif settings.backend == "librosa":
         why.append("backend librosa asked for")
-    return _librosa(mix, stems or {}, out, settings, beats, why)
+    return _librosa(*song.arrays(), out, settings, beats, why)
 
 
 # ------------------------------------------------------------------------------------------------------------ allin1
 
-def _allin1(mix, stems, out: Path, s: Settings, run, download) -> SectionsResult:
+def _allin1(song: SongArrays, out: Path, s: Settings, run, download) -> SectionsResult:
     python = allin1_python(s)
     if python is None:
         raise Allin1Error(f"no allin1 Python: set {ENV_PYTHON} to a Python with all-in-one-infer (or allin1)")
-    payload = allin1_input(stems)
+    data = allin1_input(song.arrays()[1]).astype("<i2")
+    shape, data = data.shape, data.tobytes()   # what the runner reads on stdin
+    payload = np.frombuffer(data, dtype="<i2").reshape(shape)   # the same samples for the key, without a copy
     found = probe(python, run)
     cuda_error = f" ({found['cuda_error']})" if found.get("cuda_error") else ""
     if s.device == "cuda" and not found.get("cuda"):
@@ -375,22 +495,23 @@ def _allin1(mix, stems, out: Path, s: Settings, run, download) -> SectionsResult
         fallback = f"CUDA does not run here{cuda_error}; analysed on the CPU"
         why += f"; {fallback}"
     try:
-        return _allin1_job(mix, stems, payload, out, s, python, found, device, why, fallback, run, download)
+        return _allin1_job(song, payload, data, out, s, python, found, device, why, fallback, run, download)
     except _RunFailed as e:
         if device == "cpu" or s.device != "auto":  # asked for cuda: no second try
             raise
         failed = f"the CUDA run failed ({e.line})"
         fallback = f"{failed}; analysed on the CPU"
         try:
-            return _allin1_job(mix, stems, payload, out, s, python, found, "cpu", f"{why}; {fallback}", fallback,
+            return _allin1_job(song, payload, data, out, s, python, found, "cpu", f"{why}; {fallback}", fallback,
                                run, download)
         except Allin1Error as again:
             raise Allin1Error(f"{failed}, and then on the CPU: {again}") from again
 
 
-def _allin1_job(mix, stems, payload: np.ndarray, out: Path, s: Settings, python: str, found: dict, device: str,
-                why: str, fallback: str | None, run, download) -> SectionsResult:
-    """One allin1 run on `device` (or the cached result of one); _RunFailed when the runner exits with an error."""
+def _allin1_job(song: SongArrays, payload: np.ndarray, data: bytes, out: Path, s: Settings, python: str, found: dict,
+                device: str, why: str, fallback: str | None, run, download) -> SectionsResult:
+    """One allin1 run on `device` (or the cached result of one); _RunFailed when the runner exits with an error,
+    Allin1Error when the song does not fit this machine's memory on the CPU (memory_skip)."""
     model = s.model if s.model != "auto" else AUTO_MODEL
     weights = {ALLIN1_FOLDS[f][0]: ALLIN1_FOLDS[f][1] for f in ALLIN1_MODELS[model]}
     key = cache_key({"stems": payload}, {"backend": "allin1", "engine": ENGINE_VERSION, "package": found.get("package"),
@@ -400,6 +521,10 @@ def _allin1_job(mix, stems, payload: np.ndarray, out: Path, s: Settings, python:
     hit = _cached(out, key, live)
     if hit is not None:
         return hit
+    seconds = song.samples / SAMPLE_RATE
+    skip = memory_skip(seconds, song.can_release, capacity_mib()) if device == "cpu" else None
+    if skip:
+        raise Allin1Error(skip)
     try:
         checkpoints = checkpoint_paths(model, download)
     except (ImportError, OSError, RuntimeError, ValueError) as e:  # no hub client, no download, not the pinned file
@@ -411,11 +536,14 @@ def _allin1_job(mix, stems, payload: np.ndarray, out: Path, s: Settings, python:
         job = {"samples": int(payload.shape[1]), "stems": list(ALLIN1_STEMS), "device": device, "threads": threads,
                "checkpoints": [str(p) for p in checkpoints], "seed": 0, "out": str(work / "result.json")}
         _write_json(work / "job.json", job)
+        song.release()   # while the child runs, only `data` stays here of the song (module docstring, Memory)
         try:
             proc = run(runner_command(python, "run", str(work / "job.json")), capture_output=True,
-                       input=payload.astype("<i2").tobytes(), timeout=s.timeout_s, cwd=tmp)
+                       input=data, timeout=s.timeout_s, cwd=tmp)
         except (OSError, subprocess.SubprocessError) as e:
             raise Allin1Error(f"allin1 did not finish ({type(e).__name__}: {e})") from e
+        if proc.returncode == KILLED:
+            raise _RunFailed(stopped_line(seconds), stopped_line(seconds))
         if proc.returncode != 0 or not (work / "result.json").is_file():
             raise _RunFailed(f"allin1 failed (exit {proc.returncode}):\n{_tail(proc)}", _error_line(proc))
         res = json.loads((work / "result.json").read_text(encoding="utf-8"))
@@ -424,8 +552,8 @@ def _allin1_job(mix, stems, payload: np.ndarray, out: Path, s: Settings, python:
                 "downbeats": res.get("downbeats")}
     info = {"engine": "sections", "engine_version": ENGINE_VERSION, "key": key, "backend": "allin1", **live,
             "cached": False,
-            "input": {"duration_s": round(mix.shape[1] / SAMPLE_RATE, 3), "stems": sorted(stems),
-                      "other": sorted(n for n in stems if n not in ("bass", "drums", "vocals"))},
+            "input": {"duration_s": round(song.samples / SAMPLE_RATE, 3), "stems": list(song.names),
+                      "other": [n for n in song.names if n not in ("bass", "drums", "vocals")]},
             "allin1": {**found, "model": model, "device": res.get("device", device),
                        "fallback": res.get("fallback") or fallback, "threads": res.get("threads"),
                        "repo": ALLIN1_REPO, "revision": ALLIN1_REVISION, "weights": weights,

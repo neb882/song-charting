@@ -126,7 +126,8 @@ SCRATCH_BYTES = 3_000_000   # what the stand-in guitar keeps in autochart's scra
 def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: BaseException | None = None,
              cuda_error: str | None = None, allin1_device: str | None = None, repeat: bool = False,
              auto: str = "cpu", moved: str | None = None, no_preview: str | None = None, segments=None,
-             devices="summary", reason: str | None = None, separation_fallback: str | None = None):
+             devices="summary", reason: str | None = None, separation_fallback: str | None = None,
+             sections_why: str = "backend librosa asked for"):
     """Engines that write what the real ones write, and record each call (with the arrays it got) in `calls`.
     `empty`: engines that find no notes; `bug`: a stage that raises `error` (by default a KeyError: a bug);
     `cuda_error`: device "auto" finds CUDA that does not run; `reason`: why "auto" took the CPU (by default "no
@@ -138,7 +139,9 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: BaseExc
     `no_preview`: why the preview cannot run (its libraries do not import); `segments`: the sections engine's
     segments instead of SEGMENTS (written over different ones already there). The guitar keeps SCRATCH_BYTES in
     its scratch folder, as autochart keeps its engine cache there. The GPU memory calls (free_gpu, vram_reset,
-    vram_peak_mb) go to `gpu_calls`, and torch's peak on CUDA is 100 MB more for each reset."""
+    vram_peak_mb) go to `gpu_calls`, and torch's peak on CUDA is 100 MB more for each reset. The sections come
+    from librosa as asked for (no fallback) unless `allin1_device` is given, or `sections_why` says why allin1 did
+    not run; the sections engine lets the song's arrays go, as allin1's run does."""
     segments = SEGMENTS if segments is None else segments
     why = reason or (None if auto == "cuda" else
                      f"CUDA did not run on the GPU: {cuda_error}" if cuda_error else D.NO_GPU)
@@ -207,9 +210,12 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: BaseExc
                 _write(out / "notes.chart", Track("Expert", "DoubleBass", notes))
             return Run(out / "notes.chart", cached, {})
 
-        def sections(self, mix, stems, out, device, threads):
+        def sections(self, song, out, device, threads):
             self._bug("sections")
+            mix, stems = song.arrays()
             self.calls.append(("sections", dict(stems), out, device, threads))
+            del mix, stems
+            song.release()   # as allin1's run does: the pipeline reads the arrays again after
             path = out / "segments.json"
             cached = path.is_file() and json.loads(path.read_text()) == {"segments": segments}
             if not cached:
@@ -218,7 +224,7 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: BaseExc
             if allin1_device:
                 return Run(path, cached, {"backend": "allin1", "segments": len(segments), "allin1": {
                     "model": "harmonix-fold0", "device": allin1_device, "fallback": None, "peak_rss_mb": 512.0}})
-            return Run(path, cached, {"backend": "librosa", "why": "no allin1 Python (stand-in)",
+            return Run(path, cached, {"backend": "librosa", "why": sections_why,
                                       "segments": len(segments)})
 
         def preview_missing(self):
@@ -398,7 +404,7 @@ def test_the_engines_get_the_decode_its_stems_and_the_options(charted):
     key = standin_key(mix)
     assert calls["preview"] == (result.folder, work / "preview", {s: work / "stems" / key / f"{s}.wav" for s in own})
     assert result.preview["overview"] == str(work / "preview" / "overview.png")
-    assert any("sections: the librosa fallback (no allin1 Python (stand-in))" in line for line in lines)
+    assert any("sections: the librosa fallback (backend librosa asked for)" in line for line in lines)
 
 
 def test_a_rerun_reuses_every_stage(charted, monkeypatch, capsys):
@@ -2027,13 +2033,13 @@ def test_the_real_engines_are_called_with_the_pipelines_settings(tmp_path, monke
 
     monkeypatch.setattr(AD, "generate", lambda m, d, out, device: seen.setdefault("adtof", (out, device)) and result())
     monkeypatch.setattr(BA, "generate", lambda m, b, out: seen.setdefault("bass", out) and result())
-    monkeypatch.setattr(SE, "find_sections", lambda m, s, out, settings: seen.setdefault(
-        "sections", (sorted(s), out, settings)) and result())
+    monkeypatch.setattr(SE, "find_sections", lambda song, s, out, settings: seen.setdefault(
+        "sections", (song.names, s, out, settings)) and result())
     assert Engines().drums(mix, mix, tmp_path / "d", "cuda") == Run(tmp_path / "c", True, {"k": 1})
     assert Engines().bass(mix, mix, tmp_path / "b").path == tmp_path / "c"
-    assert Engines().sections(mix, {"drums": mix}, tmp_path / "x", "auto", 3).path == tmp_path / "s"
+    assert Engines().sections(SE.SongArrays(mix, {"drums": mix}), tmp_path / "x", "auto", 3).path == tmp_path / "s"
     assert seen["adtof"] == (tmp_path / "d", "cuda") and seen["bass"] == tmp_path / "b"
-    assert seen["sections"] == (["drums"], tmp_path / "x", SE.Settings(device="auto", threads=3))
+    assert seen["sections"] == (("drums",), None, tmp_path / "x", SE.Settings(device="auto", threads=3))
 
     monkeypatch.setattr(AC, "find_install", lambda: "the install")
     take = AC.Take(101, tmp_path / "seed_101" / "notes.chart", {"runs": [{"devices": {"x": "cpu"}}]}, False, 9.5)
@@ -2051,3 +2057,48 @@ def test_the_real_engines_are_called_with_the_pipelines_settings(tmp_path, monke
                                  "on_take": heard.append}
     assert runs == [Run(take.chart, False, {"runs": [{"devices": {"x": "cpu"}}], "seconds": 9.5,
                                             "devices": {"x": "cpu"}})]
+
+
+# ------------------------------------------------------------------------------------------- the sections (M8-05)
+
+def test_the_sections_falling_back_to_librosa_is_a_banner(charted, tmp_path):
+    """When allin1 failed, was stopped or was left out, the sections' move to librosa is a fallback (from "allin1",
+    to "librosa"): in pipeline.json's fallbacks and ChartResult.fallbacks, a `fallback` event (the page's banner)
+    whose reason is the cause's first line and what the simpler analysis costs, and the warning as before. librosa
+    asked for is warned about only."""
+    root, result, _, _ = charted
+    stopped = "allin1 was stopped, most likely for memory (a song of 9:09 needs about 9.7 GiB for it on the CPU)"
+    for name, why, cause in (("stopped", stopped, stopped),
+                             ("failed", "allin1 failed (exit 1):\nRuntimeError: shapes", "allin1 failed (exit 1)"),
+                             ("asked", "backend librosa asked for", None)):
+        events = []
+        done = chart(root / "song.flac", tmp_path / "out" / name, Options(work=warm_work(result, tmp_path, name),
+                                                                  metadata={"genre": "Test"}),
+                     engines=standins(sections_why=why)(), log=lambda line: None, sampler=None, events=events.append)
+        moved = [f for f in done.fallbacks if f["stage"] == "sections"]
+        warned = [e["text"] for e in events if e["event"] == "warning"]
+        assert f"sections: the librosa fallback ({why})" in warned
+        if cause is None:
+            assert moved == [] and not any(e["event"] == "fallback" and e["stage"] == "sections" for e in events)
+            continue
+        record = {"stage": "sections", "from": "allin1", "to": "librosa", "reason": f"{cause}. {P.SIMPLER}"}
+        assert moved == [record] and {"event": "fallback", **record} in events
+        report = json.loads((done.work / "pipeline.json").read_text(encoding="utf-8"))
+        assert record in report["fallbacks"]
+
+
+def test_the_arrays_the_sections_let_go_are_read_again_the_same(charted, tmp_path, monkeypatch):
+    """The sections engine gets the song's arrays alone and lets them go (as allin1's run does); the stage after
+    gets them read again from decode.wav and the stem WAVs, the separation's own arrays, float32 sample for sample."""
+    root, result, _, _ = charted
+    seen, reads = {}, []
+    real = P._reload
+    monkeypatch.setattr(P, "_reload", lambda *a: reads.append(a) or real(*a))
+    monkeypatch.setattr(P, "_lyrics_stage", lambda options, engines, stems, *rest: seen.update(stems))
+    work = warm_work(result, tmp_path)
+    done = chart(root / "song.flac", tmp_path / "out", Options(work=work, metadata={"genre": "Test"}),
+                 engines=standins()(), log=lambda line: None, sampler=None)
+    own = stems(int(DURATION * SR))
+    assert done.ok and len(reads) == 1 and reads[0][0] == work / "decode.wav"
+    assert sorted(seen) == sorted(own)
+    assert all(seen[s].dtype == np.float32 and np.array_equal(seen[s], own[s]) for s in own)
