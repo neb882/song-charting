@@ -250,7 +250,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | HOPOs below Expert | `reduce.py`'s rule (§2.11 step 9) | same | none |
 | lower-tier density | `reduce.py`'s time floors (§2.11 step 2) | same | none |
 | +8 inside star power | dropped; the coverage step keeps phrases non-empty [decision] | absent | none |
-| taps | only inside fast runs: 8+ onsets at 0.125 s or less (§2.6 step 4, M7-02) | same (`QuantizeRules.tap_run`; any other tap plays as a HOPO); `reduce.py` drops them below Expert | none |
+| taps | only inside fast runs: 8+ onsets at 0.125 s or less (§2.6 step 4, M7-02) | same (`QuantizeRules.tap_run`; any other tap takes its natural state, no flip); `reduce.py` drops them below Expert | none |
 | Engine A ticks | through the quantizer with an "already on our grid" flag (§2.7) | absent | add with Engine A (M2) |
 | `diff_band` | written (§2.12) | not writable | add a band rating to `write_ini` and `build_song_folder` |
 | `beat_grid(start=...)` | click/free tests on that path; low evidence returns the start beats flagged (§2.3) | always free; raises `InputError` (a `ValueError`) on low evidence | §2.3 step 6 |
@@ -1202,37 +1202,50 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
    - Rule-based engines give `hopo=None`, and natural rules apply. Neither forced HOPOs nor attack strength is predictable from audio (AUC 0.48–0.53 [here, v1]), so a rule engine cannot supply intent; a forced-strum rule for rule engines is M5 (§8).
    - An imported rule-engine chart reads back with the natural HOPO states of its own 120 BPM map; use `hopo:
      "forced"` (the pipeline does) or `"natural"` for it, never `"source"` [here, bass engine run].
-   - **Taps only in fast runs** (M7-02) [here, M7-01 part A's A-b; the branch's check below]. A source tap is kept
-     only inside a run of 8 or more onsets, each at most 0.125 s after the one before on our grid (8 a second or
-     more: `QuantizeRules.tap_run` 8, `tap_run_gap_s` 0.125; `quantize.fast_runs`), on every 5-fret part and every
-     level the quantizer takes; any other tap is played as a HOPO under every HOPO rule: natural on our grid where
-     it is one, else flipped to one. `tap_run` 0 is the old rule (every tap kept). The levels reduced from Expert
-     do not change: `reduce.py` writes no tap below Expert, and its Hard rule reads a tap and a HOPO alike (§2.11).
-     `report.json`'s `parts.*.quantize.<level>` counts `taps_kept` and `taps_to_hopo`. The engine taps where the
-     humans do not: on the 8 songs with our Expert taps, 6 % of them (precision 0.061) fall on a human tap at 100 ms,
-     and they find 16 % of the human taps (recall 0.157, 13 songs with human taps); our tap share 0.041 against the
-     humans' 0.031. Rule T2 (this one) raises the per-note state agreement by +0.007 [+0.002, +0.013] pooled over the
-     23 songs, and by +0.000 to +0.044 on each of the 8, none down; dropping every tap (T1) gives the same +0.007
-     [+0.002, +0.014]. T2 is the orchestrator's choice (M7-00 section 12); the precision of the taps it keeps was not
-     measured. The same agreement from the branch's quantizer, re-run in process on each
-     song's kept engine take with the kept chart's map, pad, offset and octave (the old rule reproduces the kept
-     chart: its report's quantize counts and every onset's state), against every human chart, the song's mean:
+   - **Taps only in fast runs** (M7-02) [here, M7-01 part A's A-b; M7-02's review, its skeptic and the branch's
+     check below]. A source tap is kept only inside a run of 8 or more onsets, each at most 0.125 s after the one
+     before on our grid (8 a second or more: `QuantizeRules.tap_run` 8, `tap_run_gap_s` 0.125; `quantize.fast_runs`),
+     on every 5-fret part and every level the quantizer takes; any other tap takes its natural state on our grid
+     with no flip, under every HOPO rule: a HOPO where the natural rule makes one (a single fret change at most 65
+     ticks after the note before), else a strum (a burst's first note after a rest, a same-fret repeat, a chord). No
+     note moves or goes. `tap_run` 0 is the old rule (every tap kept). `report.json`'s `parts.*.quantize.<level>`
+     counts `taps_kept`, and of the taps outside a run `taps_to_hopo` (natural HOPOs) and `taps_to_strum`. The lower
+     levels are reduced from Expert as before: `reduce.py` writes no tap below Expert, and its Hard rule reads each
+     former tap by the state Expert now gives it (§2.11).
+     - **Why** [M7-01's A-b]: the engine taps where the humans do not: on the 8 songs with our Expert taps, 6 % of
+       them (precision 0.061) fall on a human tap at 100 ms, and they find 16 % of the human taps (recall 0.157, 13
+       songs with human taps); our tap share 0.041 against the humans' 0.031. A-b's arms: every tap outside a run
+       made a HOPO (T2) +0.007 [+0.002, +0.013] in per-note state agreement pooled over the 23 songs, +0.000 to
+       +0.044 on each of the 8; no taps at all (T1) the same; a tap on a same-fret repeat made a strum (T3) +0.008
+       [+0.000, +0.023], almost all Kimochi Warui's.
+     - **Why the natural state, not a HOPO** [M7-02's review and skeptic, recounted here]. T2 as first built forced
+       every such tap to a HOPO, a flip wherever our grid's natural state is a strum (Kimochi Warui's Expert flips
+       2 -> 395). At the 1,566 former taps the human charts match at 100 ms (the 8 songs, every chart) the humans
+       strum 598 of the 835 whose natural state is a strum (72 %: 385 of 497 that are not repeats, 213 of 338 same-fret
+       repeats, the repeats HOPO'd 60 times, 27 of them on s09) and HOPO 498 of the 731 at natural-HOPO positions
+       (68 %); a HOPO everywhere matches them at 667 of 1,566 (43 %). Against T2, the natural state is +0.0135
+       [−0.0003, +0.0377] pooled over the 23 songs (bootstrap over songs as A-b's), Kimochi Warui +0.242, sooth
+       +0.071, s09 −0.007 the only loss; against keeping every tap (T0), +0.020 [+0.002, +0.049], no song below it.
+     - **The branch's check**: the quantizer re-run in process on each song's kept engine take with the kept chart's
+       map, pad, offset and octave; the old rule reproduces the kept chart (its report's quantize counts and every
+       onset's state), the rule changes no tick, fret or sustain and adds no flip, and its states equal a
+       recombination of the kept chart's own (each former tap given its natural state there) at every matched note.
+       Per-note state agreement at 100 ms against every human chart, the song's mean:
 
-     | song (grid octave) | our taps | kept | to HOPO | the humans' tap share | agreement: taps kept (T0) | this rule (M7-01's T2) |
-     |---|---|---|---|---|---|---|
-     | Kimochi Warui (1) | 618 | 0 | 618 | 0.103 | 0.474 | 0.514 (0.514) |
-     | Lucretia (1) | 8 | 0 | 8 | 0 | 0.571 | 0.572 (0.572) |
-     | Drunk Drivers (1) | 3 | 0 | 3 | 0 | 0.966 | 0.966 (0.966) |
-     | sooth (0.5) | 312 | 31 | 281 | 0.033 | 0.525 | 0.569 (0.569) |
-     | troop (2) | 99 | 78 | 21 | 0.124 | 0.668 | 0.669 (0.669) |
-     | s06 (1) | 30 | 0 | 30 | 0.063 | 0.659 | 0.663 (0.663) |
-     | s07 (1) | 126 | 35 | 91 | 0.001 | 0.700 | 0.727 (0.727) |
-     | s09 (1) | 75 | 0 | 75 | 0 | 0.618 | 0.656 (0.656) |
+       | song (grid octave) | our taps | kept | to HOPO | to strum | the humans' tap share | T0: taps kept | T2: HOPOs | this rule |
+       |---|---|---|---|---|---|---|---|---|
+       | Kimochi Warui (1) | 618 | 0 | 225 | 393 | 0.103 | 0.474 | 0.514 | **0.755** |
+       | Lucretia (1) | 8 | 0 | 8 | 0 | 0 | 0.571 | 0.572 | 0.572 |
+       | Drunk Drivers (1) | 3 | 0 | 2 | 1 | 0 | 0.966 | 0.966 | 0.966 |
+       | sooth (0.5) | 312 | 31 | 141 | 140 | 0.033 | 0.525 | 0.569 | **0.640** |
+       | troop (2) | 99 | 78 | 12 | 9 | 0.124 | 0.668 | 0.669 | 0.671 |
+       | s06 (1) | 30 | 0 | 0 | 30 | 0.063 | 0.659 | 0.663 | 0.666 |
+       | s07 (1) | 126 | 35 | 70 | 21 | 0.001 | 0.700 | 0.727 | 0.728 |
+       | s09 (1) | 75 | 0 | 46 | 29 | 0 | 0.618 | 0.656 | 0.649 |
 
-     The counts are the quantizer's (before the stem stage trims the part's edges); the other 15 songs' charts have
-     no Expert guitar tap, so the rule changes nothing there. Most taps outside a run need a flip: Kimochi Warui's
-     Expert flips go from 2 to 395. Whether to keep taps in fast runs at all, against no taps, waits for a measure
-     of the kept taps' precision.
+       T0 and T2 are M7-01's to the third decimal. The counts are the quantizer's (before the stem stage trims the
+       part's edges); the other 15 songs' charts have no Expert guitar tap, so the rule changes nothing there. The
+       precision of the taps the rule keeps (troop 78, s07 35, sooth 31) is not measured.
 5. **Sources already on our grid** (Engine A, §2.7): a per-source flag keeps exact ticks and still runs spacing, chord, sustain and HOPO rules [untested; not in `quantize.py`].
 6. **Drums:** one hit per pad per tick; cymbal/tom collisions as in §2.9; at most two hand pads per tick; 2x kick on Expert only.
 7. **Taps** only inside fast runs (step 4, M7-02); none below Expert (§2.11).

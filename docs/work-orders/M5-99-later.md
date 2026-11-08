@@ -49,8 +49,9 @@ Its ranked gaps 1-3, 5 and 6 are M5-01, M5-02 and M5-03; part of 9 and 10 are M5
   **Narrowed by M7-01 and M7-02 (2026-11-08):** M7-01's A-a measured "source", "natural", the octave rule and a
   forced-strum rule on the guitar against the 23 songs' human charts, and none beats "forced" by M7-02's bar (+0.02
   pooled, no song down 0.03): the engine's forced flags agree with the humans about as often as chance (DESIGN 2.6
-  step 4). Taps: since M7-02 a tap is kept only in a run of 8 or more onsets at 8 or more a second, any other plays
-  as a HOPO (the engine's taps matched a human tap 6 % of the time). Left: a HOPO signal better than the engine's
+  step 4). Taps: since M7-02 a tap is kept only in a run of 8 or more onsets at 8 or more a second, any other takes
+  its natural state on our grid (the engine's taps matched a human tap 6 % of the time, and the humans strum 72 % of
+  those notes where our grid's natural state is a strum). Left: a HOPO signal better than the engine's
   flags, and the precision of the taps the rule keeps.
 - **1/32 and 1/24 burst slots** (gap 2's second half): M5-01 drops a distinct note rather than make a chord of two
   onsets on one tick more than 20 ms apart, keeping the one nearest the tick, and counts the rest
