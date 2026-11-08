@@ -66,6 +66,7 @@ ones then, but the CI runs they link still name the old ones.
 | `M7-10-ui.md` | M7-10: the web UI's quick wins (the result above the fold, Install first, a time estimate, the wake lock, the update box), the review |
 | `v040-review-fixes.md` | v0.4.0's gate: the full review's minor findings fixed (the halved line's end tested, the upload's length from the container's line, the estimate's evidence, DESIGN's `start=` row) and the advisor's "not answering" text |
 | `M8-01-gpu-takes.md` | M8-01: GPU takes of the 23 measured songs on the owner's installed app (`eval/gpu.sh takes refs\|stress\|set20`, `results`), a results zip with no audio or names and its guard; the review and the privacy re-check |
+| `v0.4.0-gate.md` | v0.4.0's release gate: the golden, stress and 20-song compares, the full review and its fixes, the advisor's report, the owner's PC check and decisions |
 | `M8-spike-contour.md` | M8's spike: pitch trackers on the guitar stem against the humans' fret direction in fast runs (none clears); the GPU charts differ from the CPU charts M7 measured |
 | `M8-spike-takescore.md` | M8's spike: window scores for the take splice from the guitar stem's evidence (none clears; a per-window oracle shows +0.042 of headroom) |
 | `pipeline-review.md` | an advisor's review of how work is run (2026-11-04), finding by finding, with what was done |
