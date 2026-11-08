@@ -2016,8 +2016,8 @@ def _halving_case(first_bpm=154.0, allin1_bpm=77.0, share=0.8, halved=None):
     built = halved if halved is not None else _fake_grid(allin1_bpm, share)
     calls = []
 
-    def second(bpm, bpm_range, start=None, half_beat=True):
-        calls.append((bpm, bpm_range, start, half_beat))
+    def second(bpm, bpm_range, start=None, half_beat=True, line_test=False):
+        calls.append((bpm, bpm_range, start, half_beat, line_test))
         if isinstance(built, Exception):
             raise built
         return built
@@ -2027,21 +2027,93 @@ def _halving_case(first_bpm=154.0, allin1_bpm=77.0, share=0.8, halved=None):
 
 def test_a_grid_at_twice_allin1s_beats_is_built_again_from_them(tmp_path):
     """The density test keeps a 154 BPM first grid at 1 and allin1's beats run at 77: the grid is built again from
-    them, moved to onset times, at the fold range halved and without the half-beat test; the halved grid keeps
-    enough evidence, so it is the grid (octave 0.5), recorded and warned about."""
+    them, moved to onset times, at the fold range halved, without the half-beat test and with the line test (M7-09:
+    a straight line through them unless they find clearly more evidence); the halved grid keeps enough evidence, so
+    it is the grid (octave 0.5), recorded and warned about, saying which start it kept. It holds its tempo against
+    the first grid's: no window runs at the first grid's tempo."""
     first, onsets, allin1, second, calls, halved = _halving_case()
     cfg = parse_config(CONFIG, tmp_path)
     grid, octave, stats, reason, warn = assemble_module._octave_pass(cfg, first, onsets, None, second, allin1, 400.0)
     assert grid is halved and octave == 0.5 and stats["octave"] == 1
     assert len(calls) == 1 and calls[0][0] == pytest.approx(77.0) and calls[0][1] == (42.5, 92.5)
-    assert calls[0][2] == pytest.approx(allin1 - ONSET_TO_BEAT_MS / 1000, abs=1e-12) and calls[0][3] is False
+    assert calls[0][2] == pytest.approx(allin1 - ONSET_TO_BEAT_MS / 1000, abs=1e-12) and calls[0][3:] == (False, True)
     rec = stats["halving"]
     assert rec["halve"] and rec["kept"] and rec["evidence_ratio"] == pytest.approx(0.8 / 0.68, abs=1e-4)
     assert rec["halved"]["bpm_median"] == pytest.approx(77.0) and rec["rate_ratio"] == pytest.approx(2.0)
+    assert rec["first_tempo"] == {"windows": [], "spans": [], "window_s": 20.0, "hop_s": 5.0, "tolerance": 0.1}
     assert reason.startswith(stats["reason"] + "; the grid's beat rate is 2.000 times allin1's") and reason.endswith(
         "the halved grid's confident share 0.80 against 0.68 (ratio 1.18, at least 0.7)")
     assert warn == ["tempo halved to 77.0 BPM: the first grid's 154.0 BPM is twice allin1's beats (77.0 BPM), and "
                     "the grid follows them: check sync"]
+    halved.stats["start"] = {"grid": "line"}
+    _, _, _, _, warn = assemble_module._octave_pass(cfg, first, onsets, None, second, allin1, 400.0)
+    assert warn == ["tempo halved to 77.0 BPM: the first grid's 154.0 BPM is twice allin1's beats (77.0 BPM), and "
+                    "the grid follows the straight line through them: check sync"]
+
+
+def _tempo_grid(segments, share=0.8):
+    """A made-up grid whose beats run at each (bpm, until s) in turn from 1 s."""
+    beats, t = [], 1.0
+    for bpm, until in segments:
+        while t < until:
+            beats.append(t)
+            t += 60 / bpm
+    n = len(beats)
+    stats = {"click": {"bpm": segments[0][0]}, "evidence": {"confident_share": share, "n_confident": int(share * n),
+                                                             "n_beats": n}}
+    return BeatGrid(np.array(beats), np.arange(0, n, 4), "free", stats)
+
+
+def test_first_tempo_windows_find_a_halved_grid_back_at_the_first_grids_tempo():
+    """first_tempo_windows (M7-09): per 20-s window every 5 s, the halved grid's median beat period over the first
+    grid's; within 10 % of 1 the window is flagged, and overlapping windows merge into spans. A halved grid that
+    holds its tempo (a ratio of 2, or a real tempo change both grids follow) flags nothing."""
+    first = _tempo_grid([(154.0, 300.0)]).beats
+    tail = _tempo_grid([(77.0, 272.0), (154.0, 300.0)]).beats  # the last 28 s back at 154
+    got = assemble_module.first_tempo_windows(first, tail)
+    assert got["spans"] == [[260.0, 295.0]] and [w[:2] for w in got["windows"]] == [
+        [260.0, 280.0], [265.0, 285.0], [270.0, 290.0], [275.0, 295.0]]
+    assert all(abs(w[2] - 1) < 0.01 for w in got["windows"])
+    assert (got["window_s"], got["hop_s"], got["tolerance"]) == (20.0, 5.0, 0.1)
+    # two stretches: two spans
+    both = _tempo_grid([(77.0, 100.0), (154.0, 130.0), (77.0, 272.0), (154.0, 300.0)]).beats
+    assert assemble_module.first_tempo_windows(first, both)["spans"] == [[90.0, 140.0], [260.0, 295.0]]
+    # a clean halved grid, and one through a real tempo change that the first grid follows too
+    assert assemble_module.first_tempo_windows(first, _tempo_grid([(77.0, 300.0)]).beats)["windows"] == []
+    change = _tempo_grid([(154.0, 150.0), (130.0, 300.0)]).beats
+    assert assemble_module.first_tempo_windows(change, _tempo_grid([(77.0, 150.0), (65.0, 300.0)]).beats)[
+        "windows"] == []
+    # the edges of 10 %: a halved period 1.09 times the first's is flagged, 1.11 is not; so is 0.91, not 0.89
+    for q, flagged in ((1.09, True), (1.11, False), (0.91, True), (0.89, False), (2.0, False)):
+        half = _tempo_grid([(154.0 / q, 300.0)]).beats
+        assert bool(assemble_module.first_tempo_windows(first, half)["windows"]) is flagged, q
+    # a window with under 4 beats of either grid is skipped; a halved grid shorter than a window has none
+    assert assemble_module.first_tempo_windows(first, _tempo_grid([(10.0, 300.0)]).beats)["windows"] == []
+    assert assemble_module.first_tempo_windows(first, first[first < 15.0])["windows"] == []
+
+
+def test_a_kept_halved_grid_back_at_the_first_grids_tempo_warns_once_per_span(tmp_path):
+    """The halving pass records first_tempo_windows under octave_stats.halving.first_tempo and warns "the halved
+    grid runs at the first grid's tempo at X-Y s: check sync" once per span when the halved grid is kept; a clean
+    halved grid gets no such warning, and a refused one only the record."""
+    cfg = parse_config(CONFIG, tmp_path)
+    first = _tempo_grid([(154.0, 300.0)], 0.68)
+    onsets = {"guitar": 1.0 + np.arange(400) * 30 / 154.0}
+    allin1 = 1.0 + np.arange(150) * 60 / 77.0
+    back = "the halved grid runs at the first grid's tempo at"
+    for segments, share, spans in (([(77.0, 100.0), (154.0, 130.0), (77.0, 272.0), (154.0, 300.0)], 0.8,
+                                    [[90.0, 140.0], [260.0, 295.0]]),
+                                   ([(77.0, 300.0)], 0.8, []),
+                                   ([(77.0, 272.0), (154.0, 300.0)], 0.3, [[260.0, 295.0]])):
+        halved = _tempo_grid(segments, share)
+        grid, octave, stats, _, warn = assemble_module._octave_pass(
+            cfg, first, onsets, None, lambda bpm, r, start=None, half_beat=True, line_test=False: halved, allin1,
+            400.0)
+        rec = stats["halving"]
+        assert rec["first_tempo"]["spans"] == spans and rec["kept"] is (share == 0.8)
+        assert [w for w in warn if w.startswith(back)] == ([f"{back} {a:.0f}-{b:.0f} s: check sync" for a, b in spans]
+                                                           if rec["kept"] else [])
+        assert warn[0].startswith("tempo halved" if rec["kept"] else "tempo: the first grid's")
 
 
 def test_an_ordinary_grid_a_forced_one_and_a_doubled_one_are_not_halved(tmp_path):
@@ -2239,7 +2311,9 @@ def test_a_song_at_twice_its_pulse_is_charted_at_the_pulse(pulse_song):
     """The first pass gives 150 BPM, the density test keeps it, and allin1's beats run at 75: the grid is built
     again from them, onto the kicks, and the chart is at 75 BPM with every note at its own time (the first grid's
     16ths on the halved grid's 1/32s, its triplets on 1/24s), its offset measured at the first grid's level. From
-    the librosa fallback's sections (no beats) the 150 BPM grid stays."""
+    the librosa fallback's sections (no beats) the 150 BPM grid stays. The song is a click, so the halved grid
+    starts from the straight line through allin1's beats (beat_grid's line test, M7-09), as report.json records,
+    and holds its tempo against the first grid's in every window."""
     root, config, pulse, times = pulse_song
     a = assemble(parse_config(config, root))
     b = assemble(parse_config({**config, "sections": "librosa.json", "output": "out/first"}, root))
@@ -2247,12 +2321,18 @@ def test_a_song_at_twice_its_pulse_is_charted_at_the_pulse(pulse_song):
     ga, gb = a.report["grid"], b.report["grid"]
     assert (ga["octave"], gb["octave"]) == (0.5, 1) and gb["bpm_median"] == pytest.approx(150.0, abs=0.2)
     assert ga["bpm_median"] == pytest.approx(75.0, abs=0.2) and ga["stats"]["start"]["source"] == "external"
+    st = ga["stats"]["start"]
+    assert st["grid"] == "line" and st["bpm"] == pytest.approx(75.0, abs=0.1)
+    assert st["tracker_confident_share"] < st["line_confident_share"] + 0.1
     rec = ga["octave_stats"]["halving"]
     assert rec["halve"] and rec["kept"] and rec["rate_ratio"] == pytest.approx(2.0, abs=0.02)
+    assert rec["first_tempo"]["windows"] == [] and rec["first_tempo"]["spans"] == []
     assert gb["octave_stats"]["halving"]["why"] == "the sections have no allin1 beats"
     assert [w for w in a.report["warnings"] if w.startswith("tempo halved")] == [
         f"tempo halved to {ga['bpm_median']:.1f} BPM: the first grid's {rec['halved_bpm'] * 2:.1f} BPM is twice "
-        f"allin1's beats ({rec['allin1_bpm']:.1f} BPM), and the grid follows them: check sync"]
+        f"allin1's beats ({rec['allin1_bpm']:.1f} BPM), and the grid follows the straight line through them: check "
+        "sync"]
+    assert not any("the first grid's tempo at" in w for w in a.report["warnings"])
     assert not any(w.startswith("tempo halved") for w in b.report["warnings"])
     assert _beat_f1(np.asarray(a.lead.beats) - a.lead.pad_seconds, pulse, pulse[0] - 0.1, pulse[-1] + 0.1) > 0.95
     assert np.median([t.bpm for t in a.chart.tempo.tempos]) == pytest.approx(75.0, abs=1.0)
@@ -2285,8 +2365,8 @@ def test_a_halved_songs_words_keep_the_first_grids_slots_and_its_pass_skips_the_
                                                                                                 monkeypatch):
     """Made-up words on the pulse song's first-grid 16ths land on the halved grid's 1/32s, three of them odd
     (lyric_rules at octave 0.5; report.json's lyrics.slots 8/6), at their own times. The halving pass's beat_grid
-    call (from allin1's beats) runs without the half-beat test, which allin1's phase replaces; the first pass's
-    call never asks for it."""
+    call (from allin1's beats) runs without the half-beat test, which allin1's phase replaces, and with the line test
+    (M7-09); the first pass's call asks for neither."""
     root, config, _, _ = pulse_song
     real, calls = assemble_module.beat_grid, []
 
@@ -2300,6 +2380,7 @@ def test_a_halved_songs_words_keep_the_first_grids_slots_and_its_pass_skips_the_
     r = assemble(parse_config({**config, "output": "out/halved-words"}, root), lyrics=words)
     assert r.ok and r.report["grid"]["octave"] == 0.5
     assert [k.get("half_beat") for k in calls] == [None, False] and calls[1]["start"] is not None
+    assert [k.get("line_test") for k in calls] == [None, True]
     assert r.report["lyrics"]["slots"] == {"straight": 8, "triplet": 6}
     tm, pad, res = r.chart.tempo, r.lead.pad_seconds, r.chart.tempo.resolution
     ticks = [t for t, _, text in sorted(r.chart.lyrics) if text.startswith("lyric ")]
