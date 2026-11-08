@@ -595,7 +595,7 @@ async function follow(token) {
     } catch (e) {
       // the connection dropped, or songcharter does not answer: try again, from the last event seen
       failed += 1;
-      if (failed >= FOLLOW_TRIES && token === state.follow) {   // it is not running any more
+      if (failed >= FOLLOW_TRIES && token === state.follow) {   // it does not answer any more
         gone(true);
         return;
       }
@@ -604,15 +604,18 @@ async function follow(token) {
   }
 }
 
-// The chart's songcharter is gone: its black window was closed (which stops the chart), and either nothing answers
-// any more (`down`) or a songcharter started since has no job. The page ends the chart as a cancel does: the screen
-// let go, the title, the update notice back, and what to do.
+// The chart's songcharter is gone: a songcharter started since has no job (its black window was closed, which stops
+// the chart), or nothing answers any more (`down`): the window may have been closed, or the page may only have lost
+// it for a while (after the PC sleeps, say) while the chart runs on, so a reload, which reattaches, comes first (the
+// v0.4.0 gate's advisor). The page ends the chart as a cancel does: the screen let go, the title, the update notice
+// back, and what to do.
 function gone(down) {
   stopRunningRows("stopped");
   const kept = "what it had worked out is kept, so it goes faster.";
   finish("songcharter stopped", down ?
-    "songcharter is not running any more: its black window was closed, which stops the chart. Start songcharter " +
-    `again from the Start menu, then chart the song again: ${kept}` :
+    "songcharter is not answering. If its black window is still open, reload this page (press F5) to follow the " +
+    "chart. If the window was closed, which stops the chart, start songcharter again from the Start menu, then " +
+    `chart the song again: ${kept}` :
     "songcharter was closed while it charted (closing its black window stops the chart) and has been started " +
     `again. Chart the song again: ${kept}`, null, { open: true, tab: "Stopped" });
 }

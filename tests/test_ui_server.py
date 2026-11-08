@@ -2226,7 +2226,9 @@ def test_the_page_lets_go_when_songcharter_is_gone(tmp_path):
     """M7-10's review (F1): when the black window is closed mid-chart, the chart stops. The page's events then get a
     404 (songcharter started again, with no job) or no answer at all; after FOLLOW_TRIES failed asks in a row (a
     working reconnect starts the count again), the page ends the chart: the screen's lock let go, not running, the
-    tab's title "Stopped", the update notice back, the rows left open, and what to do."""
+    tab's title "Stopped", the update notice back, the rows left open, and what to do. With no answer at all the
+    window may still be open (the page lost it for a while, after the PC slept, while the chart runs on), so the text
+    says to reload first, which reattaches, and then what to do if it was closed (the v0.4.0 gate's advisor)."""
     script = tmp_path / "gone.cjs"
     script.write_text(GONE_PAGE, encoding="utf-8")
     app_js = tmp_path / "app.js"
@@ -2241,9 +2243,10 @@ def test_the_page_lets_go_when_songcharter_is_gone(tmp_path):
     kept = "what it had worked out is kept, so it goes faster."
     assert out["gone"] == {**ended, "asked": 1, "text": "songcharter was closed while it charted (closing its black "
                            f"window stops the chart) and has been started again. Chart the song again: {kept}"}
-    assert out["down"] == {**ended, "asked": tries, "text": "songcharter is not running any more: its black window "
-                           "was closed, which stops the chart. Start songcharter again from the Start menu, then "
-                           f"chart the song again: {kept}"}
+    assert out["down"] == {**ended, "asked": tries, "text": "songcharter is not answering. If its black window is "
+                           "still open, reload this page (press F5) to follow the chart. If the window was closed, "
+                           "which stops the chart, start songcharter again from the Start menu, then chart the song "
+                           f"again: {kept}"}
     running = {"title": "Charting - songcharter", "running": True, "held": 1, "update": True, "done": True,
                "cancel": False}
     assert {k: out["flaky"][k] for k in running} == running and out["flaky"]["asked"] == 2 * tries

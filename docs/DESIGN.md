@@ -3063,7 +3063,12 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     closed mid-chart: its events answer 404 from a songcharter started since, or nothing answers 10 times in a row,
     2 s apart; a working reconnect starts the count again) ends on the page as a cancel does: "songcharter stopped",
     what to do, the lock let go, the tab's title "Stopped", the update notice back (M7-10's review: the page had held
-    the screen awake for good).
+    the screen awake for good). When nothing answers, the window may still be open: the page can lose the server
+    for 20 s while the chart runs on (localhost after the PC sleeps or wakes), and a song dropped again would get
+    "a chart is running already". So that text says to reload first, which reattaches: "songcharter is not
+    answering. If its black window is still open, reload this page (press F5) to follow the chart. If the window was
+    closed, which stops the chart, start songcharter again from the Start menu, then chart the song again: ..." (the
+    v0.4.0 gate's advisor).
   - **The drop zone** opens the file chooser on Enter or Space (it had a tab stop and no key handler), and **the
     update notice** is hidden while a chart runs (its line says to close the songcharter window, which would stop
     the chart) and shown again at its end.
