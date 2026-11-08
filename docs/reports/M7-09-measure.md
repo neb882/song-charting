@@ -172,9 +172,9 @@ grid measures the song's distance from a straight line, not an error.
 
 **Extra (not asked; `ratio_guard.py`)**: the first grid's median beat period over the halved grid's per 20-s window,
 outside 2 +-10 %. On today/b it flags the owner tail (x1.0 at 510-545 s), sooth 290-315 s (x1.65: the first grid's
-slip, not a halved-grid fault), s02 0-25 s and 225-265 s (x1.0, the octave split above); s04 and ntl nothing. A
+slip, not a halved-grid fault), s02 0-25 s and 225-300 s (x1.0, the octave split above; the measurement's printout cut the windows short, its ratio_guard.json runs 225-245 to 280-300 s); s04 and ntl nothing. A
 narrower form, "the halved grid back at the first grid's tempo (ratio within 10 % of 1)", flags only the owner tail
-and s02 225-265 s. Not in the brief's guard list; reported for the builder.
+and s02 225-300 s. Not in the brief's guard list; reported for the builder.
 
 ## The bar
 
@@ -214,7 +214,7 @@ Build **candidate b** (a straight line through the halved start beats, kept agai
 `TRACKER_MARGIN` evidence test: no change on the three halved songs with human charts, ntl's intro one flat 75 BPM
 with its onsets on the grid) **with the ratio guard as a warning** (`ratio_guard.py`: a 20-s window where the halved
 grid's beat period is back within 10 % of the first grid's says "the halved grid runs at the first grid's tempo at
-X-Y s: check sync"; it fires on the owner's sooth file's outro and on s02's 245-300 s, where its human charts
+X-Y s: check sync"; it fires on the owner's sooth file's outro and on s02's 225-300 s, where its human charts
 themselves disagree by an octave, and nowhere else). The `tempo_check` at the first fold (caught nothing) and the
 `drift_ms` warning (fires on 10 of 24 runs) are dropped. Correcting such a window (halving it there) is M8's, with
 measurements on more songs whose audio ends that way.
