@@ -1,5 +1,5 @@
 {
-  "updated": "2026-11-07",
+  "updated": "2026-11-08",
   "about": "The short state of the project. Read it first; DESIGN.md has the detail and the evidence. Update it when a milestone, a decision or a dead end lands.",
   "people": {
     "owner": "builds this; an RTX 5070 under WSL2 (eval/gpu.sh)",
@@ -87,7 +87,7 @@
     },
     {
       "id": "M7",
-      "status": "planned 2026-11-07 on branch m7-plan (docs/work-orders/M7-00-plan.md); the advisor reviews the plan before M7-01 starts; M7-02 and M7-06 merged 2026-11-08 at 2b703cb (taps only in fast runs, the rest natural: +0.020 [+0.0016, +0.0492] state agreement; four solos); M7-09 merged 2026-11-08 at 0b6c822 (the halved grid's line test and the first-tempo warning); M7-10 merged 2026-11-08 (the UI's quick wins)",
+      "status": "built 2026-11-08; the release gate runs. M7-01 measured every finding against the human charts of 23 songs (docs/reports/M7-01-measure.md) and closed most (dead_ends, 2026-11-08); built only what cleared its bar: M7-02 and M7-06 merged at 2b703cb (taps only in fast runs, the rest natural: +0.020 [+0.0016, +0.0492] state agreement; four solos), M7-09 at 0b6c822 (the halved grid's line test and the first-tempo warning), M7-10 at 04dc706 (the UI's quick wins); M7-03, M7-04, M7-05 and M7-07 not built (their candidates missed their bars), M7-08 (the thinning spike on the owner's GPU, optional) not run. Version 0.4.0 at c0a49f9. The gate: the golden references and the stress set showed only the planned changes; the full review found no major and five minor findings (fixed on v040-review-fixes, PROGRESS and the handoff here); the 20-song compare, the advisor, then the owner's PC check and approval",
       "what": "v0.4.0: the owner's video review of his GPU chart of sooth (and of tod, a 99 BPM rock song of the owner's, in no set) measured against the human charts of 23 songs first (the six references, the stress set, the 20-song set's 13), and only the changes that beat today's rules built: the guitar's HOPO and tap states and its sustain floor at a slow tempo (M7-02), the bass's one-lane repeats (M7-03), onsets over a silent stem and vibrato read as repeats (M7-04), the take margin (M7-05), the solos' share cap on instrumentals (M7-06), beats in drumless stretches (M7-07); the engine-thinning spike on the owner's GPU, measured only (M7-08)",
       "plan": "M7-01 (four parts, measurers only, before the usage reset of 2026-11-09 13:00 UTC) sets every bar; each build order is conditional on its numbers (an order whose candidates all fail goes to dead_ends); waves 2-4 after the reset, at most two builders: M7-02 with M7-03, M7-04 with M7-05 then M7-06, M7-07; the release gate adds the stress and 20-song compares, the owner's GPU check (sooth, tod and the test song re-charted: grid records against the CPU's, the review's counts recounted, a listen with songcharter listen) and his play test",
       "review_check": "the orchestrator's check of the review (M7-00 section 1): its counts are right; two diagnoses are wrong (the halving to 77 BPM is right, both human charts of sooth are at 77; the fast runs are thin because the engine wrote too few notes, the quantizer dropped 30 of 2,485); its fixes are untested proposals",
@@ -112,11 +112,16 @@
       "order": "M4-08 part B: the friend's PC",
       "stage": "the owner sends the pre-release's link (2026-11-04), after part A's core set passed (docs/work-orders/M4-08-results.md)",
       "then": "the director reads the friend's diagnostics zip and notes, writes part B's results, and decides M4 done or the fix orders"
+    },
+    {
+      "order": "v0.4.0's release gate",
+      "stage": "the full review done (no major; five minor, fixed on v040-review-fixes); the 20-song compare running; M8-01's tooling in review fixes",
+      "then": "the advisor, the gate report, the owner's PC check and approval, the release commands"
     }
   ],
   "next": [
-    "M7 (v0.4.0) after the weekly reset (2026-11-09 13:00 UTC): the builds M7-02 (taps only in runs of 8+ notes at 8+ a second), M7-06 (max_solos 4), M7-09 (the halved grid: candidate b and the ratio warning, docs/reports/M7-09-measure.md) and M7-10 (the UI's quick wins), at most two builders at once; then the release gate.",
-    "M7 (v0.4.0, docs/work-orders/M7-00-plan.md, branch m7-plan): the advisor reviews the plan, then M7-01's measurement before the usage reset (2026-11-09 13:00 UTC); the build orders after it, each only if its candidate cleared its bar.",
+    "v0.4.0's release gate (docs/PIPELINE.md, Gates): merge the full review's fixes (branch v040-review-fixes), the 20-song compare, the advisor on the final candidate, docs/reports/v0.4.0-gate.md, then the owner's PC check (build, install, re-chart ntl, sooth and a tap song, tempo maps against the CPU's) and his approval; he publishes.",
+    "M8 (after v0.4.0): GPU takes of the 23 measured songs on the owner's PC (M8-01's tooling: eval/gpu.sh takes stress|set20, results), then measure the take, contour and engine questions in deferred on GPU takes (docs/reports/M8-spike-contour.md, M8-spike-takescore.md).",
     "M4: M4-08 part B, the friend's PC: he follows the guide alone, charts the test song with 1 take and with the defaults, charts a song of his own, installs it into Clone Hero and plays it, and sends the diagnostics zip saved after his last chart.",
     "Before the next quality decision beyond this version's defect fixes: grow the reference set to 20 or more human charts, with human-charted solos among them. M5-09 makes a song one entry in eval/stress.json; the songs are the owner's to pick (M5-99); this version's set is the two hard songs and one ordinary rock song."
   ],
@@ -215,7 +220,8 @@
     "[M7] A UI pass after v0.4 (docs/reports/m7-ui-review.md items 5-9, 10): the built folder's path the friend cannot open, flags linked to their preview page and Listen from a flag's time, the Songs folder prompt, a quick/best choice in place of the options form, a queue and a list of his charts (jobs.py's one-job design: a design note first).",
     "[M7-01] For M8: the take splice (4 CPU takes spliced against one: +0.004 [-0.009, +0.019]; a take score that tracks the humans, e.g. against the stem's evidence); the engine's forced HOPO/strum flags (near coin flips against the humans); the GPU takes' open notes (part D, the owner's GPU).",
     "[M7-01 B-b2] For M8: the bass engine's onsets over held notes (on a ballad of the owner's, 254 onsets in fast same-lane runs, most without a pitch from the engine's tracker): an onset gate that reads the pitch track, not per-note pitches.",
-    "[M8 spike, 2026-11-08] Fast runs' fret contour: no pitch tracker in the venv clears the bar (pYIN right 0.81 where it steps, but it steps on 2-39 % of pairs; CQT 0.59); an ML tracker needs an install outside the shared venv. And: the owner's GPU charts differ from the CPU charts M7 measured (open notes; pm2's same-fret repeats 86 % on his GPU chart against 0.29 at matched CPU pairs): M8 measures on GPU takes of the sets (the owner's GPU)."
+    "[M8 spike, 2026-11-08] Fast runs' fret contour: no pitch tracker in the venv clears the bar (pYIN right 0.81 where it steps, but it steps on 2-39 % of pairs; CQT 0.59); an ML tracker, torchcrepe (installed outside the shared venv only), is below our own directions too (the best variant -0.052 [-0.190, +0.080]; the report's addendum). And: the owner's GPU charts differ from the CPU charts M7 measured (open notes; pm2's same-fret repeats 86 % on his GPU chart against 0.29 at matched CPU pairs): M8 measures on GPU takes of the sets (the owner's GPU).",
+    "[M8 spike, 2026-11-08] A take score that tracks the humans (docs/reports/M8-spike-takescore.md): no window score clears the bar (best +0.004 [-0.004, +0.013], worst song -0.044); the headroom is real (each window's best take +0.042 [+0.031, +0.053]): a better selector needs stronger evidence (a learned per-window quality model, the humans' density pattern), measured on GPU takes."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
   "how_work_is_run": "docs/PIPELINE.md. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices, /prompt-caching, /sub-agents, /settings",
