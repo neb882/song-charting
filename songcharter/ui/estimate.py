@@ -49,7 +49,8 @@ min (11.5-20.9, no preview then); Take Me Out with 1 take on this CPU 6.8 min (6
 minutes with the GPU's 4 takes, 2 to 7 with 1, 6 to 11 on the CPU.
 
 `duration` reads the length ffmpeg's header gives (the container's, or one estimated from the bit rate), without a
-decode: a few hundredths of a second. None when ffmpeg cannot say.
+decode: a few hundredths of a second; only the container's own line, never a tag that holds "Duration: ...". None
+when ffmpeg cannot say.
 """
 from __future__ import annotations
 
@@ -77,7 +78,10 @@ GUITAR_ONCE = {"cpu": (0.35, 0.50), "cuda": (0.08, 0.17 * FRIEND_GPU)}
 GUITAR_TAKE = {"cpu": (0.0012, 0.0033), "cuda": (0.0007, 0.0018 * FRIEND_GPU)}
 TAKE_FIXED = (0.0, 10.0)
 
-DURATION = re.compile(r"Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)")
+# the container's own line, which ffmpeg prints indented by two spaces after the input's Metadata block; a tag's line
+# (its key, a value's later lines) is indented by four or more, so a tag holding "Duration: 1:00:00" is not read
+# (the v0.4.0 gate's review: a downloaded song's description tag can hold one)
+DURATION = re.compile(r"^  Duration: *(\d+):(\d{2}):(\d{2}(?:\.\d+)?)", re.M)
 PROBE_TIMEOUT_S = 30.0
 
 

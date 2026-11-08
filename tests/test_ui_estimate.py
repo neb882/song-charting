@@ -2,6 +2,7 @@
 the takes it assumes for a job, the song's length from ffmpeg's header, and its rates against the measured runs they
 come from (the module docstring): the ordinary songs inside the range, the dense ones above it."""
 import math
+import subprocess
 import time
 
 import numpy as np
@@ -125,6 +126,22 @@ def test_the_length_from_ffmpegs_header(tmp_path):
     assert E.duration(tmp_path / "s.wav", ffmpeg=str(tmp_path / "no-ffmpeg")) is None   # no ffmpeg: no estimate
 
 
+@pytest.mark.parametrize("ext", ["mp3", "wav", "flac", "m4a"])
+def test_a_tag_that_holds_a_duration_is_not_the_songs_length(tmp_path, ext):
+    """The v0.4.0 gate's review: ffmpeg prints the input's tags before the container's own Duration line, and a
+    downloaded song's tag (a description, a comment) can hold "Duration: 1:00:00": a 2.5-s song is still 2.5 s, not
+    an hour (the page said "about 620 to 2150 minutes")."""
+    t = np.arange(int(2.5 * A.SAMPLE_RATE)) / A.SAMPLE_RATE
+    y = (0.2 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+    A.write_wav(np.stack([y, y]), tmp_path / "s.wav")
+    song = tmp_path / f"tagged.{ext}"
+    subprocess.run([A.ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i",
+                    str(tmp_path / "s.wav"), "-metadata", "comment=Duration: 01:00:00.00", str(song)], check=True)
+    said = subprocess.run([A.ffmpeg_exe(), "-hide_banner", "-nostdin", "-i", str(song)], capture_output=True)
+    assert "Duration: 01:00:00.00" in said.stderr.decode("utf-8", "replace")   # the tag is there to be misread
+    assert E.duration(song) == pytest.approx(2.5, abs=0.1)
+
+
 def test_an_ffmpeg_that_hangs_gives_no_length_within_the_timeout(tmp_path, monkeypatch):
     """M7-10's review (F2): an ffmpeg that never answers would hold the upload, and "Chart it", for good: the probe
     gives up after PROBE_TIMEOUT_S and the song has no estimate."""
@@ -144,6 +161,18 @@ def test_an_ffmpeg_that_hangs_gives_no_length_within_the_timeout(tmp_path, monke
     ("  Duration: 00:00:00.00, bitrate: N/A", None),
     ("  Duration: N/A, bitrate: N/A", None),
     ("nothing about a length", None),
+    # ffmpeg's own layout (n9.0.2): the tags first, then the container's line; a tag's text is never the length,
+    # whether in its value, a value's later line, or its key (an ID3 TXXX frame's description is the key)
+    ("Input #0, mp3, from 'song.mp3':\n  Metadata:\n    comment         : Duration: 01:00:00.00\n"
+     "    encoder         : Lavf63.1.102\n  Duration: 00:00:12.50, start: 0.025057, bitrate: 64 kb/s\n"
+     "  Stream #0:0: Audio: mp3 (mp3float), 44100 Hz, mono, fltp, 64 kb/s, start 0.025057", 12.5),
+    ("Input #0, mp3, from 'song.mp3':\n  Metadata:\n    comment         : a first line\n"
+     "                    : Duration: 01:00:00.00, start: 0.0, bitrate: 1 kb/s\n"
+     "  Duration: 00:03:05.00, start: 0.025057, bitrate: 192 kb/s", 185.0),
+    ("Input #0, mp3, from 'song.mp3':\n  Metadata:\n    Duration: 01:00:00.00: x\n"
+     "  Duration: 00:03:05.00, start: 0.025057, bitrate: 192 kb/s", 185.0),
+    ("Input #0, mp3, from 'song.mp3':\n  Metadata:\n    comment         : Duration: 01:00:00.00\n"
+     "  Duration: N/A, bitrate: N/A", None),
 ])
 def test_the_header_line_is_read_whatever_comes_around_it(tmp_path, said, seconds):
     """ffmpeg's answer as a stand-in ffmpeg prints it (on stderr, exit 1: no output named)."""
