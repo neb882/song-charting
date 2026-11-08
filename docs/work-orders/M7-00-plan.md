@@ -280,3 +280,8 @@ M7-02. **M7-02 becomes the tap rule alone:** a tap is kept only in a run of 8 or
 (T2: on the 8 songs with our taps, +0.000 to +0.044 each, none down; our taps match a human tap 6 % of the time),
 about half a day. With section 11, v0.4's builds are M7-02 (taps), M7-03 if its run rule clears, M7-06
 (`max_solos` 4), M7-09 (the halved grid's tempo shape, after its measurement) and M7-10 (the UI's quick wins).
+
+**M7-09's measurement** (docs/reports/M7-09-measure.md, 2026-11-08): candidate b (the straight line kept by the
+`TRACKER_MARGIN` evidence test) changes nothing on the halved songs with human charts and fixes ntl's intro; the ratio
+warning (a halved window back at the first grid's tempo) flags the owner's sooth file's outro. M7-09 builds those two;
+its scripts are in eval/m7/m709/.
