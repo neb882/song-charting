@@ -169,3 +169,21 @@ run. Scripts: eval/m8/contour/. The measurer's tables follow.
 | s12 | none | 0.509 -> 0.474 | 0.284 -> 0.279 | 97 | |
 
 score.py check (primary, contour / exact, here vs score json): [('pm2', {'here': 0.533, 'score_json': 0.5328, 'exact_here': 0.307, 'exact_json': 0.3073}), ('sooth', {'here': 0.667, 'score_json': 0.6674, 'exact_here': 0.254, 'exact_json': 0.2541}), ('troop', {'here': 0.521, 'score_json': 0.5208, 'exact_here': 0.239, 'exact_json': 0.2387}), ('s01', {'here': 0.508, 'score_json': 0.5081, 'exact_here': 0.194, 'exact_json': 0.1937}), ('s02', {'here': 0.598, 'score_json': 0.5982, 'exact_here': 0.269, 'exact_json': 0.2692}), ('s04', {'here': 0.673, 'score_json': 0.6729, 'exact_here': 0.231, 'exact_json': 0.2312}), ('s06', {'here': 0.561, 'score_json': 0.5606, 'exact_here': 0.207, 'exact_json': 0.2069}), ('s07', {'here': 0.734, 'score_json': 0.7336, 'exact_here': 0.199, 'exact_json': 0.1991}), ('s10', {'here': 0.809, 'score_json': 0.8089, 'exact_here': 0.421, 'exact_json': 0.4206}), ('s12', {'here': 0.631, 'score_json': 0.6314, 'exact_here': 0.284, 'exact_json': 0.2838})]
+
+---
+
+## Addendum (2026-11-08): an ML tracker, torchcrepe (the owner allowed the install)
+
+torchcrepe 0.0.24 (with resampy 0.4.3) installed into a throwaway folder in memory only (`uv pip install --target`;
+the shared venv has no pip; nothing went into it; deleted afterwards), on the same 10 songs' fast-run pairs with the
+first spike's scripts: the full model at a 10 ms hop, the same model on frames inside the note only, and the tiny
+model at 5 ms; each frame decoded on its own (no Viterbi: smoothing hurt pYIN); periodicity as the confidence.
+
+**Verdict: no.** Every variant is below our own directions (ours 0.593 on the primaries): full -0.175 [-0.282,
+-0.077], confident pairs -0.075 [-0.170, -0.006], the best (tiny, steps only) -0.052 [-0.190, +0.080]. Where the human
+moves, CREPE's sign is right 0.568 (2,364 pairs; ours 0.636, pYIN 0.81 where it stepped): 0.50 to 0.66 by confidence
+quartile, 0.585 with octave errors folded. It steps on most pairs, 36 % of its steps 7 semitones or more: noise on
+60-125 ms notes of distorted, often polyphonic stems. Re-laning by it, or by a per-run rank fit, lowers the contour
+(-0.09 to -0.24). CPU time: the full model 99 s wall a minute of audio on this machine's 4 cores, the tiny 11.6 s.
+Not tried: a polyphonic transcriber (basic_pitch), chroma features, pitch on the full mix. The humans agree with each
+other 0.821 against our 0.592 on these pairs; no tracker measured closes any of it. Scripts: eval/m8/contour-ml/.
