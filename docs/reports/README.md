@@ -61,6 +61,7 @@ ones then, but the CI runs they link still name the old ones.
 | `m7-ui-review.md` | a second model's review of the web UI: twelve improvements, the quick wins for v0.4 |
 | `M7-01-measure.md` | M7-01: the video reviews' questions measured against the human charts of 23 songs (HOPO modes, taps, sustains, repeats, silent stems, the bass, solos, drumless stretches, drums, the take margin) |
 | `M7-09-measure.md` | M7-09's measurement: three ways to build a halved grid and three guards; candidate b and the ratio warning chosen |
+| `M8-spike-contour.md` | M8's spike: pitch trackers on the guitar stem against the humans' fret direction in fast runs (none clears); the GPU charts differ from the CPU charts M7 measured |
 | `pipeline-review.md` | an advisor's review of how work is run (2026-11-04), finding by finding, with what was done |
 | `takes-experiment.md`, `takes-experiment-verifier.md` | spliced guitar takes against one take, and the verifier's corrections (which win where they differ) |
 | `strumming-research.json` | the pick-noise detector for sparse guitar stretches, and why no fill was built |
