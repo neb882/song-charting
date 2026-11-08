@@ -689,6 +689,15 @@ def test_the_upload_gives_the_songs_length_and_the_job_its_estimate(served, monk
     status, up = upload(ctx, song(ctx.home / "t.wav", seconds=1.5), "Other.wav")
     assert status == 200 and up["seconds"] is None and start({"device": "cpu"}) is None
 
+    def broken(*args):
+        raise ZeroDivisionError("a bug in the estimate")
+    said = []
+    monkeypatch.setattr(E, "for_job", broken)   # the estimate is for a look: a bug in it never stops a chart
+    monkeypatch.setattr(ctx.app, "log", lambda text, console=True: said.append((text, console)))
+    assert start({"device": "cpu"}) is None
+    assert [console for text, console in said if text.startswith("estimate: internal error:\n")
+            and "ZeroDivisionError: a bug in the estimate" in text] == [False]   # the log file's, not the window's
+
 
 def test_sse_replays_to_a_late_client_and_streams_to_an_early_one(served, monkeypatch):
     ctx, port = served, served.port

@@ -94,7 +94,8 @@ def test_a_jobs_device_and_takes():
 
 
 @pytest.mark.parametrize("seconds, auto", [(None, "cuda"), (0, "cuda"), (-3.0, "cuda"), (True, "cuda"),
-                                           ("241", "cuda"), (float("nan"), "cuda"), (241.0, None)])
+                                           ("241", "cuda"), (float("nan"), "cuda"), (float("inf"), "cuda"),
+                                           (241.0, None)])
 def test_no_estimate_without_a_length_or_a_device(seconds, auto):
     assert E.for_job(seconds, options(), auto, "cuda") is None
 

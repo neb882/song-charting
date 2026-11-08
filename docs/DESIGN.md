@@ -2891,7 +2891,8 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     golden runs' cold builds (11 of 14 inside; Lucretia's two and one slow build above). For a 4-minute song: about 4
     to 10 minutes with the GPU's 4 takes, 2 to 5 with 1, 6 to 11 on the CPU. Not counted: the caches (a song charted
     before goes faster) and the lyrics' first download; the friend's 4070 is not measured. Its evidence is in the
-    module's docstring, and tests/test_ui_estimate.py checks the rates against those runs.
+    module's docstring, and tests/test_ui_estimate.py checks the rates against those runs. The estimate is for a
+    look: a bug in it is logged, and the chart starts without one.
   - **The end above the fold:** the stage rows fold into one line ("Charted in 12 min 43 s", a `<details>`, left
     open after an error to show where it stopped), and the Done screen scrolls to the top of the window, again once
     its results are in. Under "Ready" comes "Play it" (Install into Clone Hero, Another folder, the zip), then the

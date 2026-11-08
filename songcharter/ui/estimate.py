@@ -114,13 +114,13 @@ def round_minutes(low_s: float, high_s: float) -> tuple[int, int]:
 
 
 def for_job(seconds: Any, options: Any, auto_device: str | None, guitar_device: str | None = None) -> dict | None:
-    """The estimate for a job (`options`: jobs.ChartOptions), or None when the song's length or the device is not
-    known: {"seconds", "takes", "device", "low_s", "high_s", "low_min", "high_min"}, `device` the guitar's. The
+    """The estimate for a job (`options`: jobs.ChartOptions), or None when the song's length (a finite number of
+    seconds) or the device is not known: {"seconds", "takes", "device", "low_s", "high_s", "low_min", "high_min"}, `device` the guitar's. The
     stages' device is the options' (the doctor summary's for "auto": `auto_device`); the guitar's takes are the
     options', else, as pipeline.guitar_takes, 4 on CUDA and 1 on the CPU. On CUDA, a guitar the doctor summary found
     on the CPU (`guitar_device`: autochart's CUDA provider did not load) runs there, and by default one take only,
     as the pipeline decides once its first take shows it."""
-    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not seconds > 0:
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 0 < seconds < math.inf:
         return None
     device = options.device if options.device in DEVICES else auto_device
     if device not in DEVICES:

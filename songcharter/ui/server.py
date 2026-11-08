@@ -64,7 +64,7 @@ Nothing is downloaded or installed; charting never waits for it.
     message) or an unknown upload. The options' `album_art` and `background` are image upload ids, which become the
     images' paths here (an unknown one, or a song's: 400), so no path ever comes from the page. The job gets its
     estimate here (M7-10: estimate.for_job, from the upload's length, the options, and the doctor summary's device
-    and guitar device).
+    and guitar device); a bug in it is logged, and the chart starts without one.
   * GET /api/jobs/current: its state (running, done, failed, cancelled), its `estimate` ({"seconds", "takes",
     "device", "low_s", "high_s", "low_min", "high_min"}, or null) and events; 404 before the first job.
   * GET /api/jobs/current/events: Server-Sent Events. Every event so far, then each new one, as `id: <index>` and
@@ -579,7 +579,11 @@ class Handler(BaseHTTPRequestHandler):
                 raise Refused(400, str(e)) from None
             doctor = app.doctor()
             auto = (doctor.get("device") or {}).get("chosen")
-            est = estimate.for_job(upload.get("seconds"), opts, auto, doctor.get("guitar_device"))
+            try:
+                est = estimate.for_job(upload.get("seconds"), opts, auto, doctor.get("guitar_device"))
+            except Exception:  # noqa: BLE001  a bug in the estimate: logged, and the chart starts without one
+                app.log(f"estimate: internal error:\n{traceback.format_exc()}", console=False)
+                est = None
             try:
                 job = app.jobs.start(upload, opts, auto_device=auto, estimate=est)
             except JobRunning as e:
