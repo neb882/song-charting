@@ -250,7 +250,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | HOPOs below Expert | `reduce.py`'s rule (§2.11 step 9) | same | none |
 | lower-tier density | `reduce.py`'s time floors (§2.11 step 2) | same | none |
 | +8 inside star power | dropped; the coverage step keeps phrases non-empty [decision] | absent | none |
-| taps | none (§2.6) | `quantize.py` keeps Expert taps (`QuantizeRules.taps = True`); `reduce.py` drops them below Expert | set `taps=False` for Goal 1, or adopt Expert taps after M2 [decision] |
+| taps | only inside fast runs: 8+ onsets at 0.125 s or less (§2.6 step 4, M7-02) | same (`QuantizeRules.tap_run`; any other tap plays as a HOPO); `reduce.py` drops them below Expert | none |
 | Engine A ticks | through the quantizer with an "already on our grid" flag (§2.7) | absent | add with Engine A (M2) |
 | `diff_band` | written (§2.12) | not writable | add a band rating to `write_ini` and `build_song_folder` |
 | `beat_grid(start=...)` | click/free tests on that path; low evidence returns the start beats flagged (§2.3) | always free; raises `InputError` (a `ValueError`) on low evidence | §2.3 step 6 |
@@ -1194,13 +1194,48 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
      default `hopo: "forced"` (`QuantizeRules.forced_only`) reproduces only the states the source forced
      (`TimedNote.hopo_forced`: a `.chart` `N 5`, a `.mid` forced HOPO or strum); every other note follows the natural
      rule on our grid, so a natural HOPO that only the source's wrong tempo map made (8ths on a half-tempo map) does not
-     become a forced one. `"source"` reproduces every state, `"natural"` none. Which rule stays is open (§2.0).
+     become a forced one. `"source"` reproduces every state, `"natural"` none. M7-01's A-a measured the modes on the
+     23 songs with human charts (Expert guitar, per-note state agreement at 100 ms): none beats `"forced"` by its bar
+     (`"natural"` +0.014 [−0.011, +0.044] with four songs down more than 0.03; the octave rule +0.005), since the
+     engine's forced flags are near coin flips against the humans (its forced strums are strummed by them 52 % of
+     the time, its forced HOPOs HOPO'd 34 %) [here, docs/reports/M7-01-measure.md]; so `"forced"` stays.
    - Rule-based engines give `hopo=None`, and natural rules apply. Neither forced HOPOs nor attack strength is predictable from audio (AUC 0.48–0.53 [here, v1]), so a rule engine cannot supply intent; a forced-strum rule for rule engines is M5 (§8).
    - An imported rule-engine chart reads back with the natural HOPO states of its own 120 BPM map; use `hopo:
      "forced"` (the pipeline does) or `"natural"` for it, never `"source"` [here, bass engine run].
+   - **Taps only in fast runs** (M7-02) [here, M7-01 part A's A-b; the branch's check below]. A source tap is kept
+     only inside a run of 8 or more onsets, each at most 0.125 s after the one before on our grid (8 a second or
+     more: `QuantizeRules.tap_run` 8, `tap_run_gap_s` 0.125; `quantize.fast_runs`), on every 5-fret part and every
+     level the quantizer takes; any other tap is played as a HOPO under every HOPO rule: natural on our grid where
+     it is one, else flipped to one. `tap_run` 0 is the old rule (every tap kept). The levels reduced from Expert
+     do not change: `reduce.py` writes no tap below Expert, and its Hard rule reads a tap and a HOPO alike (§2.11).
+     `report.json`'s `parts.*.quantize.<level>` counts `taps_kept` and `taps_to_hopo`. The engine taps where the
+     humans do not: on the 8 songs with our Expert taps, 6 % of them (precision 0.061) fall on a human tap at 100 ms,
+     and they find 16 % of the human taps (recall 0.157, 13 songs with human taps); our tap share 0.041 against the
+     humans' 0.031. Rule T2 (this one) raises the per-note state agreement by +0.007 [+0.002, +0.013] pooled over the
+     23 songs, and by +0.000 to +0.044 on each of the 8, none down; dropping every tap (T1) gives the same +0.007
+     [+0.002, +0.014]. T2 is the orchestrator's choice (M7-00 section 12); the precision of the taps it keeps was not
+     measured. The same agreement from the branch's quantizer, re-run in process on each
+     song's kept engine take with the kept chart's map, pad, offset and octave (the old rule reproduces the kept
+     chart: its report's quantize counts and every onset's state), against every human chart, the song's mean:
+
+     | song (grid octave) | our taps | kept | to HOPO | the humans' tap share | agreement: taps kept (T0) | this rule (M7-01's T2) |
+     |---|---|---|---|---|---|---|
+     | Kimochi Warui (1) | 618 | 0 | 618 | 0.103 | 0.474 | 0.514 (0.514) |
+     | Lucretia (1) | 8 | 0 | 8 | 0 | 0.571 | 0.572 (0.572) |
+     | Drunk Drivers (1) | 3 | 0 | 3 | 0 | 0.966 | 0.966 (0.966) |
+     | sooth (0.5) | 312 | 31 | 281 | 0.033 | 0.525 | 0.569 (0.569) |
+     | troop (2) | 99 | 78 | 21 | 0.124 | 0.668 | 0.669 (0.669) |
+     | s06 (1) | 30 | 0 | 30 | 0.063 | 0.659 | 0.663 (0.663) |
+     | s07 (1) | 126 | 35 | 91 | 0.001 | 0.700 | 0.727 (0.727) |
+     | s09 (1) | 75 | 0 | 75 | 0 | 0.618 | 0.656 (0.656) |
+
+     The counts are the quantizer's (before the stem stage trims the part's edges); the other 15 songs' charts have
+     no Expert guitar tap, so the rule changes nothing there. Most taps outside a run need a flip: Kimochi Warui's
+     Expert flips go from 2 to 395. Whether to keep taps in fast runs at all, against no taps, waits for a measure
+     of the kept taps' precision.
 5. **Sources already on our grid** (Engine A, §2.7): a per-source flag keeps exact ticks and still runs spacing, chord, sustain and HOPO rules [untested; not in `quantize.py`].
 6. **Drums:** one hit per pad per tick; cymbal/tom collisions as in §2.9; at most two hand pads per tick; 2x kick on Expert only.
-7. **No taps** in this version (`quantize.py` keeps Expert taps today; §2.0).
+7. **Taps** only inside fast runs (step 4, M7-02); none below Expert (§2.11).
 
 - **Not chosen:**
   - v1's "natural HOPOs only, drop every `N 5`": autochart's HOPO κ against humans is 0.77 (Drunk Drivers) and 0.74 (Take Me Out), and natural-only rules cannot force a strum (critique G1).
@@ -1845,7 +1880,7 @@ own tempo map, first to last Expert onset), phrases per song (per 40 of the char
   never tuned; nobody listened to whether the busy vocals stem is singing or guitar bleed; the 6s stems give Solo 2
   0.863 where v1's ft stems gave 95 %.
 - **Placement:** `E solo` on the first note, `E soloend` on the last (inclusive). Consecutive solo sections are one
-  run; expect 1–3 per song.
+  run; expect 1–4 per song (`max_solos` 4 since M7-06).
 - **Length and share (M5-03)** [conventions: solo markers go on a featured lead break, not on every instrumental
   passage; a counter running for most of a song makes the bonus meaningless; here, M5-03]. On the owner's 9-minute
   shred instrumental allin1 labelled most of the song Solo (Solo 1A–1C at 64–103 s, Solo 2A–2Z at 116–535 s), so two
@@ -1883,7 +1918,8 @@ own tempo map, first to last Expert onset), phrases per song (per 40 of the char
      owner may want a tighter share for songs with vocals (M5-00 section 8).
   **The choice** [conventions: on an instrumental, the spans where the lead stands out]: the candidates with 4
   measures and 16 Expert onsets are ranked by onset density (Expert onsets per measure, ties to the earlier start)
-  and taken in that order, at most 3, skipping any that starts within `min_gap_measures` (**4**) after a kept solo's
+  and taken in that order, at most `max_solos` (**4**; 3 until M7-06, below), skipping any that starts within
+  `min_gap_measures` (**4**) after a kept solo's
   end or ends within 4 before a kept solo's start. One that would take the solos' seconds (first to last onset) past
   `max_share` of the first..last Expert onset's is cut to its densest window within the budget left (measure-aligned,
   as the length rule's), or skipped when that window lacks the minimums, so a song never loses its only solo to the
@@ -1891,7 +1927,7 @@ own tempo map, first to last Expert onset), phrases per song (per 40 of the char
   orchestrator, 2026-11-05] keeps a split run from giving back-to-back markers while a long run can still give
   separated solos (the shred song's alt chart has two, 4:30–6:06 and 6:56–8:33). A person's names (`--solos "Solo
   1,Solo 2"`) are neither split, gapped nor share-capped: the person's choice stands, within the minimums and the
-  3-solo cap. `report.json`'s `phrases.guitar` holds `solo_rules` (the values used, and `capped`: false with names),
+  solo cap. `report.json`'s `phrases.guitar` holds `solo_rules` (the values used, and `capped`: false with names),
   `solo_details` (per solo: start, end, measures, onsets, onsets per measure), `solos_skipped_by_gap`,
   `solos_trimmed_by_share` (the candidates as they were before the cut) and `solos_skipped_by_share`; the preview's overview draws each solo as a green band under the star power's cyan one
   [code].
@@ -1928,6 +1964,27 @@ own tempo map, first to last Expert onset), phrases per song (per 40 of the char
   (100 s), would lengthen that solo past every human chart's 67–70 s. M5-03's rounding over all 32 human solos (the
   95th percentile 56.8 measures and 85.5 s) would give 64 measures and 90 s: 77-s solos on the fast songs and
   Lucretia's 91-s solo cut; not adopted. So `SoloRules` is unchanged.
+  **The count, 4 (M7-06)** [here, M7-01 part B's B-c2 on the 23 songs with human charts; the branch's check]. The
+  human charts' median is 1 solo a chart and their 90th percentile 2–3 (M5-03), but 4 of the 23 songs have a human
+  chart with more than 3: troop 4, pm2 5, s07 11, s08 5. `place_solos` re-run in process on the kept charts (v0.3.1's
+  code) at `max_solos` 3, 4 and 5 and `max_share` 0.40 and 0.60: cover = the humans' solo time inside ours (the mean
+  over charts with solos, on the 16 songs with human solos), inside = our solo time inside a chart's solos (the mean
+  over all charts, 18 songs); "away" = a song's solo share further from its human charts' range than today:
+
+  | rule | songs that change | cover, pooled (against today) | inside, pooled | away |
+  |---|---|---|---|---|
+  | 3 solos, share 0.40 (until M7-06) | – | 0.603 | 0.442 | – |
+  | **4 solos, share 0.40** | pm2, s06 | 0.615 (+0.012 [0.000, +0.035]) | 0.441 (−0.001 [−0.011, +0.008]) | none |
+  | 5 solos, share 0.40 | pm2, s06 | the same as 4 | the same | none |
+  | 3 solos, share 0.60 | Lucretia, sooth, s07 | 0.605 (+0.002) | 0.433 (−0.010) | all three |
+  | 4 solos, share 0.60 | Lucretia, sooth, pm2, s06, s07 | 0.617 (+0.014) | 0.430 (−0.012) | Lucretia, sooth, s07 |
+
+  So the count went to 4 and the share stays 0.40 [decision, the orchestrator, M7-00 section 11]. The two songs
+  that gain a solo: pm2 (its humans 5, 4, 3, 5 and 1 solos, shares 0.117–0.348) from 3 solos, share 0.272, cover
+  0.467, inside 0.424 to 4, 0.320, 0.631, 0.473, its fourth at 204.0–225.3 s; s06 (its humans 3, 0, 1 and 1, shares
+  0–0.551) from 3, 0.324, 0.579, 0.683 to 4, 0.380, 0.612, 0.618, its fourth at 165.1–197.2 s. The branch's check
+  (`place_solos` on all 23 kept charts at 3 and at 4): at 3 it gives every kept chart's own solos, and at 4 only those
+  two songs change, nothing else moving. A person's names are held to the count too.
 - **Difficulties:** solos are written on every guitar difficulty. The reducer copies them down and keeps at least one note in each solo on every level (`reduce.py`) [code], so scan-chart's `emptySoloSection`, which it checks on every track, cannot fire.
 
 - **Not chosen:** imported star power (autochart has none; STRUM's 8 phrases placed on the densest Expert windows come out empty on Easy); chartgen's 19 phrases.
