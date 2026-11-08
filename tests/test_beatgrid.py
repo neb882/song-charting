@@ -347,6 +347,83 @@ def test_external_start_is_the_hook_for_a_tracker(steady):
         beat_grid(y, SR, start=truth[::-1])
 
 
+HALVED = dict(bpm_range=(BPM_RANGE[0] / 2, BPM_RANGE[1] / 2), half_beat=False, keep_line=True)  # the halving pass's
+
+
+@pytest.fixture(scope="module")
+def drumless_wander():
+    """A click at 75 BPM (a halved grid's level) whose drums enter at 30 s, and start beats (allin1's, in onset
+    times as the halving pass passes them) on the drums after that and, in the drumless intro, running ahead from
+    12 to 24 s (75 -> 87 -> 75 BPM, about 2 beats gained), as on a real song's intro (M7-09)."""
+    dur, period, entry = 120.0, 0.8, 30.0
+    truth = 0.4 + np.arange(int((dur - 1.0) / period)) * period
+    y = drums(truth, dur, seed=11, active=lambda b: b >= entry)
+    body = truth[truth >= entry]
+    start, t = list(body + np.random.default_rng(3).uniform(-0.005, 0.005, len(body))), body[0]
+    while True:  # the intro's beats, backwards from the drums' entry
+        t -= period - (period - 0.69) * np.interp(t, [0, 12, 15, 20, 24, dur], [0, 0, 1, 1, 0, 0])
+        if t < 0:
+            break
+        start.insert(0, t)
+    return truth, y, np.array(start) - B.ONSET_TO_BEAT_MS / 1000, dur
+
+
+def test_a_halved_start_through_a_drumless_wander_keeps_the_straight_line(drumless_wander):
+    """line_test (the halving pass, M7-09): a straight line through the start beats finds as much drum evidence as
+    they do, so it is the start grid (stats record both shares), keep_line notwithstanding, and the intro stays on
+    the click: the tempo map is one marker at 75 BPM. Without the test the grid follows the start beats' wander."""
+    truth, y, start, dur = drumless_wander
+    f = onset_features(y, SR)
+    grids = {t: beat_grid(y, SR, duration=dur, bpm=75.0, features=f, start=start, line_test=t, **HALVED)
+             for t in (True, False)}
+    g = grids[True]
+    st = g.stats["start"]
+    assert st["grid"] == "line" and st["source"] == "external" and st["n_beats"] == len(start) == len(truth) + 2
+    assert st["bpm"] == pytest.approx(75.0, abs=0.01) and st["first_beat"] == pytest.approx(0.4, abs=0.03)
+    assert st["line_confident_share"] > 0.7 and st["tracker_confident_share"] < st["line_confident_share"] + 0.1
+    maps = {}
+    for t, grid in grids.items():
+        lead = plan_lead_in(grid.beats, grid.downbeats, SR, duration=dur)
+        maps[t] = TempoMap.from_beats(lead.beats, bars=lead.bars, tolerance=0.003)
+    assert [round(x.bpm, 2) for x in maps[True].tempos] == [75.0]
+    intro = (truth > 2) & (truth < 28)
+    _, p95 = spread_ms(g.beats, truth)  # one constant offset (the attacks against the peaks) everywhere ...
+    assert p95 < 3.0
+    assert np.abs(nearest(g.beats, truth[intro]) - truth[intro]).max() < 0.015  # ... the intro included
+    # the line runs to the song's end, a period or less from it, past the last start beat (2 s before the end)
+    assert start[-1] < dur - 1.5 and 0 <= dur - g.beats[-1] < 0.8
+    old = grids[False]
+    assert old.stats["start"]["grid"] == "tracker" and "line_confident_share" not in old.stats["start"]
+    assert len(maps[False].tempos) > 10 and max(x.bpm for x in maps[False].tempos) > 84.0
+    assert np.abs(nearest(old.beats, truth[intro]) - truth[intro]).max() > 0.3
+
+
+def test_a_halved_start_with_a_real_tempo_change_keeps_the_start_beats():
+    """line_test on a song that changes tempo (70 -> 84 BPM at 49 s, drums throughout): the start beats find far
+    more evidence than any straight line through them (TRACKER_MARGIN more), so the grid is the start beats' as
+    without the test, beat for beat and stat for stat, with the line's share recorded beside theirs."""
+    a = 0.4 + np.arange(58) * 60 / 70
+    b = a[-1] + 60 / 84 + np.arange(200) * 60 / 84
+    truth = np.concatenate([a, b[b < 99.0]])
+    y = drums(truth, 100.0, seed=12)
+    start = truth - B.ONSET_TO_BEAT_MS / 1000 + np.random.default_rng(5).uniform(-0.005, 0.005, len(truth))
+    f = onset_features(y, SR)
+    with_test, without = (beat_grid(y, SR, duration=100.0, bpm=77.0, features=f, start=start, line_test=t, **HALVED)
+                          for t in (True, False))
+    st = with_test.stats["start"]
+    assert st["grid"] == "tracker" and st["tracker_confident_share"] >= st["line_confident_share"] + B.TRACKER_MARGIN
+    assert st["line_confident_share"] < 0.3 and 70.0 < st["bpm"] < 84.0
+    assert np.array_equal(with_test.beats, without.beats) and np.array_equal(with_test.downbeats, without.downbeats)
+    assert with_test.mode == without.mode == "free"
+    assert {k: v for k, v in with_test.stats.items() if k != "start"} == {
+        k: v for k, v in without.stats.items() if k != "start"}
+    assert {k: v for k, v in st.items() if k not in ("bpm", "first_beat", "line_confident_share")} == \
+        without.stats["start"]
+    g = with_test.beats  # both tempos followed
+    assert 60 / np.median(np.diff(g[g < 45])) == pytest.approx(70.0, abs=0.5)
+    assert 60 / np.median(np.diff(g[g > 55])) == pytest.approx(84.0, abs=0.5)
+
+
 def test_grid_feeds_the_tempo_map(steady):
     truth, y = steady
     g = beat_grid(y, SR)

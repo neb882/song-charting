@@ -18,7 +18,9 @@ own difficulties, star power, fills and sections, and a Clone Hero folder that i
      when the notes are too dense for it; when that doubled grid's straight line misses a tempo change and the
      sections file holds allin1's beats, the doubled grid starts from them instead (`allin1_start`). A grid the
      notes leave at 1 that runs at twice allin1's beats, under the fold's 85 BPM floor halved, is built again from
-     allin1's beats (`halving_test`, `_halving_pass`), its slots and offset at the first grid's level. The bar phase
+     allin1's beats (`halving_test`, `_halving_pass`), its slots and offset at the first grid's level: from a straight
+     line through them unless they find clearly more drum evidence than it (beat_grid's `line_test`), and warned
+     about where it runs at the first grid's tempo (`first_tempo_windows`). The bar phase
      of the grid chosen is the one allin1's downbeats vote for, when the sections file holds them
      (beatgrid.with_downbeats; else the kick's, beatgrid.bar_phase; DESIGN.md 2.3 step 4). A window whose
      tempo the grid does not follow (stats["tempo_check"]), and a stretch of 16 or more beats that neither the drums
@@ -739,6 +741,11 @@ HALVE_TOLERANCE = 0.1      # ... its median beat rate is twice allin1's within t
 HALVE_MIN_BEATS = 16       # ... over at least this many of allin1's beats inside the audio, and the halved tempo
                            # is under BPM_RANGE's floor: a pulse the first pass could not hold (allin1 sits at half
                            # the humans' tempo on both 200 BPM stress songs, so it alone is no reason to halve)
+# A halved grid back at the first grid's tempo (M7-09, DESIGN.md 2.3): allin1's beats can double for a stretch (the
+# owner's file of the shred song, its last 28 s at 160 BPM), and the halved grid follows them. Per window ...
+HALVED_TEMPO_WINDOW_S = 20.0  # ... of 20 s, ...
+HALVED_TEMPO_HOP_S = 5.0      # ... every 5 s, the halved grid's median beat period over the first grid's: within ...
+HALVED_TEMPO_BACK = 0.10      # ... this share of 1 (2 where it holds its tempo) it runs at the first grid's tempo
 
 
 @dataclass(frozen=True)
@@ -1567,6 +1574,33 @@ def allin1_start(allin1: np.ndarray | None, grid_bpm: float, duration: float = m
     return start, {**rec, "why": f"allin1's beats doubled: {len(start)} beats at {bpm:.1f} BPM"}
 
 
+def first_tempo_windows(first: np.ndarray, halved: np.ndarray, window_s: float = HALVED_TEMPO_WINDOW_S,
+                        hop_s: float = HALVED_TEMPO_HOP_S, tolerance: float = HALVED_TEMPO_BACK) -> dict:
+    """Where a halved grid runs at the first grid's tempo (DESIGN.md 2.3, M7-09): per window_s window, every hop_s
+    from 0 s while a window ends before the halved grid's last beat, the halved grid's median beat period over the
+    first grid's, from each one's beats inside the window (a window with under 4 of either is skipped). The ratio is
+    2 where the halved grid holds its tempo; within `tolerance` of 1 the halved grid is back at the first grid's
+    tempo there (allin1's beats doubled for a stretch, and the halved grid followed them). Returns the flagged
+    windows as [start s, end s, ratio], the spans they make (overlapping windows merged) as [start s, end s], and
+    the parameters. Times are the beats' (seconds of the input)."""
+    f, h = np.asarray(first, dtype=np.float64), np.asarray(halved, dtype=np.float64)
+    windows = []
+    for t0 in np.arange(0.0, h[-1] - window_s, hop_s) if len(h) else []:
+        a, b = f[(f >= t0) & (f < t0 + window_s)], h[(h >= t0) & (h < t0 + window_s)]
+        if len(a) < 4 or len(b) < 4:
+            continue
+        q = float(np.median(np.diff(b)) / np.median(np.diff(a)))
+        if abs(q - 1) <= tolerance:
+            windows.append([round(float(t0), 2), round(float(t0 + window_s), 2), round(q, 4)])
+    spans: list[list[float]] = []
+    for t0, t1, _ in windows:
+        if spans and t0 <= spans[-1][1]:
+            spans[-1][1] = max(spans[-1][1], t1)
+        else:
+            spans.append([t0, t1])
+    return {"windows": windows, "spans": spans, "window_s": window_s, "hop_s": hop_s, "tolerance": tolerance}
+
+
 def _halving_pass(first: BeatGrid, stats: dict, second_pass, allin1: np.ndarray | None, duration: float,
                   rules: OctaveRules) -> tuple[BeatGrid, float, dict, str, list[str]]:
     """The halving (DESIGN.md 2.3, M6-06) of a first grid the density test kept at 1: _octave_pass's return. When
@@ -1575,9 +1609,14 @@ def _halving_pass(first: BeatGrid, stats: dict, second_pass, allin1: np.ndarray 
     range halved, without the half-beat test (allin1's beats give the phase), `second_pass(bpm, bpm_range,
     start=..., half_beat=False)`, which refines them onto the drums (free mode) and finds their downbeats as for any
     grid. Not every other line of the first grid: on the shred stress song the first grid slips a line in a tempo
-    dip the humans and allin1 do not have, so its parity on allin1's beats flips at 300 s. The halved grid is kept,
-    octave 0.5, when its confident share is at least rules.evidence_min times the first's (the doubling's guard);
-    otherwise the first stays, with a warning. stats["halving"] records it all."""
+    dip the humans and allin1 do not have, so its parity on allin1's beats flips at 300 s. The pass runs with
+    `line_test=True` (M7-09): a straight line through allin1's beats is the start unless allin1's beats find
+    TRACKER_MARGIN more drum evidence, as the first pass tests its line against its tracker (the halved grid's
+    stats["start"]); so where the drums are silent the halved grid holds a straight tempo instead of allin1's
+    wander. The halved grid is kept, octave 0.5, when its confident share is at least rules.evidence_min times the
+    first's (the doubling's guard); otherwise the first stays, with a warning. A kept halved grid that runs at the
+    first grid's tempo somewhere (first_tempo_windows, rec["first_tempo"]) warns once per span. stats["halving"]
+    records it all."""
     halve, rec = halving_test(first.bpm, allin1, duration, rules)
     stats["halving"] = rec
     if not halve:
@@ -1585,7 +1624,7 @@ def _halving_pass(first: BeatGrid, stats: dict, second_pass, allin1: np.ndarray 
     lo, hi = BPM_RANGE
     start = np.unique(np.asarray(allin1, dtype=np.float64)) - ONSET_TO_BEAT_MS / 1000.0
     try:
-        halved = second_pass(first.bpm / 2, (lo / 2, hi / 2), start=start, half_beat=False)
+        halved = second_pass(first.bpm / 2, (lo / 2, hi / 2), start=start, half_beat=False, line_test=True)
     except InputError as e:  # beatgrid: no confident drum evidence around them
         halved, rec["failed"] = None, str(e)
     s1 = first.stats["evidence"]["confident_share"]
@@ -1594,11 +1633,17 @@ def _halving_pass(first: BeatGrid, stats: dict, second_pass, allin1: np.ndarray 
     rec["halved"] = None if halved is None else _grid_record(halved)
     rec["evidence_ratio"] = round(ratio, 4) if math.isfinite(ratio) else None
     rec["kept"] = halved is not None and ratio >= rules.evidence_min
+    if halved is not None:
+        rec["first_tempo"] = first_tempo_windows(first.beats, halved.beats)
     share = f"the halved grid's confident share {s2:.2f} against {s1:.2f} (ratio {ratio:.2f}"
     if rec["kept"]:
+        how = ("follows the straight line through them" if halved.stats.get("start", {}).get("grid") == "line"
+               else "follows them")
         return halved, 0.5, stats, f"{stats['reason']}; {rec['why']}; {share}, at least {rules.evidence_min})", [
             f"tempo halved to {halved.bpm:.1f} BPM: the first grid's {first.bpm:.1f} BPM is twice allin1's beats "
-            f"({rec['allin1_bpm']:.1f} BPM), and the grid follows them: check sync"]
+            f"({rec['allin1_bpm']:.1f} BPM), and the grid {how}: check sync"] + [
+            f"the halved grid runs at the first grid's tempo at {t0:.0f}-{t1:.0f} s: check sync"
+            for t0, t1 in rec["first_tempo"]["spans"]]
     return first, 1, stats, f"{stats['reason']}; {rec['why']}; but {share}, under {rules.evidence_min}): the " \
         "first grid stays", [f"tempo: the first grid's {first.bpm:.1f} BPM is twice allin1's beats "
                              f"({rec['allin1_bpm']:.1f} BPM) but the drums give no evidence at that tempo: check "
@@ -1744,9 +1789,9 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
               for p in cfg.parts}
     grid, octave, octave_stats, octave_reason, warn = _octave_pass(
         cfg, grid, onsets, features if src == "drums" else None,
-        lambda bpm, bpm_range, start=None, half_beat=True: beat_grid(
+        lambda bpm, bpm_range, start=None, half_beat=True, line_test=False: beat_grid(
             grid_audio, sr, duration=duration, bpm=bpm, mode=cfg.grid_mode, secondary=second_stem, features=features,
-            bpm_range=bpm_range, half_beat=half_beat, keep_line=True, start=start),
+            bpm_range=bpm_range, half_beat=half_beat, keep_line=True, start=start, line_test=line_test),
         _read_allin1_beats(cfg), duration)
     warnings += warn
     grid = with_downbeats(grid, _read_allin1_beats(cfg, downbeats=True))  # the bar phase (DESIGN.md 2.3 step 4)

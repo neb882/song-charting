@@ -11,7 +11,8 @@ lands. The grid comes from the drum stem (or the mix when the song has no drums)
      The tracker prefers the line's period except in 20-s windows whose own autocorrelation tempo clearly differs
      (local_periods: Take Me Out's 142 BPM intro in a 104.6 BPM song); stats["tempo_check"] lists any window whose
      tempo the final grid still misses. The full product passes Beat This! beats as `start=`; `track_beats` also
-     decodes its activations.
+     decodes its activations. Beats given as `start=` are the start grid, or under `line_test` (assemble's halving
+     pass) the same test picks between them and a straight line through them.
   2. **Local beats.** For each grid beat, the strongest onset-envelope peak within +-60 ms, refined by a parabola,
      with a confidence: how clear the peak is, how strong against the song's drum hits, and how loud the stem is.
   3. **The grid.** A robust straight line through the confident local beats is the click grid. Free mode follows
@@ -765,8 +766,8 @@ def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None
               first_beat: float | None = None, mode: str | None = None, onset_to_beat_ms: float = ONSET_TO_BEAT_MS,
               start: np.ndarray | None = None, features: OnsetFeatures | None = None,
               secondary: np.ndarray | None = None, secondary_features: OnsetFeatures | None = None,
-              bpm_range: tuple[float, float] = BPM_RANGE, half_beat: bool = False, keep_line: bool = False
-              ) -> BeatGrid:
+              bpm_range: tuple[float, float] = BPM_RANGE, half_beat: bool = False, keep_line: bool = False,
+              line_test: bool = False) -> BeatGrid:
     """The beat grid of a song from its drum stem (or its mix when it has no drums).
 
     audio:      shape (channels, samples) or (samples,), at sample_rate. May be None when `features` is given.
@@ -789,10 +790,17 @@ def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None
     keep_line:  the straight start line is never replaced by the tracker's beats (it still runs, for its stats).
                 assemble's second pass sets it: its hint is the first grid's tempo doubled, and on a fast drum stem
                 the tracker flips between the beats and their "and"s over parts of the song (DESIGN.md 2.3 step 7).
+                It does not apply to line_test's line.
+    line_test:  with `start`: a robust straight line through the start beats (by their index, extended over the
+                song from its first beat at or after 0 s) is the start grid unless the start beats find
+                TRACKER_MARGIN more evidence, the first pass's test with the start beats as its tracker. Without it
+                the start beats are always the start grid. assemble's halving pass sets it (DESIGN.md 2.3 step 7,
+                M7-09): allin1's beats can wander where the drums are silent, and the halved grid followed them.
 
     The start grid is the straight line unless a tracker's beats find clearly more evidence (TRACKER_MARGIN more
     of the beats confident): then no straight line fits the song, the fill for beats without evidence follows the
-    tracker's smoothed beats, and the automatic mode is free.
+    tracker's smoothed beats, and the automatic mode is free. stats["start"] holds the line's tempo, first beat and
+    confident share (with `start`, only under line_test), the tracker's share and the grid used.
     """
     if mode not in (None, "free", "click"):
         raise ValueError(f"unknown mode {mode!r}")
@@ -808,6 +816,13 @@ def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None
         if len(tracker) < 8 or np.any(np.diff(tracker) <= 0):
             raise ValueError("start beats must be strictly increasing, with at least 8 inside the audio")
         stats["start"] = {"source": "external", "n_beats": int(len(tracker))}
+        if line_test:  # the start beats' straight line, from its first beat at or after 0 s to the end
+            a, b, _ = robust_line(np.arange(len(tracker), dtype=np.float64), tracker, np.ones(len(tracker)))
+            first = a - np.floor(a / b) * b
+            line = first + np.arange(int(np.floor((dur - first) / b)) + 1) * b
+            line_ev = local_beats(f, line)
+            stats["start"].update(bpm=round(60.0 / b, 4), first_beat=round(float(first), 4),
+                                  line_confident_share=round(float(line_ev.confident.mean()), 4))
     else:
         period, first, source = start_line(f, dur, bpm, first_beat, bpm_range)
         line = first + np.arange(int(np.floor((dur - first) / period)) + 1) * period
@@ -819,7 +834,7 @@ def beat_grid(audio: np.ndarray | None, sample_rate: int, duration: float | None
                           "line_confident_share": round(float(line_ev.confident.mean()), 4),
                           "tracker_tempo_changes": changes}
     trk_ev = local_beats(f, tracker)
-    use_tracker = line_ev is None or (not keep_line and
+    use_tracker = line_ev is None or ((start is not None or not keep_line) and  # keep_line is the first pass's
                                       trk_ev.confident.mean() >= line_ev.confident.mean() + TRACKER_MARGIN)
     stats["start"]["tracker_confident_share"] = round(float(trk_ev.confident.mean()), 4)
     stats["start"]["grid"] = "tracker" if use_tracker else "line"
