@@ -115,13 +115,13 @@
     },
     {
       "order": "v0.4.0's release gate",
-      "stage": "the full review's fixes merged (53de2d3); the 20-song compare done; the advisor: ready for the owner's PC check; M8-01's guard hardening",
+      "stage": "the full review's fixes merged (53de2d3); the 20-song compare done; the advisor: ready for the owner's PC check; M8-01 merged (65f1bcc)",
       "then": "a warm golden run at the final commit, the gate report, the owner's PC check and approval, the release commands"
     }
   ],
   "next": [
     "v0.4.0's release gate (docs/PIPELINE.md, Gates): the 20-song compare, a warm golden run at the final commit (the advisor's finding 1), docs/reports/v0.4.0-gate.md, then the owner's PC check (build, install, re-chart ntl, sooth and a tap song, tempo maps against the CPU's) and his approval; he publishes.",
-    "M8 (after v0.4.0): GPU takes of the 23 measured songs on the owner's PC (M8-01's tooling: eval/gpu.sh takes stress|set20, results), then measure the take, contour and engine questions in deferred on GPU takes (docs/reports/M8-spike-contour.md, M8-spike-takescore.md).",
+    "M8 (after v0.4.0): GPU takes of the 23 measured songs on the owner's PC (M8-01's tooling, merged at 65f1bcc: eval/gpu.sh takes refs|stress|set20, results; docs/reports/M8-01-gpu-takes.md), then measure the take, contour and engine questions in deferred on GPU takes (docs/reports/M8-spike-contour.md, M8-spike-takescore.md).",
     "M4: M4-08 part B, the friend's PC: he follows the guide alone, charts the test song with 1 take and with the defaults, charts a song of his own, installs it into Clone Hero and plays it, and sends the diagnostics zip saved after his last chart.",
     "Before the next quality decision beyond this version's defect fixes: grow the reference set to 20 or more human charts, with human-charted solos among them. M5-09 makes a song one entry in eval/stress.json; the songs are the owner's to pick (M5-99); this version's set is the two hard songs and one ordinary rock song."
   ],
