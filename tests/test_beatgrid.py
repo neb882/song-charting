@@ -398,6 +398,24 @@ def test_a_halved_start_through_a_drumless_wander_keeps_the_straight_line(drumle
     assert np.abs(nearest(old.beats, truth[intro]) - truth[intro]).max() > 0.3
 
 
+def test_a_halved_start_over_part_of_the_song_runs_the_line_to_its_end():
+    """line_test's line runs from its first beat to the song's end, whatever part of the song the start beats cover:
+    here 12 start beats cover the first 9 s of a 120-s click at 75 BPM, and the grid still runs, on the click, to a
+    period or less from the end. A line that stops at the last start beat, or has one beat per start beat, leaves
+    the rest of the song with no grid (the v0.4.0 gate's review; the drumless wander above cannot tell)."""
+    dur, period = 120.0, 0.8
+    truth = 0.4 + np.arange(int((dur - 1.0) / period)) * period
+    y = drums(truth, dur, seed=11)
+    start = truth[:12] - B.ONSET_TO_BEAT_MS / 1000
+    g = beat_grid(y, SR, duration=dur, bpm=75.0, start=start, line_test=True, **HALVED)
+    st = g.stats["start"]
+    assert st["grid"] == "line" and st["n_beats"] == 12 and start[-1] < 10.0
+    assert st["bpm"] == pytest.approx(75.0, abs=0.01)
+    assert 0 <= dur - g.beats[-1] < period and len(g.beats) == int((dur - g.beats[0]) / period) + 1
+    assert np.abs(nearest(g.beats, truth) - truth).max() < 0.015  # on the click all the way
+    assert spread_ms(g.beats, truth)[1] < 3.0
+
+
 def test_a_halved_start_with_a_real_tempo_change_keeps_the_start_beats():
     """line_test on a song that changes tempo (70 -> 84 BPM at 49 s, drums throughout): the start beats find far
     more evidence than any straight line through them (TRACKER_MARGIN more), so the grid is the start beats' as

@@ -2,6 +2,7 @@
 the takes it assumes for a job, the song's length from ffmpeg's header, and its rates against the measured runs they
 come from (the module docstring): the ordinary songs inside the range, the dense ones above it."""
 import math
+import subprocess
 import time
 
 import numpy as np
@@ -15,10 +16,10 @@ from songcharter.ui import jobs as J
 def test_the_arithmetic_on_a_four_minute_song():
     """240 s, 4 takes on the GPU, with the preview: every part's low and high values summed, by hand; the GPU's high
     rates the 5070's times 1.35 (the friend's 4070, M7-10's review), each take's own start 0 to 10 s."""
-    low = (20 + 0.15 * 240) + (5 + 0.02 * 240) + 0.08 * 240 + 4 * (0 + 0.0007 * 240 ** 2)
-    high = (20 + 0.40 * 1.35 * 240) + (5 + 0.05 * 240) + 0.17 * 1.35 * 240 + 4 * (10 + 0.0018 * 1.35 * 240 ** 2)
+    low = (20 + 0.15 * 240) + (5 + 0.01 * 240) + 0.07 * 240 + 4 * (0 + 0.0007 * 240 ** 2)
+    high = (20 + 0.40 * 1.35 * 240) + (5 + 0.05 * 240) + 0.19 * 1.35 * 240 + 4 * (10 + 0.0018 * 1.35 * 240 ** 2)
     assert E.chart_seconds(240, 4, "cuda") == pytest.approx((low, high))
-    assert (round(low, 2), round(high, 2)) == (246.28, 821.55)
+    assert (round(low, 2), round(high, 2)) == (241.48, 828.03)   # (246.28, 821.55) before the v0.4.0 gate
     assert E.round_minutes(low, high) == (4, 14)   # the page's "4 to 14 minutes"
     assert E.round_minutes(*E.chart_seconds(240, 1, "cuda")) == (2, 7)
 
@@ -26,7 +27,7 @@ def test_the_arithmetic_on_a_four_minute_song():
 def test_the_gpus_high_rates_are_the_5070s_with_the_4070s_margin():
     assert E.FRIEND_GPU == 1.35 and E.TAKE_FIXED == (0.0, 10.0)
     assert E.GUITAR_TAKE["cuda"] == pytest.approx((0.0007, 0.0018 * 1.35))
-    assert E.GUITAR_ONCE["cuda"] == pytest.approx((0.08, 0.17 * 1.35))
+    assert E.GUITAR_ONCE["cuda"] == pytest.approx((0.07, 0.19 * 1.35))
     assert E.OTHER["cuda"] == ((20.0, 20.0), pytest.approx((0.15, 0.40 * 1.35)))
     assert E.GUITAR_TAKE["cpu"] == (0.0012, 0.0033) and E.OTHER["cpu"] == ((10.0, 10.0), (0.81, 1.13))
 
@@ -36,7 +37,7 @@ def test_each_part_counts_once_and_where_it_runs():
     base = E.chart_seconds(d, 0, "cpu", preview=False)
     assert base == pytest.approx((10 + 0.81 * d, 10 + 1.13 * d))   # no guitar: the other stages alone
     preview = E.chart_seconds(d, 0, "cpu")
-    assert [b - a for a, b in zip(base, preview)] == pytest.approx([5 + 0.02 * d, 5 + 0.05 * d])
+    assert [b - a for a, b in zip(base, preview)] == pytest.approx([5 + 0.01 * d, 5 + 0.05 * d])
     lyrics = E.chart_seconds(d, 0, "cpu", lyrics=True, preview=False)
     assert [b - a for a, b in zip(base, lyrics)] == pytest.approx([10 + 0.45 * d, 10 + 0.60 * d])
     one = E.chart_seconds(d, 1, "cpu", preview=False)
@@ -125,6 +126,22 @@ def test_the_length_from_ffmpegs_header(tmp_path):
     assert E.duration(tmp_path / "s.wav", ffmpeg=str(tmp_path / "no-ffmpeg")) is None   # no ffmpeg: no estimate
 
 
+@pytest.mark.parametrize("ext", ["mp3", "wav", "flac", "m4a"])
+def test_a_tag_that_holds_a_duration_is_not_the_songs_length(tmp_path, ext):
+    """The v0.4.0 gate's review: ffmpeg prints the input's tags before the container's own Duration line, and a
+    downloaded song's tag (a description, a comment) can hold "Duration: 1:00:00": a 2.5-s song is still 2.5 s, not
+    an hour (the page said "about 620 to 2150 minutes")."""
+    t = np.arange(int(2.5 * A.SAMPLE_RATE)) / A.SAMPLE_RATE
+    y = (0.2 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+    A.write_wav(np.stack([y, y]), tmp_path / "s.wav")
+    song = tmp_path / f"tagged.{ext}"
+    subprocess.run([A.ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i",
+                    str(tmp_path / "s.wav"), "-metadata", "comment=Duration: 01:00:00.00", str(song)], check=True)
+    said = subprocess.run([A.ffmpeg_exe(), "-hide_banner", "-nostdin", "-i", str(song)], capture_output=True)
+    assert "Duration: 01:00:00.00" in said.stderr.decode("utf-8", "replace")   # the tag is there to be misread
+    assert E.duration(song) == pytest.approx(2.5, abs=0.1)
+
+
 def test_an_ffmpeg_that_hangs_gives_no_length_within_the_timeout(tmp_path, monkeypatch):
     """M7-10's review (F2): an ffmpeg that never answers would hold the upload, and "Chart it", for good: the probe
     gives up after PROBE_TIMEOUT_S and the song has no estimate."""
@@ -144,6 +161,18 @@ def test_an_ffmpeg_that_hangs_gives_no_length_within_the_timeout(tmp_path, monke
     ("  Duration: 00:00:00.00, bitrate: N/A", None),
     ("  Duration: N/A, bitrate: N/A", None),
     ("nothing about a length", None),
+    # ffmpeg's own layout (n9.0.2): the tags first, then the container's line; a tag's text is never the length,
+    # whether in its value, a value's later line, or its key (an ID3 TXXX frame's description is the key)
+    ("Input #0, mp3, from 'song.mp3':\n  Metadata:\n    comment         : Duration: 01:00:00.00\n"
+     "    encoder         : Lavf63.1.102\n  Duration: 00:00:12.50, start: 0.025057, bitrate: 64 kb/s\n"
+     "  Stream #0:0: Audio: mp3 (mp3float), 44100 Hz, mono, fltp, 64 kb/s, start 0.025057", 12.5),
+    ("Input #0, mp3, from 'song.mp3':\n  Metadata:\n    comment         : a first line\n"
+     "                    : Duration: 01:00:00.00, start: 0.0, bitrate: 1 kb/s\n"
+     "  Duration: 00:03:05.00, start: 0.025057, bitrate: 192 kb/s", 185.0),
+    ("Input #0, mp3, from 'song.mp3':\n  Metadata:\n    Duration: 01:00:00.00: x\n"
+     "  Duration: 00:03:05.00, start: 0.025057, bitrate: 192 kb/s", 185.0),
+    ("Input #0, mp3, from 'song.mp3':\n  Metadata:\n    comment         : Duration: 01:00:00.00\n"
+     "  Duration: N/A, bitrate: N/A", None),
 ])
 def test_the_header_line_is_read_whatever_comes_around_it(tmp_path, said, seconds):
     """ffmpeg's answer as a stand-in ffmpeg prints it (on stderr, exit 1: no output named)."""
@@ -200,6 +229,26 @@ def test_the_ordinary_songs_fall_inside_the_range_and_the_dense_ones_above(reque
             song, seconds = seconds
         low, high = guitar(song, takes, device)
         assert (low <= seconds <= high) if inside else seconds > high, (song, seconds, round(low), round(high))
+
+
+# the first take's own separation and timing on the 5070: its time less the mean of the three later takes (the
+# takes experiment's table), on the five ordinary songs; and the preview, on the 5070's PC and on this CPU
+ONCE = {"dd": 74 - (33 + 34 + 29) / 3, "tmo": 96 - (76 + 69 + 63) / 3, "atst": 59 - (42 + 49 + 47) / 3,
+        "creep": 66 - (35 + 37 + 47) / 3, "test": 264 - (224 + 164 + 187) / 3}
+PREVIEW_S = {"test": 11.0, 240.0: 12.0}
+
+
+def test_the_first_takes_own_part_and_the_preview_fall_inside_their_ranges(the_5070):
+    """Each part's range is where its measured runs fell (the module docstring; the v0.4.0 gate's review: Drunk
+    Drivers' 0.19 s a second and All the Small Things' 0.07 were outside 0.08-0.17, the test song's 11-s preview
+    under its 13-s low end)."""
+    for song, seconds in ONCE.items():
+        low, high = (rate * LENGTH[song] for rate in E.GUITAR_ONCE["cuda"])
+        assert low <= seconds <= high, (song, round(seconds, 1), round(low, 1), round(high, 1))
+    for song, seconds in PREVIEW_S.items():
+        d = LENGTH.get(song, song)
+        low, high = (fixed + rate * d for fixed, rate in zip(*E.PREVIEW))
+        assert low <= seconds <= high, (song, seconds, round(low, 1), round(high, 1))
 
 
 @pytest.mark.parametrize("minutes, song, takes, device, preview", [

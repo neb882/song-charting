@@ -1607,16 +1607,17 @@ def _halving_pass(first: BeatGrid, stats: dict, second_pass, allin1: np.ndarray 
     halving_test says the grid is at twice allin1's beats, under the fold's floor halved, the grid is built again
     from allin1's beats: moved to onset times (minus ONSET_TO_BEAT_MS, beat_grid's start= convention), at the fold
     range halved, without the half-beat test (allin1's beats give the phase), `second_pass(bpm, bpm_range,
-    start=..., half_beat=False)`, which refines them onto the drums (free mode) and finds their downbeats as for any
-    grid. Not every other line of the first grid: on the shred stress song the first grid slips a line in a tempo
-    dip the humans and allin1 do not have, so its parity on allin1's beats flips at 300 s. The pass runs with
-    `line_test=True` (M7-09): a straight line through allin1's beats is the start unless allin1's beats find
-    TRACKER_MARGIN more drum evidence, as the first pass tests its line against its tracker (the halved grid's
-    stats["start"]); so where the drums are silent the halved grid holds a straight tempo instead of allin1's
-    wander. The halved grid is kept, octave 0.5, when its confident share is at least rules.evidence_min times the
-    first's (the doubling's guard); otherwise the first stays, with a warning. A kept halved grid that runs at the
-    first grid's tempo somewhere (first_tempo_windows, rec["first_tempo"]) warns once per span. stats["halving"]
-    records it all."""
+    start=..., half_beat=False, line_test=True)`, which refines onto the drums allin1's beats (free mode) or the
+    straight line through them (click or free by FREE_SHARE, as the first pass; below) and finds the downbeats as
+    for any grid; the doubling's start from allin1 (_octave_pass) takes no line test and stays free. Not every other
+    line of the first grid: on the shred stress song the first grid slips a line in a tempo dip the humans and
+    allin1 do not have, so its parity on allin1's beats flips at 300 s. The pass runs with `line_test=True` (M7-09):
+    a straight line through allin1's beats is the start unless allin1's beats find TRACKER_MARGIN more drum
+    evidence, as the first pass tests its line against its tracker (the halved grid's stats["start"]); so where the
+    drums are silent the halved grid holds a straight tempo instead of allin1's wander. The halved grid is kept,
+    octave 0.5, when its confident share is at least rules.evidence_min times the first's (the doubling's guard);
+    otherwise the first stays, with a warning. A kept halved grid that runs at the first grid's tempo somewhere
+    (first_tempo_windows, rec["first_tempo"]) warns once per span. stats["halving"] records it all."""
     halve, rec = halving_test(first.bpm, allin1, duration, rules)
     stats["halving"] = rec
     if not halve:

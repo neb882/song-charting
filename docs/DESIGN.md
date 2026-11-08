@@ -253,7 +253,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | taps | only inside fast runs: 8+ onsets at 0.125 s or less (§2.6 step 4, M7-02) | same (`QuantizeRules.tap_run`; any other tap takes its natural state, no flip); `reduce.py` drops them below Expert | none |
 | Engine A ticks | through the quantizer with an "already on our grid" flag (§2.7) | absent | add with Engine A (M2) |
 | `diff_band` | written (§2.12) | not writable | add a band rating to `write_ini` and `build_song_folder` |
-| `beat_grid(start=...)` | click/free tests on that path; low evidence returns the start beats flagged (§2.3) | always free; raises `InputError` (a `ValueError`) on low evidence | §2.3 step 6 |
+| `beat_grid(start=...)` | click/free tests on that path; low evidence returns the start beats flagged (§2.3) | free on the start beats; with `line_test` (the halving pass's, M7-09) the straight line through them unless they find `TRACKER_MARGIN` more evidence, then click or free by `FREE_SHARE` as on the first pass (`ntl`: click, §2.3 step 7); the doubling's start (M6-05) takes no line test and stays free; raises `InputError` (a `ValueError`) on low evidence | §2.3 step 6 |
 | downbeats | the Viterbi decides (§2.4) | allin1's downbeats vote (`beatgrid.with_downbeats`, M6-03), else the kick phase | the Viterbi, with Goal 2 (§2.4) |
 
 ### Stage overview
@@ -674,15 +674,16 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
        the gap is 1.009 to 2.002 on these songs, one positive in eleven), over at least 16 of allin1's beats inside
        the audio (`HALVE_MIN_BEATS`), and the halved tempo is under the fold's 85 BPM floor: a pulse the first pass
        could not hold. A song at 170 where allin1 says 85 is not halved, since allin1 halves fast songs (both 200 BPM
-       stress songs) and the first pass could have chosen 85. The pass runs `beat_grid` with `start=` allin1's
-       beats (moved to onset times, minus `ONSET_TO_BEAT_MS`), at the fold range halved (42.5, 92.5) and without the
-       half-beat test (allin1's beats give the phase). `beat_grid` refines them onto the drums (free mode) and finds
-       the downbeats as for any grid. The halved grid is kept when its confident share is at least 0.7 times the
-       first's (the doubling's guard; `sooth` 0.798 against 0.682), else the first stays with a warning.
-       report.json's `octave_stats.halving` holds the numbers and why. `grid.octave` is 0.5, and the build warns
-       "tempo halved to ...: check sync". `grid_octave` 1 forces the first grid (no halving). Since M7-09 the pass
-       tests a straight line through allin1's beats against them first, and warns where the halved grid runs at the
-       first grid's tempo (the halved grid's tempo shape, below).
+       stress songs) and the first pass could have chosen 85. The pass runs `beat_grid` with `start=` allin1's beats
+       (moved to onset times, minus `ONSET_TO_BEAT_MS`), at the fold range halved (42.5, 92.5) and without the
+       half-beat test (allin1's beats give the phase). `beat_grid` refines them onto the drums (free mode; since M7-09
+       the straight line through them when it wins the line test, click or free by `FREE_SHARE`, below) and finds the
+       downbeats as for any grid. The halved grid is kept when its confident share is at least 0.7 times the first's
+       (the doubling's guard; `sooth` 0.798 against 0.682), else the first stays with a warning. report.json's
+       `octave_stats.halving` holds the numbers and why. `grid.octave` is 0.5, and the build warns "tempo halved to
+       ...: check sync". `grid_octave` 1 forces the first grid (no halving). Since M7-09 the pass tests a straight
+       line through allin1's beats against them first, and warns where the halved grid runs at the first grid's tempo
+       (the halved grid's tempo shape, below).
      - **Not every other line of the first grid** (the order's wording; decided 2026-11-06 by the orchestrator on
        these numbers). On `sooth` the first grid's lines on allin1's beats switch parity at about 300 s (even lines
        0.81–1.00 of each 30-s window before, odd 0.78–1.00 after). The cause is our grid: a tempo dip at 297–315 s
@@ -3014,24 +3015,35 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
   - **How long it usually takes:** a line under the progress screen's title, "Usually about 4 to 14 minutes for a song
     of this length (4:01), with 4 guitar takes on the GPU. That is an estimate: a dense song takes longer, as the
     guitar's time grows with the notes it writes." The upload reads the song's length from ffmpeg's header
-    (`ui/estimate.py`, `duration`), and the job gets its range as it starts (`estimate.for_job`: the options' device,
-    else the doctor summary's; the takes as `pipeline.guitar_takes` sets them, one on the CPU where the doctor found
-    autochart's CUDA provider missing). The model: every stage but the guitar a fixed part and a rate per second;
-    the guitar its first take's own separation (a rate per second), then for each take its own start (0 to 10 s
-    [est.]: the 5070's later takes show no fixed part on songs of 3 minutes or more, but no shorter song was
-    measured) and k·d², d the length in seconds, as a take's time grows with the notes it has written (the test song
-    against Creep, at about the same notes a second: 2.8x the time a take for 1.7x the length [here, the takes
-    experiment]). The rates' low and high values are where the measured ordinary songs fell: on the owner's 5070, the
-    takes experiment's seven songs and four of his own job logs (the eight ordinary ones inside; Kimochi Warui,
-    Lucretia and a dense 7:19 song above it); on the dev CPU, the golden runs' cold builds (11 of 14 inside;
-    Lucretia's two and one slow build above). **The GPU's high rates are the 5070's times 1.35** for the friend's
-    4070, until M4-08 part B times his PC: it has about 25 % less memory bandwidth (504 against 672 GB/s), which
-    bounds a transcriber that writes one token at a time [inference, M7-10's review]; Kimochi Warui then falls inside
-    too. For a 4-minute song the page says 4 to 14 minutes with the GPU's 4 takes, 2 to 7 with 1, 6 to 11 on the CPU;
-    the guide keeps the rounder "about 5 to 15" and "2 to 7". Not counted: the caches (a song charted before goes
+    (`ui/estimate.py`, `duration`: the container's own line, indented two spaces, never a tag's text, which ffmpeg
+    prints before it and which a downloaded song's description can fill with "Duration: 1:00:00" [here, the v0.4.0
+    gate]), and the job gets its range as it starts (`estimate.for_job`: the options' device, else the doctor
+    summary's; the takes as `pipeline.guitar_takes` sets them, one on the CPU where the doctor found autochart's CUDA
+    provider missing). The model: every stage but the guitar a fixed part and a rate per second; the guitar its first
+    take's own separation (a rate per second), then for each take its own start (0 to 10 s [est.]: the 5070's later
+    takes show no fixed part on songs of 3 minutes or more, but no shorter song was measured) and k·d², d the length
+    in seconds, as a take's time grows with the notes it has written (the test song against Creep, at about the same
+    notes a second: 4.8x the time a later take and 4.5x for all four, for 1.7x the length, whose square is 2.9 [here,
+    the takes experiment's table; corrected at the v0.4.0 gate: this said 2.8x, Creep's own ratio of 4 takes to 1].
+    That pair grows faster than the square, which k's range takes up; the experiment's five ordinary songs fit d to
+    the 1.9th, and d to the 2.4th with the owner's three). The rates' low and high values are where the measured
+    ordinary songs fell: on the owner's 5070, the takes experiment's seven songs and four of his own job logs (the
+    eight ordinary ones inside; Kimochi Warui, Lucretia and a dense 7:19 song above it); on the dev CPU, the golden
+    runs' cold builds (11 of 14 inside; Lucretia's two and one slow build above). **The GPU's high rates are the
+    5070's times 1.35** for the friend's 4070, until M4-08 part B times his PC: it has about 25 % less memory
+    bandwidth (504 against 672 GB/s), which bounds a transcriber that writes one token at a time [inference, M7-10's
+    review]; Kimochi Warui then falls inside too. The v0.4.0 gate widened two parts' ranges to the runs they had
+    missed: the first take's own separation and timing to 0.07-0.19 s a second (All the Small Things' 0.074, Drunk
+    Drivers' 0.187) and the preview to 5 s + 0.01-0.05 s a second (the test song's 11 s). The page's minutes for a 4-
+    and a 9-minute song stayed as they were, but for the 9-minute song's 1 take on the GPU (6 to 20, now 5 to 21). **A
+    song much longer than 9 minutes** may pass the high end on the 4070: the owner's 9:05 song's 4 takes are 95 % of
+    the 5070's own high end, and along d to the 2.4th a 4070 1.35x as slow passes the page's high end from about 10
+    minutes (on the 5070 it holds to 20) [inference, the v0.4.0 gate]; M4-08 part B or the friend's first long song
+    will tell. For a 4-minute song the page says 4 to 14 minutes with the GPU's 4 takes, 2 to 7 with 1, 6 to 11 on the
+    CPU; the guide keeps the rounder "about 5 to 15" and "2 to 7". Not counted: the caches (a song charted before goes
     faster) and the lyrics' first download. Its evidence is in the module's docstring, and tests/test_ui_estimate.py
-    checks the rates against those runs and the 4070's margin. The estimate is for a look: a bug in it is logged,
-    and the chart starts without one.
+    checks the rates against those runs and the 4070's margin. The estimate is for a look: a bug in it is logged, and
+    the chart starts without one.
   - **The end above the fold:** the stage rows fold into one line ("Charted in 12 min 43 s", a `<details>`, left
     open after an error to show where it stopped), and the Done screen scrolls to the top of the window, again once
     its results are in. Under "Ready" comes "Play it" (Install into Clone Hero, Another folder, the zip), then the
@@ -3051,7 +3063,12 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     closed mid-chart: its events answer 404 from a songcharter started since, or nothing answers 10 times in a row,
     2 s apart; a working reconnect starts the count again) ends on the page as a cancel does: "songcharter stopped",
     what to do, the lock let go, the tab's title "Stopped", the update notice back (M7-10's review: the page had held
-    the screen awake for good).
+    the screen awake for good). When nothing answers, the window may still be open: the page can lose the server
+    for 20 s while the chart runs on (localhost after the PC sleeps or wakes), and a song dropped again would get
+    "a chart is running already". So that text says to reload first, which reattaches: "songcharter is not
+    answering. If its black window is still open, reload this page (press F5) to follow the chart. If the window was
+    closed, which stops the chart, start songcharter again from the Start menu, then chart the song again: ..." (the
+    v0.4.0 gate's advisor).
   - **The drop zone** opens the file chooser on Enter or Space (it had a tab stop and no key handler), and **the
     update notice** is hidden while a chart runs (its line says to close the songcharter window, which would stop
     the chart) and shown again at its end.
