@@ -1,12 +1,15 @@
 """Quantizing: synthetic parts in seconds placed on a tempo map (offset, straight and triplet grids, merges and chord
-limits, sustains, HOPO states, drum lanes, spans)."""
+limits, sustains, HOPO states, taps, drum lanes, spans)."""
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
-from songcharter.chart import DRUM_ACTIVATION, STAR_POWER, Chart, SongInfo, write_chart
-from songcharter.quantize import (HOPO_SPACING_S, MERGE_MAX_S, RUN_CHORD_S, STRUM_SPACING_S, QuantizeRules,
-                                  SnapGrid, estimate_offset, limit_chord, odd_32nds, play_states, quantize_part,
-                                  quantize_song, run_chords)
+from songcharter.chart import DRUM_ACTIVATION, STAR_POWER, Chart, SongInfo, Track, write_chart
+from songcharter.quantize import (HOPO_SPACING_S, MERGE_MAX_S, RULES, RUN_CHORD_S, STRUM_SPACING_S, TAP_RUN,
+                                  TAP_RUN_GAP_S, QuantizeRules, SnapGrid, estimate_offset, fast_runs, limit_chord,
+                                  odd_32nds, play_states, quantize_part, quantize_song, run_chords)
+from songcharter.reduce import hopo_states, reduce_track
 from songcharter.tempo import TempoMap
 from songcharter.timed import OPEN, TimedHit, TimedNote, TimedPart, TimedSong, TimedSpan
 
@@ -525,18 +528,122 @@ def test_the_source_hopo_states_are_reproduced():
         (1.5, (0, 1), True, False),    # forced HOPO chord: flip
         (2.0, (2,), None, False),      # unknown: natural (strum)
         (2.25, (OPEN,), None, False),  # an open note after a fret: natural HOPO
-        (2.5, (4,), False, True),      # a tap stays a tap, no flip
+        (2.5, (4,), False, True),      # a tap: with tap_run 0 it stays a tap, no flip
         (3.0, (1,), False, False),
     ]
     notes = [TimedNote(at(tm, b, 6), f, hopo=h, tap=t) for b, f, h, t in seq]
-    track, rep = quantize_part(part(notes), tm, PAD, offset=0.0)
+    track, rep = quantize_part(part(notes), tm, PAD, offset=0.0, rules=QuantizeRules(tap_run=0))
     want = ["tap" if t else "hopo" if h else "strum" for _, _, h, t in seq]
     want[6], want[7] = "strum", "hopo"
     assert play_states(track.notes, RES) == want
     assert [n.flip for n in track.notes] == [False, False, True, True, False, True, False, False, False, False]
-    assert rep.flips == 3
+    assert rep.flips == 3 and (rep.taps_kept, rep.taps_to_hopo) == (1, 0)
+    # the default tap rule: that tap is in no run of 8 fast onsets, so it plays as the natural HOPO it is here
+    track, rep = quantize_part(part(notes), tm, PAD, offset=0.0)
+    want[8] = "hopo"
+    assert play_states(track.notes, RES) == want and not any(n.tap for n in track.notes)
+    assert rep.flips == 3 and (rep.taps_kept, rep.taps_to_hopo) == (0, 1)
     natural = quantize_part(part(notes), tm, PAD, offset=0.0, rules=QuantizeRules(source_hopo=False, taps=False))
     assert natural[1].flips == 0 and not any(n.tap for n in natural[0].notes)
+
+
+# ------------------------------------------------------------------------------------------------ taps
+
+def test_fast_runs():
+    """A run is at least min_onsets onsets, each at most max_gap_s after the one before: a gap of exactly 0.125 s is
+    inside one, 0.1251 s ends it, and so do the part's ends."""
+    assert (TAP_RUN, TAP_RUN_GAP_S) == (8, 0.125) and (RULES.tap_run, RULES.tap_run_gap_s) == (8, 0.125)
+    eight = [0.4 + 0.125 * k for k in range(8)]
+    assert fast_runs(eight, 8, 0.125) == [True] * 8
+    assert fast_runs(eight[:7], 8, 0.125) == [False] * 7
+    assert fast_runs([0.4 + 0.1251 * k for k in range(8)], 8, 0.125) == [False] * 8
+    split = [0.0, 0.1, 0.2, 0.3, 0.55, 0.65, 0.75, 0.85, 0.95, 1.05]   # 4 and 6: neither is 8
+    assert fast_runs(split, 8, 0.125) == [False] * 10
+    nine = [0.1 * k for k in range(9)] + [2.0]
+    assert fast_runs(nine, 8, 0.125) == [True] * 9 + [False]
+    assert fast_runs([0.0, 1.0], 0, 0.125) == fast_runs([0.0, 1.0], 1, 0.125) == [True, True]
+    assert fast_runs([], 8, 0.125) == []
+
+
+def _taps_part(groups):
+    """Single notes on a map's seconds: groups of (first second, offsets in seconds from it, tapped indices); frets
+    cycle G R Y B in each group, and the source plays every note as a strum (hopo False, not forced)."""
+    notes, names = [], {}
+    for name, (t0, steps, tapped) in groups.items():
+        for i, dt in enumerate(steps):
+            notes.append(TimedNote(t0 + dt - PAD + 0.004, (i % 4,), hopo=False, tap=i in tapped))
+            names[notes[-1].time] = (name, i)
+    return part(notes), names
+
+
+def _states_by_group(track, tm, names):
+    """{group: [play state of each of its notes]} (names: _taps_part's)."""
+    states = dict(zip(sorted(n.tick for n in track.notes), play_states(track.notes, RES)))
+    out = {}
+    for t, (name, i) in sorted(names.items()):
+        out.setdefault(name, []).append(states[round(tm.sec_to_tick(t + PAD - 0.004))])
+    return out
+
+
+@pytest.mark.parametrize("bpm, rules", [(150.0, QuantizeRules()), (75.0, QuantizeRules(straight=8, triplet=6))],
+                         ids=["first grid", "halved grid"])
+def test_a_tap_is_kept_only_inside_a_run_of_8_fast_onsets(bpm, rules):
+    """At 150 BPM a 1/16 is 0.1 s (on a halved grid at 75 BPM, its 1/32): 8 taps on 16ths in a row stay taps; 7 do
+    not, nor 8 with one gap of an 8th (0.2 s); 2 taps inside a run of 10 16ths stay, since the run counts every onset,
+    tapped or not. The others play as HOPOs. tap_run 0 keeps every tap (the rule until M7-02)."""
+    tm = const_map(bpm)
+    s16 = 0.1
+    groups = {"eight": (2.0, [k * s16 for k in range(8)], range(8)),
+              "seven": (4.0, [k * s16 for k in range(7)], range(7)),
+              "gapped": (6.0, [k * s16 for k in (0, 1, 2, 3, 5, 6, 7, 8)], range(8)),
+              "ten": (9.0, [k * s16 for k in range(10)], (3, 4))}
+    p, names = _taps_part(groups)
+    track, rep = quantize_part(p, tm, PAD, offset=0.0, rules=rules)
+    assert rep.notes_out == 33 and rep.dropped == rep.merged == 0
+    got = _states_by_group(track, tm, names)
+    assert got["eight"] == ["tap"] * 8
+    assert got["seven"] == ["hopo"] * 7 and got["gapped"] == ["hopo"] * 8
+    assert [s == "tap" for s in got["ten"]] == [i in (3, 4) for i in range(10)]
+    assert (rep.taps_kept, rep.taps_to_hopo) == (10, 15)
+    check(rep)
+    old, rep = quantize_part(p, tm, PAD, offset=0.0, rules=replace(rules, tap_run=0))
+    assert sum(n.tap for n in old.notes) == 25 and (rep.taps_kept, rep.taps_to_hopo) == (25, 0)
+    assert [(n.tick, n.frets) for n in old.notes] == [(n.tick, n.frets) for n in track.notes]
+
+
+@pytest.mark.parametrize("hopo", ["forced", "source", "natural"])
+def test_tap_bursts_play_as_hopos(hopo):
+    """Bursts of 2, 3 and 4 taps are no fast run: each plays as a HOPO under every HOPO rule,
+    whatever state the source gave it: natural on our grid where it is one (a fret change a 16th after the note
+    before), flipped to one where it is not (a burst's first note after a rest, a same-fret repeat, a chord).
+    reduce.hopo_states reads them as HOPOs, as it read the taps, so the levels reduced from Expert are unchanged (at
+    80 BPM Hard keeps two of them as HOPOs). Every source note's HOPO state alternates, its ends strummed."""
+    tm = const_map(80.0)
+    rules = {"forced": QuantizeRules(forced_only=True), "source": QuantizeRules(),
+             "natural": QuantizeRules(source_hopo=False)}[hopo]
+    beat = 0.75
+    seq = [  # (beat, frets, tap)
+        (5.0, (0,), False),
+        (6.0, (2,), True), (6.25, (3,), True),                                       # 2: flip, natural
+        (8.0, (1,), True), (8.25, (1,), True), (8.5, (0, 2), True),                  # 3: flip, repeat, chord
+        (10.0, (4,), True), (10.25, (3,), True), (10.5, (2,), True), (10.75, (OPEN,), True),  # 4: flip, natural
+        (12.0, (1,), False),
+    ]
+    notes = [TimedNote(b * beat - PAD + 0.004, f, hopo=bool(i % 2), tap=t) for i, (b, f, t) in enumerate(seq)]
+    notes[0], notes[-1] = (replace(n, hopo=False) for n in (notes[0], notes[-1]))
+    track, rep = quantize_part(part(notes), tm, PAD, offset=0.0, rules=rules)
+    assert [n.tick for n in track.notes] == [round(b * RES) for b, _, _ in seq]
+    assert play_states(track.notes, RES) == ["strum"] + ["hopo"] * 9 + ["strum"]
+    assert not any(n.tap for n in track.notes)
+    assert [n.flip for n in track.notes][1:10] == [True, False, True, True, True, True, False, False, False]
+    states = hopo_states(track.notes, RES)
+    assert [states[n.tick] for n in track.notes] == [False] + [True] * 9 + [False]
+    assert (rep.taps_kept, rep.taps_to_hopo) == (0, 9)
+    old, _ = quantize_part(part(notes), tm, PAD, offset=0.0, rules=replace(rules, tap_run=0))
+    assert sum(n.tap for n in old.notes) == 9 and hopo_states(old.notes, RES) == states
+    reduced = reduce_track(Track("Expert", "Single", track.notes), tm)
+    assert reduced == reduce_track(Track("Expert", "Single", old.notes), tm)
+    assert [play_states(t.notes, RES).count("hopo") for t in reduced] == [2, 0, 0]
 
 
 # ------------------------------------------------------------------------------------------------ drums
