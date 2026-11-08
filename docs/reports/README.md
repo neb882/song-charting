@@ -62,6 +62,8 @@ ones then, but the CI runs they link still name the old ones.
 | `M7-01-measure.md` | M7-01: the video reviews' questions measured against the human charts of 23 songs (HOPO modes, taps, sustains, repeats, silent stems, the bass, solos, drumless stretches, drums, the take margin) |
 | `M7-09-measure.md` | M7-09's measurement: three ways to build a halved grid and three guards; candidate b and the ratio warning chosen |
 | `M7-02-taps-solos.md` | M7-02 and M7-06: taps only in fast runs (the rest keep their natural state), four solos; the review, the skeptic's wider fix |
+| `M7-09-halved-line.md` | M7-09: a halved grid keeps a straight line when the evidence prefers it, and a warning where it runs at the first grid's tempo; the review |
+| `M7-10-ui.md` | M7-10: the web UI's quick wins (the result above the fold, Install first, a time estimate, the wake lock, the update box), the review |
 | `M8-spike-contour.md` | M8's spike: pitch trackers on the guitar stem against the humans' fret direction in fast runs (none clears); the GPU charts differ from the CPU charts M7 measured |
 | `M8-spike-takescore.md` | M8's spike: window scores for the take splice from the guitar stem's evidence (none clears; a per-window oracle shows +0.042 of headroom) |
 | `pipeline-review.md` | an advisor's review of how work is run (2026-11-04), finding by finding, with what was done |

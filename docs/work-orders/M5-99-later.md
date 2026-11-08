@@ -108,6 +108,16 @@ the drums, its slots (8/6) and offset at the first grid's level. The shred song 
   a halving.
 - The guitar's HOPO share 0.35 -> 0.65 against the humans' 0.55 and 0.39 (the natural threshold at 77 BPM); its
   play-state agreement 0.56 / 0.67 -> 0.60 / 0.45 (primary / alt1).
+- **A halved grid back at the first grid's tempo is warned about, not corrected (M7-09, M8's).** The halving pass
+  now tests a straight line through allin1's beats against them (DESIGN 2.3 step 7, "The halved grid's tempo
+  shape"), which fixes a drumless intro's wander, but where allin1's beats themselves double for a stretch and win
+  the test (the owner's audio file of the shred song: its last 28 s at 160 BPM against the humans' 77) the halved
+  grid still follows them; the build only warns "the halved grid runs at the first grid's tempo at X-Y s: check
+  sync". Halving such a window (every other beat there, its parity from the beats around it) needs more songs
+  whose audio ends that way, and a rule for s02's 225-300 s, where the warning fires and the song's two human charts
+  themselves disagree by an octave. Also open: the line is fit by start-beat index, so a wander that gains beats
+  over a large share of the song pulls it off and the start beats win (no worse than before; a fit by time with an
+  integer phase per stretch is an untested alternative).
 
 ## The tempo refinement's vertex (M6-08)
 

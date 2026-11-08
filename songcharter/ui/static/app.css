@@ -55,6 +55,7 @@ section {
   text-align: center;
 }
 .drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.drop:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }   /* Enter or Space: the file chooser */
 .drop p { margin: 0.25rem 0; }
 .button, button {
   display: inline-block;
@@ -91,6 +92,8 @@ input:not([type]), input[type=number], select {
 .listen-row { display: flex; flex-wrap: wrap; column-gap: 1rem; }
 .listen-row label { flex: 0 1 12rem; }
 audio { display: block; width: 100%; margin-top: 0.6rem; }
+#progress-estimate, #progress-keep { margin: 0.2rem 0 0.5rem; }
+#stages-box > summary { cursor: pointer; color: var(--ok); font-weight: 600; padding: 0.2rem 0; }   /* folded */
 #stages { list-style: none; padding: 0; margin: 0; }
 .stage {
   display: grid;
@@ -153,7 +156,10 @@ a.button { color: #fff; text-decoration: none; }
 #done-text { white-space: pre-wrap; overflow-wrap: anywhere; }   /* an error's advice, then the engine's own lines */
 #problems { margin: 0.25rem 0; padding-left: 1.2rem; }
 .warn-text { color: var(--warn); }
-#export-box { border-top: 1px solid var(--line); margin-top: 1rem; }
+#export-box h3 { margin-top: 0.5rem; }   /* "Play it": first under "Ready" (M7-10) */
+#export-box:not([hidden]) + #look { border-top: 1px solid var(--line); margin-top: 1rem; padding-top: 0.5rem; }
+#summary-box { margin-top: 1rem; }
+#summary-box > summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
 .button.plain { background: transparent; color: var(--accent); }   /* a file picker that is not the main action */
 .picture { margin: 0.2rem 0 0.4rem; }
 .picture .button { margin-right: 0.6rem; }
