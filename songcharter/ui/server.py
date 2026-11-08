@@ -53,16 +53,20 @@ Nothing is downloaded or installed; charting never waits for it.
     a newer release (`line` null when its SHA256SUMS could not be read), else null (before the check has run too).
   * POST /api/upload: the raw file as the body, X-Filename its name (percent-encoded). An extension not in AUDIO: 415;
     over 1 GB: 413; no Content-Length: 411. Streamed to uploads/<16 hex of its SHA-256>/<cache.safe_name(stem)><ext>,
-    with upload.json beside it; answers {"id", "name", "bytes", "tags", "origin"}: the song.ini values the chart
-    would take from the tags or the file's name (pipeline.read_tags and song_metadata), and where each came from.
+    with upload.json beside it; answers {"id", "name", "bytes", "tags", "origin", "seconds"}: the song.ini values
+    the chart would take from the tags or the file's name (pipeline.read_tags and song_metadata), where each came
+    from, and the song's length as ffmpeg's header gives it (estimate.duration; null when it cannot say).
   * POST /api/upload/image (M4-11): a picture for the album art or the background, as the song is uploaded (the same
     guards, folder and pruning; upload.json's kind "image"). An extension not in art.EXTENSIONS: 415; over
     art.MAX_BYTES (20 MB): 413. It must decode as art.py's checks say (a JPEG, PNG or WebP within its pixel limit),
     else 415 with why, and nothing is kept. Answers {"id", "name", "bytes", "format", "width", "height"}.
   * POST /api/jobs {"upload", "options"}: 202 {"job"}; 409 while a job runs; 400 for bad options (Options.check()'s
     message) or an unknown upload. The options' `album_art` and `background` are image upload ids, which become the
-    images' paths here (an unknown one, or a song's: 400), so no path ever comes from the page.
-  * GET /api/jobs/current: its state (running, done, failed, cancelled) and events; 404 before the first job.
+    images' paths here (an unknown one, or a song's: 400), so no path ever comes from the page. The job gets its
+    estimate here (M7-10: estimate.for_job, from the upload's length, the options, and the doctor summary's device
+    and guitar device).
+  * GET /api/jobs/current: its state (running, done, failed, cancelled), its `estimate` ({"seconds", "takes",
+    "device", "low_s", "high_s", "low_min", "high_min"}, or null) and events; 404 before the first job.
   * GET /api/jobs/current/events: Server-Sent Events. Every event so far, then each new one, as `id: <index>` and
     `data: <json>`; a comment every 15 s keeps the connection open; it closes after `result`, `error` or `cancelled`,
     once the job's process has exited (up to 10 s more), so the state is final then. A Last-Event-ID header resumes
@@ -141,8 +145,9 @@ from .. import __version__, cache, clonehero, device, diagnostics, listen, updat
 from .. import art as ART
 from ..errors import InputError, ToolError
 from ..timed import DIFFICULTIES, INSTRUMENTS
+from . import estimate
 from . import home as default_home
-from .jobs import CLOSING, Jobs, JobRunning, NotRunning
+from .jobs import CLOSING, Jobs, JobRunning, NotRunning, parse_options
 
 APP = "songcharter"
 PORTS = range(8765, 8785)          # 8765-8784
@@ -569,7 +574,14 @@ class Handler(BaseHTTPRequestHandler):
                             raise Refused(400, f"no such {what}: {options[key]!r} (choose the picture again)")
                         options[key] = image["path"]
             try:
-                job = app.jobs.start(upload, options, auto_device=app.auto_device())
+                opts = parse_options(options)
+            except InputError as e:
+                raise Refused(400, str(e)) from None
+            doctor = app.doctor()
+            auto = (doctor.get("device") or {}).get("chosen")
+            est = estimate.for_job(upload.get("seconds"), opts, auto, doctor.get("guitar_device"))
+            try:
+                job = app.jobs.start(upload, opts, auto_device=auto, estimate=est)
             except JobRunning as e:
                 raise Refused(409, f"a chart is running already (job {e})") from None
             except InputError as e:
@@ -872,10 +884,11 @@ class Handler(BaseHTTPRequestHandler):
         from .. import pipeline   # numpy loads with it
         tags = pipeline.read_tags(dest)
         meta, origin = pipeline.song_metadata(Path(name), tags, {})   # the name as dropped, not its safe form
+        seconds = estimate.duration(dest)   # the progress screen's estimate (M7-10)
         self._keep(target, dest, {"id": target.name, "name": name, "file": dest.name, "bytes": n, "sha256": key,
-                                  "metadata": meta, "origin": origin, "uploaded": time.time()})
-        self.app.log(f"upload {target.name}: {name} ({n} bytes)")
-        return {"id": target.name, "name": name, "bytes": n, "tags": meta, "origin": origin}
+                                  "metadata": meta, "origin": origin, "seconds": seconds, "uploaded": time.time()})
+        self.app.log(f"upload {target.name}: {name} ({n} bytes" + (f", {seconds} s)" if seconds else ")"))
+        return {"id": target.name, "name": name, "bytes": n, "tags": meta, "origin": origin, "seconds": seconds}
 
     def _upload_image(self) -> dict:
         name, target, dest, n, key = self._receive(ART.EXTENSIONS, ART.MAX_BYTES, "a picture songcharter takes")

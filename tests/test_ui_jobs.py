@@ -269,10 +269,23 @@ def test_a_chart_whose_gate_fails_is_done_with_ok_false(tmp_path, standin):
         assert line in log, line
     snap = job.snapshot()
     assert snap["state"] == "done" and snap["exit"] == 1 and len(snap["events"]) == 4
-    assert snap["upload"] == {"id": UPLOAD["id"], "name": UPLOAD["name"]}
+    assert snap["upload"] == {"id": UPLOAD["id"], "name": UPLOAD["name"]} and snap["estimate"] is None
     # a second job may start now; it has a log of its own even within the same second
     second = jobs.start(upload(tmp_path), {})
     assert wait_state(second) == "done" and second.log != job.log and jobs.current is second
+
+
+def test_the_estimate_given_at_the_start_is_in_the_snapshot(tmp_path, standin):
+    """The server's estimate (estimate.for_job) goes into the job as given, a copy, and its snapshot carries it for
+    the progress screen (M7-10)."""
+    est = {"seconds": 241.0, "takes": 4, "device": "cuda", "low_s": 246.3, "high_s": 588.5, "low_min": 4,
+           "high_min": 10}
+    given = dict(est)
+    job = J.Jobs(tmp_path, command=standin("ok")).start(upload(tmp_path), {}, auto_device="cuda", estimate=given)
+    given["low_min"] = 99
+    assert wait_state(job) == "done"
+    assert job.snapshot()["estimate"] == est and job.snapshot(events=False)["estimate"] == est
+    assert json.loads(json.dumps(job.snapshot()))["estimate"] == est
 
 
 @pytest.mark.parametrize("mode, kind, head, tail", [

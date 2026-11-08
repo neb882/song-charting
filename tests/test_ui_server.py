@@ -490,7 +490,7 @@ def test_uploads(served, monkeypatch):
     status, body = upload(ctx, data, "C:\\Music\\Jörg's Söng: 1/2.WAV")
     key = hashlib.sha256(data).hexdigest()
     assert status == 200, body
-    assert set(body) == {"id", "name", "bytes", "tags", "origin"} and body["id"] == key[:16]
+    assert set(body) == {"id", "name", "bytes", "tags", "origin", "seconds"} and body["id"] == key[:16]
     assert body["bytes"] == len(data) and body["name"] == "2.WAV"   # a path in the name: only its last part
     folder = ctx.home / "uploads" / key[:16]
     assert sorted(p.name for p in folder.iterdir()) == ["2.wav", "upload.json"]
@@ -649,6 +649,43 @@ def test_one_job_at_a_time_then_cancel(served):
     status, _, _ = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"], "options": {"device": "cuda"}})
                         .encode(), guarded(port))
     assert status == 202 and wait_state(ctx, "done") and ctx.threads[-1] is None
+
+
+def test_the_upload_gives_the_songs_length_and_the_job_its_estimate(served, monkeypatch):
+    """M7-10: /api/upload answers the song's length (ffmpeg's header) and upload.json keeps it; a job started on it
+    carries estimate.for_job's answer for its options and the doctor summary's devices, in /api/jobs/current and in
+    the status's job; with no length, no estimate."""
+    from songcharter.ui import estimate as E
+    ctx, port = served, served.port
+    ctx.mode = "ok"
+    status, up = upload(ctx, song(ctx.home / "s.wav", seconds=2.0), "Song.wav")
+    assert status == 200 and up["seconds"] == pytest.approx(2.0, abs=0.02)
+    assert S.read_upload(ctx.home, up["id"])["seconds"] == up["seconds"]
+
+    def start(options, code=202):
+        status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"], "options": options})
+                               .encode(), guarded(port))
+        assert status == code, body
+        wait_state(ctx, "done")
+        return json.loads(call(port, "GET", "/api/jobs/current")[2])["estimate"]
+
+    est = start({})   # doctor.json: the CPU, the guitar on the CPU
+    assert est == E.for_job(up["seconds"], J.parse_options({}), "cpu", "cpu") and est["takes"] == 1
+    assert est["device"] == "cpu" and est["low_min"] >= 1
+    assert json.loads(call(port, "GET", "/api/status")[2])["job"]["estimate"] == est
+    assert start({"takes": 3, "preview": False})["takes"] == 3
+    doctor = {**DOCTOR, "device": {"chosen": "cuda"}, "guitar_device": "cuda"}
+    monkeypatch.setattr(ctx.app, "doctor", lambda: doctor)
+    est = start({})
+    assert (est["takes"], est["device"]) == (4, "cuda")
+    assert est == E.for_job(up["seconds"], J.parse_options({}), "cuda", "cuda")
+    doctor["guitar_device"] = "cpu"   # autochart's CUDA provider did not load: one take, on the CPU
+    assert (start({})["takes"], start({})["device"]) == (1, "cpu")
+    doctor["device"] = {"chosen": None}   # the machine check failed: "auto" is unknown, so is the time
+    assert start({}) is None and start({"device": "cpu"})["device"] == "cpu"
+    monkeypatch.setattr(E, "duration", lambda path: None)   # ffmpeg cannot say: no length, no estimate
+    status, up = upload(ctx, song(ctx.home / "t.wav", seconds=1.5), "Other.wav")
+    assert status == 200 and up["seconds"] is None and start({"device": "cpu"}) is None
 
 
 def test_sse_replays_to_a_late_client_and_streams_to_an_early_one(served, monkeypatch):
