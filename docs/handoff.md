@@ -1,4 +1,4 @@
-# Handoff (updated 2026-11-07)
+# Handoff (updated 2026-11-08)
 
 The session that ran M3 and M4 ended on 2026-11-05; a new session took over that morning and ran M5 (v0.2.0); M6
 (v0.3.0) was published on 2026-11-07. Read CLAUDE.md, docs/PROGRESS.json (`in_flight` says what is waiting, `deferred`
@@ -18,8 +18,12 @@ holds the known gaps) and docs/PIPELINE.md first. This note adds what only the r
   (a chart you can hear) followed as **v0.3.1** (tag v0.3.1, a5895ff, published 2026-11-07; assets byte-identical
   to the build at the tag). Releases are built from a clean clone at the tagged commit and published by the owner (the
   session's proxy refuses tag pushes).
-- **M7 (v0.4.0)** is planned (docs/work-orders/M7-00-plan.md, from the owner's video reviews of his GPU charts) and
-  its measurement M7-01 runs; the build orders follow it, after the weekly usage reset (2026-11-09 13:00 UTC).
+- **M7 (v0.4.0)** is built (docs/work-orders/M7-00-plan.md, from the owner's video reviews of his GPU charts):
+  M7-01 measured every finding against the human charts and closed most; M7-02 with M7-06, M7-09 and M7-10 are merged
+  (their reports in docs/reports/) and the version is 0.4.0. Its release gate runs (PROGRESS `in_flight`): the full
+  review's minor fixes, the 20-song compare, the advisor, then the owner's PC check and approval.
+- **M8** starts from the spikes (docs/reports/M8-spike-contour.md, M8-spike-takescore.md: nothing cleared its bar on
+  CPU takes) and needs GPU takes of the 23 measured songs from the owner's PC (M8-01's tooling, `eval/gpu.sh takes`).
 - **The owner's earlier questions are settled:** the history was rewritten on 2026-11-06 to remove a report's md5
   prefixes and a stress song's artist (his decision), and the stale remote branch `m5-01-fast-grid` is gone.
 
@@ -43,7 +47,8 @@ version: engines/bass.py).
 ## Only in the session
 
 - **The usage meter:** `.claude/mods/usage-meter/` (its README installs it); read it before each wave. The owner's
-  limit: keep working up to 90 % of the weekly usage (2026-11-06).
+  limit: keep working up to 90 % of the weekly usage (2026-11-06); for the week ending 2026-11-09 13:00 UTC, up to
+  about 96 % (the owner, 2026-11-08: use all of it), never usage credits.
 - **Check-ins:** the session schedules its own while agents run (PIPELINE, Long runs), and keeps a tracked local task
   running while it waits on CI (an idle container is reclaimed).
 - **Before every push to main:** `EVAL_DATA=<dev>/eval python -I eval/privacy_check.py` (PIPELINE, the merge).
@@ -56,4 +61,4 @@ version: engines/bass.py).
 ## Limits for unattended work (the owner's, unchanged)
 
 No release published without the owner; no session on the owner's PC unless he asks; no force push or branch
-delete; no usage credits; work up to 90 % of the weekly usage (the owner, 2026-11-06).
+delete; no usage credits; work up to 90 % of the weekly usage (the owner, 2026-11-06; 96 % for the week ending 2026-11-09).
