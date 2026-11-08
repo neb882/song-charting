@@ -36,6 +36,9 @@
   * **Pictures** (M4-11): `album_art` and `background` are the paths of images uploaded through the page; the server
     puts them in for the page's upload ids (server.py: a path never comes from the page) and they become
     --album-art and --background. The job's options say whether each was given.
+  * **The estimate** (M7-10): how long the chart usually takes (estimate.for_job, which the server works out from
+    the upload's length, the options and the doctor summary), given to `start` and kept as it is in the job's
+    snapshot (`estimate`, None without one) for the progress screen.
 """
 from __future__ import annotations
 
@@ -241,6 +244,7 @@ class Job:
     tree: proc.Tree | None = None
     cancelling: bool = False
     tail: list[str] = field(default_factory=list)   # the log's last lines, for an error the job writes itself
+    estimate: dict | None = None           # how long it usually takes (estimate.for_job), for the progress screen
     cond: threading.Condition = field(default_factory=threading.Condition)
     reader: threading.Thread | None = None
 
@@ -268,7 +272,8 @@ class Job:
             out = {"job": self.id, "state": self.state, "upload": {"id": self.upload["id"],
                                                                    "name": self.upload.get("name")},
                    "options": self.options.as_dict(), "out": str(self.out), "log": str(self.log),
-                   "started": self.started, "ended": self.ended, "exit": self.returncode, "now": time.time()}
+                   "started": self.started, "ended": self.ended, "exit": self.returncode, "now": time.time(),
+                   "estimate": dict(self.estimate) if self.estimate else None}
             if events:
                 out["events"] = list(self.events)
             return out
@@ -310,11 +315,12 @@ class Jobs:
             name = f"{stamp}-{n}"
         return name, folder / f"job-{name}.log"
 
-    def start(self, upload: Mapping[str, Any], options: Any, auto_device: str | None = None) -> Job:
+    def start(self, upload: Mapping[str, Any], options: Any, auto_device: str | None = None,
+              estimate: Mapping[str, Any] | None = None) -> Job:
         """Start the chart of `upload` ({"id", "path", "name", "metadata"}) with the page's `options` (parse_options;
-        an InputError for bad ones). JobRunning while a job runs; a job that has sent its result or error but whose
-        process is still exiting (a second or so) is waited for first, up to END_WAIT_S, as the page offers the next
-        song as soon as the result is in."""
+        an InputError for bad ones), with its `estimate` (the module docstring). JobRunning while a job runs; a job
+        that has sent its result or error but whose process is still exiting (a second or so) is waited for first, up
+        to END_WAIT_S, as the page offers the next song as soon as the result is in."""
         opts = options if isinstance(options, ChartOptions) else parse_options(options)
         with self._lock:
             current = self.current
@@ -333,7 +339,7 @@ class Jobs:
                 if fd is not None:
                     cmd.append(f"--lyrics=/dev/fd/{fd}")
                 job_id, log = self._log_path()
-                job = Job(job_id, dict(upload), opts, cmd, out, log)
+                job = Job(job_id, dict(upload), opts, cmd, out, log, estimate=dict(estimate) if estimate else None)
                 env = {**(os.environ if self.env is None else self.env), "PYTHONUTF8": "1"}
                 out.parent.mkdir(parents=True, exist_ok=True)
                 with open(log, "w", encoding="utf-8") as f:

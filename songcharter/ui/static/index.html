@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>songcharter</title>
-<link rel="icon" href="data:,">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAxNiAxNic+PHJlY3Qgd2lkdGg9JzE2JyBoZWlnaHQ9JzE2JyByeD0nMycgZmlsbD0nIzI0NTlkNicvPjxlbGxpcHNlIGN4PSc4JyBjeT0nOScgcng9JzUuNScgcnk9JzQnIGZpbGw9JyMzNWI4NWYnLz48ZWxsaXBzZSBjeD0nOCcgY3k9JzguMicgcng9JzMuNicgcnk9JzIuNCcgZmlsbD0nI2ZmZicvPjwvc3ZnPg==">
 <link rel="stylesheet" href="/app.css">
 <script src="/app.js" defer></script>
 </head>
@@ -124,8 +124,13 @@
   <section id="progress-screen" hidden>
     <h2 id="progress-title">3. Charting</h2>
     <p id="progress-song" class="small"></p>
+    <p id="progress-estimate" class="small" hidden></p>
+    <p id="progress-keep" class="small">Keep the black songcharter window open: closing it stops the chart. You can close this tab and come back (start songcharter again from the Start menu): the page picks the chart up where it is.</p>
     <div id="fallbacks"></div>
-    <ol id="stages"></ol>
+    <details id="stages-box" open>
+      <summary id="stages-line" hidden></summary>
+      <ol id="stages"></ol>
+    </details>
     <ul id="warnings" class="warnings"></ul>
     <p class="actions"><button type="button" id="cancel" class="danger">Cancel</button></p>
   </section>
@@ -134,36 +139,6 @@
     <h2 id="done-title"></h2>
     <p id="done-text"></p>
     <div id="results" hidden>
-      <figure id="art" hidden>
-        <img id="album-art" class="album-art" alt="The album art">
-        <figcaption><span id="art-name"></span><span id="art-from" class="small"></span></figcaption>
-      </figure>
-      <p id="background-line" class="small" hidden>With a background image: Clone Hero shows it when Settings &gt; Gameplay &gt; Use Song Backgrounds is on.</p>
-      <p id="lyrics-line" hidden></p>
-      <p id="lyrics-low" class="warn-text" hidden>The lyrics' timing may be off: check them in Clone Hero.</p>
-      <div id="preview" hidden>
-        <h3>Preview</h3>
-        <a id="overview-link" target="_blank" rel="noopener"><img id="overview" class="overview" alt="The overview: every instrument's notes against its sound"></a>
-        <p class="small">Blue bars are notes per beat; red marks a stretch where the instrument plays but the chart has no notes.</p>
-        <div id="pages" class="pages"></div>
-        <div id="flags-box">
-          <h3>Worth a look</h3>
-          <ul id="flags"></ul>
-          <ul id="remarks" class="small"></ul>
-        </div>
-      </div>
-      <p id="no-preview" hidden></p>
-      <div id="listen-box" hidden>
-        <h3>Listen</h3>
-        <p class="small">The chart as sound over the song, to hear a note that is wrong, late or missing. Guitar and bass: a tone for each note, green lowest to orange highest (an open note lower still), a chord's tones together, HOPOs and taps softer than strums, sustains held. Drums: the kick a thump, the snare a burst, the toms pitched, the cymbals a hiss.</p>
-        <div class="listen-row">
-          <label>Part <select id="listen-part"></select></label>
-          <label>Level <select id="listen-level"></select></label>
-        </div>
-        <p class="actions"><button type="button" id="listen">Listen</button></p>
-        <p id="listen-msg" class="small" hidden></p>
-        <audio id="listen-audio" controls preload="auto" hidden></audio>
-      </div>
       <div id="export-box" hidden>
         <h3>Play it</h3>
         <div id="ch-box">
@@ -195,8 +170,43 @@
         <p class="small">The zip holds song.ogg, made from your recording. Sharing it is sharing the song.</p>
         <p id="export-msg" class="small" hidden></p>
       </div>
+      <div id="look">
+        <figure id="art" hidden>
+          <img id="album-art" class="album-art" alt="The album art">
+          <figcaption><span id="art-name"></span><span id="art-from" class="small"></span></figcaption>
+        </figure>
+        <p id="background-line" class="small" hidden>With a background image: Clone Hero shows it when Settings &gt; Gameplay &gt; Use Song Backgrounds is on.</p>
+        <p id="lyrics-line" hidden></p>
+        <p id="lyrics-low" class="warn-text" hidden>The lyrics' timing may be off: check them in Clone Hero.</p>
+        <div id="preview" hidden>
+          <h3>Preview</h3>
+          <a id="overview-link" target="_blank" rel="noopener"><img id="overview" class="overview" alt="The overview: every instrument's notes against its sound"></a>
+          <p class="small">Blue bars are notes per beat; red marks a stretch where the instrument plays but the chart has no notes.</p>
+          <div id="pages" class="pages"></div>
+          <div id="flags-box">
+            <h3>Worth a look</h3>
+            <ul id="flags"></ul>
+            <ul id="remarks" class="small"></ul>
+          </div>
+        </div>
+        <p id="no-preview" hidden></p>
+        <div id="listen-box" hidden>
+          <h3>Listen</h3>
+          <p class="small">The chart as sound over the song, to hear a note that is wrong, late or missing. Guitar and bass: a tone for each note, green lowest to orange highest (an open note lower still), a chord's tones together, HOPOs and taps softer than strums, sustains held. Drums: the kick a thump, the snare a burst, the toms pitched, the cymbals a hiss.</p>
+          <div class="listen-row">
+            <label>Part <select id="listen-part"></select></label>
+            <label>Level <select id="listen-level"></select></label>
+          </div>
+          <p class="actions"><button type="button" id="listen">Listen</button></p>
+          <p id="listen-msg" class="small" hidden></p>
+          <audio id="listen-audio" controls preload="auto" hidden></audio>
+        </div>
+      </div>
     </div>
-    <pre id="summary" hidden></pre>
+    <details id="summary-box" hidden>
+      <summary>What the build reported</summary>
+      <pre id="summary"></pre>
+    </details>
     <p class="actions"><button type="button" id="again">Chart another song</button></p>
   </section>
 </main>

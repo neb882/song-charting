@@ -2,12 +2,14 @@
 static files by exact name, uploads, one job at a time, the SSE stream, cancel, the Windows self-check and its
 fallback, and `songcharter ui` itself as a process. Jobs run a stand-in chart program (STANDIN); Windows' curl.exe
 is a stand-in function. Nothing here needs Windows or a model."""
+import base64
 import hashlib
 import io
 import http.client
 import json
 import os
 import pty
+import re
 import shutil
 import signal
 import socket
@@ -490,7 +492,7 @@ def test_uploads(served, monkeypatch):
     status, body = upload(ctx, data, "C:\\Music\\Jörg's Söng: 1/2.WAV")
     key = hashlib.sha256(data).hexdigest()
     assert status == 200, body
-    assert set(body) == {"id", "name", "bytes", "tags", "origin"} and body["id"] == key[:16]
+    assert set(body) == {"id", "name", "bytes", "tags", "origin", "seconds"} and body["id"] == key[:16]
     assert body["bytes"] == len(data) and body["name"] == "2.WAV"   # a path in the name: only its last part
     folder = ctx.home / "uploads" / key[:16]
     assert sorted(p.name for p in folder.iterdir()) == ["2.wav", "upload.json"]
@@ -649,6 +651,52 @@ def test_one_job_at_a_time_then_cancel(served):
     status, _, _ = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"], "options": {"device": "cuda"}})
                         .encode(), guarded(port))
     assert status == 202 and wait_state(ctx, "done") and ctx.threads[-1] is None
+
+
+def test_the_upload_gives_the_songs_length_and_the_job_its_estimate(served, monkeypatch):
+    """M7-10: /api/upload answers the song's length (ffmpeg's header) and upload.json keeps it; a job started on it
+    carries estimate.for_job's answer for its options and the doctor summary's devices, in /api/jobs/current and in
+    the status's job; with no length, no estimate."""
+    from songcharter.ui import estimate as E
+    ctx, port = served, served.port
+    ctx.mode = "ok"
+    status, up = upload(ctx, song(ctx.home / "s.wav", seconds=2.0), "Song.wav")
+    assert status == 200 and up["seconds"] == pytest.approx(2.0, abs=0.02)
+    assert S.read_upload(ctx.home, up["id"])["seconds"] == up["seconds"]
+
+    def start(options, code=202):
+        status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"], "options": options})
+                               .encode(), guarded(port))
+        assert status == code, body
+        wait_state(ctx, "done")
+        return json.loads(call(port, "GET", "/api/jobs/current")[2])["estimate"]
+
+    est = start({})   # doctor.json: the CPU, the guitar on the CPU
+    assert est == E.for_job(up["seconds"], J.parse_options({}), "cpu", "cpu") and est["takes"] == 1
+    assert est["device"] == "cpu" and est["low_min"] >= 1
+    assert json.loads(call(port, "GET", "/api/status")[2])["job"]["estimate"] == est
+    assert start({"takes": 3, "preview": False})["takes"] == 3
+    doctor = {**DOCTOR, "device": {"chosen": "cuda"}, "guitar_device": "cuda"}
+    monkeypatch.setattr(ctx.app, "doctor", lambda: doctor)
+    est = start({})
+    assert (est["takes"], est["device"]) == (4, "cuda")
+    assert est == E.for_job(up["seconds"], J.parse_options({}), "cuda", "cuda")
+    doctor["guitar_device"] = "cpu"   # autochart's CUDA provider did not load: one take, on the CPU
+    assert (start({})["takes"], start({})["device"]) == (1, "cpu")
+    doctor["device"] = {"chosen": None}   # the machine check failed: "auto" is unknown, so is the time
+    assert start({}) is None and start({"device": "cpu"})["device"] == "cpu"
+    monkeypatch.setattr(E, "duration", lambda path: None)   # ffmpeg cannot say: no length, no estimate
+    status, up = upload(ctx, song(ctx.home / "t.wav", seconds=1.5), "Other.wav")
+    assert status == 200 and up["seconds"] is None and start({"device": "cpu"}) is None
+
+    def broken(*args):
+        raise ZeroDivisionError("a bug in the estimate")
+    said = []
+    monkeypatch.setattr(E, "for_job", broken)   # the estimate is for a look: a bug in it never stops a chart
+    monkeypatch.setattr(ctx.app, "log", lambda text, console=True: said.append((text, console)))
+    assert start({"device": "cpu"}) is None
+    assert [console for text, console in said if text.startswith("estimate: internal error:\n")
+            and "ZeroDivisionError: a bug in the estimate" in text] == [False]   # the log file's, not the window's
 
 
 def test_sse_replays_to_a_late_client_and_streams_to_an_early_one(served, monkeypatch):
@@ -1903,6 +1951,332 @@ def test_the_page_shows_the_update_notice_copies_the_line_and_later_hides_it(tmp
     assert html.index("</header>") < html.index('<section id="update" hidden>') < html.index('id="drop-screen"')
 
 
+# ------------------------------------------------------------------------------------------------ M7-10
+
+PROGRESS_PAGE = r"""
+const vm = require("vm"), fs = require("fs");
+const els = {};
+const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [],
+  value: "", open: false, on: {}, scrolled: 0, clicked: 0,
+  replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); },
+  addEventListener(kind, f) { this.on[kind] = f; }, classList: { add() {}, remove() {} }, removeAttribute() {},
+  pause() {}, scrollIntoView(how) { this.scrolled += 1; this.how = how; }, click() { this.clicked += 1; } });
+const docOn = {};
+const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node, title: "songcharter",
+  visibilityState: "visible", addEventListener(kind, f) { docOn[kind] = f; } };
+els.options = Object.assign(node("form"), { elements: { solos: node("select") } });
+const locks = [];
+const lock = (type) => ({ type, released: false, on: {}, addEventListener(k, f) { this.on[k] = f; },
+  release() { this.released = true; return Promise.resolve(); } });
+let grant = null;   // a function that answers the next request, when the test holds it back
+const navigator = { wakeLock: { request: (type) => { const l = lock(type); locks.push(l);
+  if (grant === "hold") return new Promise((ok) => { grant = () => ok(l); });
+  return Promise.resolve(l); } } };
+const EST = { seconds: 241, takes: 4, device: "cuda", low_s: 246.3, high_s: 588.5, low_min: 4, high_min: 10 };
+let job = { job: "j1", state: "running", upload: { name: "Some Song.mp3" }, started: 1000, now: 1000, estimate: EST };
+const ctx = { document, window: { addEventListener() {} }, XMLHttpRequest: class {}, encodeURIComponent, console,
+  navigator, setInterval() {}, clearInterval() {}, setTimeout() {}, TextDecoder,
+  sessionStorage: { setItem() {}, getItem() { return null; } },
+  fetch: async (path) => {
+    if (path === "/api/jobs/current") return { status: 200, json: async () => JSON.parse(JSON.stringify(job)) };
+    if (path === "/api/jobs/current/results") return { status: 200, json: async () => ({ job: job.job,
+      installable: false, preview: { why: "it was turned off in the options" }, art: null, lyrics: null,
+      listen: null }) };
+    if (path === "/api/status") return { status: 200, json: async () => ({ device: { chosen: "cpu" }, problems: [],
+      notes: [], job: null, update: UP }) };
+    if (path === "/api/hello") return { status: 200, json: async () => ({ app: "songcharter", version: "0.3.1" }) };
+    if (path === "/api/jobs/current/events") {   // a stream that stays open: the test hands the events in
+      return { status: 200, body: { getReader: () => ({ read: () => new Promise(() => {}) }) } };
+    }
+    return { status: 404, json: async () => ({}) };
+  } };
+const UP = { version: "9.9.9", line: "curl x && bash install.sh", url: "https://example.invalid/r" };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(process.argv[2], "utf8"), ctx);
+const settle = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
+const wake = () => vm.runInContext("state.wake && state.wake.type ? state.wake.type : String(state.wake)", ctx);
+const running = () => vm.runInContext("state.running", ctx);
+const ended = () => ({ title: document.title, line: els["stages-line"].hidden ? null : els["stages-line"].textContent,
+  open: els["stages-box"].open, estimate: els["progress-estimate"].hidden, keep: els["progress-keep"].hidden,
+  report: els["summary-box"].hidden ? null : els["summary-box"].open, update: els.update.hidden, wake: wake(),
+  running: running(), done: els["done-screen"].hidden, cancel: els.cancel.hidden });
+const out = {};
+(async () => {
+  await ctx.start();   // no job yet; an update is out
+  await settle();
+  out.idle = { update: els.update.hidden, title: document.title, version: vm.runInContext("state.version", ctx) };
+  await ctx.attach();
+  await settle();
+  out.running = { title: document.title, update: els.update.hidden, estimate: els["progress-estimate"].textContent,
+    estimateHidden: els["progress-estimate"].hidden, keep: els["progress-keep"].hidden, open: els["stages-box"].open,
+    line: els["stages-line"].hidden, locks: locks.length, wake: wake(), running: running() };
+  ctx.handle({ event: "stage_start", stage: "separate", index: 2, count: 8, detail: "", at: 1010 });
+  out.stage = document.title;
+  ctx.handle({ event: "take", index: 3, count: 4, seed: 303 });
+  out.take = document.title;
+  await ctx.showUpdate(UP);   // the update check's answer comes while it runs: still put away
+  ctx.askForUpdate();
+  await settle();
+  out.later = els.update.hidden;
+  locks[0].released = true;   // the tab hidden: the browser lets the lock go ...
+  locks[0].on.release();
+  document.visibilityState = "hidden";
+  docOn.visibilitychange();
+  await settle();
+  out.hidden = { wake: wake(), locks: locks.length };
+  document.visibilityState = "visible";   // ... and back in view, it is asked for again
+  docOn.visibilitychange();
+  await settle();
+  out.back = { wake: wake(), locks: locks.length };
+  docOn.visibilitychange();   // held already: not asked twice
+  await settle();
+  out.twice = locks.length;
+  ctx.handle({ event: "result", ok: true, exit: 0, folder: "/x/Made-Up Band - Song", work: "/w", preview: null,
+               summary: "gate: OK", at: 1763 });
+  out.result = { ...ended(), released: locks[1].released, scrolled: els["done-screen"].scrolled,
+                 how: els["done-screen"].how };
+  await settle();
+  out.results = { scrolled: els["done-screen"].scrolled, results: els.results.hidden };
+  ctx.again();
+  out.again = { title: document.title, update: els.update.hidden, running: running() };
+  // a failed check: the build's report open
+  job = { ...job, job: "j2", started: 2000 };
+  await ctx.attach();
+  await settle();
+  ctx.handle({ event: "result", ok: false, exit: 1, folder: "/x/S.failed", work: "/w", preview: null,
+               summary: "gate: FAILED", at: 2005 });
+  out.failed = ended();
+  // an error: the rows stay open, to show where it stopped
+  job = { ...job, job: "j3", started: 3000, estimate: null };
+  await ctx.attach();
+  await settle();
+  out.noEstimate = { text: els["progress-estimate"].textContent, hidden: els["progress-estimate"].hidden };
+  ctx.handle({ event: "error", kind: "tool", message: "it broke", at: 3065 });
+  out.error = ended();
+  job = { ...job, job: "j4", started: 4000 };
+  await ctx.attach();
+  await settle();
+  ctx.handle({ event: "cancelled", at: 4002 });
+  out.cancelled = ended();
+  // a job that ended before the page came (a reload): no lock asked for; the end comes again from its events
+  job = { ...job, job: "j5", state: "done", started: 5000 };
+  const asked = locks.length;
+  await ctx.attach();
+  await settle();
+  out.reload = { asked: locks.length - asked, update: els.update.hidden };
+  // the lock granted after the chart ended: let go at once
+  job = { ...job, job: "j6", state: "running", started: 6000 };
+  grant = "hold";
+  await ctx.attach();
+  ctx.handle({ event: "cancelled", at: 6001 });
+  grant();
+  await settle();
+  out.race = { released: locks[locks.length - 1].released, wake: wake() };
+  // no wake lock here (the fallback address), or one refused: the page goes on
+  grant = null;
+  navigator.wakeLock = undefined;
+  job = { ...job, job: "j7" };
+  await ctx.attach();
+  await settle();
+  out.none = { wake: wake(), title: document.title };
+  navigator.wakeLock = { request: () => Promise.reject(new Error("NotAllowedError")) };
+  docOn.visibilitychange();
+  await settle();
+  out.refused = wake();
+  delete ctx.navigator;   // no navigator at all
+  job = { ...job, job: "j8" };
+  await ctx.attach();
+  await settle();
+  out.noNavigator = wake();
+  out.texts = [EST, { ...EST, takes: 1, device: "cpu", seconds: 59.6, low_min: 1, high_min: 2 },
+               { ...EST, takes: 0 }, { ...EST, seconds: null }, { ...EST, low_min: 0 }, null].map(ctx.estimateText);
+  // the drop zone: Enter or Space opens the file chooser; other keys and chords do not
+  ctx.setupDrop();
+  const keys = [{ key: "Enter" }, { key: " " }, { key: "a" }, { key: "Enter", ctrlKey: true },
+                { key: " ", shiftKey: true }, { key: "Tab" }];
+  out.keys = keys.map((k) => { const e = { ...k, preventDefault() { this.prevented = true; } };
+    const before = els.file.clicked;
+    els.drop.on.keydown(e);
+    return [els.file.clicked - before, !!e.prevented]; });
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_page_follows_a_chart_and_lands_on_ready(tmp_path):
+    """M7-10 (app.js in node with a stand-in DOM and wake lock): while a chart runs, the estimate under the title and
+    the sentence on closing the tab, the tab's title on its stage and take, a screen wake lock (asked again when the
+    tab is back in view, never twice), and the update box put away; at its end, the stages folded into "Charted in
+    12 min 43 s" (open after an error), the title "Ready", the lock let go, the update box back, the build's report
+    folded (open when the check failed), and the Done screen scrolled to the top of the window, again once its
+    results are in. A page with no wake lock, or a refused one, goes on; a lock granted after the end is let go. The
+    drop zone opens the file chooser on Enter or Space."""
+    files = S.static_files()
+    script = tmp_path / "progress.cjs"
+    script.write_text(PROGRESS_PAGE, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(files["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["idle"] == {"update": False, "title": "songcharter", "version": "0.3.1"}
+    estimate = ("Usually about 4 to 10 minutes for a song of this length (4:01), with 4 guitar takes on the GPU. "
+                "That is an estimate: a dense song takes longer, as the guitar's time grows with the notes it writes.")
+    assert out["running"] == {"title": "Charting - songcharter", "update": True, "estimate": estimate,
+                              "estimateHidden": False, "keep": False, "open": True, "line": True, "locks": 1,
+                              "wake": "screen", "running": True}
+    assert out["stage"] == "Separate the instruments - songcharter"
+    assert out["take"] == "Guitar: take 3 of 4 - songcharter"
+    assert out["later"] is True
+    assert out["hidden"] == {"wake": "null", "locks": 1} and out["back"] == {"wake": "screen", "locks": 2}
+    assert out["twice"] == 2
+    assert out["result"] == {"title": "Ready - songcharter", "line": "Charted in 12 min 43 s", "open": False,
+                             "estimate": True, "keep": True, "report": False, "update": False, "wake": "null",
+                             "running": False, "done": False, "cancel": True, "released": True, "scrolled": 1,
+                             "how": {"block": "start"}}
+    assert out["results"] == {"scrolled": 2, "results": False}
+    assert out["again"] == {"title": "songcharter", "update": False, "running": False}
+    assert out["failed"]["title"] == "The check failed - songcharter" and out["failed"]["report"] is True
+    assert out["failed"]["line"] == "Charted in 5 s" and out["failed"]["open"] is False
+    assert out["noEstimate"] == {"text": "", "hidden": True}
+    assert out["error"]["title"] == "It did not finish - songcharter" and out["error"]["open"] is True
+    assert out["error"]["line"] == "Stopped after 1 min 05 s" and out["error"]["report"] is None
+    assert out["error"]["wake"] == "null" and out["error"]["update"] is False
+    assert out["cancelled"]["title"] == "Cancelled - songcharter" and out["cancelled"]["line"] == "Cancelled after 2 s"
+    assert out["cancelled"]["open"] is False
+    assert out["reload"] == {"asked": 0, "update": False}
+    assert out["race"] == {"released": True, "wake": "null"}
+    assert out["none"] == {"wake": "null", "title": "Charting - songcharter"} and out["refused"] == "null"
+    assert out["noNavigator"] == "null"
+    dense = "That is an estimate: a dense song takes longer, as the guitar's time grows with the notes it writes."
+    assert out["texts"] == [
+        estimate,
+        f"Usually about 1 to 2 minutes for a song of this length (1:00), with 1 guitar take on the CPU. {dense}",
+        "Usually about 4 to 10 minutes for a song of this length (4:01). That is an estimate.",
+        f"Usually about 4 to 10 minutes for a song of this length, with 4 guitar takes on the GPU. {dense}",
+        "", ""]
+    assert out["keys"] == [[1, True], [1, True], [0, False], [0, False], [0, False], [0, False]]
+
+
+GONE_PAGE = r"""
+const vm = require("vm"), fs = require("fs");
+const els = {};
+const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [],
+  value: "", open: false, on: {}, replaceChildren(...c) { this.children = c; },
+  append(...c) { this.children.push(...c); }, addEventListener(kind, f) { this.on[kind] = f; },
+  classList: { add() {}, remove() {} }, removeAttribute() {}, pause() {}, scrollIntoView() {}, click() {} });
+const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node, title: "songcharter",
+  visibilityState: "visible", addEventListener() {} };
+const locks = [];
+const navigator = { wakeLock: { request: async (type) => { const l = { type, released: false, addEventListener() {},
+  release() { this.released = true; return Promise.resolve(); } }; locks.push(l); return l; } } };
+const UP = { version: "9.9.9", line: "curl x && bash install.sh", url: "https://example.invalid/r" };
+let job = { job: "j1", state: "running", upload: { name: "Some Song.mp3" }, started: 1000, now: 1000, estimate: null };
+// the events' answers, one a call, the last one again when they run out: "404", "down" (nothing answers), "ended" (a
+// stream that ends with no event), "open" (a stream that stays open)
+let answers = ["open"], asked = 0;
+const stream = (read) => ({ status: 200, body: { getReader: () => ({ read }) } });
+const ctx = { document, window: { addEventListener() {} }, XMLHttpRequest: class {}, encodeURIComponent, console,
+  navigator, setInterval() {}, clearInterval() {}, TextDecoder,
+  setTimeout(f, ms) { if (ms === 2000) setImmediate(f); },   // the events' retries, at once
+  sessionStorage: { setItem() {}, getItem() { return null; } },
+  fetch: async (path) => {
+    if (path === "/api/jobs/current") return { status: 200, json: async () => JSON.parse(JSON.stringify(job)) };
+    if (path !== "/api/jobs/current/events") return { status: 404, json: async () => ({}) };
+    const a = answers[Math.min(asked, answers.length - 1)];
+    asked += 1;
+    if (a === "down") throw new TypeError("Failed to fetch");
+    if (a === "404") return { status: 404, json: async () => ({ error: "no job yet" }) };
+    if (a === "500") return { ...stream(() => Promise.resolve({ done: true })), status: 500 };   // with a body
+    if (a === "ended") return stream(() => Promise.resolve({ done: true }));
+    return stream(() => new Promise(() => {}));
+  } };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(process.argv[2], "utf8"), ctx);
+vm.runInContext(`state.update = ${JSON.stringify(UP)}; state.version = "0.3.1";`, ctx);
+const settle = async () => { for (let i = 0; i < 200; i++) await new Promise((r) => setImmediate(r)); };
+const look = () => ({ title: document.title, running: vm.runInContext("state.running", ctx),
+  held: locks.filter((l) => !l.released).length, update: els.update.hidden, done: els["done-screen"].hidden,
+  heading: els["done-title"].textContent, text: els["done-text"].textContent, open: els["stages-box"].open,
+  line: els["stages-line"].hidden ? null : els["stages-line"].textContent, cancel: els.cancel.hidden, asked });
+const run = async (name, seq) => { answers = seq; asked = 0; job = { ...job, job: name };
+  await ctx.attach(); await settle(); return look(); };
+const out = { tries: vm.runInContext("FOLLOW_TRIES", ctx) };
+(async () => {
+  out.gone = await run("j1", ["404"]);   // the window closed, songcharter started again: no job
+  ctx.again();
+  const T = out.tries;
+  out.down = await run("j2", ["down"]);   // nothing answers any more
+  ctx.again();
+  // a reconnect that works resets the count: T - 1 failures, a stream that ends, T - 1 failures, an open stream
+  out.flaky = await run("j3", [...Array(T - 1).fill("down"), "ended", ...Array(T - 1).fill("down"), "open"]);
+  vm.runInContext("state.follow += 1", ctx);   // put away (as "Chart another song" does): nothing more from it
+  ctx.again();
+  out.errors = await run("j4", ["500"]);   // an answer that is not the events counts as a failure too
+  ctx.again();
+  out.open = await run("j5", ["open"]);   // a chart that runs on: nothing ends
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_page_lets_go_when_songcharter_is_gone(tmp_path):
+    """M7-10's review (F1): when the black window is closed mid-chart, the chart stops. The page's events then get a
+    404 (songcharter started again, with no job) or no answer at all; after FOLLOW_TRIES failed asks in a row (a
+    working reconnect starts the count again), the page ends the chart: the screen's lock let go, not running, the
+    tab's title "Stopped", the update notice back, the rows left open, and what to do."""
+    script = tmp_path / "gone.cjs"
+    script.write_text(GONE_PAGE, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(S.static_files()["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    tries = out["tries"]
+    assert tries == 10
+    ended = {"title": "Stopped - songcharter", "running": False, "held": 0, "update": False, "done": False,
+             "heading": "songcharter stopped", "open": True, "line": "The stages", "cancel": True}
+    kept = "what it had worked out is kept, so it goes faster."
+    assert out["gone"] == {**ended, "asked": 1, "text": "songcharter was closed while it charted (closing its black "
+                           f"window stops the chart) and has been started again. Chart the song again: {kept}"}
+    assert out["down"] == {**ended, "asked": tries, "text": "songcharter is not running any more: its black window "
+                           "was closed, which stops the chart. Start songcharter again from the Start menu, then "
+                           f"chart the song again: {kept}"}
+    running = {"title": "Charting - songcharter", "running": True, "held": 1, "update": True, "done": True,
+               "cancel": False}
+    assert {k: out["flaky"][k] for k in running} == running and out["flaky"]["asked"] == 2 * tries
+    assert out["errors"] == {**out["down"], "asked": tries}
+    assert {k: out["open"][k] for k in running} == running and out["open"]["asked"] == 1
+
+
+def test_the_done_screen_puts_the_install_first_and_folds_the_rest():
+    """M7-10's page: "Play it" first under "Ready", then the album art, the lyrics' line, the preview and Listen; the
+    build's report in a details element; the stages in one, its summary line hidden while it runs; the sentence on
+    closing the tab; the drop zone focusable; a favicon of its own, as a data: image the CSP allows."""
+    html = S.static_files()["index.html"].decode()
+    order = ['id="done-title"', 'id="export-box"', 'id="install"', 'id="look"', 'id="art"', 'id="lyrics-line"',
+             'id="preview"', 'id="listen-box"', 'id="summary-box"', 'id="again"']
+    assert [html.index(x) for x in order] == sorted(html.index(x) for x in order)
+    assert '<details id="summary-box" hidden>\n      <summary>What the build reported</summary>\n      <pre id="summary">' \
+           '</pre>\n    </details>' in html
+    assert ('<details id="stages-box" open>\n      <summary id="stages-line" hidden></summary>\n      <ol id="stages">'
+            '</ol>\n    </details>') in html
+    assert html.index('id="progress-song"') < html.index('id="progress-estimate"') < html.index('id="progress-keep"') \
+        < html.index('id="stages-box"')
+    assert ('<p id="progress-keep" class="small">Keep the black songcharter window open: closing it stops the chart. '
+            'You can close this tab and come back (start songcharter again from the Start menu): the page picks the '
+            'chart up where it is.</p>') in html
+    assert '<div id="drop" class="drop" tabindex="0">' in html
+    icon = re.search(r'<link rel="icon" type="image/svg\+xml" href="data:image/svg\+xml;base64,([A-Za-z0-9+/=]+)">',
+                     html)   # base64: the page's own guard finds no "http" in it (its SVG namespace is one)
+    svg = base64.b64decode(icon[1]).decode()
+    assert svg.startswith("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'>") and svg.endswith("</svg>")
+    assert "href" not in svg and "url(" not in svg and "<script" not in svg   # a picture that loads nothing
+    assert "img-src 'self' data:" in S.CSP
+
+
 # ------------------------------------------------------------------------------------------------ Listen (M6-09)
 
 def listen_chart(folder: Path, seconds: float = 3.0) -> None:
@@ -2128,4 +2502,4 @@ def test_the_page_offers_the_charts_parts_and_plays_the_render(tmp_path):
     assert out["none"] == {"box": True} and out["nothing"] == {"box": True}
     html = files["index.html"].decode()
     assert '<audio id="listen-audio" controls preload="auto" hidden></audio>' in html
-    assert html.index('id="preview"') < html.index('id="listen-box"') < html.index('id="export-box"')
+    assert html.index('id="export-box"') < html.index('id="preview"') < html.index('id="listen-box"')   # M7-10
