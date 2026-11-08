@@ -11,6 +11,10 @@ source), `songcharter/assemble.py` only where it hands the splice the stem level
 part, the HOPO rules (M8-07's in this wave). **Time budget:** a day (2 hours for a margin alone). **Rough cost:** 2-4 %
 of a week's meter.
 
+**Environment:** eval/README.md's step 9, and `SONGCHARTER_HEAVY_MIN_FREE_GB=1` on every heavy job (the suite, the
+golden, stress and 20-song runs, builds): about 1.7 GB is free on `/`, `tools/heavy.sh` refuses under 5 GB without
+it, and `python -m eval.golden run` takes the lock but not the disk check.
+
 *Written by the M8 planner on 2026-11-08 from M7-01 part C, the take-score spike (docs/reports/M8-spike-takescore.md:
 no score clears on CPU takes, the oracle window's headroom +0.042 [+0.031, +0.053]) and M8-02 part B's plan.*
 
@@ -43,9 +47,11 @@ plus a learned window score and the humans' density pattern, each scored on song
 
 Pooled guitar Expert F1@50 against the primaries (the 19 songs whose humans agree) at least +0.005 over today's GPU
 splice (`m05`), its paired-bootstrap CI above 0, no song down by more than 0.01; for L1 and D1, on held-out songs
-only. Re-measured on the branch: M8-02's GPU arms rebuilt with the branch's `takes.py` (the takes are files; no GPU
-needed) within 0.002 of what M8-02 reported. The CPU's `--takes 4` (M7-01's CPU takes) reported beside it, not lower
-by more than 0.005 pooled.
+only. That bar holds for M8-02's primary candidates (L1 at p 0.6, D1 at its 10 % rule, q05), named before any number;
+an exploratory one (a margin, a spike score, L1 at another p) clears only with the CI's lower end at +0.002 or more
+as well (the advisor's finding 3: the best of about 25 candidates against one 95 % CI). Re-measured on the branch:
+M8-02's GPU arms rebuilt with the branch's `takes.py` (the takes are files; no GPU needed) within 0.002 of what M8-02
+reported. The CPU's `--takes 4` (M7-01's CPU takes) reported beside it, not lower by more than 0.005 pooled.
 
 ## Evaluation
 

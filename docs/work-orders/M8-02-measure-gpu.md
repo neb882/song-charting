@@ -6,7 +6,9 @@ to the repository. **No branch.** The orchestrator commits the merged report as 
 the scripts the build orders' bars read under `eval/m8/m802/`, after PIPELINE's privacy scan. **Starts** when the
 owner's `gpu_results.zip` (M8-01) has arrived and passed the intake (below). **Time budget:** a day of machine time
 (about 6-8 hours), each measurer stopping and reporting what it has at 85 % of the weekly meter. **Rough cost:** 5-7 %
-of a week's meter.
+of a week's meter. **Environment:** eval/README.md's step 9 with `SONGCHARTER_HEAVY_MIN_FREE_GB=1` in every command
+(about 1.7 GB free: `tools/heavy.sh` refuses under 5 GB otherwise, and `eval.golden run` takes the lock without the
+disk check).
 
 *Written by the M8 planner on 2026-11-08 from M7-01's report, the M8 spikes (contour, its torchcrepe addendum, the
 take score) and M8-01's zip format (eval/README.md, "GPU takes with the installed app").*
@@ -32,8 +34,8 @@ M8-00 section 4's, fixed before any number.
   part; a paired bootstrap over songs (10,000 resamples, seed fixed) for each difference's 95 % CI; the humans' own
   agreement beside each number; songs whose humans agree under 0.6 on the measure reported and left out of its pooled
   figure, named (guitar F1@50: s02, s04, s06, s12); each pooled figure with and without the references, and over all
-  23. Report the CPU's figure beside every GPU figure (M7-01's, or recomputed at the v0.4.0 tag where the tag changed
-  it: T2's taps).
+  23. Report the CPU's figure beside every GPU figure, from the tag's CPU arms that part B builds (`cpu_m05`, the CPU
+  `one`), never from M7-01's tables: M7-02, M7-06 and M7-09 merged since.
 - **Privacy:** numbers only. Never print, save or report a lyric, a chart's events or text, a title, an artist, a
   charter, an md5 or a 20-song id; the 20-song songs are s01-s13 (ids sorted, mapped in process as
   `eval/m7/C/songs.py` does). Vocal tracks and lyric events are never read. Process listings cut to 80 characters.
@@ -115,29 +117,39 @@ config v0.4.0's pipeline writes for a 4-take chart:
 candidate; each minus `m05` (the GPU's today) and `m05` minus `one`, with CIs; the windows switched and the windows
 picked more than 0.05 below the best take; the oracle window's headroom on GPU takes against the CPU's +0.042.
 
-**Bars** (M8-00 section 4): a margin, a spike score, q05, L1 or D1 clears M8-06's bar when its pooled primary F1@50 is
-+0.005 or more over `m05`, CI above 0, no song down by more than 0.01 (L1 and D1 on held-out songs only). **The 4-take
+**The primary candidates, named before any number** (the advisor's finding 3: about 25 candidates are scored, and
+the best of many against one 95 % CI clears by chance far more often than 5 %): **L1 at p 0.6, D1 at its 10 % rule,
+and q05** (the CPU's nearest miss, M7-01 C). Every other candidate (the margins, the spike scores, L1 at p 0.5 and 0.7)
+is exploratory.
+
+**Bars** (M8-00 section 4): a primary candidate clears M8-06's bar when its pooled primary F1@50 is +0.005 or more over
+`m05`, its CI above 0, no song down by more than 0.01 (L1 and D1 on held-out songs only); an exploratory one only with
+the CI's lower end at +0.002 or more as well. The report says how many candidates were scored. **The 4-take
 default:** if `m05` minus `one` is under +0.005 pooled, say so plainly (M8-00 section 10, the owner's decision 4a).
 
 ## Part C (M2): articulation, opens, repeats and the contour on the GPU charts (about 2-3 hours)
 
-On the `m05` GPU arm (the friend's default chart), with the CPU's numbers beside each (M7-01 part A's, the taps at the
-tag's T2):
+On the `m05` GPU arm (the friend's default chart), with the CPU's numbers beside each from the tag's `cpu_m05` and CPU
+`one` arms (part B), part C's variant arms built on their configs too (the same `hopo` values and floor caps): never
+M7-01 part A's tables (the advisor's finding 7).
 - **C-a, the HOPO rule** (M7-01 A-a): the state agreement under the guitar part's `hopo` "forced" (today), "source"
   and "natural" (built: the config's `hopo` key, no patch), and R1 (the octave rule) and R2 (no forced strums in fast
   runs) computed per note; the confusion of states by the engine's flag (forced strum, forced HOPO, unforced, tap)
   against each human chart. Our onsets must be identical across these arms: assert it.
 - **C-b, taps** (A-b): today's T2 on GPU charts: our tap share, precision and recall against the humans', and T1 (no
   taps) beside it.
-- **C-c, sustains** (A-c): the sustain share and the per-note sustain agreement under today's floor and the caps 300,
-  400 and 500 ms (`quantize.sustain_kept`'s floor `max(200 ms, min(0.75 beat, cap))`, built through the floor patch),
-  the slow songs (grid under 100 BPM: creep, lucretia, sooth, s02, s04, s13) apart; the share of the humans' sustains
-  each floor would drop.
+- **C-c, sustains** (A-c), **the guitar only**: the sustain share and the per-note sustain agreement under today's
+  floor and the caps 300, 400 and 500 ms (`quantize.sustain_kept`'s floor `max(200 ms, min(0.75 beat, cap))` for the
+  guitar part, built through the floor patch), the slow songs (grid under 100 BPM: creep, lucretia, sooth, s02, s04,
+  s13) apart; the share of the humans' sustains each floor would drop. The bass is our CPU rule engine, the same on
+  both devices, and M7-01 A-c measured its floor on the CPU charts inside noise (300 ms: +0.016 [-0.019, +0.047]):
+  nothing here changes it.
 - **C-d, open notes** (A-e): our open share and longest run against each chart's; our opens' precision (a human open
   within 50 ms) and recall; the exact-lane and contour agreement at 100 ms under o0 (today, the opens kept), o1 (every
   open to green), o2 (every open to the lane of the nearest fretted note before it, else after it), o3 (an open kept
   only in a run of 3 or more opens, the others as o2); per song and pooled over the songs where our GPU charts have
-  opens.
+  opens, with that count stated. The CPU arms have few opens (0.007 of onsets): their figures are reported, and the
+  rule is in effect a GPU rule.
 - **C-e, same-fret repeats** (A-d): the repeat share whole song and in fast runs, ours and the humans'; our repeats'
   match rate at 50 ms against our other notes'; the removal rules gap150/200/250, with and without the stem test at
   p25 and p50: removed, precision, the F1@50 change, the human notes removed per song.
@@ -151,10 +163,14 @@ tag's T2):
 **Bars** (M8-00 section 4): C-a's best rule clears M8-07 (a) at +0.02 pooled state agreement, CI above 0, no song down
 0.03, tap precision not lower; C-c's best cap clears (b) at +0.03 on the slow songs, no song down 0.01; C-d's best
 clears (c) at exact-lane +0.005 pooled with CI above 0, contour's CI lower end above -0.002, no song's exact-lane down
-0.01; C-e's best removal clears (d) at precision 0.75, no song's F1@50 down 0.005 and human notes removed under 0.5 %
-on every song; C-f's best re-lane clears (d) at +0.10 pooled direction agreement, CI above 0, at least 3 songs up
-0.10, score.py's contour and exact lanes not lower. For each that clears, also its CPU arm (the same rule on the CPU
-m05 and one arms at the tag): its pooled change and its worst song (M8-00 section 4: a device-scoped rule).
+0.01, **when 8 or more songs have GPU opens**; with fewer (a bootstrap over so few songs is no 95 % CI), the bar is
+the pooled +0.005 with no song's exact-lane down at all and the contour not lower on any song, and (c) is then built
+only as a GPU-only trial the owner may veto at the gate (M8-00 section 10, ask 4b); C-e's best removal clears (d) at
+precision 0.75, no song's F1@50 down 0.005 and human notes removed under 0.5 % on every song; C-f's best re-lane
+clears (d) at +0.10 pooled direction agreement, CI above 0, at least 3 songs up 0.10, score.py's contour and exact
+lanes not lower. For each that clears, also its CPU arm (the same rule on the CPU m05 and one arms at the tag): its
+pooled change and its worst song (M8-00 section 4: a device-scoped rule). Part C's grids are small (3 caps, 9 removal
+rules, 3 open rules, a few trackers): the report says how many each winner was chosen from, beside it.
 
 ## Part D (M2): fast runs' density (about 30 minutes)
 

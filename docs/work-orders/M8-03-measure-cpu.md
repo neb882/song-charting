@@ -28,10 +28,14 @@ addendum and M5-99's "Beat-counted rules at a slow tempo".*
 **A-a. The line** (the planner's reading, M8-00 section 6, to be re-derived by a script): each kept folder's
 `sections/engine.json` (allin1's `peak_rss_mb`, `input.duration_s`) and `pipeline.json`'s sections stage
 (`peak_rss_mb.self`, `child_peak_rss_mb`, `min_available_ram_mb`), 24 songs: the fit of allin1's peak against the
-length (intercept, slope, the residuals' range), the parent's high-water mark against the length.
+length (intercept, slope, the residuals' range), the parent's high-water mark against the length. The advisor reproduced it
+on 23 kept folders: 346 MB + 17.5 MB a second (1.02 GiB a minute), residuals -233 / +197 MB. Four kept songs pass 7
+minutes (pm2, sooth, s06, s08), so an L near 7 minutes chunks 4 of the 24; the bar's "every song" means each W is
+run on the short songs too (cheap).
 
 **A-b. The parent while allin1 runs.** The parent's high-water mark may come from an earlier stage, so sample it:
-on creep (4:00) and the test song (6:52), one cold sections stage each (a copy of the kept folder without
+on creep (4:00) and the test song (6:52; its tree about 9.5 GiB, so only when the free RAM allows it by the rule
+above, else break), one cold sections stage each (a copy of the kept folder without
 `sections/`, the rest from cache; `songcharter chart ... --no-preview --threads 2`), the tree's VmRSS every 0.5 s
 from `/proc` (the parent and allin1's child apart), giving the parent's RSS while the child runs and the child's
 curve. From the code (`pipeline.py`'s sections stage and what follows it): the arrays the parent holds then (the mix,
@@ -44,8 +48,11 @@ and what reloading would cost in seconds. Delete each copy after its song.
 kept folders record): the whole song's spectrogram cut into windows of W seconds (W 120, 180, 240) overlapping by 30 s,
 each window's frame-level outputs from the model, stitched by a linear crossfade over each overlap, then allin1's own
 postprocessing (`postprocess_metrical_structure`, `postprocess_functional_structure`, `estimate_tempo_from_beats`) on
-the stitched outputs. First reproduce two songs' whole-song results in process (the kept `sections/segments.json`:
-expect identical beats, downbeats, bpm and segments; if not, say so and compare against fresh whole runs). Per song
+the stitched outputs. First reproduce two short songs' whole-song results in process, **break (3:13) and creep
+(4:00)** (a whole run holds 3.4-4.6 GiB at that length and 10 GiB at 9:43, beside another heavy job and two builders'
+suites on 15 GB: the advisor's finding 4), against the kept `sections/segments.json`: expect identical beats,
+downbeats, bpm and segments; if not, say so and compare against fresh whole runs of short songs only. No whole run of
+a long song: its whole-song outputs are the kept folder's, and its peak the records' (A-a's line). Per song
 and W: beat F1 and downbeat F1 at 70 ms against the whole run, the bpm ratio, the segment starts' F1 at 1 s and the
 labels' agreement on matched starts, the run's seconds, and the peak RSS (one W per process, its VmHWM). Then the
 grid: on sooth, s02 and s04 (the halved songs) and on every song's downbeats, the grid rebuilt in process from the

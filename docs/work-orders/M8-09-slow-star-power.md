@@ -8,6 +8,10 @@ M8-08). **Agent:** `sc-builder`, then `sc-reviewer`. May push its branch to run 
 `engines/bass.py` (M8-08's), `assemble.py`, `quantize.py`. **Time budget:** 3 hours. **Rough cost:** 1-2 % of a week's
 meter.
 
+**Environment:** eval/README.md's step 9, and `SONGCHARTER_HEAVY_MIN_FREE_GB=1` on every heavy job (the suite, the
+golden, stress and 20-song runs, builds): about 1.7 GB is free on `/`, `tools/heavy.sh` refuses under 5 GB without
+it, and `python -m eval.golden run` takes the lock but not the disk check.
+
 *Written by the M8 planner on 2026-11-08 from M5-99 ("Beat-counted rules at a slow tempo", the half M7-01 did not
 measure) and M8-03 part C's plan.*
 

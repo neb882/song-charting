@@ -7,7 +7,8 @@
 `docs/guide/windows-wsl.md` (the screens' sentences), `docs/DESIGN.md` 4.5, and the "Design" section of
 `docs/work-orders/M8-10-queue.md`. **Not:** anything under `songcharter/` outside `ui/`, `pipeline.py`'s events
 (M8-05 owns those in this wave), `clonehero.py`. **Time budget:** 2 days; stop and report at the budget.
-**Rough cost:** 5-6 % of a week's meter.
+**Rough cost:** 5-6 % of a week's meter. **Environment:** the suite through `tools/heavy.sh` with
+`SONGCHARTER_HEAVY_MIN_FREE_GB=1` (about 1.7 GB free: heavy.sh refuses under 5 GB otherwise).
 
 *Written by the M8 planner on 2026-11-08 from docs/reports/m7-ui-review.md (items 5-10; the orchestrator's routing
 there), the v0.4.0 gate's two notes (PROGRESS `deferred`, "[v0.4.0 gate] The time estimate") and DESIGN 4.5. The owner
@@ -43,12 +44,16 @@ after that: a Linux path he cannot open, flags with no way to their picture, a b
    number box, the device and "Make a preview" under a folded "More options"; Lyrics and Pictures in a `<details>`
    of their own. The options sent to the job are what they are today for each choice (Best = the defaults); no option
    lost. 2-3 hours.
-5. **The re-estimate after the first take** (the gate's note): when the guitar's first take ends (its `stage_end` or
-   take event, with its seconds), the progress line becomes "about N-M more minutes": the takes left at that take's
-   own measured seconds less its separation part (`estimate.py`'s first-take model, its range for the low and high
-   ends), plus the stages after the guitar at their rates; the first estimate stays above it, struck through or
-   folded. The model is in `estimate.py` with its evidence in its docstring (the takes experiment's later takes
-   against the first; the owner's 9:05 song), so tests can pin it. 2-3 hours.
+5. **The re-estimate after the first take** (the gate's note), **with no change to `pipeline.py`** (M8-05's file in
+   this wave): the pipeline's `take` event fires as each take starts and carries no seconds, and jobs.py stamps
+   every event with `at` (the server's clock), so the first take's seconds are `at` of the second take's event less
+   `at` of the first's (the advisor's finding 5); a 1-take chart has only the guitar's `stage_end` seconds, after
+   which only the stages after the guitar remain. From the second take's start the progress line becomes "about N-M
+   more minutes": the takes left at that first take's measured seconds less its separation part (`estimate.py`'s
+   first-take model, its range for the low and high ends), plus the stages after the guitar at their rates; the
+   first estimate stays above it, struck through or folded. The model is in `estimate.py` with its evidence in its
+   docstring (the takes experiment's later takes against the first; the owner's 9:05 song), so tests can pin it. 2-3
+   hours.
 6. **The not-answering heading** (the gate's note): when nothing answers (`gone(true)`), the heading reads
    "songcharter is not answering" and the tab "Not answering"; the stopped case (`gone(false)`, a 404 from a
    songcharter started since) keeps "songcharter stopped". 0.5 hour.

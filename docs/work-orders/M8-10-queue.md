@@ -9,6 +9,10 @@ the screens). May push its branch to run CI. **Files:** `songcharter/ui/jobs.py`
 4.5. **Not:** anything that charts (`pipeline.py`, `cli.py`'s chart command: the child is unchanged), `clonehero.py`
 beyond calling it. **Time budget:** 2 days. **Rough cost:** 5-7 % of a week's meter.
 
+**Environment:** eval/README.md's step 9, and `SONGCHARTER_HEAVY_MIN_FREE_GB=1` on every heavy job (the suite, the
+golden, stress and 20-song runs, builds): about 1.7 GB is free on `/`, `tools/heavy.sh` refuses under 5 GB without
+it, and `python -m eval.golden run` takes the lock but not the disk check.
+
 *Written by the M8 planner on 2026-11-08 from docs/reports/m7-ui-review.md item 9 ("One song at a time, nothing
 remembered": 8-16 hours, a design note first) and jobs.py's module docstring.*
 

@@ -10,6 +10,10 @@ run CI. **Files:** `songcharter/engines/sections.py`, `songcharter/engines/allin
 this wave; the guide's line, if one is needed, goes to the orchestrator for the merge), `wslsetup.py`'s memory rule
 (unchanged: allin1 stays out under 11 GB). **Time budget:** a day. **Rough cost:** 3-5 % of a week's meter.
 
+**Environment:** eval/README.md's step 9, and `SONGCHARTER_HEAVY_MIN_FREE_GB=1` on every heavy job (the suite, the
+golden, stress and 20-song runs, builds): about 1.7 GB is free on `/`, `tools/heavy.sh` refuses under 5 GB without
+it, and `python -m eval.golden run` takes the lock but not the disk check.
+
 *Written by the M8 planner on 2026-11-08 from the v0.4.0 gate's note (PROGRESS `deferred`: allin1 killed for memory on
 a 9-minute song, the sections fell back to librosa with only a warning) and the planner's reading of the records
 (M8-00 section 6).*
@@ -49,7 +53,9 @@ fallback on a long song is the likeliest case.
    line plus the parent's, with the line's largest residual as margin) is compared with WSL's configured memory and
    swap (`MemTotal` and `SwapTotal`, fixed per PC; never `MemAvailable`, which changes from run to run); when it
    cannot fit, allin1 is skipped at once with part 1's banner and part 2's sentence, instead of being killed minutes
-   later. doctor's memory note names the longest song this PC charts with allin1.
+   later. doctor's memory note names the longest song this PC charts with allin1, and the report says the
+   consequence plainly for the owner and the guide: a 16 GB PC charts songs over about 7 minutes without allin1
+   (the advisor's finding 10).
 5. DESIGN 2.5 (the sections: the fallback, the chunks or the skip, with M8-03's numbers) and 4.7.
 
 ## Bar (M8-03 part A)

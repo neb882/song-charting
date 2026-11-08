@@ -8,6 +8,10 @@ only if M8-02 part D finds the GPU takes' fast windows thin (recall at 100 ms un
 `<scratchpad>/m8/m8-11/`. **Time budget:** two hours here once the zip has arrived. **Rough cost:** about 1 % of a
 week's meter (2-3 % more if a setting is built).
 
+**Environment:** eval/README.md's step 9, and `SONGCHARTER_HEAVY_MIN_FREE_GB=1` on every heavy job (the suite, the
+golden, stress and 20-song runs, builds): about 1.7 GB is free on `/`, `tools/heavy.sh` refuses under 5 GB without
+it, and `python -m eval.golden run` takes the lock but not the disk check.
+
 *Written by the M8 planner on 2026-11-08 from docs/work-orders/M7-08-thin-runs.md (never run in M7), M5-99 ("Fast runs
 thinned by the guitar engine") and M8-02 part D's plan.*
 

@@ -12,6 +12,10 @@ feel measures where a bar's measure is missing (`eval/scorer/score.py`, with a t
 (Chords, HOPOs, opens and sustains). **Not:** `takes.py` (M8-06's), `engines/`, `starpower.py`. **Time budget:** half a
 day per part built, 1 day for (d)'s re-lane; at most 2.5 days. **Rough cost:** 3-7 % of a week's meter.
 
+**Environment:** eval/README.md's step 9, and `SONGCHARTER_HEAVY_MIN_FREE_GB=1` on every heavy job (the suite, the
+golden, stress and 20-song runs, builds): about 1.7 GB is free on `/`, `tools/heavy.sh` refuses under 5 GB without
+it, and `python -m eval.golden run` takes the lock but not the disk check.
+
 *Written by the M8 planner on 2026-11-08 from M7-01 part A (A-a to A-e), the contour spike and its torchcrepe
 addendum, and M8-02 part C's plan.*
 
@@ -29,21 +33,25 @@ cleared there.
   ("source" or "natural" in `pipeline.py`'s guitar part), or R1 (by the grid's octave) or R2 (no forced strum in a fast
   run) as a new `hopo` value in assemble's `HOPO_RULES`; the taps' T2 rule kept on top. `report.json` records the
   rule.
-- **(b) The sustain floor in seconds:** `quantize.sustain_kept`'s floor `max(200 ms, min(0.75 beat, cap))` for Expert
-  and Hard at the cap that cleared (300, 400 or 500 ms), the guitar and the bass alike unless M8-02 reports the bass
-  apart.
+- **(b) The sustain floor in seconds, the guitar only:** `quantize.sustain_kept`'s floor `max(200 ms, min(0.75 beat,
+  cap))` for Expert and Hard at the cap that cleared (300, 400 or 500 ms), for the guitar part alone (a part config
+  key the guitar part sets; the bass keeps today's floor: it is our CPU rule engine on both devices, and M7-01 A-c
+  measured its floor inside noise, 300 ms +0.016 [-0.019, +0.047]; the advisor's finding 1).
 - **(c) Open notes:** the winning rule of C-d as the guitar part's `opens` key in assemble ("keep", today; "green";
   "neighbour", the lane of the nearest fretted note before it, else after it; "runs", kept only in a run of 3 or more
   opens, the others as "neighbour"), applied on Expert before the reductions (the lower levels follow from Expert as
-  today), the chord rules unchanged (an open never in a chord).
+  today), the chord rules unchanged (an open never in a chord). If fewer than 8 songs had GPU opens in M8-02 (its
+  small-sample bar), (c) is built for GPU charts only, as a trial the owner may veto at the gate.
 - **(d) Same-fret repeats and the fast runs' contour:** either C-e's removal rule (a repeat merged into the note
   before it as a sustain, by gap and stem test, as M7-01 A-d defined it), or C-f's re-lane: in a fast run, a
   same-fret repeat where the guitar stem's pitch (pYIN, as the spike ran it) steps a semitone or more moves one lane
   in the step's direction, clamped to the lanes, chords untouched (`contour.py`, called by assemble on Expert after
   the splice and before the quantizer's chord rules). pYIN's settings are the spike's (`eval/m8/contour/pitch.py`).
-- **The device:** a part whose CPU arm (M8-02's, the same rule on M7-01's CPU charts) dropped the order's floor on any
-  song applies to GPU charts only: the pipeline passes the guitar's device to the part's config and `report.json`
-  records `rules_device` (M8-00 section 4). Otherwise one rule for both.
+- **The device:** a part whose CPU arm (M8-02's, the same rule on the tag's CPU arms) dropped the order's floor on any
+  song applies to GPU charts only. The rule follows the chart's configured guitar device (the device
+  `pipeline.guitar_takes` was given, "cuda" or "cpu"), passed to the part's config and recorded in `report.json` as
+  `rules_device`, never per take: a take that `cpu_retry` ran again on the CPU inside a CUDA chart keeps the chart's
+  CUDA rule (the advisor's finding 6). Otherwise one rule for both.
 
 ## Bars (M8-02 part C; each re-measured on the branch)
 
@@ -51,7 +59,7 @@ cleared there.
 |---|---|---|
 | (a) | state agreement +0.02 pooled at 100 ms, CI above 0, no song down 0.03; tap precision not lower | not lower by 0.005 pooled, no song down 0.03, or GPU only |
 | (b) | sustain agreement +0.03 on the slow songs, no song down 0.01 | the same floor, or GPU only |
-| (c) | exact-lane +0.005 pooled, CI above 0; contour's CI lower end above -0.002; no song's exact-lane down 0.01 | not lower (the CPU charts have few opens: 0.007) |
+| (c) | 8 or more songs with GPU opens: exact-lane +0.005 pooled, CI above 0; contour's CI lower end above -0.002; no song's exact-lane down 0.01. Fewer: +0.005 pooled, no song's exact-lane down, contour not lower on any song, and GPU only as a trial | not lower (the CPU charts have few opens: 0.007) |
 | (d) removal | precision 0.75; no song's F1@50 down 0.005; human notes removed under 0.5 % on every song | the same |
 | (d) re-lane | fast-run direction agreement +0.10 pooled, CI above 0, 3 songs up 0.10; score.py's contour and exact lanes not lower | not lower, or GPU only |
 

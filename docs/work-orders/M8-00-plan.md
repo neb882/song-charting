@@ -98,7 +98,9 @@ release.
   may then go to a release on its own only with his go-ahead (recommended: wait for the GPU line, which is the
   version's point).
 - Heavy jobs (golden, stress and 20-song runs, builds, allin1 runs) go through `tools/heavy.sh`, one at a time, with
-  `SONGCHARTER_HEAVY_MIN_FREE_GB=1` (the disk, section 4).
+  `SONGCHARTER_HEAVY_MIN_FREE_GB=1` (the disk, section 4). Every builder's and measurer's brief carries it (each
+  order's Environment line): heavy.sh refuses under 5 GB without it, and `python -m eval.golden run` takes the lock
+  but not the disk check.
 
 ## 4. The evaluation plan
 
@@ -124,10 +126,10 @@ device class, another draw): the measures are distributions over four seeds, not
 
 | question | measure | bar | from |
 |---|---|---|---|
-| the take selector or margin (M8-06) | pooled guitar Expert F1@50 against the primaries, the 19 songs whose humans agree | +0.005 over today's GPU splice (`takes.MARGIN` 0.05), CI above 0, no song down 0.01; a learned score scored only on songs it was not fitted on | M7-05 |
+| the take selector or margin (M8-06) | pooled guitar Expert F1@50 against the primaries, the 19 songs whose humans agree | +0.005 over today's GPU splice (`takes.MARGIN` 0.05), CI above 0, no song down 0.01, for the primary candidates named before any number (L1 at p 0.6, D1 at its 10 % rule, q05); an exploratory one also needs the CI's lower end at +0.002; a learned score scored only on songs it was not fitted on | M7-05 |
 | the engine's forced HOPO/strum flags (M8-07 a) | per-note state agreement at 100 ms, mean over charts | +0.02 pooled, CI above 0, no song down 0.03; tap precision not lower | M7-02 |
-| the sustain floor in seconds (M8-07 b) | per-note sustain agreement at 100 ms on the slow songs (grid under 100 BPM) | +0.03 pooled on the slow songs, no song down 0.01 | M7-02 |
-| open notes (M8-07 c) | exact-lane and contour (lane direction) agreement at 100 ms, mean over charts, on the songs where our GPU charts have opens | exact-lane +0.005 pooled with CI above 0, contour's CI lower end above -0.002, no song's exact-lane down 0.01 | new, on M7-01 A-e's measures |
+| the sustain floor in seconds, the guitar only (M8-07 b) | per-note sustain agreement at 100 ms on the slow songs (grid under 100 BPM) | +0.03 pooled on the slow songs, no song down 0.01 | M7-02 |
+| open notes (M8-07 c) | exact-lane and contour (lane direction) agreement at 100 ms, mean over charts, on the songs where our GPU charts have opens | with 8 or more such songs: exact-lane +0.005 pooled with CI above 0, contour's CI lower end above -0.002, no song's exact-lane down 0.01; with fewer: +0.005 pooled, no song's exact-lane down, contour not lower on any song, and then built GPU-only as a trial the owner may veto | new, on M7-01 A-e's measures |
 | same-fret repeats (M8-07 d, removal) | removal precision (no human note within 50 ms); F1@50 | precision 0.75; no song's F1@50 down 0.005; human notes removed under 0.5 % on every song | M7-04 |
 | the fast runs' contour (M8-07 d, re-lane) | direction agreement on fast-run pairs (8+ onsets at most 125 ms apart) against the primaries | +0.10 pooled, CI above 0, at least 3 songs up 0.10; score.py's whole-song contour and exact lanes not lower | the contour spike |
 | the bass's unpitched onsets (M8-08) | removal precision; bass F1@50 | precision 0.75; F1@50 +0.005 pooled with CI above 0 (or not lower for a gate at precision 0.9); no song down 0.01, no reference's bass down 0.01 | M7-03 |
@@ -136,9 +138,10 @@ device class, another draw): the measures are distributions over four seeds, not
 | the thinning setting (M8-11) | per 30-s window F1@100 against sooth's two charts | the fast windows (humans at 8+ notes a second) +0.10, no window down 0.02, the references' pooled F1@50 unchanged | M5-99 |
 
 **A rule found on GPU takes and the CPU.** A rule adopted from M8-02's numbers applies on both devices unless its CPU
-arm (the same rule on M7-01's CPU charts, rebuilt on the branch) drops the order's floor on any song; then it applies
-to GPU charts only, recorded in report.json and DESIGN [decision]. One rule is preferred; the owner may veto a
-device-dependent one at the gate.
+arm (the same rule on the CPU arms M8-02 builds at the tag, rebuilt on the branch) drops the order's floor on any
+song; then it applies to GPU charts only, by the chart's configured guitar device (never per take: a CPU retry inside a
+CUDA chart keeps the CUDA rule), recorded in report.json as `rules_device` and in DESIGN [decision]. One rule is
+preferred; the owner may veto a device-dependent one at the gate.
 
 **The guard on every build order** (beside its own bar):
 - Golden (eval/README.md, Golden charts) against the order's merge base, `--expect` naming the parts it means to
@@ -284,8 +287,11 @@ PIPELINE's gate, in its order, plus what this version adds:
 ## 10. What the owner is asked for, in order
 
 1. **At v0.4.0's gate check** (already planned: ntl, sooth and a tap song re-charted on his GPU): also send the
-   sections stage's memory figures of those charts (a command the orchestrator gives him that prints numbers only:
-   allin1's host and VRAM peaks, the tree's, the song's length) and his WSL's memory setting. **5 minutes.** For
+   sections stage's memory figures of those charts, read from each chart's `pipeline.json` by a command the
+   orchestrator gives him that prints numbers only (pipeline.json holds home paths): the sections stage's
+   `child_peak_rss_mb`, `peak_rss_mb.self`, `torch_peak_vram_mb`, `max_gpu_used_mb`, `min_available_ram_mb` and
+   `max_swap_used_mb`, and the decode stage's samples (the length); his WSL's memory setting; and one question: does
+   the friend's PC have 16 or 32 GB of RAM (M8-05's parts 3-4 are a must at 16 GB, a nicety at 32). **5 minutes.** For
    M8-05 (section 6).
 2. **After v0.4.0 is published: M8-01's GPU takes** (eval/README.md, "GPU takes with the installed app"): copy the
    packages and the two lists, `eval/gpu.sh build --app refs|stress|set20`, `check --app`, `takes --app refs stress
@@ -335,3 +341,27 @@ friend's PC), M8-04, the GPU-line builds that cleared, M8-08/M8-09, M8-10, M8-11
   `dead_ends`.
 - Every merged order's "Done means" passes and CI is green on `main`; the release gate of section 9 holds.
 - PROGRESS: M8 "built" at the gate, "done" when the friend has the release; M5-99 gains what M8 deferred.
+
+## 14. The advisor's review (2026-11-08) and what changed
+
+The advisor (a different model) read the plan at c3dab2b with the code its orders name and the kept folders' records
+(no job run). **Verdict:** ready for wave 0 and wave 1 with three text changes (findings 4, 5 and 9); findings 1, 2,
+3, 6 and 7 before M8-02 starts. Nothing changes the scope, the waves or the owner's asks; no finding needed a skeptic.
+The orchestrator had findings 1-7, 9 and 11 applied, as follows:
+
+| # | finding | what changed |
+|---|---|---|
+| 1 | M8-07 (b)'s floor reached the bass, which M8-02 C-c never measures | **(b) is the guitar's only** (the planner's call): the bass is our CPU rule engine, the same chart on both devices, and M7-01 A-c measured its floor on the CPU charts inside noise (300 ms: +0.016 [-0.019, +0.047]); nothing about the GPU reopens it, so no bass line goes into M8-03. M8-02 C-c, M8-07 (b) and section 4's table say so |
+| 2 | the open-notes CI may rest on too few songs | under 8 songs with GPU opens the bar is the pooled +0.005 with no song's exact-lane down and the contour not lower on any song, and (c) is then built GPU-only as a trial the owner may veto (his ask 4b); the CPU charts' few opens make the rule a GPU rule in effect (M8-02 C-d, M8-07, section 4) |
+| 3 | best-of-N: about 25 take candidates against one 95 % CI | M8-02 B names its primary candidates before any number (L1 at p 0.6, D1 at its 10 % rule, q05); every other one is exploratory and clears only with the CI's lower end at +0.002 as well; part C reports how many candidates each winner came from (M8-02, M8-06, section 4) |
+| 4 | M8-03 A-c's whole-song reproduction must be on short songs | break (3:13) and creep (4:00); no whole run of a long song (its outputs and peak come from the kept folders' records); the advisor's line (346 MB + 17.5 MB a second on 23 kept folders) recorded beside the planner's; A-b's test song only when the free RAM allows, else break |
+| 5 | M8-04's re-estimate read as if a take event carried seconds | the first take's seconds are `at` of the second take's event less the first's (jobs.py stamps every event); a 1-take chart has the guitar's `stage_end`; no `pipeline.py` change (M8-05's file in wave 1) |
+| 6 | a device-scoped rule on a chart with a CPU retry | the rule follows the chart's configured guitar device, recorded as `rules_device`, never per take (M8-07, section 4) |
+| 7 | M8-02 C's CPU comparison from M7-01's tables | from the tag's `cpu_m05` and CPU `one` arms that part B builds, part C's variants built on their configs too |
+| 9 | the free-disk variable in every brief | every order carries an Environment line with `SONGCHARTER_HEAVY_MIN_FREE_GB=1` (section 3) |
+| 11 | the owner's first ask | reads `pipeline.json`'s sections stage (its six memory fields and the length) by a print of numbers only, and asks once whether the friend's PC has 16 or 32 GB of RAM (section 10) |
+
+Also taken, as a note (finding 10): if chunks miss their bar, M8-05's report says plainly that a 16 GB PC charts songs
+over about 7 minutes without allin1. Findings 8 (the assemble route, the zip's device fields and the under-0.6 list
+verified), 10 (chunking by length is the right lever; the skip's dependence on the PC's configured memory is the
+install rule's own) and 12 (the usage estimate a generous upper bound) are notes that change nothing.

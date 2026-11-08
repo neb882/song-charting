@@ -8,6 +8,10 @@ run CI. **Files:** `songcharter/engines/bass.py` (the gate, its constants, the e
 changes), `tests/test_engines_bass.py`, `docs/DESIGN.md` 2.8. **Not:** `assemble.py`, `quantize.py`, `starpower.py`
 (M8-09's). **Time budget:** half a day. **Rough cost:** 1-2 % of a week's meter.
 
+**Environment:** eval/README.md's step 9, and `SONGCHARTER_HEAVY_MIN_FREE_GB=1` on every heavy job (the suite, the
+golden, stress and 20-song runs, builds): about 1.7 GB is free on `/`, `tools/heavy.sh` refuses under 5 GB without
+it, and `python -m eval.golden run` takes the lock but not the disk check.
+
 *Written by the M8 planner on 2026-11-08 from M7-01's B-b and its B-b2 addendum and M8-03 part B's plan.*
 
 ## Why
