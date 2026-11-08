@@ -18,6 +18,9 @@ const DISMISSED = "songcharter.dismissed";   // sessionStorage: the finished job
 // the status asked again this long (ms) after the start while it has no `update`: the server's check starts once this
 // page is served, so the first status usually comes before its answer (one request, 5 s at most for each of two)
 const UPDATE_ASKS = [2000, 6000, 15000];
+// the job's events asked for again this many times in a row, 2 s apart, before the page says songcharter has stopped
+// (M7-10's review: a closed black window stops the chart, and the page went on holding the screen awake)
+const FOLLOW_TRIES = 10;
 
 const APP = "songcharter";   // the tab's title, after what the page is doing
 const $ = (id) => document.getElementById(id);
@@ -487,7 +490,8 @@ function handle(ev) {
 // The end (M7-10): the stages folded into one line ("Charted in 12 min 43 s"; the rows stay open after an error,
 // to show where it stopped), the tab's title, the screen let go to sleep, the update notice back, and the Done
 // screen scrolled to the top of the window: "Ready", then "Install into Clone Hero". `how`: the closing event's
-// time (`at`), the folded line's words (`line`), whether the rows stay open (`open`) and the build's report (`report`).
+// time (`at`), the folded line's words (`line`), whether the rows stay open (`open`), the build's report (`report`)
+// and the tab's title when it is not `title` (`tab`).
 function finish(title, message, summary, how) {
   how = how || {};
   $("results").hidden = true;
@@ -503,7 +507,7 @@ function finish(title, message, summary, how) {
   $("progress-keep").hidden = true;
   text($("done-title"), title);
   text($("done-text"), message);
-  setTitle(title);
+  setTitle(how.tab || title);
   text($("summary"), summary || "");
   $("summary-box").hidden = !summary;
   $("summary-box").open = !!how.report;   // the engines' lines, for a look; open when the check failed
@@ -553,14 +557,20 @@ function visible() {
 }
 
 async function follow(token) {
-  let last = -1;
+  let last = -1, failed = 0;
   for (;;) {
     if (token !== state.follow) return;
     try {
       const headers = { ...HEADER };
       if (last >= 0) headers["Last-Event-ID"] = String(last);
       const r = await fetch("/api/jobs/current/events", { headers, cache: "no-store" });
-      if (r.status === 404) return;
+      if (token !== state.follow) return;
+      if (r.status === 404) {   // a songcharter started again, with no job: this chart stopped with the old one
+        gone(false);
+        return;
+      }
+      if (r.status !== 200) throw new Error(`the events answered ${r.status}`);
+      failed = 0;
       const reader = r.body.getReader();
       const decoder = new TextDecoder();
       let buf = "";
@@ -583,10 +593,28 @@ async function follow(token) {
         }
       }
     } catch (e) {
-      // the connection dropped: try again, from the last event seen
+      // the connection dropped, or songcharter does not answer: try again, from the last event seen
+      failed += 1;
+      if (failed >= FOLLOW_TRIES && token === state.follow) {   // it is not running any more
+        gone(true);
+        return;
+      }
     }
     await new Promise((ok) => setTimeout(ok, 2000));
   }
+}
+
+// The chart's songcharter is gone: its black window was closed (which stops the chart), and either nothing answers
+// any more (`down`) or a songcharter started since has no job. The page ends the chart as a cancel does: the screen
+// let go, the title, the update notice back, and what to do.
+function gone(down) {
+  stopRunningRows("stopped");
+  const kept = "what it had worked out is kept, so it goes faster.";
+  finish("songcharter stopped", down ?
+    "songcharter is not running any more: its black window was closed, which stops the chart. Start songcharter " +
+    `again from the Start menu, then chart the song again: ${kept}` :
+    "songcharter was closed while it charted (closing its black window stops the chart) and has been started " +
+    `again. Chart the song again: ${kept}`, null, { open: true, tab: "Stopped" });
 }
 
 async function attach() {

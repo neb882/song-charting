@@ -1975,7 +1975,7 @@ const navigator = { wakeLock: { request: (type) => { const l = lock(type); locks
 const EST = { seconds: 241, takes: 4, device: "cuda", low_s: 246.3, high_s: 588.5, low_min: 4, high_min: 10 };
 let job = { job: "j1", state: "running", upload: { name: "Some Song.mp3" }, started: 1000, now: 1000, estimate: EST };
 const ctx = { document, window: { addEventListener() {} }, XMLHttpRequest: class {}, encodeURIComponent, console,
-  navigator, setInterval() {}, clearInterval() {}, setTimeout() {},
+  navigator, setInterval() {}, clearInterval() {}, setTimeout() {}, TextDecoder,
   sessionStorage: { setItem() {}, getItem() { return null; } },
   fetch: async (path) => {
     if (path === "/api/jobs/current") return { status: 200, json: async () => JSON.parse(JSON.stringify(job)) };
@@ -1985,7 +1985,10 @@ const ctx = { document, window: { addEventListener() {} }, XMLHttpRequest: class
     if (path === "/api/status") return { status: 200, json: async () => ({ device: { chosen: "cpu" }, problems: [],
       notes: [], job: null, update: UP }) };
     if (path === "/api/hello") return { status: 200, json: async () => ({ app: "songcharter", version: "0.3.1" }) };
-    return { status: 404, json: async () => ({}) };   // the events: none here, the test hands them in
+    if (path === "/api/jobs/current/events") {   // a stream that stays open: the test hands the events in
+      return { status: 200, body: { getReader: () => ({ read: () => new Promise(() => {}) }) } };
+    }
+    return { status: 404, json: async () => ({}) };
   } };
 const UP = { version: "9.9.9", line: "curl x && bash install.sh", url: "https://example.invalid/r" };
 vm.createContext(ctx);
@@ -2154,6 +2157,98 @@ def test_the_page_follows_a_chart_and_lands_on_ready(tmp_path):
         f"Usually about 4 to 10 minutes for a song of this length, with 4 guitar takes on the GPU. {dense}",
         "", ""]
     assert out["keys"] == [[1, True], [1, True], [0, False], [0, False], [0, False], [0, False]]
+
+
+GONE_PAGE = r"""
+const vm = require("vm"), fs = require("fs");
+const els = {};
+const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [],
+  value: "", open: false, on: {}, replaceChildren(...c) { this.children = c; },
+  append(...c) { this.children.push(...c); }, addEventListener(kind, f) { this.on[kind] = f; },
+  classList: { add() {}, remove() {} }, removeAttribute() {}, pause() {}, scrollIntoView() {}, click() {} });
+const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node, title: "songcharter",
+  visibilityState: "visible", addEventListener() {} };
+const locks = [];
+const navigator = { wakeLock: { request: async (type) => { const l = { type, released: false, addEventListener() {},
+  release() { this.released = true; return Promise.resolve(); } }; locks.push(l); return l; } } };
+const UP = { version: "9.9.9", line: "curl x && bash install.sh", url: "https://example.invalid/r" };
+let job = { job: "j1", state: "running", upload: { name: "Some Song.mp3" }, started: 1000, now: 1000, estimate: null };
+// the events' answers, one a call, the last one again when they run out: "404", "down" (nothing answers), "ended" (a
+// stream that ends with no event), "open" (a stream that stays open)
+let answers = ["open"], asked = 0;
+const stream = (read) => ({ status: 200, body: { getReader: () => ({ read }) } });
+const ctx = { document, window: { addEventListener() {} }, XMLHttpRequest: class {}, encodeURIComponent, console,
+  navigator, setInterval() {}, clearInterval() {}, TextDecoder,
+  setTimeout(f, ms) { if (ms === 2000) setImmediate(f); },   // the events' retries, at once
+  sessionStorage: { setItem() {}, getItem() { return null; } },
+  fetch: async (path) => {
+    if (path === "/api/jobs/current") return { status: 200, json: async () => JSON.parse(JSON.stringify(job)) };
+    if (path !== "/api/jobs/current/events") return { status: 404, json: async () => ({}) };
+    const a = answers[Math.min(asked, answers.length - 1)];
+    asked += 1;
+    if (a === "down") throw new TypeError("Failed to fetch");
+    if (a === "404") return { status: 404, json: async () => ({ error: "no job yet" }) };
+    if (a === "500") return { ...stream(() => Promise.resolve({ done: true })), status: 500 };   // with a body
+    if (a === "ended") return stream(() => Promise.resolve({ done: true }));
+    return stream(() => new Promise(() => {}));
+  } };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(process.argv[2], "utf8"), ctx);
+vm.runInContext(`state.update = ${JSON.stringify(UP)}; state.version = "0.3.1";`, ctx);
+const settle = async () => { for (let i = 0; i < 200; i++) await new Promise((r) => setImmediate(r)); };
+const look = () => ({ title: document.title, running: vm.runInContext("state.running", ctx),
+  held: locks.filter((l) => !l.released).length, update: els.update.hidden, done: els["done-screen"].hidden,
+  heading: els["done-title"].textContent, text: els["done-text"].textContent, open: els["stages-box"].open,
+  line: els["stages-line"].hidden ? null : els["stages-line"].textContent, cancel: els.cancel.hidden, asked });
+const run = async (name, seq) => { answers = seq; asked = 0; job = { ...job, job: name };
+  await ctx.attach(); await settle(); return look(); };
+const out = { tries: vm.runInContext("FOLLOW_TRIES", ctx) };
+(async () => {
+  out.gone = await run("j1", ["404"]);   // the window closed, songcharter started again: no job
+  ctx.again();
+  const T = out.tries;
+  out.down = await run("j2", ["down"]);   // nothing answers any more
+  ctx.again();
+  // a reconnect that works resets the count: T - 1 failures, a stream that ends, T - 1 failures, an open stream
+  out.flaky = await run("j3", [...Array(T - 1).fill("down"), "ended", ...Array(T - 1).fill("down"), "open"]);
+  vm.runInContext("state.follow += 1", ctx);   // put away (as "Chart another song" does): nothing more from it
+  ctx.again();
+  out.errors = await run("j4", ["500"]);   // an answer that is not the events counts as a failure too
+  ctx.again();
+  out.open = await run("j5", ["open"]);   // a chart that runs on: nothing ends
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_page_lets_go_when_songcharter_is_gone(tmp_path):
+    """M7-10's review (F1): when the black window is closed mid-chart, the chart stops. The page's events then get a
+    404 (songcharter started again, with no job) or no answer at all; after FOLLOW_TRIES failed asks in a row (a
+    working reconnect starts the count again), the page ends the chart: the screen's lock let go, not running, the
+    tab's title "Stopped", the update notice back, the rows left open, and what to do."""
+    script = tmp_path / "gone.cjs"
+    script.write_text(GONE_PAGE, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(S.static_files()["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    tries = out["tries"]
+    assert tries == 10
+    ended = {"title": "Stopped - songcharter", "running": False, "held": 0, "update": False, "done": False,
+             "heading": "songcharter stopped", "open": True, "line": "The stages", "cancel": True}
+    kept = "what it had worked out is kept, so it goes faster."
+    assert out["gone"] == {**ended, "asked": 1, "text": "songcharter was closed while it charted (closing its black "
+                           f"window stops the chart) and has been started again. Chart the song again: {kept}"}
+    assert out["down"] == {**ended, "asked": tries, "text": "songcharter is not running any more: its black window "
+                           "was closed, which stops the chart. Start songcharter again from the Start menu, then "
+                           f"chart the song again: {kept}"}
+    running = {"title": "Charting - songcharter", "running": True, "held": 1, "update": True, "done": True,
+               "cancel": False}
+    assert {k: out["flaky"][k] for k in running} == running and out["flaky"]["asked"] == 2 * tries
+    assert out["errors"] == {**out["down"], "asked": tries}
+    assert {k: out["open"][k] for k in running} == running and out["open"]["asked"] == 1
 
 
 def test_the_done_screen_puts_the_install_first_and_folds_the_rest():
