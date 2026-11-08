@@ -2223,7 +2223,7 @@ const out = { tries: vm.runInContext("FOLLOW_TRIES", ctx) };
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
 def test_the_page_lets_go_when_songcharter_is_gone(tmp_path):
-    """M7-10's review (F1): when the black window is closed mid-chart, the chart stops. The page's events then get a
+    """M7-10's review (F1): when songcharter's window is closed mid-chart, the chart stops. The page's events then get a
     404 (songcharter started again, with no job) or no answer at all; after FOLLOW_TRIES failed asks in a row (a
     working reconnect starts the count again), the page ends the chart: the screen's lock let go, not running, the
     tab's title "Stopped", the update notice back, the rows left open, and what to do. With no answer at all the
@@ -2241,12 +2241,12 @@ def test_the_page_lets_go_when_songcharter_is_gone(tmp_path):
     ended = {"title": "Stopped - songcharter", "running": False, "held": 0, "update": False, "done": False,
              "heading": "songcharter stopped", "open": True, "line": "The stages", "cancel": True}
     kept = "what it had worked out is kept, so it goes faster."
-    assert out["gone"] == {**ended, "asked": 1, "text": "songcharter was closed while it charted (closing its black "
+    assert out["gone"] == {**ended, "asked": 1, "text": "songcharter was closed while it charted (closing its "
                            f"window stops the chart) and has been started again. Chart the song again: {kept}"}
-    assert out["down"] == {**ended, "asked": tries, "text": "songcharter is not answering. If its black window is "
-                           "still open, reload this page (press F5) to follow the chart. If the window was closed, "
-                           "which stops the chart, start songcharter again from the Start menu, then chart the song "
-                           f"again: {kept}"}
+    assert out["down"] == {**ended, "asked": tries, "text": "songcharter is not answering. If the songcharter window "
+                           "is still open, reload this page (press F5) to follow the chart. If the window was "
+                           "closed, which stops the chart, start songcharter again from the Start menu, then chart the "
+                           f"song again: {kept}"}
     running = {"title": "Charting - songcharter", "running": True, "held": 1, "update": True, "done": True,
                "cancel": False}
     assert {k: out["flaky"][k] for k in running} == running and out["flaky"]["asked"] == 2 * tries
@@ -2268,9 +2268,9 @@ def test_the_done_screen_puts_the_install_first_and_folds_the_rest():
             '</ol>\n    </details>') in html
     assert html.index('id="progress-song"') < html.index('id="progress-estimate"') < html.index('id="progress-keep"') \
         < html.index('id="stages-box"')
-    assert ('<p id="progress-keep" class="small">Keep the black songcharter window open: closing it stops the chart. '
-            'You can close this tab and come back (start songcharter again from the Start menu): the page picks the '
-            'chart up where it is.</p>') in html
+    assert ('<p id="progress-keep" class="small">Keep the songcharter window open: closing it stops the chart. '
+            'You can close this tab, though: start songcharter again from the Start menu to come back to the '
+            'chart.</p>') in html
     assert '<div id="drop" class="drop" tabindex="0">' in html
     icon = re.search(r'<link rel="icon" type="image/svg\+xml" href="data:image/svg\+xml;base64,([A-Za-z0-9+/=]+)">',
                      html)   # base64: the page's own guard finds no "http" in it (its SVG namespace is one)

@@ -82,7 +82,7 @@ page.
 - **Keep the PC awake while a song charts:** a chart takes long enough for the PC to go to sleep. While songcharter's
   page is on screen, it keeps the screen on and the PC awake; behind another tab, or with the browser minimized, it
   cannot. So for the evening, set its sleep to Never in Windows' power settings.
-- **You can close the page while a song charts:** keep the black songcharter window open (closing it stops the
+- **You can close the page while a song charts:** keep the songcharter window open (closing it stops the
   chart). To come back, start songcharter again from the Start menu: the page shows the chart where it is.
 - Drop the song file on the page (or use "Choose a file"), then press "Chart it".
 - **Lyrics, if you want them on screen:** before "Chart it", paste the song's words into the "Paste lyrics" box,
