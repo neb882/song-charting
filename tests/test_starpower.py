@@ -412,17 +412,6 @@ def test_solos_on_the_sections_a_person_named():
     assert [t.solos for t in placed.tracks] == [[(9 * M, 17 * M - 96), (25 * M, 33 * M - 96)], []]
 
 
-def test_at_most_three_solos_with_the_most_notes():
-    tm = const_map()
-    ex = guitar(80, thin=set(range(41, 46)))
-    secs = []
-    for i, m in enumerate(range(1, 81, 8)):
-        secs.append((m * M, "Solo" if i % 2 else "Verse"))
-    got = place_solos(ex, tm, secs)
-    assert len(got) == 3
-    assert all(a // M != 41 for a, _ in got)  # the thin one (measures 41-48) is not among them
-
-
 def lettered(first, lengths, name="Solo 2"):
     """Sections: an Intro at measure 1, then parts of the given lengths in measures from `first` ("Solo 2A", "Solo
     2B", ...), then an Outro."""
@@ -529,16 +518,37 @@ def test_the_densest_solos_win():
             "f": (93, 8, 8)}                      # first measure, measures, notes a measure; 6 measures apart
     ex = density({m: n for first, k, n in runs.values() for m in range(first, first + k)}, measures=110)
     secs = runs_at(*((first, k) for first, k, _ in runs.values()))
-    got = place_solos(ex, tm, secs, rules=SoloRules(max_share=1.0))
+    got = place_solos(ex, tm, secs, rules=SoloRules(max_share=1.0, max_solos=3))
     assert [a // M for a, _ in got] == [41, 55, 69]   # d (16), c (12), then b (8) before f (8)
+
+
+def test_at_most_four_solos_the_densest():
+    """max_solos 4 (M7-06; M7-01 B-c2: two songs gain a fourth solo, the humans' solo time covered +0.012): four
+    candidates that pass every rule give four solos, and of five the least dense is left out. The share does not bind
+    (five 16-s solos in a 259-s span, under 0.40 of it), so the count alone holds the fifth back; it holds a person's
+    names too."""
+    tm = const_map()
+    runs = [(11, 8, 12), (25, 8, 16), (39, 8, 10), (53, 8, 14), (67, 8, 8)]  # first measure, measures, notes a measure
+    ex = density({m: n for first, k, n in runs for m in range(first, first + k)}, measures=130)
+    assert SOLO_RULES.max_solos == 4
+    four = runs_at(*((first, k) for first, k, _ in runs[:4]))
+    assert [a // M for a, _ in place_solos(ex, tm, four)] == [11, 25, 39, 53]
+    five = runs_at(*((first, k) for first, k, _ in runs))
+    record = {}
+    assert [a // M for a, _ in place_solos(ex, tm, five, record=record)] == [11, 25, 39, 53]  # not 67, 8 a measure
+    assert record["rules"]["max_solos"] == 4
+    assert record["skipped_by_gap"] == record["trimmed_by_share"] == record["skipped_by_share"] == []
+    assert len(place_solos(ex, tm, five, rules=SoloRules(max_solos=5))) == 5   # nothing else holds the fifth back
+    named = place_solos(ex, tm, five, names=[f"Solo {i}" for i in range(1, 6)])
+    assert [a // M for a, _ in named] == [11, 25, 39, 53]
 
 
 def test_the_share_cap_trims_or_skips_a_solo_and_takes_the_next_that_fits():
     """Of the first..last onset's 199 s, max_share 0.2375 is 47.26 s: the two densest take 39.7 s, leaving 7.5 s. The
     third (23.8 s) would pass it, and its densest window within 7.5 s is 3 measures, under the minimum: skipped. The
     fourth (7.0 s, its last measure half empty) fits. At 0.25 the 10 s left trim the third to a 5-measure window
-    instead; at 0.40 all three fit. The record says what was used and why; a person's names are neither split nor
-    capped."""
+    instead, leaving no room for the fourth; at 0.40 all four fit. The record says what was used and why; a person's
+    names are neither split nor capped."""
     tm = const_map()
     runs = [(11, 10, 16), (31, 10, 14), (51, 12, 12), (71, 4, 10)]    # first measure, measures, notes a measure
     ex = density({**{m: n for first, k, n in runs for m in range(first, first + k)}, 74: 2})
@@ -547,7 +557,7 @@ def test_the_share_cap_trims_or_skips_a_solo_and_takes_the_next_that_fits():
     record = {}
     got = place_solos(ex, tm, secs, rules=rules, record=record)
     assert [a // M for a, _ in got] == [11, 31, 71]
-    assert record["rules"] == {"min_measures": 4, "min_onsets": 16, "max_solos": 3, "max_measures": 56,
+    assert record["rules"] == {"min_measures": 4, "min_onsets": 16, "max_solos": 4, "max_measures": 56,
                                "max_seconds": 100.0, "max_share": 0.2375, "min_gap_measures": 4.0}
     assert record["capped"] and record["skipped_by_gap"] == record["trimmed_by_share"] == []
     assert [(r["start"], r["end"], r["measures"], r["onsets"]) for r in record["solos"]] == [
@@ -558,9 +568,10 @@ def test_the_share_cap_trims_or_skips_a_solo_and_takes_the_next_that_fits():
     trimmed = place_solos(ex, tm, secs, rules=SoloRules(max_share=0.25), record=record)
     assert trimmed == got[:2] + [(51 * M, 56 * M - M // 12)]          # 5 measures, 9.8 s of the 10.0 left
     assert [(r["start"] // M, r["measures"], r["onsets"]) for r in record["trimmed_by_share"]] == [(51, 12, 144)]
-    assert record["solos"][2]["measures"] == 5 and record["skipped_by_share"] == []
+    assert record["solos"][2]["measures"] == 5
+    assert [(r["start"] // M, r["measures"], r["onsets"]) for r in record["skipped_by_share"]] == [(71, 4, 32)]
     assert place_solos(ex, tm, secs, rules=SoloRules(max_share=0.40)) == got[:2] + [
-        (51 * M, 63 * M - M // 12)]                                     # 63.6 s: within 0.40 (79.6 s)
+        (51 * M, 63 * M - M // 12), got[2]]                             # 70.6 s: within 0.40 (79.6 s)
     # names: one 60-measure, 120-s run over every cap and 0.60 of the song, taken whole
     long = density({m: 8 for m in range(21, 81)})
     named = lettered(21, [20, 20, 20], "Lead ")

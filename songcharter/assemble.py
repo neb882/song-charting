@@ -132,7 +132,7 @@ from .quantize import (RULES, RUN_CHORD_S, TRACK_DIFFICULTY, TRACK_INSTRUMENT, Q
 from .reduce import LEVELS, Issue, check_reductions, hopo_states, reduce_level
 from .sections import (read_allin1, read_allin1_beats, read_allin1_downbeats, sections_from_chart,
                        sections_from_segments)
-from .starpower import check_phrases, fill_crash_share, fit_chart, place_phrases, stem_confirm
+from .starpower import SOLO_RULES, check_phrases, fill_crash_share, fit_chart, place_phrases, stem_confirm
 from .takes import splice
 from .tempo import LeadIn, TempoMap, plan_lead_in
 from .timed import DIFFICULTIES, INSTRUMENTS, TimedHit, TimedNote, TimedPart, TimedSong, TimedSpan
@@ -1879,7 +1879,7 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
                 if n == name and lead_track is not None and not any(a <= s < (b if b is not None else s + 1)
                                                                     for s, _ in lead_track.solos):
                     warnings.append(f"solos: section {name!r} got no solo (it needs 16 Expert guitar onsets and 4 "
-                                    "measures, and a song has at most 3 solos)")
+                                    f"measures, and a song has at most {SOLO_RULES.max_solos} solos)")
     placed = {t.instrument: t for t in chart.tracks}
     loud = None
     if "drums" in levels_db and sections:

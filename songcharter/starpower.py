@@ -74,7 +74,7 @@ write, and solos are a minority of the song (DESIGN 2.10; M5-03 measured 14 huma
     earlier start. The rest of the run on either side is split the same way while it is over a cap; every piece is
     a candidate. A run within both caps is one candidate.
   * Choosing: a candidate needs 4 measures and 16 Expert onsets; the densest (onsets per measure, ties to the
-    earlier) are taken, at most 3 a song (human median 1, p90 2-3), skipping any that starts or ends within
+    earlier) are taken, at most 4 a song (`max_solos`; M7-06), skipping any that starts or ends within
     `min_gap_measures` (4) of a solo already taken (so a split run never gives back-to-back markers, while a long run
     can still give separated solos). One that would take the solos' seconds past `max_share` (0.40) of the
     first..last Expert onset's is cut to its densest measure-aligned window within the budget left, or skipped when
@@ -145,7 +145,9 @@ class SoloRules:
     67 s covering 0.96-1.00 of it; so the caps count our grid's measures, doubled or not."""
     min_measures: int = 4
     min_onsets: int = 16
-    max_solos: int = 3              # human median 1 a song, p90 2-3
+    max_solos: int = 4              # 3 until M7-06: human median 1 a song, p90 2-3, but 4 of 23 songs have a human
+                                    # chart with 4-11; at 4 two songs gain a fourth solo, coverage of the humans'
+                                    # solo time +0.012, none further from its humans' share (M7-01 B-c2, DESIGN 2.10)
     max_measures: int = 56          # a candidate's length on our map: p95 rounded up to a multiple of 8, in [16, 64]
     max_seconds: float = 100.0      # the same in seconds (our map may be at twice the humans' tempo): p95 rounded up
                                     # to the next 10 s, in [30, 120]
@@ -578,7 +580,8 @@ def place_solos(expert: Track, tempo: TempoMap, sections: Sequence[tuple[int, st
              and Kimochi Warui's (vocals active in 0.561, 0.863 and 0.905 of their frames).
     names:   the sections a person named as solos (exact section names), instead of the label and confirm. The
              test song's player named "Solo 1" and "Solo 2", which the stem test rejects. Nothing is split, and
-             neither the gap nor the share applies; the 16-onset and 4-measure minimums and the 3-solo cap do.
+             neither the gap nor the share applies; the 16-onset and 4-measure minimums and the solo cap
+             (rules.max_solos) do.
     record:  filled with what was used and why (report.json's phrases.guitar): "rules" (SoloRules' values),
              "capped" (False with names), "solos" (per solo: start and end ticks, measures, onsets, onsets per
              measure), "skipped_by_gap" and "skipped_by_share" (the candidates each rule skipped, the same fields)
