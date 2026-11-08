@@ -213,6 +213,7 @@ eval/gpu.sh check      # names the GPU, runs a CUDA op inside each tool, shows t
 eval/gpu.sh start      # every tool on every song, detached; finished jobs are skipped, so it resumes after any stop
 eval/gpu.sh status     # the latest driver.log lines, GPU use, free memory
 eval/gpu.sh takes      # 4 autochart Expert takes of every song (seeds 20260609,101,202,303; SEEDS=, SONGS= to change)
+eval/gpu.sh takes stress set20   # the same for the stress and 20-song sets, one after the other (below)
 eval/gpu.sh results    # eval/data/gpu_results.zip: scores, logs, the test-song charts and the takes' charts, no audio
 ```
 
@@ -244,6 +245,73 @@ memory=24GB
 swap=8GB
 EOF
 ```
+
+## GPU takes with the installed app
+
+M8 measures 4 autochart Expert takes of every song with human charts on the owner's GPU: the six references and the
+test song, the stress set's 4 (Stress songs, above), the 20-song set's 13 (`docs/reports/set20-v03.md`). The
+installed songcharter makes them (`packaging/linux/install.sh`, the cu132 lane): `--app` points `eval/gpu.sh` at its
+Python, Node, scan-chart, ffmpeg and autochart with its CUDA provider, so the eval tools (strum, chartgen,
+`eval/tools/autochart` and their models: several GB) are not needed, and the check is autochart's only.
+
+- **What it needs:** the app installed on the cu132 lane (`songcharter doctor`), the GPU visible (`nvidia-smi`), a
+  clone of the repository, and `python3` and `curl` (Ubuntu has both). Nothing is installed. The app's Python
+  (`~/.local/share/songcharter/runtime/env/bin/python`; `SONGCHARTER_HOME` names another install) has every package
+  the build scripts use (numpy, soundfile, librosa; none needs mido), its runtime the `node` and scan-chart that
+  `build_ref.py` runs. `ffmpeg` is Ubuntu's when it has one, else the app's (imageio-ffmpeg's), linked as
+  `eval/data/bin/ffmpeg`.
+- **The code:** songcharter is imported from the clone, first on `sys.path`. When this was written (M8-01),
+  `songcharter/engines/autochart.py`, the driver, the launcher, `uv.lock` and `pyproject.toml` were as in v0.3.1
+  (the app's version), so a take runs as the app's would, with the app's environment (`songcharter.launch`) and,
+  for CUDA, the CUDA 13 and cuDNN libraries of the app's own Python. A later clone still runs its own wrapper on the
+  app's packages: `git diff v0.3.1 -- songcharter/engines/autochart.py uv.lock` shows what differs.
+- **The inputs** are built as on the dev machine: `build_refs.sh` sums each primary package's stems into `input.wav`,
+  so the takes are on the dev machine's kept folders' clock. On made-up Vorbis, Opus and MP3 stems, Ubuntu 24.04's
+  ffmpeg 6.1.1 (the dev machine's) and the app's 9.0.2 decode to identical samples [here, one check]. Each take's
+  `take.json` carries its input's SHA-256, so the orchestrator can check each `input.wav` against the dev machine's.
+  The test song must be the same file as the kept folders' (its separation key is a hash of its samples).
+- **The packages:** `build_refs.sh` takes each from `sng/<md5>.sng` (the md5s are `refs.json`'s and the lists') and
+  downloads only a missing one, from `https://files.enchor.us/<md5>.sng`. Copy yours in under those names to skip
+  the download. The 20-song set is a data folder of its own, `eval/data/set20` (`SET20_DATA` moves it), with its two
+  lists, `set20.json` (the set's ids and slots) and `stress.local.json` (the md5s): the owner's, never committed.
+
+From a fresh clone (`git clone <the repository> song-charting && cd song-charting`), or `git pull` in a release
+clone (the paths are placeholders):
+
+```sh
+mkdir -p eval/data/sng eval/data/set20/sng
+cp /path/to/the/packages/*.sng eval/data/sng/              # the references' and the stress set's, as <md5>.sng
+cp /path/to/the/set20/packages/*.sng eval/data/set20/sng/  # the 20-song set's
+cp /path/to/stress.local.json eval/data/                   # the stress set's list
+cp /path/to/set20.json /path/to/the/set20/stress.local.json eval/data/set20/   # the 20-song set's two lists
+eval/gpu.sh build --app refs /path/to/the-test-song.mp3    # eval/data/refs: 6 songs and the test song
+eval/gpu.sh build --app stress                             # eval/data/stress: 4 songs, 14 charts
+eval/gpu.sh build --app set20                              # eval/data/set20/stress: 13 songs, 50 charts
+eval/gpu.sh check --app                                    # the GPU, the app's autochart with its CUDA provider, memory
+eval/gpu.sh takes --app refs stress set20                  # detached, one set after the other; then the zip
+eval/gpu.sh status                                         # the latest lines of runs/takes/takes.log
+eval/gpu.sh results                                        # eval/data/gpu_results.zip (again, after a stop)
+```
+
+- **The build** [dev machine, CPU]: under a minute a chart, plus the downloads; the folders take about 0.4 GB
+  (refs), 1.1 GB (stress) and 3.0 GB (set20), as each other human chart gets an `input.wav` too. The stress and
+  20-song builds print through `takes.py --scrub`: songs by their labels, every md5 as `<md5>`.
+- **The takes** go one set after the other (or one at a time: `eval/gpu.sh takes --app stress`), each set's songs
+  checked first (`takes.py --dry-run`: the songs found, by label). `takes` refuses while a run is going. A run that
+  stops resumes: the same command reuses every finished take. Each line of the log names the song by its label.
+- **GPU time** [the owner's RTX 5070]: 4 takes of a 4-minute song take about 4-15 minutes, dense songs more (the
+  9-minute shred song 36 minutes). So, at about 1 to 4 GPU minutes a minute of audio [an estimate from those, not
+  measured]: the reference set (30 minutes of audio with the test song) 0.5-2 hours, the stress set (25 minutes)
+  0.5-1.5 hours, the 20-song set (75 minutes) 1.5-5 hours.
+- **The zip** (`eval/data/gpu_results.zip`, and a copy in Windows' Downloads folder), made at the end of a run or by
+  `results`: per set, each take's `notes.chart`, `song.ini`, `take.json` (its key: the input's SHA-256, the seed,
+  the install) and `autochart_run/*.json` (the engine's summary, devices and timings), and the set's `set.json`
+  (each label's slot, chart count and length); `takes.log`, `gpu_run.log` and `gpu_samples.csv` (the GPU's use every
+  5 s). The reference set's takes are under `takes/<id>/`, the others' under `takes/<set>/<label>/`. No audio:
+  `check_no_audio.py` must pass on the zip, or none is made. No title: a 20-song song's take folder goes in under its
+  label (s01-s13, in the order of the sorted ids, as `set20-v03.md` names them), every such id in every file is
+  replaced by its label, and a zip still holding one is not made; the mapping, `runs/takes/set20/labels.json`, stays
+  on this PC. This PC's home folder is written `~` and the Windows profile `%USERPROFILE%`.
 
 ## Rebuilding the dev machine
 
