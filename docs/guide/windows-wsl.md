@@ -67,13 +67,12 @@ page.
 
 - **Chart first, play after.** While a song charts, songcharter uses most of the PC's memory: on a 16 GB PC, Windows
   has about 4 GB left until the chart is done. Don't run games then.
-- **How long it takes:** the page says it when the chart starts ("Usually about 4 to 10 minutes" for a 4-minute song
-  with the default options), and the browser tab's title says what it is doing. Most of that is the guitar:
-  songcharter charts it 4 times over (4 "takes") and combines them into a better chart, and the page shows which take
-  it is on ("take 2 of 4"). A busy song or a long one takes longer, as the guitar's time grows with the notes it
-  writes: a 9-minute song can take over half an hour. For a quicker chart, type 1 in the "Guitar takes" box (in the
-  options, under Guitar) before you press "Chart it": then a 4-minute song takes about 2 to 5 minutes. These times
-  are estimates.
+- **How long it takes:** about 5 to 15 minutes for a 4-minute song with the default options (a busy or long song
+  takes longer: a 9-minute song can take over half an hour). The page says how long when the chart starts, and the
+  browser tab's title says what it is doing. Most of that is the guitar: songcharter charts it 4 times over (4
+  "takes") and combines them into a better chart, and the page shows which take it is on ("take 2 of 4"). For a
+  quicker chart, type 1 in the "Guitar takes" box (in the options, under Guitar) before you press "Chart it": then a
+  4-minute song takes about 2 to 7 minutes. These times are estimates.
 - **If a guitar take fails on the graphics card** (a game, Clone Hero or a browser left open can take the memory it
   needs), songcharter runs that take again on the CPU, once a song, and carries on. The page says so: a note at the
   top, and "take 3 of 4 (on the CPU)". That take takes a few minutes longer. If a second take fails, or a take was

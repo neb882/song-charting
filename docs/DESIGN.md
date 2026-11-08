@@ -3011,22 +3011,27 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
   v0.1.0's page runs (refused, only install.sh fetched, `app/` as it was), then with that page stopped.
 - **The progress and Done screens' quick wins** (M7-10, items 1-4, 11 and 12 of the second model's review of the
   page, docs/reports/m7-ui-review.md) [code]:
-  - **How long it usually takes:** a line under the progress screen's title, "Usually about 4 to 10 minutes for a song
+  - **How long it usually takes:** a line under the progress screen's title, "Usually about 4 to 14 minutes for a song
     of this length (4:01), with 4 guitar takes on the GPU. That is an estimate: a dense song takes longer, as the
     guitar's time grows with the notes it writes." The upload reads the song's length from ffmpeg's header
     (`ui/estimate.py`, `duration`), and the job gets its range as it starts (`estimate.for_job`: the options' device,
     else the doctor summary's; the takes as `pipeline.guitar_takes` sets them, one on the CPU where the doctor found
     autochart's CUDA provider missing). The model: every stage but the guitar a fixed part and a rate per second;
-    the guitar its first take's own separation (a rate per second), then k·d² a take, d the length in seconds, as a
-    take's time grows with the notes it has written (the test song against Creep, at about the same notes a second:
-    2.8x the time a take for 1.7x the length [here, the takes experiment]). The rates' low and high values are where
-    the measured ordinary songs fell: on the owner's 5070, the takes experiment's seven songs and four of his own job
-    logs (the eight ordinary ones inside; Kimochi Warui, Lucretia and a dense 7:19 song above it); on the dev CPU, the
-    golden runs' cold builds (11 of 14 inside; Lucretia's two and one slow build above). For a 4-minute song: about 4
-    to 10 minutes with the GPU's 4 takes, 2 to 5 with 1, 6 to 11 on the CPU. Not counted: the caches (a song charted
-    before goes faster) and the lyrics' first download; the friend's 4070 is not measured. Its evidence is in the
-    module's docstring, and tests/test_ui_estimate.py checks the rates against those runs. The estimate is for a
-    look: a bug in it is logged, and the chart starts without one.
+    the guitar its first take's own separation (a rate per second), then for each take its own start (0 to 10 s
+    [est.]: the 5070's later takes show no fixed part on songs of 3 minutes or more, but no shorter song was
+    measured) and k·d², d the length in seconds, as a take's time grows with the notes it has written (the test song
+    against Creep, at about the same notes a second: 2.8x the time a take for 1.7x the length [here, the takes
+    experiment]). The rates' low and high values are where the measured ordinary songs fell: on the owner's 5070, the
+    takes experiment's seven songs and four of his own job logs (the eight ordinary ones inside; Kimochi Warui,
+    Lucretia and a dense 7:19 song above it); on the dev CPU, the golden runs' cold builds (11 of 14 inside;
+    Lucretia's two and one slow build above). **The GPU's high rates are the 5070's times 1.35** for the friend's
+    4070, until M4-08 part B times his PC: it has about 25 % less memory bandwidth (504 against 672 GB/s), which
+    bounds a transcriber that writes one token at a time [inference, M7-10's review]; Kimochi Warui then falls inside
+    too. For a 4-minute song the page says 4 to 14 minutes with the GPU's 4 takes, 2 to 7 with 1, 6 to 11 on the CPU;
+    the guide keeps the rounder "about 5 to 15" and "2 to 7". Not counted: the caches (a song charted before goes
+    faster) and the lyrics' first download. Its evidence is in the module's docstring, and tests/test_ui_estimate.py
+    checks the rates against those runs and the 4070's margin. The estimate is for a look: a bug in it is logged,
+    and the chart starts without one.
   - **The end above the fold:** the stage rows fold into one line ("Charted in 12 min 43 s", a `<details>`, left
     open after an error to show where it stopped), and the Done screen scrolls to the top of the window, again once
     its results are in. Under "Ready" comes "Play it" (Install into Clone Hero, Another folder, the zip), then the
@@ -3039,9 +3044,14 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     SVG `data:` image (the CSP's img-src allows data:, and the package ships only the page's .html, .js and .css).
   - **A screen wake lock** while a chart runs (`navigator.wakeLock.request("screen")`), asked for again when the tab
     is back in view (the browser lets it go while the tab is hidden) and let go at the end. Where the API is missing
-    (the fallback address is not a secure context) or refuses, nothing happens, so the guide's "sleep: Never" stays.
-    A sentence on the progress screen: keep the black songcharter window open (closing it stops the chart); the tab
-    may close, and songcharter started again from the Start menu opens the running server's page, which reattaches.
+    or refuses, nothing happens; at the fallback address it is always missing, as that address is not a secure
+    context, so the guide's "sleep: Never" stays. A sentence on the progress screen: keep the black songcharter
+    window open (closing it stops the chart); the tab may close, and songcharter started again from the Start menu
+    opens the running server's page, which reattaches. **A chart whose songcharter is gone** (the black window
+    closed mid-chart: its events answer 404 from a songcharter started since, or nothing answers 10 times in a row,
+    2 s apart; a working reconnect starts the count again) ends on the page as a cancel does: "songcharter stopped",
+    what to do, the lock let go, the tab's title "Stopped", the update notice back (M7-10's review: the page had held
+    the screen awake for good).
   - **The drop zone** opens the file chooser on Enter or Space (it had a tab stop and no key handler), and **the
     update notice** is hidden while a chart runs (its line says to close the songcharter window, which would stop
     the chart) and shown again at its end.
