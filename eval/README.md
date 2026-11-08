@@ -260,9 +260,9 @@ Python, Node, scan-chart, ffmpeg and autochart with its CUDA provider, so the ev
   the build scripts use (numpy, soundfile, librosa; none needs mido), its runtime the `node` and scan-chart that
   `build_ref.py` runs. `ffmpeg` is Ubuntu's when it has one, else the app's (imageio-ffmpeg's), linked as
   `eval/data/bin/ffmpeg`.
-- **The code:** songcharter is imported from the clone, first on `sys.path`. When this was written (M8-01),
-  `songcharter/engines/autochart.py`, the driver, the launcher, `uv.lock` and `pyproject.toml` were as in v0.3.1
-  (the app's version), so a take runs as the app's would, with the app's environment (`songcharter.launch`) and,
+- **The code:** songcharter is imported from the clone, first on `sys.path`. When this was written (M8-01, on
+  0.4.0's code), `songcharter/engines/autochart.py`, the driver and the launcher were as in v0.3.1 (the app's
+  version), and `uv.lock` and `pyproject.toml` differed only in the version, so a take runs as the app's would, with the app's environment (`songcharter.launch`) and,
   for CUDA, the CUDA 13 and cuDNN libraries of the app's own Python. A later clone still runs its own wrapper on the
   app's packages: `git diff v0.3.1 -- songcharter/engines/autochart.py uv.lock` shows what differs.
 - **The inputs** are built as on the dev machine: `build_refs.sh` sums each primary package's stems into `input.wav`,
