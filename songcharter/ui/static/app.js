@@ -1,9 +1,11 @@
-// songcharter's page (M4-04, M4-06, M4-11, M5-07, M6-09): drop a song, choose the options (the lyrics and the pictures
-// too), follow the chart, cancel it; then the album art, the preview, the chart to listen to, the zip, the install
-// into Clone Hero, and the diagnostics in the footer; above it all, the update notice when a newer version is out. No
-// framework, no build step. Every request sends X-Songcharter: 1 (the server's guard for anything but a GET). The job's events come over
-// a streamed fetch of /api/jobs/current/events (Server-Sent Events), which can send that header too, and which
-// resumes after the last event it saw when the connection drops; a reload reattaches to the current job.
+// songcharter's page (M4-04, M4-06, M4-11, M5-07, M6-09, M7-10): drop a song, choose the options (the lyrics and the
+// pictures too), follow the chart (how long it usually takes, the tab's title saying where it is, the screen kept
+// awake), cancel it; then "Ready" scrolled into view with the install into Clone Hero first, the zip, the album art,
+// the preview and the chart to listen to, and the diagnostics in the footer; above it all, the update notice when a
+// newer version is out, put away while a chart runs. No framework, no build step. Every request sends
+// X-Songcharter: 1 (the server's guard for anything but a GET). The job's events come over a streamed fetch of
+// /api/jobs/current/events (Server-Sent Events), which can send that header too, and which resumes after the last
+// event it saw when the connection drops; a reload reattaches to the current job.
 "use strict";
 
 const HEADER = { "X-Songcharter": "1" };
@@ -17,10 +19,11 @@ const DISMISSED = "songcharter.dismissed";   // sessionStorage: the finished job
 // page is served, so the first status usually comes before its answer (one request, 5 s at most for each of two)
 const UPDATE_ASKS = [2000, 6000, 15000];
 
+const APP = "songcharter";   // the tab's title, after what the page is doing
 const $ = (id) => document.getElementById(id);
 const state = { status: null, upload: null, job: null, stages: {}, offset: 0, ticker: null, follow: 0, ch: null,
   images: { album_art: null, background: null }, sending: 0, version: null, update: null, later: false,
-  listen: { parts: {}, job: null } };
+  listen: { parts: {}, job: null }, running: false, wake: null };
 // the Listen control's names for the parts and levels the chart has (the results' `listen`)
 const PART_NAMES = { guitar: "Guitar", bass: "Bass", drums: "Drums" };
 const LEVEL_NAMES = { expert: "Expert", hard: "Hard", medium: "Medium", easy: "Easy" };
@@ -61,6 +64,14 @@ function seconds(s) {
 
 function serverNow() { return Date.now() / 1000 + state.offset; }
 
+function mmss(s) {
+  s = Math.max(0, Math.round(s));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// the tab's title: what the page is doing, so a tab in the background says it too
+function setTitle(what) { document.title = what ? `${what} - ${APP}` : APP; }
+
 // ------------------------------------------------------------------------------------------------ the header
 
 function renderStatus(st) {
@@ -94,7 +105,8 @@ function renderStatus(st) {
 // and the release page; "Later" puts it away for this page load. It never stops anything else on the page.
 function renderUpdate(up, have) {
   const box = $("update");
-  if (!up || state.later) { box.hidden = true; return; }
+  // while a chart runs, its line ("close the songcharter window") would stop the chart: shown again at its end
+  if (!up || state.later || state.running) { box.hidden = true; return; }
   const yours = have ? ` (you have ${have})` : "";
   if (up.line) {
     text($("update-text"), `songcharter ${up.version} is out${yours}. To update: close the songcharter window, open Ubuntu from the Start menu, paste this line and press Enter:`);
@@ -200,6 +212,13 @@ function setupDrop() {
     e.preventDefault();
     const file = e.dataTransfer && e.dataTransfer.files[0];
     if (file) upload(file);
+  });
+  // the zone takes the keyboard's focus (tabindex 0): Enter or Space opens the file chooser, as a click on its button
+  zone.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      e.preventDefault();   // Space would scroll the page
+      $("file").click();
+    }
   });
   // a file dropped beside the zone must not navigate away from the page
   window.addEventListener("dragover", (e) => e.preventDefault());
@@ -341,6 +360,17 @@ async function chartIt(e) {
 
 // ------------------------------------------------------------------------------------------------ progress
 
+// "Usually about N to M minutes ..." (the job's estimate: the server's estimate.for_job), or "" without one
+function estimateText(est) {
+  if (!est || !(est.low_min > 0) || !(est.high_min > 0)) return "";
+  const length = est.seconds > 0 ? ` (${mmss(est.seconds)})` : "";
+  const range = `Usually about ${est.low_min} to ${est.high_min} minutes for a song of this length${length}`;
+  if (!est.takes) return `${range}. That is an estimate.`;
+  const where = est.device === "cuda" ? "the GPU" : "the CPU";
+  return `${range}, with ${est.takes} guitar take${est.takes === 1 ? "" : "s"} on ${where}. That is an estimate: ` +
+         "a dense song takes longer, as the guitar's time grows with the notes it writes.";
+}
+
 function resetProgress(job) {
   state.stages = {};
   $("stages").replaceChildren();
@@ -350,6 +380,11 @@ function resetProgress(job) {
   $("cancel").hidden = false;
   text($("progress-title"), "3. Charting");
   text($("progress-song"), job && job.upload ? job.upload.name : "");
+  const est = estimateText(job && job.estimate);
+  text($("progress-estimate"), est).hidden = !est;
+  $("progress-keep").hidden = false;
+  $("stages-box").open = true;   // the rows while it runs; folded into one line at the end
+  text($("stages-line"), "").hidden = true;
 }
 
 function stageRow(name) {
@@ -399,6 +434,7 @@ function handle(ev) {
       row.ended = false;
       setRow(row, "running", "◐");
       text(row.detail, ev.detail);
+      setTitle(stageLabel(ev.stage));
       break;
     }
     case "stage_end": {
@@ -414,6 +450,7 @@ function handle(ev) {
       // a take run again on the CPU after its GPU run failed says so (the banner above gives why)
       text(stageRow("guitar").takes,
            `take ${ev.index} of ${ev.count}${ev.device === "cpu" ? " (on the CPU)" : ""}`);
+      setTitle(`${stageLabel("guitar")}: take ${ev.index} of ${ev.count}`);
       break;
     case "warning":
       $("warnings").append(make("li", null, ev.text));
@@ -427,16 +464,19 @@ function handle(ev) {
       stopRunningRows("stopped");
       finish(ev.ok ? "Ready" : "The check failed",
              ev.ok ? `The song folder is in ${ev.folder}` :
-               `The build did not pass the check. It is in ${ev.folder} for a look.`, ev.summary);
+               `The build did not pass the check. It is in ${ev.folder} for a look.`, ev.summary,
+             { at: ev.at, line: "Charted in", report: !ev.ok });
       loadResults();
       return true;
     case "error":
       stopRunningRows("stopped");
-      finish("It did not finish", ev.message, null);
+      finish("It did not finish", ev.message, null, { at: ev.at, line: "Stopped after", open: true });
       return true;
     case "cancelled":
       stopRunningRows("cancelled");
-      finish("Cancelled", "The chart was cancelled. What it had worked out is kept, so the same song goes faster next time.", null);
+      finish("Cancelled",
+             "The chart was cancelled. What it had worked out is kept, so the same song goes faster next time.", null,
+             { at: ev.at, line: "Cancelled after" });
       return true;
     default:
       break;
@@ -444,17 +484,72 @@ function handle(ev) {
   return false;
 }
 
-function finish(title, message, summary) {
+// The end (M7-10): the stages folded into one line ("Charted in 12 min 43 s"; the rows stay open after an error,
+// to show where it stopped), the tab's title, the screen let go to sleep, the update notice back, and the Done
+// screen scrolled to the top of the window: "Ready", then "Install into Clone Hero". `how`: the closing event's
+// time (`at`), the folded line's words (`line`), whether the rows stay open (`open`) and the build's report (`report`).
+function finish(title, message, summary, how) {
+  how = how || {};
   $("results").hidden = true;
   clearInterval(state.ticker);
   state.ticker = null;
   $("cancel").hidden = true;
+  const started = state.job && state.job.started;
+  const took = how.at != null && started != null ? how.at - started : null;
+  const line = took != null && took >= 0 && how.line ? `${how.line} ${seconds(took)}` : "The stages";
+  text($("stages-line"), line).hidden = false;
+  $("stages-box").open = !!how.open;
+  $("progress-estimate").hidden = true;
+  $("progress-keep").hidden = true;
   text($("done-title"), title);
   text($("done-text"), message);
-  const pre = $("summary");
-  pre.hidden = !summary;
-  text(pre, summary || "");
+  setTitle(title);
+  text($("summary"), summary || "");
+  $("summary-box").hidden = !summary;
+  $("summary-box").open = !!how.report;   // the engines' lines, for a look; open when the check failed
+  state.running = false;
+  letSleep();
+  renderUpdate(state.update, state.version);
   $("done-screen").hidden = false;
+  toDone();
+}
+
+// the Done screen at the top of the window (as far as the page's height allows: again once the results are in)
+function toDone() {
+  const done = $("done-screen");
+  if (!done.hidden && typeof done.scrollIntoView === "function") done.scrollIntoView({ block: "start" });
+}
+
+// ------------------------------------------------------------------------------------------------ the wake lock
+
+// While a chart runs, a screen wake lock keeps the screen, and so the PC, awake. The browser lets it go when the tab
+// is hidden (another tab, the window minimized), so it is asked for again when the tab is in view again; the chart
+// lets it go at its end. Where the API is missing (an older browser; the fallback address, not a secure context) or
+// refuses, nothing happens: the guide's sleep setting covers that.
+async function holdAwake() {
+  const wl = typeof navigator !== "undefined" ? navigator.wakeLock : undefined;
+  if (!state.running || state.wake || !wl || typeof wl.request !== "function") return;
+  const asking = {};   // one request at a time
+  state.wake = asking;
+  let lock = null;
+  try { lock = await wl.request("screen"); } catch (e) { lock = null; }
+  if (state.wake !== asking || !state.running) {   // let go meanwhile: the chart ended
+    if (state.wake === asking) state.wake = null;
+    if (lock) lock.release().catch(() => {});
+    return;
+  }
+  state.wake = lock;
+  if (lock) lock.addEventListener("release", () => { if (state.wake === lock) state.wake = null; });
+}
+
+function letSleep() {
+  const lock = state.wake;
+  state.wake = null;
+  if (lock && typeof lock.release === "function") lock.release().catch(() => {});
+}
+
+function visible() {
+  if (document.visibilityState === "visible") holdAwake();
 }
 
 async function follow(token) {
@@ -503,6 +598,10 @@ async function attach() {
   resetProgress(job);
   $("done-screen").hidden = true;
   show("progress-screen");
+  setTitle("Charting");
+  state.running = job.state === "running";   // a finished job's events end it again at once
+  renderUpdate(state.update, state.version);
+  holdAwake();
   clearInterval(state.ticker);
   state.ticker = setInterval(tick, 1000);
   state.follow += 1;
@@ -527,9 +626,12 @@ function again() {
   state.follow += 1;
   state.job = null;
   state.upload = null;
+  state.running = false;
+  letSleep();
   stopListening();
   dropError("");
   show("drop-screen");
+  setTitle(null);
   refreshStatus();   // a session of charts fills the disk: the header measures it again for the next song
 }
 
@@ -560,6 +662,7 @@ async function loadResults() {
   text($("export-msg"), "").hidden = true;
   $("open-exports").hidden = true;
   $("results").hidden = false;
+  toDone();
   if (res.installable) loadCloneHero();
 }
 
@@ -830,6 +933,7 @@ async function start() {
   $("open-exports").addEventListener("click", () => openFolder("exports", $("export-msg")));
   $("update-copy").addEventListener("click", copyLine);
   $("update-later").addEventListener("click", later);
+  document.addEventListener("visibilitychange", visible);
   show("drop-screen");
   let st;
   try {
