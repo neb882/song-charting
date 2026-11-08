@@ -19,7 +19,7 @@ const DISMISSED = "songcharter.dismissed";   // sessionStorage: the finished job
 // page is served, so the first status usually comes before its answer (one request, 5 s at most for each of two)
 const UPDATE_ASKS = [2000, 6000, 15000];
 // the job's events asked for again this many times in a row, 2 s apart, before the page says songcharter has stopped
-// (M7-10's review: a closed black window stops the chart, and the page went on holding the screen awake)
+// (M7-10's review: a closed songcharter window stops the chart, and the page went on holding the screen awake)
 const FOLLOW_TRIES = 10;
 
 const APP = "songcharter";   // the tab's title, after what the page is doing
@@ -604,7 +604,7 @@ async function follow(token) {
   }
 }
 
-// The chart's songcharter is gone: a songcharter started since has no job (its black window was closed, which stops
+// The chart's songcharter is gone: a songcharter started since has no job (its window was closed, which stops
 // the chart), or nothing answers any more (`down`): the window may have been closed, or the page may only have lost
 // it for a while (after the PC sleeps, say) while the chart runs on, so a reload, which reattaches, comes first (the
 // v0.4.0 gate's advisor). The page ends the chart as a cancel does: the screen let go, the title, the update notice
@@ -613,10 +613,10 @@ function gone(down) {
   stopRunningRows("stopped");
   const kept = "what it had worked out is kept, so it goes faster.";
   finish("songcharter stopped", down ?
-    "songcharter is not answering. If its black window is still open, reload this page (press F5) to follow the " +
-    "chart. If the window was closed, which stops the chart, start songcharter again from the Start menu, then " +
-    `chart the song again: ${kept}` :
-    "songcharter was closed while it charted (closing its black window stops the chart) and has been started " +
+    "songcharter is not answering. If the songcharter window is still open, reload this page (press F5) to " +
+    "follow the chart. If the window was closed, which stops the chart, start songcharter again from the Start " +
+    `menu, then chart the song again: ${kept}` :
+    "songcharter was closed while it charted (closing its window stops the chart) and has been started " +
     `again. Chart the song again: ${kept}`, null, { open: true, tab: "Stopped" });
 }
 
