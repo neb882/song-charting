@@ -305,7 +305,7 @@ stop() {
 
 # The zip to send back, structured files only, never a log, a traceback or audio: drive.sh's scores and the test-song
 # charts, gpu_samples.csv, runs/takes/takes.jsonl (takes.py's records), and every set's takes: each take's notes.chart
-# and song.ini as the engine wrote them, and its take.json and autochart_run/summary.json copied field by field
+# and song.ini as the engine wrote them, and its take.json and autochart_run/summary.json (as summary.json) copied field by field
 # (numbers, hashes and short names: no path, no message). A stress or 20-song set's take folders go in under their
 # labels (runs/takes/<set>/labels.json, which stays here; a song folder it does not name is left out), with the set's
 # set.json. In the text files this PC's home folder is written ~ and the Windows profile %USERPROFILE%
@@ -324,10 +324,10 @@ results() {
       winp="/mnt/${win:0:1}"; winp="${winp,,}${win:2}"; winp=${winp//\\//}
     fi
   fi
-  python3 -I - "$RUNS" "$zip.part" "$HOME" "$win" "$winp" "${STRESS_LOCAL:-$DATA/stress.local.json}" \
+  python3 -I - "$RUNS" "$zip.part" "$HOME" "$win" "$winp" "${USER:-}" "${STRESS_LOCAL:-$DATA/stress.local.json}" \
     "${SET20_DATA:-$DATA/set20}/stress.local.json" <<'EOF' || { rm -f "$zip.part"; return 1; }
 import glob, json, os, re, sys, time, zipfile
-runs, out, home, win, winp, *lists = sys.argv[1:]
+runs, out, home, win, winp, user, *lists = sys.argv[1:]
 SCORES = ["SCORECARD.md", "gpu_samples.csv", "*/*.score.json", "*/*.score.txt", "*/test_song/notes.chart",
           "*/test_song/notes.mid", "*/test_song/song.ini", "takes/takes.jsonl"]   # drive.sh's and takes.py's own
 TEXT = ["notes.chart", "song.ini"]   # a take's files as the engine writes them (chart data)
@@ -377,10 +377,10 @@ def add_take(prefix, folder):
     for f in TEXT:
         if os.path.isfile(os.path.join(folder, f)):
             add_file(f"{prefix}/{f}", os.path.join(folder, f))
-    for f, spec in (("take.json", TAKE), ("autochart_run/summary.json", SUMMARY)):
+    for f, spec, to in (("take.json", TAKE, "take.json"), ("autochart_run/summary.json", SUMMARY, "summary.json")):
         copy = spec(read_json(os.path.join(folder, f)))
-        if copy:
-            members[f"{prefix}/{f}"] = (json.dumps(copy, indent=1).encode(), os.path.getmtime(os.path.join(folder, f)))
+        if copy:   # the summary as seed_<s>/summary.json: no fixed word in a member's path the guard could take for a name
+            members[f"{prefix}/{to}"] = (json.dumps(copy, indent=1).encode(), os.path.getmtime(os.path.join(folder, f)))
 
 
 for p in SCORES:
@@ -427,27 +427,62 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         info.compress_type = zipfile.ZIP_DEFLATED
         z.writestr(info, scrub(data))
 
-# the guard, apart from the scrub: the finished zip, read back, any case
-md5s = set()
+# the guard, apart from the scrub: the finished zip read back, each member's name and text in lower case, and once
+# more with runs of spaces, hyphens and underscores read as one space. It stops on: a 20-song id, or a title, artist
+# or charter of the stress or 20-song lists, as a whole word in that form; this PC's user name as a whole word; an
+# md5 of the lists, or a run of 8 or more hex digits that starts one; a Windows user folder (/mnt/x/users/,
+# x:\users or x:/users), a \\wsl$ or \\wsl.localhost path, the home folder or the Windows profile. It names the
+# member (by label) and the kind of hit, never the text.
+def norm(s):
+    return re.sub(r"[\s_-]+", " ", s.lower()).strip()
+
+
+PUBLIC = set()   # the stress set's ids and labels: committed (eval/stress.json), so a name that is one is not checked
+for name in ("stress", "set20"):
+    labels = read_json(os.path.join(runs, "takes", name, "labels.json"))
+    if isinstance(labels, dict):
+        PUBLIC |= {norm(k) for k in labels if isinstance(k, str)}
+        PUBLIC |= {norm(v) for k, v in labels.items() if name == "stress" and isinstance(v, str)}
+
+
+def words(kind, values):   # (kind, a whole-word pattern over normalized text), for names of 3 characters or more
+    vs = sorted({norm(v) for v in values if isinstance(v, str) and len(norm(v)) >= 3} - PUBLIC, key=len, reverse=True)
+    return [(kind, re.compile(r"(?<!\w)(?:" + "|".join(re.escape(v) for v in vs) + r")(?!\w)"))] if vs else []
+
+
+md5s, names = set(), {"title": [], "artist": [], "charter": []}
 for path in lists:
     for song in read_json(path) or []:
-        if isinstance(song, dict):
-            md5s |= {m.lower() for m in [song.get("md5")] + [a.get("md5") for a in song.get("alts") or []
-                                                              if isinstance(a, dict)] if isinstance(m, str)}
-idrx = re.compile("(?<![a-z0-9_])(" + "|".join(re.escape(i.lower()) for i in sorted(hidden)) + ")(?![a-z0-9_])") \
-    if hidden else None
+        if not isinstance(song, dict):
+            continue
+        alts = [a for a in song.get("alts") or [] if isinstance(a, dict)]
+        md5s |= {m.lower() for m in [song.get("md5")] + [a.get("md5") for a in alts] if isinstance(m, str)}
+        for kind in names:
+            names[kind] += [song.get(kind)] + [a.get(kind) for a in alts]
+users = {u for u in (user, os.path.basename(home.rstrip("/"))) if len(u) >= 2}
+checks = words("id", hidden) + [w for kind, vs in names.items() for w in words(kind, vs)] + words("user name", users)
+PATHS = re.compile(r"/mnt/[a-z]/users/|(?<![a-z])[a-z]:[\\/]+users[\\/]|[\\/]{2,}wsl(?:\$|\.localhost)")
 lowered = [v.lower() for v in places]
+HEXRUN = re.compile(r"(?<![0-9a-f])[0-9a-f]{8,32}(?![0-9a-f])")
 stops = []
 with zipfile.ZipFile(out) as z:
     for n in z.namelist():
         text = (n + "\n" + z.read(n).decode("utf-8", "surrogateescape")).lower()
-        why = [w for w, hit in (("a 20-song id", idrx is not None and idrx.search(text)),
-                                ("a package md5 of the lists", any(m in text for m in md5s)),
-                                ("the home folder or the Windows profile", any(v in text for v in lowered))) if hit]
+        flat = norm(text)
+        why = [kind for kind, rx in checks if rx.search(flat)]
+        if any(m in text for m in md5s) or any(any(m.startswith(r) for m in md5s) for r in HEXRUN.findall(text)):
+            why.append("md5")
+        if PATHS.search(text) or any(v in text for v in lowered):
+            why.append("path")
         if why:
-            stops.append(f"{idrx.sub('<id>', n) if idrx else n}: {', '.join(why)}")
+            named = norm(n)   # the member, with any name in its own path masked
+            hits = [(kind, rx) for kind, rx in checks if rx.search(named)]
+            for kind, rx in hits:
+                named = rx.sub(f"<{kind}>", named)
+            stops.append(f"{named if hits else n}: {', '.join(dict.fromkeys(why))}")
 if stops:
-    print("results: no zip made, the guard stopped it:", *(f"  {s}" for s in stops), sep="\n")
+    print("results: no zip made, the guard stopped it (these lines hold no name: send them as they are):",
+          *(f"  {s}" for s in stops), sep="\n")
     sys.exit(1)
 print(f"results: {len(members)} files" + (f"; {left} song folders left out (no labels.json names them)" if left else ""))
 EOF

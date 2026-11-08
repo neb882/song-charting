@@ -3,6 +3,7 @@ takes, build and results. Made-up sets in a temporary folder, a stand-in for the
 songcharter.engines.autochart.generate (so a take is reused as it really is), made-up packages: the engine never
 runs, and no id, title or md5 of a real set is here. The 20-song set's made-up ids stand in for ids that spell titles:
 none may appear in a printed line, a log or the results zip."""
+import hashlib
 import io
 import json
 import os
@@ -378,13 +379,30 @@ def test_gpu_takes_run_passes_each_set_and_the_app_through(tmp_path, app):
     assert (data / "gpu_results.zip").is_file() and not (data / "runs" / "gpu_run.pid").exists()
 
 
+def hmd5(k: int) -> str:
+    """A made-up md5 with no long run of zeros (a prefix of one is a guard's stop)."""
+    return hashlib.md5(f"made up package {k}".encode()).hexdigest()
+
+
+# the owner's two local lists, made up: names no zipped file holds unless a test plants one
+STRESS_LOCAL = [{"id": "ttt", "md5": hmd5(40), "title": "Glorpy Tune", "artist": "The Snorbs", "charter": "chartyfox",
+                 "alts": [{"md5": hmd5(41), "charter": "otherfox", "title": "Glorpy Tune"}]}]
+SET20_LOCAL = [{"id": "zorblat", "md5": hmd5(30), "title": "Zorblat", "artist": "Fimwob Ensemble",
+                "charter": "plinkster", "alts": [{"md5": hmd5(31), "charter": "trelvosk"}]},
+               {"id": "quimby_flux", "md5": hmd5(32), "title": "Vosklet Morning", "artist": "Drazzle", "charter": "qq"},
+               {"id": "a_made_up_title", "md5": hmd5(33), "title": "Snibber", "artist": "Wobblecast",
+                "charter": "plinkster"}]
+
+
 @pytest.fixture
 def three_sets(data, tmp_path, engine, monkeypatch):
-    """Takes of a made-up reference set, stress set and 20-song set (the stand-in engine), under a made-up home; the
-    engine's summary holds the input's path (an id in it), and gpu_run.log a traceback-like line."""
+    """Takes of a made-up reference set, stress set and 20-song set (the stand-in engine), under a made-up home, with
+    the two local lists; the engine's summary holds the input's path (an id in it), gpu_run.log a traceback-like line."""
     refs(data, ids=("aaa",), test_song=False)
     stress(data, tmp_path, monkeypatch, ids=("ttt",), built=("ttt",))
     set20(data / "set20")
+    (data / "stress.local.json").write_text(json.dumps(STRESS_LOCAL))
+    (data / "set20" / "stress.local.json").write_text(json.dumps(SET20_LOCAL))
     for args in (["--set", "refs"], ["--set", "stress"], ["--set", "set20"]):
         assert T.main([*args, "--device", "cpu", "--seeds", "1"]) == 0
     (data / "runs" / "takes" / "set20" / "stray" / "seed_1").mkdir(parents=True)   # a folder labels.json does not name
@@ -401,7 +419,7 @@ def take_of(data: Path, label: str) -> Path:
 
 
 def results(data: Path, home: Path, **env):
-    return gpu(["results"], {**os.environ, "EVAL_DATA": str(data), "HOME": str(home), **env})
+    return gpu(["results"], {**os.environ, "EVAL_DATA": str(data), "HOME": str(home), "USER": "madeupuser", **env})
 
 
 @bash
@@ -413,7 +431,7 @@ def test_results_zips_structured_files_by_label_and_no_log(three_sets, tmp_path)
     assert str(tmp_path) not in p.stdout   # the zip's own line too: ~/data/gpu_results.zip
     z = zipfile.ZipFile(data / "gpu_results.zip")
     names = z.namelist()
-    take = ["notes.chart", "song.ini", "take.json", "autochart_run/summary.json"]
+    take = ["notes.chart", "song.ini", "take.json", "summary.json"]
     assert sorted(names) == sorted(
         ["gpu_results/takes/takes.jsonl", "gpu_results/takes/stress/set.json", "gpu_results/takes/set20/set.json"]
         + [f"gpu_results/takes/aaa/seed_1/{f}" for f in take] + [f"gpu_results/takes/stress/ttt/seed_1/{f}" for f in take]
@@ -422,7 +440,7 @@ def test_results_zips_structured_files_by_label_and_no_log(three_sets, tmp_path)
         text = z.read(n).decode()
         assert no_id(n) and no_id(text) and str(tmp_path) not in text, n
     # the summary and take.json copied field by field: the numbers and names, not the input's path
-    summary = json.loads(z.read("gpu_results/takes/set20/s03/seed_1/autochart_run/summary.json"))
+    summary = json.loads(z.read("gpu_results/takes/set20/s03/seed_1/summary.json"))
     original = json.loads((take_of(data, "s03") / "autochart_run" / "summary.json").read_text())
     assert "audio" not in summary and original["audio"].endswith("/zorblat/input.wav")
     assert summary == {k: v for k, v in original.items() if k != "audio"}
@@ -445,56 +463,102 @@ def test_results_makes_no_zip_that_would_hold_audio(three_sets, tmp_path):
     assert "set20/s03/seed_1/notes.chart" in p.stdout and no_id(p.stdout) and str(tmp_path) not in p.stdout
 
 
+GUARD_PLANTS = [   # (planted line, the kind the guard names, extra env, HOME's last part)
+    ("// Zorblat\n", "id", {}, None),                               # an id in another case
+    ("a = Quimby Flux\n", "id", {}, None),                          # an id with spaces for its underscores
+    ("a = quimby-flux\n", "id", {}, None),                          # and with a hyphen
+    ("a = zorblat_live\n", "title", {}, None),                      # a title as one word of an underscored run
+    ("a = vosklet   morning\n", "title", {}, None),                 # a title, another case and spacing
+    ("a = The-Snorbs\n", "artist", {}, None),                       # a stress artist
+    ("a = Wobblecast\n", "artist", {}, None),                       # a 20-song artist
+    ("a = OTHERFOX\n", "charter", {}, None),                        # a stress alt's charter
+    ("a = trelvosk\n", "charter", {}, None),                        # a 20-song alt's charter
+    (f"a = {hmd5(30)}\n", "md5", {}, None),                         # a 20-song primary md5
+    (f"a = {hmd5(31).upper()}\n", "md5", {}, None),                 # a 20-song alt md5, upper case
+    (f"a = {hmd5(40)}\n", "md5", {}, None),                         # a stress primary md5
+    (f"a = {hmd5(41)[:12]}\n", "md5", {}, None),                    # 12 digits that start a stress alt's md5
+    ("a = /mnt/c/users/madeupname/x\n", "path", {}, None),          # a Windows user folder, no profile known
+    ("a = C:/Users/Madeupname/x\n", "path", {}, None),
+    ("a = e:\\\\users\\\\madeupname\n", "path", {}, None),          # JSON-escaped
+    ("a = \\\\wsl$\\Ubuntu\\home\\x\n", "path", {}, None),
+    ("a = \\\\wsl.localhost\\Ubuntu\\home\\x\n", "path", {}, None),
+    ("a = /mnt/d/profiles/made up/x\n", "path", {"WINDOWS_PROFILE": "D:\\Profiles\\Made Up"}, None),   # wslpath's
+    ("a = d:\\\\profiles\\\\made up\n", "path", {"WINDOWS_PROFILE": "D:\\Profiles\\Made Up"}, None),  # escaped
+    ("HOME", "path", {}, None),                                      # the home folder in another case
+    ("charter = Madeupuser\n", "user name", {}, None),              # $USER
+    ("a = zibboq\n", "user name", {"USER": ""}, "zibboq"),         # the home folder's last part
+]
+
+
 @bash
-@pytest.mark.parametrize("plant, why", [
-    ("// Zorblat\n", "a 20-song id"),                        # an id in any case, as a whole word
-    (f"made_up = {md5(31)}\n", "a package md5 of the lists"),
-    ("HOME", "the home folder or the Windows profile"),       # the home folder in another case: the scrub misses it
-])
-def test_the_guard_reads_the_finished_zip_apart_from_the_scrub(three_sets, tmp_path, plant, why):
+@pytest.mark.parametrize("plant, kind, env, home_name", GUARD_PLANTS)
+def test_the_guard_stops_each_name_md5_and_path_and_names_none(three_sets, tmp_path, plant, kind, env, home_name):
     data = three_sets
-    (data / "set20" / "stress.local.json").write_text(json.dumps([{"id": "zorblat", "md5": md5(30),
-                                                                   "alts": [{"md5": md5(31)}]}]))
+    home = tmp_path / home_name if home_name else tmp_path
     with open(take_of(data, "s02") / "song.ini", "a") as f:
         f.write(f"made_up = {str(tmp_path).upper()}/x\n" if plant == "HOME" else plant)
+    p = results(data, home, **env)
+    assert p.returncode == 1 and "no zip made, the guard stopped it" in p.stdout, p.stdout + p.stderr
+    line = next(x for x in p.stdout.splitlines() if "seed_1/song.ini: " in x)
+    assert line.strip().startswith("gpu_results/takes/set20/s02/seed_1/song.ini: ") and kind in line.split(": ")[1]
+    low = p.stdout.lower()
+    planted = plant.strip().split("= ")[-1].lower()
+    assert planted not in low and no_id(low) and not (data / "gpu_results.zip").exists()
+    for song in STRESS_LOCAL + SET20_LOCAL:   # no name, md5 or prefix of one in what it prints
+        for v in (song["title"], song["artist"], song["md5"][:8]):
+            assert v.lower() not in low
+
+
+@bash
+def test_a_name_in_a_members_own_path_is_masked_in_the_stop(three_sets, tmp_path):
+    data = three_sets
+    folder = data / "runs" / "takes" / "Wobblecast" / "seed_1"   # a reference-set folder named like an artist
+    folder.mkdir(parents=True)
+    (folder / "notes.chart").write_text("x")
     p = results(data, tmp_path)
-    assert p.returncode == 1 and "no zip made, the guard stopped it" in p.stdout
-    assert f"gpu_results/takes/set20/s02/seed_1/song.ini: {why}" in p.stdout
-    assert no_id(p.stdout.lower()) and md5(31) not in p.stdout and not (data / "gpu_results.zip").exists()
+    assert p.returncode == 1 and "gpu results/takes/<artist>/seed 1/notes.chart: artist" in p.stdout
+    assert "wobblecast" not in p.stdout.lower()
 
 
 @bash
 def test_a_common_word_id_is_kept_out_of_the_zip_by_label_and_the_guard(data, tmp_path, engine, monkeypatch):
     """A 20-song id that is a common word ("run") must not come back in the zip: the summary's path that holds it is
-    not copied, the JSON keys that hold it inside a word ("runs") are not it, and a whole word anywhere stops the zip."""
+    not copied, no fixed part of a member's path is that word, the JSON keys that hold it inside a word ("runs") are
+    not it, and a whole word anywhere stops the zip."""
     root = data / "set20"
     set20(root, ids=("run", "zorblat"))
     assert T.main(["--set", "set20", "--device", "cpu", "--seeds", "1"]) == 0
     p = results(data, tmp_path)
     assert p.returncode == 0, p.stdout + p.stderr
     z = zipfile.ZipFile(data / "gpu_results.zip")
-    word = re.compile(r"(?<![a-z0-9_])run(?![a-z0-9_])")
-    assert not any(word.search((n + z.read(n).decode()).lower()) for n in z.namelist())
-    assert "gpu_results/takes/set20/s01/seed_1/autochart_run/summary.json" in z.namelist()   # "run" sorts first
+    word = re.compile(r"(?<![a-z0-9])run(?![a-z0-9])")
+    assert not any(word.search(re.sub(r"[\s_-]+", " ", n + z.read(n).decode()).lower()) for n in z.namelist())
+    assert "gpu_results/takes/set20/s01/seed_1/summary.json" in z.namelist()   # "run" sorts first
     with open(root.parent / "runs" / "takes" / "set20" / "run" / "seed_1" / "notes.chart", "a") as f:
         f.write("// takes Run started\n")   # the repository's own words around it
     p = results(data, tmp_path)
-    assert p.returncode == 1 and "gpu_results/takes/set20/s01/seed_1/notes.chart: a 20-song id" in p.stdout
+    assert p.returncode == 1 and "gpu_results/takes/set20/s01/seed_1/notes.chart: id" in p.stdout
+
+
+@bash
+def test_a_title_that_is_a_public_stress_id_does_not_stop_the_zip(three_sets, tmp_path):
+    data = three_sets
+    local = [{**STRESS_LOCAL[0], "title": "TTT"}]   # the committed stress id ttt is public; its title equals it
+    (data / "stress.local.json").write_text(json.dumps(local))
+    p = results(data, tmp_path)
+    assert p.returncode == 0, p.stdout
 
 
 @bash
 def test_results_writes_the_windows_profile_as_userprofile(three_sets, tmp_path):
     data = three_sets
     with open(take_of(data, "ttt") / "song.ini", "a") as f:
-        f.write("a = C:\\Users\\Made Up\\Music\nb = /mnt/c/Users/Made Up/song-charting\nc = C:\\\\Users\\\\Made Up\n")
-    p = results(data, tmp_path, WINDOWS_PROFILE="C:\\Users\\Made Up")
+        f.write("a = D:\\Profiles\\Made Up\\Music\nb = /mnt/d/Profiles/Made Up/song-charting\n"
+                "c = D:\\\\Profiles\\\\Made Up\n")
+    p = results(data, tmp_path, WINDOWS_PROFILE="D:\\Profiles\\Made Up")
     assert p.returncode == 0, p.stdout + p.stderr
     ini = zipfile.ZipFile(data / "gpu_results.zip").read("gpu_results/takes/stress/ttt/seed_1/song.ini").decode()
     assert ini.endswith("a = %USERPROFILE%\\Music\nb = %USERPROFILE%/song-charting\nc = %USERPROFILE%\n"), ini
-    with open(take_of(data, "ttt") / "song.ini", "a") as f:
-        f.write("d = c:\\users\\made up\n")   # another case: the guard's
-    p = results(data, tmp_path, WINDOWS_PROFILE="C:\\Users\\Made Up")
-    assert p.returncode == 1 and "song.ini: the home folder or the Windows profile" in p.stdout
 
 
 def app_python(home: Path, log: Path) -> Path:

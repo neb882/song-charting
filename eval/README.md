@@ -305,8 +305,8 @@ eval/gpu.sh results                                        # eval/data/gpu_resul
   0.5-1.5 hours, the 20-song set (75 minutes) 1.5-5 hours.
 - **The zip** (`eval/data/gpu_results.zip`, and a copy in Windows' Downloads folder), made at the end of a run or by
   `results`, holds structured files only: per set, each take's `notes.chart` and `song.ini` as the engine wrote them,
-  its `take.json` (its key: the input's SHA-256, the seed, the install) and `autochart_run/summary.json` (the engine's
-  devices, tokens, beats and timings), both copied field by field (numbers, hashes and short names: no path, no
+  its `take.json` (its key: the input's SHA-256, the seed, the install) and `summary.json` (the engine's
+  `autochart_run/summary.json`: devices, tokens, beats and timings), both copied field by field (numbers, hashes and short names: no path, no
   message), and the set's `set.json` (each label's slot, chart count and length); `takes/takes.jsonl` (takes.py's
   record of each take: made, cached or failed, a failure by its exception's type) and `gpu_samples.csv` (the GPU's
   use every 5 s). No log goes in: `takes.log`, which has each failure's message, and `gpu_run.log` stay on this PC
@@ -314,9 +314,12 @@ eval/gpu.sh results                                        # eval/data/gpu_resul
   `takes/<set>/<label>/`. A 20-song song's take folder goes in under its label (s01-s13, in the order of the sorted
   ids, as `set20-v03.md` names them); the mapping, `runs/takes/set20/labels.json`, stays on this PC. In the text
   files, this PC's home folder is written `~` and the Windows profile `%USERPROFILE%` (`WINDOWS_PROFILE` names it,
-  else Windows' own). Then a guard reads the finished zip: a 20-song id as a whole word in any case, an md5 of the
-  two lists, or the home folder or the Windows profile in any case, in any file, and no zip is made (it names the
-  file by its label path); `check_no_audio.py` must pass too. A path the scripts print is written with `~`.
+  else Windows' own). Then a guard reads the finished zip, in lower case and with spaces, hyphens and underscores
+  alike: a 20-song id, a title, artist or charter of the two lists (one that is a stress id, public, aside), this
+  PC's user name, an md5 of the lists or 8 or more of its first digits, a Windows user folder, a `\\wsl$` path, the
+  home folder or the Windows profile, in any file, and no zip is made; `check_no_audio.py` must pass too. **If the
+  guard stops it, send its lines as they are:** each names a file by its label path and the kind of hit (id, title,
+  artist, charter, user name, md5, path), never the name. A path the scripts print is written with `~`.
 
 ## Rebuilding the dev machine
 
