@@ -272,3 +272,11 @@ the owner's, ntl, on v0.3.1) and two second-model reviews (`docs/reports/m7-vide
   of the references; until then nothing is built for them.
 - **The release gate's GPU check** (section 8) compares each re-charted song's whole tempo map and `drift_ms` with a
   CPU chart of the same audio file, not only the grid's headline numbers.
+
+## 12. After M7-01 (2026-11-08)
+
+M7-01's report (docs/reports/M7-01-measure.md) closed M7-04, M7-05 and M7-07 and the HOPO and sustain halves of
+M7-02. **M7-02 becomes the tap rule alone:** a tap is kept only in a run of 8 or more notes at 8 or more a second
+(T2: on the 8 songs with our taps, +0.000 to +0.044 each, none down; our taps match a human tap 6 % of the time),
+about half a day. With section 11, v0.4's builds are M7-02 (taps), M7-03 if its run rule clears, M7-06
+(`max_solos` 4), M7-09 (the halved grid's tempo shape, after its measurement) and M7-10 (the UI's quick wins).

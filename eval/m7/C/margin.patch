@@ -1,0 +1,93 @@
+diff --git a/songcharter/assemble.py b/songcharter/assemble.py
+index e3dc0bc..bb01301 100644
+--- a/songcharter/assemble.py
++++ b/songcharter/assemble.py
+@@ -1820,6 +1820,9 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
+             offset["map"] = "the halved grid's beats with their midpoints: the first grid's level (offset_map)"
+         warnings += warn
+         if takes[part.key]:
++            import songcharter.takes as _T   # M7-01 part C: the stem levels for the silent-onset arm
++            _stem = next((s for s in STEMS_FOR[part.instrument] if s in levels_db), None)
++            _T.SILENT = (levels_db[_stem], applied) if _stem else None
+             song, spliced = _splice_takes(part, song, takes[part.key],
+                                           [(tm.tick_to_sec(t) - pad, n) for t, n in sections], applied)
+             if not sections:
+diff --git a/songcharter/takes.py b/songcharter/takes.py
+index 17bac5a..7f9e208 100644
+--- a/songcharter/takes.py
++++ b/songcharter/takes.py
+@@ -21,6 +21,7 @@ fills are dropped, as assemble drops every source's phrases.
+ """
+ from __future__ import annotations
+ 
++import os
+ from dataclasses import dataclass, replace
+ 
+ import numpy as np
+@@ -71,26 +72,63 @@ def agreement(a: tuple[np.ndarray, np.ndarray], b: tuple[np.ndarray, np.ndarray]
+     return 2 * m / (len(ta) + len(tb))
+ 
+ 
++SILENT = None   # M7-01 part C: (the part's stem levels, the takes' offset), set by assemble when SC_M7_SILENT is
++
++
++def _m7_agreement(a, b, qa, qb, tol):
++    """agreement() with the silent onsets (qa, qb) unable to match; with none silent, agreement() itself."""
++    if not qa.any() and not qb.any():
++        return agreement(a, b, tol)
++    (ta, wa), (tb, wb) = a, b
++    if not len(ta) and not len(tb):
++        return 1.0
++    if not len(ta) or not len(tb):
++        return 0.0
++    used = qb.copy()
++    m = 0
++    for t, w, q in zip(ta, wa, qa):
++        if q:
++            continue
++        lo, hi = np.searchsorted(tb, t - tol), np.searchsorted(tb, t + tol, side="right")
++        ks = [k for k in range(lo, hi) if not used[k] and wb[k] == w]
++        if ks:
++            used[min(ks, key=lambda k: abs(tb[k] - t))] = True
++            m += 1
++    return 2 * m / (len(ta) + len(tb))
++
++
+ def splice(takes: list[TimedPart], sections: list[tuple[float, str]], *, margin: float = MARGIN,
+            early: float = EARLY, tol: float = TOL, gap: float = GAP) -> tuple[TimedPart, list[Window]]:
+     """One part from several takes of it (the first is the base), chosen window by window (the module docstring).
+     sections: (seconds on the takes' clock, name), sorted; with fewer than three takes, or no sections, the base is
+     returned."""
+     base = takes[0]
++    margin = float(os.environ.get("SC_M7_MARGIN", margin))   # M7-01 part C: the margin arm (measurement only)
++    force = os.environ.get("SC_M7_FORCE")                    # M7-01 part C: every window from this take (oracle)
+     if len(takes) < 3 or not sections:
+         return base, []
+     starts = [0.0] + [max(0.0, t - early) for t, _ in sections[1:]]
+     names = [n for _, n in sections]
+     ends: list[float | None] = starts[1:] + [None]
+     ons = [onsets(t.notes) for t in takes]
++    if SILENT is not None and os.environ.get("SC_M7_SILENT"):   # M7-01 part C: a silent onset counts as unmatched
++        from .assemble import silent_onsets, LEVEL_FRAME_S
++        levels, off = SILENT
++        quiet = [set(silent_onsets([x - off for x in t], levels, LEVEL_FRAME_S)) for t, _ in ons]
++        ons = [(t, w, np.array([round(float(x - off), 3) in q for x in t], dtype=bool)) for (t, w), q in zip(ons, quiet)]
++    else:
++        ons = [(t, w, np.zeros(len(t), dtype=bool)) for t, w in ons]
+     windows = []
+     for a, b, name in zip(starts, ends, names):
+         hi = np.inf if b is None else b
+-        cut = [(t[(t >= a) & (t < hi)], w[(t >= a) & (t < hi)]) for t, w in ons]
+-        scores = tuple(float(np.mean([agreement(cut[k], cut[j], tol) for j in range(len(takes)) if j != k]))
+-                       for k in range(len(takes)))
++        cut = [(t[(t >= a) & (t < hi)], w[(t >= a) & (t < hi)]) for t, w, _ in ons]
++        mute = [q[(t >= a) & (t < hi)] for t, _, q in ons]
++        scores = tuple(float(np.mean([_m7_agreement(cut[k], cut[j], mute[k], mute[j], tol) for j in range(len(takes))
++                                      if j != k])) for k in range(len(takes)))
+         best = max(range(len(takes)), key=lambda k: (scores[k], -k))
+         pick = best if scores[best] > scores[0] + margin else 0
++        if force is not None:
++            pick = int(force)
+         windows.append(Window(round(a, 4), None if b is None else round(b, 4), name,
+                               tuple(len(c[0]) for c in cut), tuple(round(s, 4) for s in scores), pick))
+     notes = []
