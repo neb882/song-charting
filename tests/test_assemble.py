@@ -2087,8 +2087,13 @@ def test_first_tempo_windows_find_a_halved_grid_back_at_the_first_grids_tempo():
     for q, flagged in ((1.09, True), (1.11, False), (0.91, True), (0.89, False), (2.0, False)):
         half = _tempo_grid([(154.0 / q, 300.0)]).beats
         assert bool(assemble_module.first_tempo_windows(first, half)["windows"]) is flagged, q
-    # a window with under 4 beats of either grid is skipped; a halved grid shorter than a window has none
-    assert assemble_module.first_tempo_windows(first, _tempo_grid([(10.0, 300.0)]).beats)["windows"] == []
+    # a window with under 4 beats of either grid is skipped: 3 halved beats at the first grid's spacing alone in a
+    # 40-s hole flag nothing (with 4 they would); a halved grid shorter than a window has none
+    slow = _tempo_grid([(77.0, 300.0)]).beats
+    for n, flagged in ((3, False), (4, True)):
+        hole = np.sort(np.concatenate([slow[(slow < 90.0) | (slow > 130.0)], 110.0 + np.arange(n) * 60 / 154]))
+        got = assemble_module.first_tempo_windows(first, hole)["windows"]
+        assert bool(got) is flagged and all(abs(w[2] - 1) < 0.01 for w in got), n
     assert assemble_module.first_tempo_windows(first, first[first < 15.0])["windows"] == []
 
 
