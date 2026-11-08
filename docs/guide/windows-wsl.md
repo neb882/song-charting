@@ -67,18 +67,24 @@ page.
 
 - **Chart first, play after.** While a song charts, songcharter uses most of the PC's memory: on a 16 GB PC, Windows
   has about 4 GB left until the chart is done. Don't run games then.
-- **How long it takes:** with the default options, a 4-minute song takes about 10 to 15 minutes. Most of that is the
-  guitar: songcharter charts it 4 times over (4 "takes") and combines them into a better chart, and the page shows
-  which take it is on ("take 2 of 4"). For a quicker chart, type 1 in the "Guitar takes" box (in the options, under
-  Guitar) before you press "Chart it": then a 4-minute song takes about 4 to 6 minutes. These times are estimates.
+- **How long it takes:** the page says it when the chart starts ("Usually about 4 to 10 minutes" for a 4-minute song
+  with the default options), and the browser tab's title says what it is doing. Most of that is the guitar:
+  songcharter charts it 4 times over (4 "takes") and combines them into a better chart, and the page shows which take
+  it is on ("take 2 of 4"). A busy song or a long one takes longer, as the guitar's time grows with the notes it
+  writes: a 9-minute song can take over half an hour. For a quicker chart, type 1 in the "Guitar takes" box (in the
+  options, under Guitar) before you press "Chart it": then a 4-minute song takes about 2 to 5 minutes. These times
+  are estimates.
 - **If a guitar take fails on the graphics card** (a game, Clone Hero or a browser left open can take the memory it
   needs), songcharter runs that take again on the CPU, once a song, and carries on. The page says so: a note at the
   top, and "take 3 of 4 (on the CPU)". That take takes a few minutes longer. If a second take fails, or a take was
   stopped because the PC ran out of memory, the chart stops and the page says what to try.
 - **A very long or very busy song's guitar** may be transcribed in pieces (more than the guitar model takes in one
   go), which songcharter joins into one chart; the Done screen then shows a note that says so.
-- **Keep the PC awake while a song charts:** a chart takes long enough for the PC to go to sleep. For the evening,
-  set its sleep to Never in Windows' power settings.
+- **Keep the PC awake while a song charts:** a chart takes long enough for the PC to go to sleep. While songcharter's
+  page is on screen, it keeps the screen on and the PC awake; behind another tab, or with the browser minimized, it
+  cannot. So for the evening, set its sleep to Never in Windows' power settings.
+- **You can close the page while a song charts:** keep the black songcharter window open (closing it stops the
+  chart). To come back, start songcharter again from the Start menu: the page shows the chart where it is.
 - Drop the song file on the page (or use "Choose a file"), then press "Chart it".
 - **Lyrics, if you want them on screen:** before "Chart it", paste the song's words into the "Paste lyrics" box,
   one line for each sung line. songcharter times the words you paste to the singing; it never looks lyrics up. The
@@ -86,8 +92,9 @@ page.
 - **Pictures, if you want them:** a song file with its own cover picture gets it as the album art. Under "Pictures"
   in the options you can choose another album art, and a background image to show behind the highway (JPEG, PNG or
   WebP). To see song backgrounds in Clone Hero, turn on Settings > Gameplay > "Use Song Backgrounds".
-- When it is done, look at the preview, then press "Install into Clone Hero". The first time, it may ask where your
-  Clone Hero Songs folder is.
+- When it is done, the page shows "Ready" at the top, with "Install into Clone Hero" right under it. Press it (the
+  preview and Listen, further down, are there for a look first if you want one). The first time, it may ask where
+  your Clone Hero Songs folder is.
 - **Listen to the chart** without playing it: under the preview, choose a part and a level and press "Listen". After
   a few seconds the page plays the chart over the song, a tone for each note (green lowest, orange highest; HOPOs
   softer than strums) or a drum sound for each hit. Listen for a note that comes late or not at all, a part playing
