@@ -250,7 +250,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | HOPOs below Expert | `reduce.py`'s rule (§2.11 step 9) | same | none |
 | lower-tier density | `reduce.py`'s time floors (§2.11 step 2) | same | none |
 | +8 inside star power | dropped; the coverage step keeps phrases non-empty [decision] | absent | none |
-| taps | none (§2.6) | `quantize.py` keeps Expert taps (`QuantizeRules.taps = True`); `reduce.py` drops them below Expert | set `taps=False` for Goal 1, or adopt Expert taps after M2 [decision] |
+| taps | only inside fast runs: 8+ onsets at 0.125 s or less (§2.6 step 4, M7-02) | same (`QuantizeRules.tap_run`; any other tap takes its natural state, no flip); `reduce.py` drops them below Expert | none |
 | Engine A ticks | through the quantizer with an "already on our grid" flag (§2.7) | absent | add with Engine A (M2) |
 | `diff_band` | written (§2.12) | not writable | add a band rating to `write_ini` and `build_song_folder` |
 | `beat_grid(start=...)` | click/free tests on that path; low evidence returns the start beats flagged (§2.3) | always free; raises `InputError` (a `ValueError`) on low evidence | §2.3 step 6 |
@@ -680,7 +680,9 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
        the downbeats as for any grid. The halved grid is kept when its confident share is at least 0.7 times the
        first's (the doubling's guard; `sooth` 0.798 against 0.682), else the first stays with a warning.
        report.json's `octave_stats.halving` holds the numbers and why. `grid.octave` is 0.5, and the build warns
-       "tempo halved to ...: check sync". `grid_octave` 1 forces the first grid (no halving).
+       "tempo halved to ...: check sync". `grid_octave` 1 forces the first grid (no halving). Since M7-09 the pass
+       tests a straight line through allin1's beats against them first, and warns where the halved grid runs at the
+       first grid's tempo (the halved grid's tempo shape, below).
      - **Not every other line of the first grid** (the order's wording; decided 2026-11-06 by the orchestrator on
        these numbers). On `sooth` the first grid's lines on allin1's beats switch parity at about 300 s (even lines
        0.81–1.00 of each 30-s window before, odd 0.78–1.00 after). The cause is our grid: a tempo dip at 297–315 s
@@ -758,6 +760,68 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
          with the vote). Beat F1, every F1@50, star power and the sustain shares are as in the table; the solo time
          overlapping alt1's is 0.903 (0.824 on M6-03's run). `troop`, `break` and `pm2` keep every track's hash
          there too, and the references against M6-03's golden run (below).
+   - **The halved grid's tempo shape** (M7-09) [code; here, M7-09's measurement (`docs/reports/M7-09-measure.md`,
+     scripts in `eval/m7/m709/`) and its build's checks]. Started from allin1's beats, the halved grid followed them
+     wherever the drums gave no evidence: with `start=`, `beat_grid` took the start beats unconditionally (no line
+     was tested), its base was their LOESS, and where drum support ran out the free curve faded to that base, i.e.
+     to allin1's own wander (`docs/reports/m7-video-review-check.md` section 3).
+     - **What it did.** A 150 BPM rock ballad of the owner's (`ntl`, first grid a click at 150, halved to 75):
+       its drumless intro warped 75 -> 86.9 -> 74.3 BPM (35 tempo markers; about 1.5 beats too many at 19-33 s),
+       and 8 of the 42 guitar notes there sat off the 8th grid after the quantizer, against 5 of 447 elsewhere.
+       The owner's own audio file of the shred song (`sooth`) charted its last 28 s at 160 BPM where both human
+       charts stay at 77: that file's allin1 beats double there (the stress set's audio of the song does not).
+       Neither warned: `tempo_check` runs in the halved fold, where 160 folds to 80, and `drift_ms` is recorded,
+       not tested.
+     - **The rule: the line test** (`beat_grid(line_test=True)`, which `assemble._halving_pass` passes). A robust
+       straight line through the start beats, by their index and extended over the song from its first beat at or
+       after 0 s, is the start grid unless the start beats find `TRACKER_MARGIN` (0.10) more confident share: the
+       first pass's test of its line against its tracker, with allin1's beats as the tracker and `keep_line` not
+       applying. When the start beats win, the grid is today's, beat for beat. When the line wins, the grid is built
+       around it as the first pass's line is: click below `FREE_SHARE`, free above it, the drumless beats on the
+       line. The halved grid's `stats["start"]` (report.json's `grid.stats.start`) holds the line's tempo, first
+       beat and confident share, the start beats' share and the grid used, and the "tempo halved" warning says
+       which ("the grid follows them" or "follows the straight line through them"). The doubling's start from
+       allin1 (M6-05, above) does not take the test: its line already missed a tempo change there.
+     - **The measurement** (main 6a8b1e8, in process from the kept folders, CPU, no engine; beat F1 against the
+       humans with the scorer's 70-ms match):
+
+       | halved grid | `sooth` / s02 / s04 beat F1 (primary) | `ntl` intro notes off the 8th grid | `ntl` tempo map |
+       |---|---|---|---|
+       | today (allin1's beats) | 0.980 / 0.748 / 0.956 | 8 of 42 | 74.3-86.9 BPM, 35 markers |
+       | a: every other beat of the first grid | -0.453 / -0.218 / -0.099 | 0 of 41 | 74.5-75.2, 17 |
+       | **b: the line test (built)** | **0.980 / 0.748 / 0.956 (identical, every chart and stretch)** | **0 of 41** | **75.0, 1 marker** |
+       | c: allin1's curve faded to the line where the drums are silent | -0.091 / -0.445 / -0.078 | 8 of 41 | 72.1-78.0, 29 |
+
+       On `sooth`, s02 and s04 allin1's beats win the test (the line's share is more than 0.10 under theirs), so
+       b is today's grid; on `ntl` the line wins (0.549 against allin1's 0.578) and its guitar's 8th-level phase
+       concentration over 0-35 s rises from 0.176 to 0.269. On the owner's `sooth` file (simulated: the stress
+       audio with that file's chart beats standing in for allin1's) b is today too: allin1's beats win there, and
+       the tail stays at 160 BPM. a loses because the first grid slips a line on `sooth` (the parity flips, above).
+     - **The warning: the halved grid back at the first grid's tempo** (`assemble.first_tempo_windows`). Per 20-s
+       window every 5 s (`HALVED_TEMPO_WINDOW_S`, `HALVED_TEMPO_HOP_S`), the halved grid's median beat period over
+       the first grid's, from each one's beats in the window (4 or more each): 2 where the halved grid holds its
+       tempo. Within 10 % of 1 (`HALVED_TEMPO_BACK`) the window is flagged; overlapping windows merge into spans,
+       and a kept halved grid warns once per span "the halved grid runs at the first grid's tempo at X-Y s: check
+       sync". report.json's `octave_stats.halving.first_tempo` holds the windows (start, end, ratio), the spans and
+       the parameters, whenever a halved grid was built. It flags the owner file's outro (510-545 s, on the
+       measurement's simulation) and s02's 225-300 s (ratios 0.997-1.054; the build's check), where s02's own human
+       charts disagree by an octave (the primary at 69.6 BPM, alt1 at 140.2), and nothing on `sooth`'s stress
+       audio, s04 or `ntl`. It warns and changes nothing:
+       halving such a window is M8's, with more songs whose audio ends that way (M5-99).
+     - **Not built** (the orchestrator, 2026-11-08, on the measurement): `tempo_check` at the first grid's fold
+       (it caught neither fault: the 160 BPM tail doubled is 320 against a 160 window, under the margin), and a
+       warning on `drift_ms` p95 over two beats (it fires on 10 of 24 golden and stress runs, s06 and s07 above the
+       owner file: on a tracker grid it measures the song's distance from a straight line, not an error).
+     - **Checked** (the build against main c32f750, in process on the kept folders as the measurement ran:
+       the first grid, `_octave_pass`, allin1's downbeats). `sooth`, s02 and s04: beats and downbeats identical
+       (689, 476 and 350), allin1's beats winning the test (the line's share 0.330, 0.152 and 0.204 against their
+       0.807, 0.574 and 0.871), every grid stat the same. `ntl`: the line, click mode, one tempo marker at 75.0
+       BPM (main 35, 74.3-86.9), 0 of 41 guitar notes off the 8th grid in the intro (main 8 of 41; 4 of 448
+       elsewhere, main 5), and the halved fold's tempo-check window gone.
+     - **A limit of the line.** It is fit by index, so start beats that gain beats over a large share of the song
+       pull it off the body's tempo (a made-up click with 2 beats gained over its first 30 s: at 120 s the line
+       holds 75.0 BPM; at 90 s it reads 76.0 and the start beats win the test). The test then keeps the start
+       beats, today's grid: never worse than before, but not fixed.
 
 **Whole-song runs tonight** [here, beatgrid run].
 
@@ -805,7 +869,7 @@ Four Harmonix references: summed original drum stems, no hints, no Beat This sta
      is about half of v1's. It runs today only on the onset envelope; on Beat This activations it is [untested], and M2
      can compare the two.
 6. **Refine** with `beat_grid(start=...)` [code], after three changes [untested]:
-   - With `start=`, `beat_grid` fits no straight line and always returns free mode (`use_tracker` is true), so step 7 cannot run. After refining, fit `robust_line` to the refined beats and run step 7's tests on both paths.
+   - With `start=` alone, `beat_grid` fits no straight line and always returns free mode (`use_tracker` is true), so step 7 cannot run. After refining, fit `robust_line` to the refined beats and run step 7's tests on both paths. (Since M7-09, `line_test=True` fits a straight line through the start beats and tests it against them as the first pass tests its line against its tracker; Goal 1's halving pass uses it, Goal 1 step 7.)
    - With too little evidence (a drumless song, a weak bass or guitar stem) it raises `InputError` (a `ValueError`). Return the start beats unrefined with a "low-evidence" flag instead.
    - Refining on bass or guitar onsets when there are no drums (critique G3) is the caller's choice of stem today (the module docstring says "or the mix"), and `ONSET_TO_BEAT_MS` (−22 ms) was calibrated on drum-stem envelope peaks only. Calibrate it for bass and guitar onsets, or disable it there.
      Inside a song that has drums, drumless beats already follow a second stem calibrated on the same song (Goal 1,
@@ -1194,13 +1258,61 @@ The quantizer is the only place where seconds become ticks (Resolution 192). It 
      default `hopo: "forced"` (`QuantizeRules.forced_only`) reproduces only the states the source forced
      (`TimedNote.hopo_forced`: a `.chart` `N 5`, a `.mid` forced HOPO or strum); every other note follows the natural
      rule on our grid, so a natural HOPO that only the source's wrong tempo map made (8ths on a half-tempo map) does not
-     become a forced one. `"source"` reproduces every state, `"natural"` none. Which rule stays is open (§2.0).
+     become a forced one. `"source"` reproduces every state, `"natural"` none. M7-01's A-a measured the modes on the
+     23 songs with human charts (Expert guitar, per-note state agreement at 100 ms): none beats `"forced"` by its bar
+     (`"natural"` +0.014 [−0.011, +0.044] with four songs down more than 0.03; the octave rule +0.005), since the
+     engine's forced flags are near coin flips against the humans (its forced strums are strummed by them 52 % of
+     the time, its forced HOPOs HOPO'd 34 %) [here, docs/reports/M7-01-measure.md]; so `"forced"` stays.
    - Rule-based engines give `hopo=None`, and natural rules apply. Neither forced HOPOs nor attack strength is predictable from audio (AUC 0.48–0.53 [here, v1]), so a rule engine cannot supply intent; a forced-strum rule for rule engines is M5 (§8).
    - An imported rule-engine chart reads back with the natural HOPO states of its own 120 BPM map; use `hopo:
      "forced"` (the pipeline does) or `"natural"` for it, never `"source"` [here, bass engine run].
+   - **Taps only in fast runs** (M7-02) [here, M7-01 part A's A-b; M7-02's review, its skeptic and the branch's
+     check below]. A source tap is kept only inside a run of 8 or more onsets, each at most 0.125 s after the one
+     before on our grid (8 a second or more: `QuantizeRules.tap_run` 8, `tap_run_gap_s` 0.125; `quantize.fast_runs`),
+     on every 5-fret part and every level the quantizer takes; any other tap takes its natural state on our grid
+     with no flip, under every HOPO rule: a HOPO where the natural rule makes one (a single fret change at most 65
+     ticks after the note before), else a strum (a burst's first note after a rest, a same-fret repeat, a chord). No
+     note moves or goes. `tap_run` 0 is the old rule (every tap kept). `report.json`'s `parts.*.quantize.<level>`
+     counts `taps_kept`, and of the taps outside a run `taps_to_hopo` (natural HOPOs) and `taps_to_strum`. The lower
+     levels are reduced from Expert as before: `reduce.py` writes no tap below Expert, and its Hard rule reads each
+     former tap by the state Expert now gives it (§2.11).
+     - **Why** [M7-01's A-b]: the engine taps where the humans do not: on the 8 songs with our Expert taps, 6 % of
+       them (precision 0.061) fall on a human tap at 100 ms, and they find 16 % of the human taps (recall 0.157, 13
+       songs with human taps); our tap share 0.041 against the humans' 0.031. A-b's arms: every tap outside a run
+       made a HOPO (T2) +0.007 [+0.002, +0.013] in per-note state agreement pooled over the 23 songs, +0.000 to
+       +0.044 on each of the 8; no taps at all (T1) the same; a tap on a same-fret repeat made a strum (T3) +0.008
+       [+0.000, +0.023], almost all Kimochi Warui's.
+     - **Why the natural state, not a HOPO** [M7-02's review and skeptic, recounted here]. T2 as first built forced
+       every such tap to a HOPO, a flip wherever our grid's natural state is a strum (Kimochi Warui's Expert flips
+       2 -> 395). At the 1,566 former taps the human charts match at 100 ms (the 8 songs, every chart) the humans
+       strum 598 of the 835 whose natural state is a strum (72 %: 385 of 497 that are not repeats, 213 of 338 same-fret
+       repeats, the repeats HOPO'd 60 times, 27 of them on s09) and HOPO 498 of the 731 at natural-HOPO positions
+       (68 %); a HOPO everywhere matches them at 667 of 1,566 (43 %). Against T2, the natural state is +0.0135
+       [−0.0003, +0.0377] pooled over the 23 songs (bootstrap over songs as A-b's), Kimochi Warui +0.242, sooth
+       +0.071, s09 −0.007 the only loss; against keeping every tap (T0), +0.020 [+0.002, +0.049], no song below it.
+     - **The branch's check**: the quantizer re-run in process on each song's kept engine take with the kept chart's
+       map, pad, offset and octave; the old rule reproduces the kept chart (its report's quantize counts and every
+       onset's state), the rule changes no tick, fret or sustain and adds no flip, and its states equal a
+       recombination of the kept chart's own (each former tap given its natural state there) at every matched note.
+       Per-note state agreement at 100 ms against every human chart, the song's mean:
+
+       | song (grid octave) | our taps | kept | to HOPO | to strum | the humans' tap share | T0: taps kept | T2: HOPOs | this rule |
+       |---|---|---|---|---|---|---|---|---|
+       | Kimochi Warui (1) | 618 | 0 | 225 | 393 | 0.103 | 0.474 | 0.514 | **0.755** |
+       | Lucretia (1) | 8 | 0 | 8 | 0 | 0 | 0.571 | 0.572 | 0.572 |
+       | Drunk Drivers (1) | 3 | 0 | 2 | 1 | 0 | 0.966 | 0.966 | 0.966 |
+       | sooth (0.5) | 312 | 31 | 141 | 140 | 0.033 | 0.525 | 0.569 | **0.640** |
+       | troop (2) | 99 | 78 | 12 | 9 | 0.124 | 0.668 | 0.669 | 0.671 |
+       | s06 (1) | 30 | 0 | 0 | 30 | 0.063 | 0.659 | 0.663 | 0.666 |
+       | s07 (1) | 126 | 35 | 70 | 21 | 0.001 | 0.700 | 0.727 | 0.728 |
+       | s09 (1) | 75 | 0 | 46 | 29 | 0 | 0.618 | 0.656 | 0.649 |
+
+       T0 and T2 are M7-01's to the third decimal. The counts are the quantizer's (before the stem stage trims the
+       part's edges); the other 15 songs' charts have no Expert guitar tap, so the rule changes nothing there. The
+       precision of the taps the rule keeps (troop 78, s07 35, sooth 31) is not measured.
 5. **Sources already on our grid** (Engine A, §2.7): a per-source flag keeps exact ticks and still runs spacing, chord, sustain and HOPO rules [untested; not in `quantize.py`].
 6. **Drums:** one hit per pad per tick; cymbal/tom collisions as in §2.9; at most two hand pads per tick; 2x kick on Expert only.
-7. **No taps** in this version (`quantize.py` keeps Expert taps today; §2.0).
+7. **Taps** only inside fast runs (step 4, M7-02); none below Expert (§2.11).
 
 - **Not chosen:**
   - v1's "natural HOPOs only, drop every `N 5`": autochart's HOPO κ against humans is 0.77 (Drunk Drivers) and 0.74 (Take Me Out), and natural-only rules cannot force a strum (critique G1).
@@ -1845,7 +1957,7 @@ own tempo map, first to last Expert onset), phrases per song (per 40 of the char
   never tuned; nobody listened to whether the busy vocals stem is singing or guitar bleed; the 6s stems give Solo 2
   0.863 where v1's ft stems gave 95 %.
 - **Placement:** `E solo` on the first note, `E soloend` on the last (inclusive). Consecutive solo sections are one
-  run; expect 1–3 per song.
+  run; expect 1–4 per song (`max_solos` 4 since M7-06).
 - **Length and share (M5-03)** [conventions: solo markers go on a featured lead break, not on every instrumental
   passage; a counter running for most of a song makes the bonus meaningless; here, M5-03]. On the owner's 9-minute
   shred instrumental allin1 labelled most of the song Solo (Solo 1A–1C at 64–103 s, Solo 2A–2Z at 116–535 s), so two
@@ -1883,7 +1995,8 @@ own tempo map, first to last Expert onset), phrases per song (per 40 of the char
      owner may want a tighter share for songs with vocals (M5-00 section 8).
   **The choice** [conventions: on an instrumental, the spans where the lead stands out]: the candidates with 4
   measures and 16 Expert onsets are ranked by onset density (Expert onsets per measure, ties to the earlier start)
-  and taken in that order, at most 3, skipping any that starts within `min_gap_measures` (**4**) after a kept solo's
+  and taken in that order, at most `max_solos` (**4**; 3 until M7-06, below), skipping any that starts within
+  `min_gap_measures` (**4**) after a kept solo's
   end or ends within 4 before a kept solo's start. One that would take the solos' seconds (first to last onset) past
   `max_share` of the first..last Expert onset's is cut to its densest window within the budget left (measure-aligned,
   as the length rule's), or skipped when that window lacks the minimums, so a song never loses its only solo to the
@@ -1891,7 +2004,7 @@ own tempo map, first to last Expert onset), phrases per song (per 40 of the char
   orchestrator, 2026-11-05] keeps a split run from giving back-to-back markers while a long run can still give
   separated solos (the shred song's alt chart has two, 4:30–6:06 and 6:56–8:33). A person's names (`--solos "Solo
   1,Solo 2"`) are neither split, gapped nor share-capped: the person's choice stands, within the minimums and the
-  3-solo cap. `report.json`'s `phrases.guitar` holds `solo_rules` (the values used, and `capped`: false with names),
+  solo cap. `report.json`'s `phrases.guitar` holds `solo_rules` (the values used, and `capped`: false with names),
   `solo_details` (per solo: start, end, measures, onsets, onsets per measure), `solos_skipped_by_gap`,
   `solos_trimmed_by_share` (the candidates as they were before the cut) and `solos_skipped_by_share`; the preview's overview draws each solo as a green band under the star power's cyan one
   [code].
@@ -1928,6 +2041,27 @@ own tempo map, first to last Expert onset), phrases per song (per 40 of the char
   (100 s), would lengthen that solo past every human chart's 67–70 s. M5-03's rounding over all 32 human solos (the
   95th percentile 56.8 measures and 85.5 s) would give 64 measures and 90 s: 77-s solos on the fast songs and
   Lucretia's 91-s solo cut; not adopted. So `SoloRules` is unchanged.
+  **The count, 4 (M7-06)** [here, M7-01 part B's B-c2 on the 23 songs with human charts; the branch's check]. The
+  human charts' median is 1 solo a chart and their 90th percentile 2–3 (M5-03), but 4 of the 23 songs have a human
+  chart with more than 3: troop 4, pm2 5, s07 11, s08 5. `place_solos` re-run in process on the kept charts (v0.3.1's
+  code) at `max_solos` 3, 4 and 5 and `max_share` 0.40 and 0.60: cover = the humans' solo time inside ours (the mean
+  over charts with solos, on the 16 songs with human solos), inside = our solo time inside a chart's solos (the mean
+  over all charts, 18 songs); "away" = a song's solo share further from its human charts' range than today:
+
+  | rule | songs that change | cover, pooled (against today) | inside, pooled | away |
+  |---|---|---|---|---|
+  | 3 solos, share 0.40 (until M7-06) | – | 0.603 | 0.442 | – |
+  | **4 solos, share 0.40** | pm2, s06 | 0.615 (+0.012 [0.000, +0.035]) | 0.441 (−0.001 [−0.011, +0.008]) | none |
+  | 5 solos, share 0.40 | pm2, s06 | the same as 4 | the same | none |
+  | 3 solos, share 0.60 | Lucretia, sooth, s07 | 0.605 (+0.002) | 0.433 (−0.010) | all three |
+  | 4 solos, share 0.60 | Lucretia, sooth, pm2, s06, s07 | 0.617 (+0.014) | 0.430 (−0.012) | Lucretia, sooth, s07 |
+
+  So the count went to 4 and the share stays 0.40 [decision, the orchestrator, M7-00 section 11]. The two songs
+  that gain a solo: pm2 (its humans 5, 4, 3, 5 and 1 solos, shares 0.117–0.348) from 3 solos, share 0.272, cover
+  0.467, inside 0.424 to 4, 0.320, 0.631, 0.473, its fourth at 204.0–225.3 s; s06 (its humans 3, 0, 1 and 1, shares
+  0–0.551) from 3, 0.324, 0.579, 0.683 to 4, 0.380, 0.612, 0.618, its fourth at 165.1–197.2 s. The branch's check
+  (`place_solos` on all 23 kept charts at 3 and at 4): at 3 it gives every kept chart's own solos, and at 4 only those
+  two songs change, nothing else moving. A person's names are held to the count too.
 - **Difficulties:** solos are written on every guitar difficulty. The reducer copies them down and keeps at least one note in each solo on every level (`reduce.py`) [code], so scan-chart's `emptySoloSection`, which it checks on every track, cannot fire.
 
 - **Not chosen:** imported star power (autochart has none; STRUM's 8 phrases placed on the densest Expert windows come out empty on Easy); chartgen's 19 phrases.
