@@ -185,7 +185,7 @@ def test_the_20_song_set_is_named_by_its_labels_in_every_line(data, tmp_path, en
     lines = log_lines(data)
     assert lines[0] == "start: set20, 3 songs x 2 seeds on cpu" and lines[-1] == "ALL DONE, 1 takes failed"
     assert [line.split(" ")[0] for line in lines[1:-1]] == ["s01", "s01", "s02", "s02", "s03", "s03"]
-    assert lines[4] == f"s02 seed 2: FAILED cannot read {root / 'stress' / 's02' / 'input.wav'}"
+    assert lines[4] == T.shown(f"s02 seed 2: FAILED cannot read {root / 'stress' / 's02' / 'input.wav'}")
     # the take folders keep the ids (on this PC); the mapping and the set's facts beside them
     st = data / "runs" / "takes" / "set20"
     assert (st / "zorblat" / "seed_1" / "notes.chart").is_file() and not (st / "s03").exists()
@@ -256,7 +256,7 @@ def test_scrub_puts_labels_for_ids_and_hides_md5s(data, tmp_path, monkeypatch, c
     text = f"ok zorblat primary\nok quimby_flux alt\n{root}/stress/a_made_up_title/alt/{md5(5)}/x zorblatx\n"
     monkeypatch.setattr(sys, "stdin", io.StringIO(text))
     assert T.main(["--set", "set20", "--scrub"]) == 0
-    assert capsys.readouterr().out == f"ok s03 primary\nok s02 alt\n{root}/stress/s01/alt/<md5>/x zorblatx\n"
+    assert capsys.readouterr().out == T.shown(f"ok s03 primary\nok s02 alt\n{root}/stress/s01/alt/<md5>/x zorblatx\n")
 
 
 # ------------------------------------------------------------------------------------------------ --app
@@ -320,7 +320,7 @@ def test_the_app_check_names_each_problem(tmp_path, monkeypatch, app_env, capsys
         monkeypatch.setattr(T, "cuda_library_path", lambda: change["libs"])
     code = T.main(["--app", "--check", "--device", "cuda"])
     out = capsys.readouterr().out
-    assert out.startswith(f"app: songcharter 0.3.1 at {home}, the {change.get('lane', 'cu132')} lane\n")
+    assert out.startswith(T.shown(f"app: songcharter 0.3.1 at {home}, the {change.get('lane', 'cu132')} lane\n"))
     if problem is None:
         assert code == 0 and out.endswith("check: ok\n") and "CUDA provider: there" in out
     else:

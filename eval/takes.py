@@ -260,7 +260,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.scrub:
         scrub = scrubber(every, md5s=True)
         for line in sys.stdin:
-            sys.stdout.write(scrub(line))
+            sys.stdout.write(shown(scrub(line)))
             sys.stdout.flush()
         return 0
     scrub = scrubber(every)
