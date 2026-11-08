@@ -390,6 +390,8 @@ def test_a_halved_start_through_a_drumless_wander_keeps_the_straight_line(drumle
     _, p95 = spread_ms(g.beats, truth)  # one constant offset (the attacks against the peaks) everywhere ...
     assert p95 < 3.0
     assert np.abs(nearest(g.beats, truth[intro]) - truth[intro]).max() < 0.015  # ... the intro included
+    # the line runs to the song's end, a period or less from it, past the last start beat (2 s before the end)
+    assert start[-1] < dur - 1.5 and 0 <= dur - g.beats[-1] < 0.8
     old = grids[False]
     assert old.stats["start"]["grid"] == "tracker" and "line_confident_share" not in old.stats["start"]
     assert len(maps[False].tempos) > 10 and max(x.bpm for x in maps[False].tempos) > 84.0

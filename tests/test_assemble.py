@@ -1909,15 +1909,26 @@ def stretch_song(tmp_path_factory):
     return root, config, truth
 
 
-def test_a_doubled_grid_follows_a_tempo_change_from_allin1s_beats(stretch_song):
+def test_a_doubled_grid_follows_a_tempo_change_from_allin1s_beats(stretch_song, monkeypatch):
     """The doubled grid's straight line misses the 170 BPM stretch (its tempo check warns; on this made-up song
     the first grid follows the stretch, so the line, hinted at twice its tilted click tempo, is off elsewhere too).
     Started from allin1's beats it follows the stretch and the 198 BPM around it, its own tempo check finds nothing,
     and report.json and the warnings say so. From the librosa fallback's sections (no beats) the line stays,
     warned about, as before. (grid_octave 2 on both: without allin1's beats the line's evidence is too thin for the
-    octave pass to keep it.)"""
+    octave pass to keep it.) The doubled pass from allin1's beats runs without the halving's line test (M7-09):
+    its straight line is the one that missed the tempo change."""
     root, config, truth = stretch_song
+    real, calls = assemble_module.beat_grid, []
+
+    def grid(*args, **kwargs):
+        calls.append(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(assemble_module, "beat_grid", grid)
     a = assemble(parse_config(config, root))
+    started = [k for k in calls if k.get("start") is not None]
+    assert len(calls) == 3 and len(started) == 1 and not started[0].get("line_test")
+    assert started[0]["bpm_range"] == (170.0, 370.0) and started[0]["half_beat"] is True
     b = assemble(parse_config({**config, "sections": "librosa.json", "output": "out/librosa"}, root))
     assert a.ok and b.ok and a.report["grid"]["octave"] == b.report["grid"]["octave"] == 2
     ga, gb = a.report["grid"], b.report["grid"]
