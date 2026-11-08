@@ -46,6 +46,13 @@ Its ranked gaps 1-3, 5 and 6 are M5-01, M5-02 and M5-03; part of 9 and 10 are M5
 
   "source" helps the guitar a little and hurts the rule-engine bass (its states are its own 120 BPM map's), so a
   mode per part, not one switch, is the likely answer.
+  **Narrowed by M7-01 and M7-02 (2026-11-08):** M7-01's A-a measured "source", "natural", the octave rule and a
+  forced-strum rule on the guitar against the 23 songs' human charts, and none beats "forced" by M7-02's bar (+0.02
+  pooled, no song down 0.03): the engine's forced flags agree with the humans about as often as chance (DESIGN 2.6
+  step 4). Taps: since M7-02 a tap is kept only in a run of 8 or more onsets at 8 or more a second, any other takes
+  its natural state on our grid (the engine's taps matched a human tap 6 % of the time, and the humans strum 72 % of
+  those notes where our grid's natural state is a strum). Left: a HOPO signal better than the engine's
+  flags, and the precision of the taps the rule keeps.
 - **1/32 and 1/24 burst slots** (gap 2's second half): M5-01 drops a distinct note rather than make a chord of two
   onsets on one tick more than 20 ms apart, keeping the one nearest the tick, and counts the rest
   (`dropped_distinct`). The human charts themselves lose 5.4-6.4 % of the power-metal song's notes that way when
@@ -128,6 +135,11 @@ The humans at the same tempo keep more of both, so the cause is our rules, not t
 for each (a sustain floor of at most some ms; the span counted at least at some BPM) wants the 20-song set's slow
 songs, measured on every human chart; not tuned on the shred song alone. No code change in M6-06 (the orchestrator,
 2026-11-07). Half a day to measure.
+**The sustain floor, measured (M7-01's A-c, 2026-11-08):** a floor of max(200 ms, min(0.75 beat, X)) for X 300, 400
+and 500 ms moves the slow songs' (grid under 100 BPM) per-note guitar sustain agreement by +0.001 at most, against
+M7-02's bar of +0.03 (bass: +0.016 [−0.019, +0.047] at 300 ms). The floor rarely bites our own notes: the shortfall
+(our sustain share 0.072 against the humans' 0.106) is notes the engine never holds. Not built. The star power rate's
+half of this item is still open.
 
 ## Star power on a doubled grid (closed by M6-01)
 
