@@ -34,8 +34,12 @@ It follows DESIGN.md §2.6 with the critique's corrections (CRITIQUE.json):
   5. **HOPOs.** The source's HOPO or strum state (TimedNote.hopo) is reproduced on our grid: where the natural state
      on our grid differs from it, the note gets a flip (`N 5`). With `forced_only`, only the states the source forced
      (TimedNote.hopo_forced) are reproduced and the rest follow the natural rule on our grid, so a natural HOPO that
-     only the source's wrong tempo map made (8ths on a half-tempo map) does not become a forced one. Taps and open
-     notes are kept.
+     only the source's wrong tempo map made (8ths on a half-tempo map) does not become a forced one. Open notes are
+     kept. A tap is kept only inside a fast run (`QuantizeRules.tap_run`: 8 or more onsets, each at most 0.125 s
+     after the one before, on our grid; `fast_runs`); any other tap takes its natural state on our grid, with no
+     flip: a HOPO where the natural rule makes one, else a strum (`QuantizeReport.taps_kept`, `taps_to_hopo`,
+     `taps_to_strum`). The engine's taps matched a human tap 6 % of the time, and the humans strum most of those
+     notes where our grid's natural state is a strum (DESIGN.md §2.6 step 4, M7-02).
   6. **Drums.** One hit per pad per tick. A pad cannot be cymbal and tom at once: the cymbal stays and the tom
      moves to a free tom pad, yellow first as Rock Band does, or is dropped. At most two hand pads per tick (the
      hits closest to the slot stay, accents first); 2x kick on Expert only; on Easy no kick under two hand pads
@@ -100,6 +104,9 @@ MERGE_MAX_S = 0.020        # source onsets on one tick further apart than this a
 MAX_HANDS = 2              # drum pads other than the kick on one tick
 RUN_CHORD_S = 0.120        # the guitar's run_chord_s (assemble passes it): a chord with both neighbouring onsets
                            # closer than this becomes one note, its top (DESIGN.md 2.6 step 3, M6-04)
+TAP_RUN = 8                # a tap is kept only inside a run of at least this many onsets (QuantizeRules.tap_run),
+TAP_RUN_GAP_S = 0.125      # each at most this long after the one before (8 a second or more; DESIGN.md 2.6 step 4,
+                           # M7-02); every other tap takes its natural state on our grid
 TOM_MOVES = {2: (3, 4), 3: (2, 4), 4: (2, 3)}  # where a tom that collides with a cymbal goes, in order of preference
 
 
@@ -122,8 +129,12 @@ class QuantizeRules:
     max_offset_s: float = 0.060         # and it is no larger than this
     source_hopo: bool = True            # reproduce the source's HOPO/strum states (False: natural HOPOs only)
     forced_only: bool = False           # with source_hopo, only the states the source forced (TimedNote.hopo_forced)
-    taps: bool = True                   # keep taps
-    run_chord_s: float = 0.0            # a chord whose previous and next onsets both lie closer than this (seconds
+    taps: bool = True                   # keep taps (False: none; a source tap then takes its own HOPO state)
+    tap_run: int = TAP_RUN              # a tap is kept only inside a run of at least this many onsets, each at most
+    tap_run_gap_s: float = TAP_RUN_GAP_S  # this long after the one before on our grid (`fast_runs`); any other tap
+                                        # takes its natural state on our grid, no flip; 0 = every tap kept (the rule
+                                        # until M7-02)
+    run_chord_s: float = 0.0           # a chord whose previous and next onsets both lie closer than this (seconds
                                         # on our grid) becomes its top note (`run_chords`); 0 = off, the guitar's
                                         # is RUN_CHORD_S
 
@@ -171,6 +182,9 @@ class QuantizeReport:
     sustains_trimmed: int = 0     # ended earlier to leave the gap before the next note
     sustains_dropped: int = 0     # shorter than the minimum, so no sustain
     flips: int = 0                # notes forced against the natural HOPO state on our grid
+    taps_kept: int = 0            # taps written: inside a fast run (QuantizeRules.tap_run); the source taps outside
+    taps_to_hopo: int = 0         # one take their natural state on our grid: these play as HOPOs (natural ones) ...
+    taps_to_strum: int = 0        # ... and these as strums (5-fret parts only)
     spans_dropped: int = 0        # star power, solo or fill spans left with no notes
 
 
@@ -441,6 +455,29 @@ def run_chords(times, frets, max_gap_s: float) -> list[tuple[int, ...]]:
     return out
 
 
+def fast_runs(times, min_onsets: int, max_gap_s: float) -> list[bool]:
+    """For each onset (times in seconds, sorted): whether it lies inside a run of at least `min_onsets` onsets, each
+    at most `max_gap_s` after the one before. A gap over `max_gap_s` ends a run; so does the part's first or last
+    onset. min_onsets 0 or 1: every onset is inside one.
+
+    The tap rule (QuantizeRules.tap_run, DESIGN.md 2.6 step 4): a tap is kept only inside a run of 8 at 0.125 s
+    (8 a second or more); any other tap takes its natural state on our grid. M7-01's A-b measured it on the 23 songs
+    with human charts: the engine's Expert taps matched a human tap 6 % of the time. With every other tap made a HOPO
+    (A-b's T2) the per-note state agreement of each song with our taps rose 0.000 to 0.044; with the natural state
+    instead (M7-02's review) more, since the humans strum most of those notes where our grid's natural state is one.
+    """
+    out = [False] * len(times)
+    i = 0
+    while i < len(times):
+        j = i
+        while j + 1 < len(times) and times[j + 1] - times[j] <= max_gap_s + 1e-9:
+            j += 1
+        if j - i + 1 >= min_onsets:
+            out[i:j + 1] = [True] * (j - i + 1)
+        i = j + 1
+    return out
+
+
 def sustain_kept(tm: TempoMap, tick: int, end: int, difficulty: str) -> bool:
     """Whether a sustain from `tick` to `end` is long enough to keep on the difficulty: SUSTAIN_MIN_BEATS beats and
     SUSTAIN_MIN_S seconds (shorter ones become plain notes)."""
@@ -649,6 +686,14 @@ def _frets(notes: list[TimedNote], groups: dict[int, list[int]], grid: SnapGrid,
             if frets != n.frets:
                 n.frets = frets
                 rep.run_chords += 1
+    untapped = set()        # ticks of the taps outside a fast run: each takes its natural state on our grid, no flip
+    if rules.tap_run > 0:
+        for n, fast in zip(kept, fast_runs([tm.tick_to_sec(n.tick) for n in kept], rules.tap_run,
+                                           rules.tap_run_gap_s)):
+            if n.tap and not fast:
+                n.tap, n.hopo = False, None
+                untapped.add(n.tick)
+    rep.taps_kept = sum(n.tap for n in kept)
     out, src_tick, prev = [], [None] * len(notes), None
     for n, nxt in zip(kept, kept[1:] + [None]):
         length = 0
@@ -668,6 +713,9 @@ def _frets(notes: list[TimedNote], groups: dict[int, list[int]], grid: SnapGrid,
         natural = _natural(prev and prev.frets, n.tick - prev.tick if prev else 0, n.frets, threshold)
         flip = not n.tap and n.hopo is not None and n.hopo != natural
         rep.flips += flip
+        if n.tick in untapped:
+            rep.taps_to_hopo += natural
+            rep.taps_to_strum += not natural
         out.append(FretNote(n.tick, n.frets, length, flip, n.tap))
         for i in n.src:
             src_tick[i] = n.tick
