@@ -16,10 +16,10 @@ from songcharter.ui import jobs as J
 def test_the_arithmetic_on_a_four_minute_song():
     """240 s, 4 takes on the GPU, with the preview: every part's low and high values summed, by hand; the GPU's high
     rates the 5070's times 1.35 (the friend's 4070, M7-10's review), each take's own start 0 to 10 s."""
-    low = (20 + 0.15 * 240) + (5 + 0.02 * 240) + 0.08 * 240 + 4 * (0 + 0.0007 * 240 ** 2)
-    high = (20 + 0.40 * 1.35 * 240) + (5 + 0.05 * 240) + 0.17 * 1.35 * 240 + 4 * (10 + 0.0018 * 1.35 * 240 ** 2)
+    low = (20 + 0.15 * 240) + (5 + 0.01 * 240) + 0.07 * 240 + 4 * (0 + 0.0007 * 240 ** 2)
+    high = (20 + 0.40 * 1.35 * 240) + (5 + 0.05 * 240) + 0.19 * 1.35 * 240 + 4 * (10 + 0.0018 * 1.35 * 240 ** 2)
     assert E.chart_seconds(240, 4, "cuda") == pytest.approx((low, high))
-    assert (round(low, 2), round(high, 2)) == (246.28, 821.55)
+    assert (round(low, 2), round(high, 2)) == (241.48, 828.03)   # (246.28, 821.55) before the v0.4.0 gate
     assert E.round_minutes(low, high) == (4, 14)   # the page's "4 to 14 minutes"
     assert E.round_minutes(*E.chart_seconds(240, 1, "cuda")) == (2, 7)
 
@@ -27,7 +27,7 @@ def test_the_arithmetic_on_a_four_minute_song():
 def test_the_gpus_high_rates_are_the_5070s_with_the_4070s_margin():
     assert E.FRIEND_GPU == 1.35 and E.TAKE_FIXED == (0.0, 10.0)
     assert E.GUITAR_TAKE["cuda"] == pytest.approx((0.0007, 0.0018 * 1.35))
-    assert E.GUITAR_ONCE["cuda"] == pytest.approx((0.08, 0.17 * 1.35))
+    assert E.GUITAR_ONCE["cuda"] == pytest.approx((0.07, 0.19 * 1.35))
     assert E.OTHER["cuda"] == ((20.0, 20.0), pytest.approx((0.15, 0.40 * 1.35)))
     assert E.GUITAR_TAKE["cpu"] == (0.0012, 0.0033) and E.OTHER["cpu"] == ((10.0, 10.0), (0.81, 1.13))
 
@@ -37,7 +37,7 @@ def test_each_part_counts_once_and_where_it_runs():
     base = E.chart_seconds(d, 0, "cpu", preview=False)
     assert base == pytest.approx((10 + 0.81 * d, 10 + 1.13 * d))   # no guitar: the other stages alone
     preview = E.chart_seconds(d, 0, "cpu")
-    assert [b - a for a, b in zip(base, preview)] == pytest.approx([5 + 0.02 * d, 5 + 0.05 * d])
+    assert [b - a for a, b in zip(base, preview)] == pytest.approx([5 + 0.01 * d, 5 + 0.05 * d])
     lyrics = E.chart_seconds(d, 0, "cpu", lyrics=True, preview=False)
     assert [b - a for a, b in zip(base, lyrics)] == pytest.approx([10 + 0.45 * d, 10 + 0.60 * d])
     one = E.chart_seconds(d, 1, "cpu", preview=False)
@@ -229,6 +229,26 @@ def test_the_ordinary_songs_fall_inside_the_range_and_the_dense_ones_above(reque
             song, seconds = seconds
         low, high = guitar(song, takes, device)
         assert (low <= seconds <= high) if inside else seconds > high, (song, seconds, round(low), round(high))
+
+
+# the first take's own separation and timing on the 5070: its time less the mean of the three later takes (the
+# takes experiment's table), on the five ordinary songs; and the preview, on the 5070's PC and on this CPU
+ONCE = {"dd": 74 - (33 + 34 + 29) / 3, "tmo": 96 - (76 + 69 + 63) / 3, "atst": 59 - (42 + 49 + 47) / 3,
+        "creep": 66 - (35 + 37 + 47) / 3, "test": 264 - (224 + 164 + 187) / 3}
+PREVIEW_S = {"test": 11.0, 240.0: 12.0}
+
+
+def test_the_first_takes_own_part_and_the_preview_fall_inside_their_ranges(the_5070):
+    """Each part's range is where its measured runs fell (the module docstring; the v0.4.0 gate's review: Drunk
+    Drivers' 0.19 s a second and All the Small Things' 0.07 were outside 0.08-0.17, the test song's 11-s preview
+    under its 13-s low end)."""
+    for song, seconds in ONCE.items():
+        low, high = (rate * LENGTH[song] for rate in E.GUITAR_ONCE["cuda"])
+        assert low <= seconds <= high, (song, round(seconds, 1), round(low, 1), round(high, 1))
+    for song, seconds in PREVIEW_S.items():
+        d = LENGTH.get(song, song)
+        low, high = (fixed + rate * d for fixed, rate in zip(*E.PREVIEW))
+        assert low <= seconds <= high, (song, seconds, round(low, 1), round(high, 1))
 
 
 @pytest.mark.parametrize("minutes, song, takes, device, preview", [

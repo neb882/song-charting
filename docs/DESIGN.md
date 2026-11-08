@@ -3014,24 +3014,35 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
   - **How long it usually takes:** a line under the progress screen's title, "Usually about 4 to 14 minutes for a song
     of this length (4:01), with 4 guitar takes on the GPU. That is an estimate: a dense song takes longer, as the
     guitar's time grows with the notes it writes." The upload reads the song's length from ffmpeg's header
-    (`ui/estimate.py`, `duration`), and the job gets its range as it starts (`estimate.for_job`: the options' device,
-    else the doctor summary's; the takes as `pipeline.guitar_takes` sets them, one on the CPU where the doctor found
-    autochart's CUDA provider missing). The model: every stage but the guitar a fixed part and a rate per second;
-    the guitar its first take's own separation (a rate per second), then for each take its own start (0 to 10 s
-    [est.]: the 5070's later takes show no fixed part on songs of 3 minutes or more, but no shorter song was
-    measured) and k·d², d the length in seconds, as a take's time grows with the notes it has written (the test song
-    against Creep, at about the same notes a second: 2.8x the time a take for 1.7x the length [here, the takes
-    experiment]). The rates' low and high values are where the measured ordinary songs fell: on the owner's 5070, the
-    takes experiment's seven songs and four of his own job logs (the eight ordinary ones inside; Kimochi Warui,
-    Lucretia and a dense 7:19 song above it); on the dev CPU, the golden runs' cold builds (11 of 14 inside;
-    Lucretia's two and one slow build above). **The GPU's high rates are the 5070's times 1.35** for the friend's
-    4070, until M4-08 part B times his PC: it has about 25 % less memory bandwidth (504 against 672 GB/s), which
-    bounds a transcriber that writes one token at a time [inference, M7-10's review]; Kimochi Warui then falls inside
-    too. For a 4-minute song the page says 4 to 14 minutes with the GPU's 4 takes, 2 to 7 with 1, 6 to 11 on the CPU;
-    the guide keeps the rounder "about 5 to 15" and "2 to 7". Not counted: the caches (a song charted before goes
+    (`ui/estimate.py`, `duration`: the container's own line, indented two spaces, never a tag's text, which ffmpeg
+    prints before it and which a downloaded song's description can fill with "Duration: 1:00:00" [here, the v0.4.0
+    gate]), and the job gets its range as it starts (`estimate.for_job`: the options' device, else the doctor
+    summary's; the takes as `pipeline.guitar_takes` sets them, one on the CPU where the doctor found autochart's CUDA
+    provider missing). The model: every stage but the guitar a fixed part and a rate per second; the guitar its first
+    take's own separation (a rate per second), then for each take its own start (0 to 10 s [est.]: the 5070's later
+    takes show no fixed part on songs of 3 minutes or more, but no shorter song was measured) and k·d², d the length
+    in seconds, as a take's time grows with the notes it has written (the test song against Creep, at about the same
+    notes a second: 4.8x the time a later take and 4.5x for all four, for 1.7x the length, whose square is 2.9 [here,
+    the takes experiment's table; corrected at the v0.4.0 gate: this said 2.8x, Creep's own ratio of 4 takes to 1].
+    That pair grows faster than the square, which k's range takes up; the experiment's five ordinary songs fit d to
+    the 1.9th, and d to the 2.4th with the owner's three). The rates' low and high values are where the measured
+    ordinary songs fell: on the owner's 5070, the takes experiment's seven songs and four of his own job logs (the
+    eight ordinary ones inside; Kimochi Warui, Lucretia and a dense 7:19 song above it); on the dev CPU, the golden
+    runs' cold builds (11 of 14 inside; Lucretia's two and one slow build above). **The GPU's high rates are the
+    5070's times 1.35** for the friend's 4070, until M4-08 part B times his PC: it has about 25 % less memory
+    bandwidth (504 against 672 GB/s), which bounds a transcriber that writes one token at a time [inference, M7-10's
+    review]; Kimochi Warui then falls inside too. The v0.4.0 gate widened two parts' ranges to the runs they had
+    missed: the first take's own separation and timing to 0.07-0.19 s a second (All the Small Things' 0.074, Drunk
+    Drivers' 0.187) and the preview to 5 s + 0.01-0.05 s a second (the test song's 11 s). The page's minutes for a 4-
+    and a 9-minute song stayed as they were, but for the 9-minute song's 1 take on the GPU (6 to 20, now 5 to 21). **A
+    song much longer than 9 minutes** may pass the high end on the 4070: the owner's 9:05 song's 4 takes are 95 % of
+    the 5070's own high end, and along d to the 2.4th a 4070 1.35x as slow passes the page's high end from about 10
+    minutes (on the 5070 it holds to 20) [inference, the v0.4.0 gate]; M4-08 part B or the friend's first long song
+    will tell. For a 4-minute song the page says 4 to 14 minutes with the GPU's 4 takes, 2 to 7 with 1, 6 to 11 on the
+    CPU; the guide keeps the rounder "about 5 to 15" and "2 to 7". Not counted: the caches (a song charted before goes
     faster) and the lyrics' first download. Its evidence is in the module's docstring, and tests/test_ui_estimate.py
-    checks the rates against those runs and the 4070's margin. The estimate is for a look: a bug in it is logged,
-    and the chart starts without one.
+    checks the rates against those runs and the 4070's margin. The estimate is for a look: a bug in it is logged, and
+    the chart starts without one.
   - **The end above the fold:** the stage rows fold into one line ("Charted in 12 min 43 s", a `<details>`, left
     open after an error to show where it stopped), and the Done screen scrolls to the top of the window, again once
     its results are in. Under "Ready" comes "Play it" (Install into Clone Hero, Another folder, the zip), then the

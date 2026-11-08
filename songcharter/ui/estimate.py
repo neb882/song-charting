@@ -8,13 +8,20 @@
 (`OTHER`, `PREVIEW`, `LYRICS`); the guitar costs, once a chart, its first take's own separation and timing (a rate
 per second, `GUITAR_ONCE`), then for each take a transcription that grows with the square of the song's length
 (`GUITAR_TAKE`'s k times d squared, d the length in seconds), after its own start (`TAKE_FIXED`: 0 to 10 s a take,
-the high end for short songs). The transcriber writes its notes one at a time, each
-costing more the more it has written, so a song twice as long costs about four times as much a take: the test song
-(6:52) against Creep (4:00), at about the same notes a second, took 2.8x the time a take for 1.7x the length [here,
-the takes experiment]. Each rate has a low and a high value, from the measured runs below, and the range is where the
-ordinary songs fell; **the GPU's high rates are the 5070's times `FRIEND_GPU` (1.35)** for the friend's 4070, until
-M4-08 part B times his PC. **A dense song** (many notes a second) can take longer than the high end, as the guitar's
-time grows with the notes it writes. The caches are not counted: a song charted before goes faster.
+the high end for short songs). The transcriber writes its notes one at a time, each costing more the more it has
+written, so a song twice as long costs about four times as much a take, or more: the test song (6:52) against Creep
+(4:00), at about the same notes a second (3.1 against 2.9 from their first takes), took 4.8x the time a later take
+(192 s against 40 s, the mean of three), 4.0x the first take (264 s against 66 s) and 4.5x for all four (839 s
+against 185 s), for 1.7x the length, whose square is 2.9 [here, the takes experiment's table]. That pair grows faster
+than the square, which k's range takes up; the five ordinary songs of the experiment grow about as the square (their
+later takes fit d to the 1.9th), and d to the 2.4th with the owner's three ordinary songs, his 9:05 song the steepest
+(below). Each rate has a low and a high value, from the measured runs below, and the range is where the ordinary
+songs fell; **the GPU's high rates are the 5070's times `FRIEND_GPU` (1.35)** for the friend's 4070, until M4-08 part
+B times his PC. **A dense song** (many notes a second) can take longer than the high end, as the guitar's time grows
+with the notes it writes, and on the 4070 **a song much longer than 9 minutes** may too: the 9:05 song's 4 takes
+(2173 s on the 5070) are 95 % of the guitar's high end at the 5070's own rates and 71 % of the page's; along d to the
+2.4th the page's high end holds on the 5070 to 20 minutes, but a 4070 1.35x as slow passes it from about 10 minutes
+(1.2x as slow: about 14) [inference, the v0.4.0 gate]. The caches are not counted: a song charted before goes faster.
 
 **The evidence** (k as above; "ordinary": inside the range):
   * **The GPU** (the owner's RTX 5070; the friend's RTX 4070 is not measured):
@@ -23,7 +30,9 @@ time grows with the notes it writes. The caches are not counted: a song charted 
         0.00067-0.0018 on the eight ordinary ones; 0.0026-0.0043 on Kimochi Warui, Lucretia and the owner's 7:19
         song, all three dense. With the 5070's rates, the eight inside the range and the three above it; with the
         4070's (times 1.35), Kimochi Warui inside too. 1 take: 6 of the 7 songs inside, Lucretia above. The first
-        take's own separation and timing: 13-72 s (0.07-0.17 s a second), the first take's time less a later one's.
+        take's own separation and timing, its time less the mean of the later three, on the five ordinary songs:
+        13-72 s, 0.07-0.19 s a second (All the Small Things 0.074, Drunk Drivers 0.187; Lucretia's 0.176 inside too,
+        Kimochi Warui's negative, its later takes the slower).
       - each take's own start: the 5070's later takes grow as the square of their notes with no fixed part to within
         a few seconds (Drunk Drivers' 611 Expert onsets 29-34 s a take, Take Me Out's 872 63-76 s: 2.2x the time for
         2.0x the notes squared), but no song under 3 minutes was measured, and each take starts a node process and
@@ -43,10 +52,11 @@ time grows with the notes it writes. The caches are not counted: a song charted 
   * **Lyrics** (only with pasted words): 105-134 s for a 4-minute song on 2 threads of the CPU, and 9 s to load the
     weights (DESIGN.md 2.15); on the GPU unmeasured, taken as a fifth to a half of the CPU's [est.]. The first song
     with lyrics also downloads 1.26 GB, which is not counted.
-  * **The preview**: 11 s for the test song on the 5070's PC, 12 s for a 4-minute song here.
-Against whole charts: the test song with 1 take on the 5070 took 5.05 min (the range: 4.1-13.1), on this CPU 12.7
+  * **The preview**: 11 s for the test song on the 5070's PC, 12 s for a 4-minute song here (the range: 9.1-25.6 s
+    and 7.4-17 s).
+Against whole charts: the test song with 1 take on the 5070 took 5.05 min (the range: 4.0-13.3), on this CPU 12.7
 min (11.5-20.9, no preview then); Take Me Out with 1 take on this CPU 6.8 min (6.0-10.1). A 4-minute song: 4 to 14
-minutes with the GPU's 4 takes, 2 to 7 with 1, 6 to 11 on the CPU.
+minutes with the GPU's 4 takes, 2 to 7 with 1, 6 to 11 on the CPU; a 9-minute song 16 to 60, 5 to 21, 16 to 35.
 
 `duration` reads the length ffmpeg's header gives (the container's, or one estimated from the bit rate), without a
 decode: a few hundredths of a second; only the container's own line, never a tag that holds "Duration: ...". None
@@ -70,11 +80,11 @@ FRIEND_GPU = 1.35
 # (fixed s, rate s a second of the song), each as (low, high), by device
 OTHER = {"cpu": ((10.0, 10.0), (0.81, 1.13)),
          "cuda": ((20.0, 20.0), (0.15, 0.40 * FRIEND_GPU))}   # every stage but the guitar and the lyrics
-PREVIEW = ((5.0, 5.0), (0.02, 0.05))
+PREVIEW = ((5.0, 5.0), (0.01, 0.05))
 LYRICS = {"cpu": ((10.0, 10.0), (0.45, 0.60)), "cuda": ((10.0, 10.0), (0.10, 0.30))}
 # the guitar's device: once a chart, rate * d (the first take's own separation and timing); each take, its own start
 # (TAKE_FIXED s) and k * d**2
-GUITAR_ONCE = {"cpu": (0.35, 0.50), "cuda": (0.08, 0.17 * FRIEND_GPU)}
+GUITAR_ONCE = {"cpu": (0.35, 0.50), "cuda": (0.07, 0.19 * FRIEND_GPU)}
 GUITAR_TAKE = {"cpu": (0.0012, 0.0033), "cuda": (0.0007, 0.0018 * FRIEND_GPU)}
 TAKE_FIXED = (0.0, 10.0)
 
