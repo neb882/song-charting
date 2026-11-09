@@ -308,6 +308,20 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
   `info.json` is written last and is the hit, only when every stem it lists is there and reads: a folder half
   deleted or half written is separated again, never an error (a run used to fail as a bug, exit 3, on a stem a
   partial prune had deleted [here, defaults review]) [code; tested with the unit-test model].
+  - **The device is in the key** (v0.5.0, a second advisor's finding 8) [code; tested with the unit-test model]:
+    - **The defect:** until then the key had no device, so stems made on the CPU answered a later CUDA request.
+      After one CPU fallback (CUDA out of memory), every later GPU chart of that song used CPU stems, cached and
+      with no fallback recorded. The takes and allin1 already keyed by device.
+    - **The CPU's key is exactly the old device-less key**, so CPU stems cached before (the golden runs' kept
+      folders, 24 of 24 made on the CPU) still answer. Stems made on CUDA get a key of their own.
+    - **A hit also needs info.json to name the device asked for.** CUDA stems cached by an earlier version sit
+      under the CPU's key and answer neither device: a CPU request separates again in place.
+    - **CUDA running out of memory gives CPU stems, under the CPU's key**, taken from there when a CPU folder
+      answers. A later CUDA request separates on CUDA again.
+    - **A hit reports this call's fallback**, not that of the run that made it.
+    - **The friend's cache after the update:** each song he charted on CUDA before is separated once more on CUDA,
+      the first time he charts it again (about 10–20 s on a 4070 [est., untested]). Until the cache's prune
+      removes the old folder, the song holds both (about 0.13 GB a minute of audio each, as float32).
 - **The stems as files** (M8-12, the friend's ask: "a useful tool in and of itself for sampling") [code]: with
   `--stems` (the page's "Also save the separated instruments", off by default) the six stems go, after assemble and
   before the cache's prune, from the cache's float32 WAVs into "<song folder> (stems)" beside the song folder, never

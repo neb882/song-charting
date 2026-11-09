@@ -1,6 +1,7 @@
 """Stem separation (songcharter.separate) with Demucs's tiny untrained unit-test model: shapes, seeding, the cache,
 the CPU fallback and the pinned-file check. The real weights are never downloaded here."""
 import hashlib
+import json
 
 import numpy as np
 import pytest
@@ -94,6 +95,63 @@ def test_cuda_out_of_memory_falls_back_to_the_cpu(tiny, monkeypatch):
     assert calls == ["cuda", "cpu"] and info.device == "cpu"
     assert info.fallback.startswith("CUDA ran out of memory") and "separated on the CPU" in info.fallback
     assert list(stems) == list(tiny.sources)
+
+
+def test_the_device_is_in_the_key_and_the_cpus_key_is_as_before(tiny, tmp_path, monkeypatch):
+    """A second advisor's finding 8 (v0.5.0): stems made on the CPU answered a later CUDA request, so after one CPU
+    fallback the song's GPU charts used CPU stems. The device is in the key now. The CPU's key is exactly the
+    device-less key of earlier versions (pinned: v0.4.0's code gives 4d21...), so the CPU stems already cached still
+    answer. A folder under the CPU's key whose info.json says cuda (an earlier version's CUDA stems) answers no
+    request. CUDA out of memory puts its CPU stems under the CPU's key, or takes them from there, and a hit says
+    this call's fallback, not the run's."""
+    fixed = np.arange(8, dtype=np.float32).reshape(2, 4) / 8
+    assert S.cache_key(fixed, "htdemucs_6s", "rev", 0, 1, 0.25) == "4d21dc63c65a94267d50b396"   # v0.4.0's
+    assert S.cache_key(fixed, "htdemucs_6s", "rev", 0, 1, 0.25, "cpu") == "4d21dc63c65a94267d50b396"
+    assert S.cache_key(fixed, "htdemucs_6s", "rev", 0, 1, 0.25, "cuda") != "4d21dc63c65a94267d50b396"
+    real, calls = S._run, []
+
+    def run(model, m, device, *rest):   # no GPU here: "CUDA" stems are the CPU's negated, to tell them apart
+        calls.append(device)
+        stems = real(model, m, "cpu", *rest)
+        return {s: -y for s, y in stems.items()} if device == "cuda" else stems
+
+    monkeypatch.setattr(S, "_run", run)
+    m = mix()
+    cpu, made = separate(m, model=tiny, device="cpu", cache_dir=tmp_path)
+    gpu, info = separate(m, model=tiny, device="cuda", cache_dir=tmp_path)   # not the CPU's stems
+    assert calls == ["cpu", "cuda"] and not info.cached and info.device == "cuda" and info.key != made.key
+    assert all(np.array_equal(gpu[s], -cpu[s]) for s in cpu) and (tmp_path / info.key / "info.json").is_file()
+    again_gpu, hit = separate(m, model=tiny, device="cuda", cache_dir=tmp_path)
+    assert hit.cached and hit.key == info.key and all(np.array_equal(again_gpu[s], gpu[s]) for s in gpu)
+    again_cpu, hit = separate(m, model=tiny, device="cpu", cache_dir=tmp_path)
+    assert hit.cached and hit.key == made.key and all(np.array_equal(again_cpu[s], cpu[s]) for s in cpu)
+    assert calls == ["cpu", "cuda"]
+    # an earlier version's CUDA stems under the CPU's key: a CPU request separates again, in place
+    path = tmp_path / made.key / "info.json"
+    meta = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(json.dumps({**meta, "info": {**meta["info"], "device": "cuda"}}), encoding="utf-8")
+    _, fresh = separate(m, model=tiny, device="cpu", cache_dir=tmp_path)
+    assert calls == ["cpu", "cuda", "cpu"] and not fresh.cached and fresh.key == made.key
+    assert json.loads(path.read_text(encoding="utf-8"))["info"]["device"] == "cpu"
+
+    def oom(model, m, device, *rest):
+        calls.append(device)
+        if device == "cuda":
+            raise torch.cuda.OutOfMemoryError("CUDA out of memory. Tried to allocate 2.00 GiB")
+        return real(model, m, device, *rest)
+
+    monkeypatch.setattr(S, "_run", oom)
+    calls.clear()
+    song = mix(seed=1)   # out of memory on CUDA: the CPU's stems, under the CPU's key
+    _, moved = separate(song, model=tiny, device="cuda", cache_dir=tmp_path)
+    cpu_key = S.cache_key(song, type(tiny).__name__, None, 0, 1, 0.25)
+    assert calls == ["cuda", "cpu"] and moved.device == "cpu" and moved.key == cpu_key and not moved.cached
+    assert moved.fallback.startswith("CUDA ran out of memory")
+    _, again = separate(song, model=tiny, device="cuda", cache_dir=tmp_path)   # CUDA tried again; the CPU's cached
+    assert calls == ["cuda", "cpu", "cuda"] and again.cached and again.key == cpu_key
+    assert again.fallback == moved.fallback
+    _, asked = separate(song, model=tiny, device="cpu", cache_dir=tmp_path)   # a CPU-asked hit names no fallback
+    assert asked.cached and asked.key == cpu_key and asked.fallback is None and calls == ["cuda", "cpu", "cuda"]
 
 
 def test_auto_separates_on_the_cpu_when_cuda_does_not_run(tiny, monkeypatch):
