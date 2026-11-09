@@ -101,6 +101,10 @@ The config (JSON; relative paths are relative to the config file, keys starting 
                                                                confirm; or a list of section names: ["Solo 1"])
      "levels": ["expert", "hard", "medium", "easy"],          (the difficulties written; Expert always)
      "album_art": "album.jpg", "background": "background.jpg",  (optional: .png, .jpg or .jpeg, copied as they are)
+     "split_audio": false,                                    (true: guitar.ogg, bass.ogg and drums.ogg from the
+                                                               stems of those named, for the parts charted, and
+                                                               song.ogg the rest: Clone Hero's multitrack audio,
+                                                               the pipeline's default)
      "metadata": {"name": "...", "artist": "...", "album": "...", "genre": "...", "year": "2014",
                   "album_track": 2, "charter": "songcharter"},  (album, genre and year required; charter defaults)
      "output": "out/song"}
@@ -128,7 +132,7 @@ from .beatgrid import (BPM_RANGE, FREE_SHARE, ONSET_TO_BEAT_MS, BeatGrid, OnsetF
 from .chart import DRUM_ACTIVATION, OPEN, STAR_POWER, Chart, DrumHit, FretNote, SongInfo, Track
 from .errors import InputError, ToolError
 from .importers import _chart_sections, _decode, read_chart, read_song
-from .package import PackageResult, build_song_folder
+from .package import SPLIT_PARTS, PackageResult, build_song_folder
 from .quantize import (RULES, RUN_CHORD_S, TRACK_DIFFICULTY, TRACK_INSTRUMENT, QuantizeReport, QuantizeRules,
                        estimate_offset, quantize_part, sustain_kept)
 from .reduce import LEVELS, Issue, check_reductions, hopo_states, reduce_level
@@ -174,8 +178,8 @@ SCAN_CHART = Path(__file__).resolve().parent.parent / "tools" / "scan-chart" / "
 SCAN_CHART_TIMEOUT_S = 600.0
 SCAN_ALLOWED = {"noAlbumArt"}  # the folder issue the gate accepts
 # what a build writes: an output folder holding anything else is not replaced (it may be Clone Hero's Songs folder)
-OUTPUT_FILES = {"notes.chart", "song.ini", "song.ogg", "album.png", "album.jpg", "album.jpeg", "background.png",
-                "background.jpg", "background.jpeg", "report.json"}
+OUTPUT_FILES = {"notes.chart", "song.ini", "song.ogg", "guitar.ogg", "bass.ogg", "drums.ogg", "album.png", "album.jpg",
+                "album.jpeg", "background.png", "background.jpg", "background.jpeg", "report.json"}
 # a background is ours only when the earlier build's report.json says it wrote it (`_ours`): v0.1 wrote none, so one
 # in a folder it made is the person's, which a build refuses to replace, as v0.1 did (M5-12)
 BACKGROUNDS = {"background.png", "background.jpg", "background.jpeg"}
@@ -249,11 +253,13 @@ class AssembleConfig:
     album_art: Path | None = None                  # copied in as album<ext>
     background: Path | None = None                 # copied in as background<ext> (Clone Hero's song background)
     quality: float = 7.0                           # song.ogg Vorbis quality
+    split_audio: bool = False                      # Clone Hero's multitrack audio: <part>.ogg from the stem of each
+                                                   # part charted (package.SPLIT_PARTS), song.ogg the rest
 
 
 _CONFIG_KEYS = {"audio", "output", "parts", "metadata", "stems", "beat_hints", "grid_mode", "grid_octave",
                 "grid_source", "grid_secondary", "lead_in", "tempo_tolerance", "sections", "solos", "levels", "album_art",
-                "background", "quality"}
+                "background", "quality", "split_audio"}
 _PART_KEYS = {f.name for f in fields(PartConfig)}
 _METADATA_KEYS = {"name", "artist", "album", "genre", "year", "charter", "album_track", "preview_start_ms",
                   "loading_phrase"}
@@ -421,6 +427,9 @@ def parse_config(data: dict, base: Path | str = ".", output: Path | str | None =
     secondary = _string(d.get("grid_secondary"), "grid_secondary", True)
     if secondary is not None and secondary.strip().lower() == "none":
         secondary = ""  # no second stem: drumless beats follow the line
+    split_audio = d.get("split_audio", False)
+    if not isinstance(split_audio, bool):
+        raise InputError(f"split_audio is true or false, not {split_audio!r}")
     cfg = AssembleConfig(
         audio=path(d["audio"], "audio"), output=path(str(output) if output is not None else d["output"], "output"),
         parts=parts, metadata=meta, stems={str(k): path(v, f"stems.{k}") for k, v in stems.items()},
@@ -433,7 +442,7 @@ def parse_config(data: dict, base: Path | str = ".", output: Path | str | None =
         sections=_string(d.get("sections"), "sections", True), solos=_solos(d.get("solos", "off")),
         levels=_levels(d.get("levels", list(DIFFICULTIES))),
         album_art=path(d.get("album_art"), "album_art", True), background=path(d.get("background"), "background", True),
-        quality=opt("quality", 7.0, low=0, high=10))
+        quality=opt("quality", 7.0, low=0, high=10), split_audio=split_audio)
     for key in ("album_art", "background"):
         image = getattr(cfg, key)
         if image is not None and image.suffix.lower() not in IMAGE_SUFFIXES:
@@ -1247,6 +1256,24 @@ def lyrics_read_back(path: Path, chart: Chart) -> list[GateIssue]:
                       f"written; they first differ at event {at}")]
 
 
+def audio_file_issues(files: list[str]) -> list[GateIssue]:
+    """scan-chart's rules for a song folder's audio files (its findAudioData): each file with an audio extension has a
+    name Clone Hero reads (audio.SONG_AUDIO_NAMES, else invalidAudio), no name twice (song.ogg and song.mp3:
+    multipleAudio), and at least one is the song's music (not preview or crowd: else noAudio). One song.ogg passes,
+    and so do song.ogg, guitar.ogg, bass.ogg and drums.ogg (Clone Hero's multitrack audio)."""
+    audio = [f for f in files if Path(f).suffix in A.SONG_AUDIO_EXTENSIONS]
+    issues = [GateIssue(None, None, "invalidAudio", f"{f} is not an audio file name Clone Hero reads")
+              for f in audio if Path(f).stem not in A.SONG_AUDIO_NAMES]
+    stems = [Path(f).stem for f in audio if Path(f).stem in A.SONG_AUDIO_NAMES]
+    twice = sorted({s for s in stems if stems.count(s) > 1})
+    if twice:
+        issues.append(GateIssue(None, None, "multipleAudio", f"the folder holds more than one audio file named "
+                                f"{', '.join(twice)}: {', '.join(f for f in audio if Path(f).stem in twice)}"))
+    if not [s for s in stems if s not in A.NOT_MUSIC]:
+        issues.append(GateIssue(None, None, "noAudio", f"the folder holds no song audio: {', '.join(audio) or 'none'}"))
+    return issues
+
+
 def verify_folder(folder, chart: Chart, pad_seconds: float, audio_seconds: float | None = None, *,
                   scan_chart: bool | None = None, record: dict | None = None) -> list[GateIssue]:
     """The gate on a written song folder (DESIGN.md 2.13 steps 2-4): its files, its song.ini, notes.chart read back
@@ -1260,12 +1287,12 @@ def verify_folder(folder, chart: Chart, pad_seconds: float, audio_seconds: float
     issues: list[GateIssue] = []
     files = sorted(f.name.lower() for f in folder.iterdir() if f.is_file())
     for suffixes, none, many, what in (((".chart", ".mid"), "noChart", "multipleChart", "chart"),
-                                       ((".ini",), "noMetadata", "multipleIniFiles", "ini"),
-                                       ((".ogg", ".mp3", ".wav", ".opus"), "noAudio", "multipleAudio", "audio")):
+                                       ((".ini",), "noMetadata", "multipleIniFiles", "ini")):
         found = [f for f in files if f.endswith(suffixes)]
         if len(found) != 1:
             issues.append(GateIssue(None, None, many if found else none,
                                     f"the folder holds {len(found)} {what} files: {', '.join(found) or 'none'}"))
+    issues += audio_file_issues(files)
     ini = _read_ini(folder / "song.ini") if (folder / "song.ini").exists() else {}
     for key in INI_REQUIRED:
         if not ini.get(key):
@@ -1972,13 +1999,23 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
     cfg.output.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{cfg.output.name}.", suffix=".partial", dir=cfg.output.parent))
     try:
+        split = None
+        if cfg.split_audio:   # a file of its own for each part charted whose own stem is given (DESIGN.md 2.13)
+            charted = {PART_INSTRUMENT[t.instrument] for t in chart.tracks if t.notes}
+            split = {p: stems[p] for p in SPLIT_PARTS if p in charted and p in stems}
+            for p in sorted(charted - set(split), key=SPLIT_PARTS.index):
+                warnings.append(f"split_audio: no {p} stem, so the {p} stays in song.ogg (it will not drop out "
+                                "on a miss)")
         pkg = build_song_folder(staging, chart, mix, lead.pad_samples, sr, difficulty=ratings,
                                 album_art=cfg.album_art, background=cfg.background,
-                                quality=cfg.quality)  # ffmpeg failing: a ToolError
+                                quality=cfg.quality, split=split)  # ffmpeg failing: a ToolError
+        del split
         report["art"] = art_record(cfg, art)
         report["sync"] = {"ok": pkg.sync.ok, "summary": pkg.sync.summary(),
                           "max_abs_lag_samples": pkg.sync.max_abs_lag, "min_correlation": pkg.sync.min_correlation,
-                          "length_difference": pkg.sync.length_difference}
+                          "length_difference": pkg.sync.length_difference,
+                          "of": "the files summed" if len(pkg.files) > 1 else "song.ogg", "files": pkg.tracks}
+        report["audio_files"] = list(pkg.files)
         report["ratings"] = {PART_INSTRUMENT[k]: v for k, v in ratings.items()}
         report["rating_features"] = features
         report["preview_start_ms"] = info.preview_start_ms

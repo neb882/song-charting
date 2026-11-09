@@ -6,10 +6,16 @@ LAME header plays the song that much late. So the tool:
 
   1. decodes the input once with ffmpeg, which honours the header (the time reference),
   2. runs every analysis on that decode,
-  3. encodes the song file Clone Hero plays (song.ogg) from the same samples, with the lead-in
-     silence in front,
-  4. decodes that file back and measures its offset against the reference, window by window.
+  3. encodes the song files Clone Hero plays (song.ogg, and guitar.ogg, bass.ogg and drums.ogg from
+     the stems when the audio is split: package.py) from the same samples, with the lead-in silence in
+     front,
+  4. decodes those files back and measures their offset against the reference, window by window.
      The package is only accepted when the offset is under a sample.
+
+Every file written is byte-identical for the same samples (and the same ffmpeg and libsndfile): the
+Ogg files with ffmpeg's bitexact flags, which fix the stream serial (random otherwise) and leave the
+encoder's version out of the header; the FLAC stems (`write_flac`) carry nothing but the samples and
+libFLAC's own vendor string.
 """
 from __future__ import annotations
 
@@ -24,6 +30,13 @@ import numpy as np
 from .errors import InputError, ToolError
 
 SAMPLE_RATE = 44100
+# the audio files Clone Hero (and scan-chart, its hasAudioName) reads in a song folder: these names with one of
+# these extensions; preview and crowd are not the song's music (scan-chart leaves them out of its audio too)
+SONG_AUDIO_NAMES = ("song", "guitar", "bass", "rhythm", "keys", "vocals", "vocals_1", "vocals_2", "drums", "drums_1",
+                    "drums_2", "drums_3", "drums_4", "crowd", "preview")
+SONG_AUDIO_EXTENSIONS = (".ogg", ".mp3", ".wav", ".opus")
+NOT_MUSIC = ("preview", "crowd")
+BITEXACT = ("-fflags", "+bitexact", "-flags:a", "+bitexact")   # a fixed Ogg serial, no version in the header
 
 
 def ffmpeg_exe() -> str:
@@ -65,10 +78,12 @@ def pad_front(audio: np.ndarray, samples: int) -> np.ndarray:
 
 
 def encode_ogg(audio: np.ndarray, path, sample_rate: int = SAMPLE_RATE, quality: float = 7.0) -> None:
-    """Ogg Vorbis (libvorbis, VBR quality 0-10; 7 is about 224 kbps stereo). ffmpeg failing is a ToolError."""
+    """Ogg Vorbis (libvorbis, VBR quality 0-10; 7 is about 224 kbps stereo), byte-identical for the same samples
+    (BITEXACT). ffmpeg failing is a ToolError."""
     ch = audio.shape[0]
     cmd = [ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-f", "f32le", "-ar", str(sample_rate),
-           "-ac", str(ch), "-i", "pipe:0", "-c:a", "libvorbis", "-q:a", str(quality), str(path)]
+           "-ac", str(ch), "-i", "pipe:0", "-c:a", "libvorbis", "-q:a", str(quality), *BITEXACT, "-f", "ogg",
+           str(path)]
     data = np.ascontiguousarray(np.clip(audio, -1, 1).T.astype("<f4")).tobytes()
     try:
         subprocess.run(cmd, input=data, check=True, capture_output=True)
@@ -141,6 +156,49 @@ def verify_sync(reference: np.ndarray, path, sample_rate: int = SAMPLE_RATE) -> 
     """Decode `path` back and compare it with the samples it was encoded from."""
     test = decode(path, sample_rate, reference.shape[0])
     return SyncReport(measure_offset(reference, test, sample_rate), test.shape[1] - reference.shape[1])
+
+
+def song_audio_files(folder) -> list[Path]:
+    """The song's music in a Clone Hero song folder: the files with a name Clone Hero reads as audio
+    (SONG_AUDIO_NAMES and SONG_AUDIO_EXTENSIONS, as scan-chart matches them: lower case), but preview and crowd,
+    sorted by name. song.ogg alone for a one-file folder; song.ogg, guitar.ogg, bass.ogg and drums.ogg for one whose
+    audio is split."""
+    folder = Path(folder)
+    try:
+        files = sorted(p for p in folder.iterdir() if p.is_file())
+    except OSError:
+        return []
+    return [p for p in files if p.suffix in SONG_AUDIO_EXTENSIONS and p.stem in SONG_AUDIO_NAMES
+            and p.stem not in NOT_MUSIC]
+
+
+def decode_song_audio(folder, sample_rate: int = SAMPLE_RATE, channels: int = 2) -> np.ndarray | None:
+    """The folder's music as Clone Hero plays it when no note is missed: its audio files (`song_audio_files`)
+    decoded and summed, as long as the longest; None when it has none."""
+    total = None
+    for path in song_audio_files(folder):
+        y = decode(path, sample_rate, channels)
+        if total is None:
+            total = y
+        else:
+            if y.shape[1] > total.shape[1]:
+                total, y = y, total
+            total[:, :y.shape[1]] += y
+    return total
+
+
+def write_flac(audio: np.ndarray, path, sample_rate: int = SAMPLE_RATE) -> int:
+    """24-bit FLAC of `audio` (channels, samples), clipped to full scale, byte-identical for the same samples: made in
+    memory, then written as one file, so a full disk is an OSError (ENOSPC) here and not libsndfile's error. Returns
+    the bytes written."""
+    import io
+    import soundfile as sf
+    buf = io.BytesIO()
+    sf.write(buf, np.clip(audio, -1.0, 1.0).T, sample_rate, format="FLAC", subtype="PCM_24")
+    data = buf.getvalue()
+    with open(path, "wb") as f:
+        f.write(data)
+    return len(data)
 
 
 def write_wav(audio: np.ndarray, path, sample_rate: int = SAMPLE_RATE) -> None:
