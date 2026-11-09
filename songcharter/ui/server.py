@@ -122,9 +122,12 @@ Nothing is downloaded or installed; charting never waits for it.
     `spots` (how many).
   * **Chart it differently** (M8-14): POST /api/jobs/<id>/again {"upload"?, "lyrics"?}: the chart's song again, with
     the options its report.json records (jobs.rechart; its given pictures, which are in its folder, become image
-    uploads again; no stems, which the seed does not change) and the next seed for its song (`App.next_seed`: one
-    more than any its versions, the queue's songs and <home>/state/versions.json have used), into the queue as
-    POST /api/jobs adds a song: 202 {"job", "entry", "state", "version", "seed"}. 400 for a chart without a guitar
+    uploads again; no stems, which the seed does not change), the chart's own folder's name (`name`: every version
+    goes into one Clone Hero folder; the review's F1) and the next seed for its song (`App.next_seed`: one more than
+    any its versions, the queue's songs and <home>/state/versions.json have used; versions.json is written only once
+    the queue has taken the song, so a refusal uses no number: F3), into the queue as POST /api/jobs adds a song,
+    with the estimate of a song whose other stages are cached when its work folder is still in the cache: 202
+    {"job", "entry", "state", "version", "seed"}. 400 for a chart without a guitar
     (only the guitar changes with the seed), one whose report.json cannot be read, an `upload` that is not its song
     file; 400 {"error", "drop": true, "name"} when its song file is no longer among the uploads (kept 7 days): the
     page asks for it to be dropped again, then sends its upload id. `lyrics` as /api/jobs takes them (a chart made
@@ -504,8 +507,8 @@ class App:
     def next_seed(self, upload: str) -> int:
         """The seed "Chart it differently" gives the song of this upload next (M8-14): one more than the largest its
         charts in the library, its songs in the queue (any state) and <home>/state/versions.json have used, so a
-        version deleted in Windows is never made again by it; recorded in versions.json (a file that cannot be
-        written is logged, and the seed is used all the same)."""
+        version deleted in Windows is never made again by it. Nothing is written here: `keep_seed` records it once the
+        queue has taken the song (the review's F3: a refusal uses no number)."""
         seeds = {c["seed"] for c in library(self.home, None) if c["upload"] == upload}
         seeds |= {entry_seed(e.get("options")) for e in self.queue.snapshot_entries() if
                   (e.get("upload") or {}).get("id") == upload}
@@ -518,7 +521,17 @@ class App:
         last = kept.get(upload)
         if isinstance(last, int) and not isinstance(last, bool):
             seeds.add(last)
-        seed = max(seeds | {0}) + 1
+        return max(seeds | {0}) + 1
+
+    def keep_seed(self, upload: str, seed: int) -> None:
+        """<home>/state/versions.json records the seed the queue has just taken for this upload's song (next_seed); a
+        file that cannot be written is logged, and the song charts all the same."""
+        path = self.home.joinpath(*VERSIONS)
+        try:
+            kept = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            kept = {}
+        kept = kept if isinstance(kept, dict) else {}
         tmp = path.with_name(path.name + ".part")
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -527,7 +540,6 @@ class App:
         except OSError as e:
             tmp.unlink(missing_ok=True)
             self.log(f"{path} could not be written ({e})")
-        return seed
 
     def chart(self, chart_id: str, job_id: str | None = None) -> Charted | None:
         """The library's chart of that id, or None; named by `job_id` when it was found through that job (a finished
@@ -821,10 +833,11 @@ class Handler(BaseHTTPRequestHandler):
         raise Refused(404, "not found")
 
     # --- the queue (M8-10)
-    def _add(self, upload: dict, options: Any, lyrics: Any = None) -> tuple[dict, Job | None]:
+    def _add(self, upload: dict, options: Any, lyrics: Any = None, cached: bool = False) -> tuple[dict, Job | None]:
         """A song into the queue (POST /api/jobs, and "Chart it differently"): the page's `options` checked, its
         pictures' upload ids made into their paths for the check (the queue keeps the ids: none comes from the page),
-        its estimate, and the lyrics (the options', else `lyrics`); Refused 400 or 409 as the module docstring says."""
+        its estimate (`cached`: its stages but the guitar's takes come from the cache, estimate.for_job), and the
+        lyrics (the options', else `lyrics`); Refused 400 or 409 as the module docstring says."""
         app = self.app
         given = dict(options) if isinstance(options, dict) else options   # the queue keeps the pictures' ids
         if isinstance(options, dict):   # the images' upload ids become their paths: none comes from the page
@@ -844,7 +857,7 @@ class Handler(BaseHTTPRequestHandler):
         doctor = app.doctor()
         auto = (doctor.get("device") or {}).get("chosen")
         try:
-            est = estimate.for_job(upload.get("seconds"), opts, auto, doctor.get("guitar_device"))
+            est = estimate.for_job(upload.get("seconds"), opts, auto, doctor.get("guitar_device"), cached=cached)
         except Exception:  # noqa: BLE001  a bug in the estimate: logged, and the chart starts without one
             app.log(f"estimate: internal error:\n{traceback.format_exc()}", console=False)
             est = None
@@ -928,10 +941,16 @@ class Handler(BaseHTTPRequestHandler):
             record = art.get(key) if isinstance(art.get(key), dict) else {}
             if record.get("from") == "given" and (folder / file).is_file():
                 options[key] = self._keep_image(folder / file)   # the picture he gave, from the chart's own folder
+        options["name"] = folder.name[:-len(".failed")] if folder.name.endswith(".failed") else folder.name
+        try:   # its stages but the guitar's are in the work folder's caches, while the cache keeps it
+            cached = cache.by_key(app.work_root(), song) is not None
+        except OSError:
+            cached = False
         with app.again_lock:
             seed = app.next_seed(song)
             options["seed"] = seed
-            entry, started = self._add(upload, options, lyrics if lyrics and lyrics.strip() else None)
+            entry, started = self._add(upload, options, lyrics if lyrics and lyrics.strip() else None, cached=cached)
+            app.keep_seed(song, seed)   # only now: a refusal above uses no number (F3)
         app.log(f"chart it differently: {chart_id(folder)} again as version {seed + 1} (seed {seed})")
         return self._json(202, {"job": started.id if started is not None else None, "entry": entry["id"],
                                 "state": "charting" if started is not None else "waiting", "version": seed + 1,

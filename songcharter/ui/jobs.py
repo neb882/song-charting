@@ -13,7 +13,11 @@
   * **The output folder:** <home>/library/<the upload's 16 hex>/<cache.safe_name(f"{artist} - {title}")>, the artist
     and title as the chart will have them (the options', else the upload's tags or file name); a chart with another
     seed (M8-14, "Chart it differently": `seed` N, --seed=N) is version N + 1, in
-    <home>/library/<16 hex>/v<N + 1>/<the same name>, beside the first and never over it. The name is safe for
+    <home>/library/<16 hex>/v<N + 1>/<the same name>, beside the first and never over it. The same name is the first
+    chart's folder's own (`name`, which "Chart it differently" gives: one path component, checked), not one made again
+    from the metadata, which can differ from it (a several-song drop's chart is named from upload.json, its song.ini
+    from the uploaded file's 40-character stem: the review's F1), so every version installs into one Clone Hero
+    folder. The name is safe for
     Windows, as M4-06 copies the folder to /mnt/c, and at most LIBRARY_NAME_MAX (80) characters, cut at a word: it
     is the name the friend sees in Clone Hero's Songs folder and on the Done screen, so it is not held to the work
     folder's 40 (cache.NAME_MAX, for autochart's deep cache paths). Installed, its deepest path on the Windows side
@@ -106,7 +110,7 @@ META_FLAGS = {"title": "--title", "artist": "--artist", "album": "--album", "yea
 IMAGE_FLAGS = {"album_art": "--album-art", "background": "--background"}
 LIBRARY_NAME_MAX = 80   # the library folder's name: at most this many UTF-16 code units (the module docstring)
 OPTION_KEYS = (*META_FLAGS, "instruments", "levels", "solos", "takes", "device", "threads", "preview", "lyrics",
-               *IMAGE_FLAGS, "stems", "one_audio", "seed")
+               *IMAGE_FLAGS, "stems", "one_audio", "seed", "name")
 TAIL_LINES = 8                     # the log's last lines in an error the job writes itself
 END_WAIT_S = 10.0                  # how long a new job waits for one whose closing event is out to exit
 # an error the job writes itself (the child sent none) in plain words, for the queue's list (M8-10's review, P-F4;
@@ -152,6 +156,7 @@ class ChartOptions:
     stems: bool = False       # also the six stems as FLAC beside the song folder (--stems, M8-12)
     one_audio: bool = False   # one song.ogg, not Clone Hero's multitrack audio (--one-audio, M8-12)
     seed: int = 0             # the guitar takes' seeds moved on by this (--seed, M8-14): version seed + 1
+    name: str | None = None   # the library folder's name (a version's: its first chart's, folder_name), else made
 
     def as_dict(self) -> dict:
         """The options as the job's records show them: `lyrics` is whether some were given, never the text."""
@@ -160,13 +165,26 @@ class ChartOptions:
                 "device": self.device, "threads": self.threads, "preview": self.preview,
                 "lyrics": self.lyrics is not None, "album_art": self.album_art is not None,
                 "background": self.background is not None, "stems": self.stems, "one_audio": self.one_audio,
-                "seed": self.seed, **self.metadata}
+                "seed": self.seed, "name": self.name, **self.metadata}
 
 
 def _words(raw: Any, what: str) -> tuple[str, ...]:
     if not isinstance(raw, list) or not all(isinstance(x, str) for x in raw):
         raise InputError(f"{what} is a list of names, not {raw!r}")
     return tuple(x.strip().lower() for x in raw)
+
+
+def folder_name(raw: Any) -> str | None:
+    """The `name` option (M8-14): a library folder's name as one path component, else an InputError; None for none.
+    Not "." or "..", not hidden, no separator, colon or control character, at most 255 bytes, not a version folder's
+    name (v2, ...) and not a failed build's (".failed"): the name a chart in the library already has."""
+    if raw is None:
+        return None
+    if (not isinstance(raw, str) or not raw.strip() or raw != raw.strip() or raw in (".", "..") or raw.startswith(".")
+            or any(c in raw for c in '/\\:') or any(ord(c) < 32 or ord(c) == 127 for c in raw)
+            or len(raw.encode("utf-8")) > 255 or VERSION_DIR.match(raw) or raw.endswith(FAILED)):
+        raise InputError(f"name is a song folder's name, not {str(raw)[:90]!r}")
+    return raw
 
 
 def parse_options(raw: Any) -> ChartOptions:
@@ -209,7 +227,7 @@ def parse_options(raw: Any) -> ChartOptions:
                            metadata=meta, lyrics=lyrics if lyrics and lyrics.strip() else None,
                            album_art=get.get("album_art"), background=get.get("background"),
                            stems=get.get("stems", False), one_audio=get.get("one_audio", False),
-                           seed=get.get("seed", 0))
+                           seed=get.get("seed", 0), name=folder_name(get.get("name")))
     pipeline_meta = {"name" if k == "title" else k: v for k, v in meta.items()}
     Options(instruments=options.instruments, takes=options.takes, device=options.device, threads=options.threads,
             metadata=pipeline_meta, solos=options.solos, levels=options.levels, preview=options.preview,
@@ -267,15 +285,16 @@ def lyrics_file(text: str) -> int:
 
 
 def output_folder(home: Path, upload: Mapping[str, Any], options: ChartOptions) -> Path:
-    """<home>/library/<the upload's id>/<cache.safe_name(f"{artist} - {title}", LIBRARY_NAME_MAX)>; for a seed N > 0
-    (M8-14), version N + 1's: <home>/library/<the upload's id>/v<N + 1>/<the same name>."""
+    """<home>/library/<the upload's id>/<cache.safe_name(f"{artist} - {title}", LIBRARY_NAME_MAX)>, or the options'
+    `name` when given (a version's: its first chart's folder's name, M8-14); for a seed N > 0, version N + 1's:
+    <home>/library/<the upload's id>/v<N + 1>/<the name>."""
     tags = upload.get("metadata") or {}
     artist = options.metadata.get("artist") or tags.get("artist") or "Unknown"
     title = options.metadata.get("title") or tags.get("name") or Path(upload["path"]).stem
     base = home / "library" / upload["id"]
     if options.seed:
         base = base / f"v{options.seed + 1}"
-    return base / cache.safe_name(f"{artist} - {title}", LIBRARY_NAME_MAX)
+    return base / (options.name or cache.safe_name(f"{artist} - {title}", LIBRARY_NAME_MAX))
 
 
 def partial_folders(out: Path) -> list[Path]:
