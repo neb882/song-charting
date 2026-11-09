@@ -96,8 +96,9 @@ page.
 - **Several songs for an evening:** drop several song files at once (or choose several), pick Best or Quick once for
   all of them, and press "Chart them": songcharter charts them one after the other, by itself, while you are away. The
   list under the chart shows each song: "Install" and "Look" (its own Done screen) once it is done, "Remove" while it
-  waits; more songs can be added while one charts ("Add songs"). Leave the page in front, or set the PC's sleep to
-  Never, so it charts all evening. Cancel stops only the song charting; "Pause after this song" stops the list after
+  waits; more songs can be added while one charts ("Add songs"). Keep your PC awake while these chart: in Windows
+  Settings, set Sleep to Never for now (the page says so under the list); a PC that sleeps stops charting until it
+  wakes. Leaving the page in front helps too. Cancel stops only the song charting; "Pause after this song" stops the list after
   it. If the songcharter window closes, the list waits: start songcharter again and press "Carry on". Lyrics and
   pictures are for one song at a time.
 - **Your charts:** every song you have charted stays listed under "Your charts" on the first screen (folded once the

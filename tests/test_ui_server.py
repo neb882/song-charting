@@ -3391,6 +3391,7 @@ const out = {};
   out.running = { title: document.title, locks: locks.length, rows: rows(), left: els["queue-left"].textContent,
     actions: els["queue-actions"].hidden,
     keep: els["queue-keep"].hidden, pause: els.pause.hidden, box: els["queue-box"].hidden };
+  out.awake = { two: els["queue-awake"].hidden };
   ctx.handle({ event: "take", index: 3, count: 4, seed: 3 });
   out.take = document.title;
   // the update notice is held while a song waits, as while one charts
@@ -3425,6 +3426,7 @@ const out = {};
   await settle();
   out.end = { title: document.title, released: locks[0].released, done: els["done-screen"].hidden,
               rows: rows(), keep: els["queue-keep"].hidden, actions: els["queue-actions"].hidden };
+  out.awake.done = els["queue-awake"].hidden;
   // a restart with three songs waiting: paused, with Carry on and Clear the list
   ctx.setQueue({ paused: "restart", restarted: 3, run: 2, left: { low_s: 600, high_s: 1500, songs: 3 },
                  entries: ["c", "d", "e"].map((x) => ({ ...entry(x, "waiting", null), run: 2 })) });
@@ -3441,6 +3443,7 @@ const out = {};
   out.disk = els["queue-paused-text"].textContent;
   // a song that waits for the one charting gets no lyrics: said beside the box
   ctx.setQueue({ ...queue, paused: null, entries: [entry("g", "charting", "j9")] });
+  out.awake.one = els["queue-awake"].hidden;
   ctx.fillOptions({ name: "One.mp3", bytes: 1e6, tags: {}, origin: {} });
   out.lyrics = { wait: els["lyrics-wait"].hidden, disabled: els.options.elements.lyrics.disabled,
                  song: els["song-box"].hidden, button: els.chart.textContent };
@@ -3555,6 +3558,12 @@ def test_the_page_queues_several_songs_and_follows_them_one_after_the_other(tmp_
     assert out["disk"].startswith("C: is nearly full")
     assert out["lyrics"] == {"wait": False, "disabled": True, "song": False, "button": "Chart it"}
     assert out["hours"] == ["5 min", "59 min", "1 h", "1 h 10 min", "3 h 20 min"]
+    # the advisor's finding 7 on v0.5.0: with 2 songs this evening, one of them to chart, the line on keeping the PC
+    # awake shows; with 1 song, or once all have finished, it does not (break: the line never shown, or shown for one)
+    assert out["awake"] == {"two": False, "done": True, "one": True}
+    html = S.static_files()["index.html"].decode()
+    assert ('<p id="queue-awake" hidden>Keep your PC awake while these chart: in Windows Settings, set Sleep to Never '
+            'for now.</p>') in html
     # the review's fixes
     assert out["note"] == {"text": "1 song was not added (1 is waiting already): J.mp3. Drop it again once some are "
                            "charted.", "hidden": False, "progress": False}

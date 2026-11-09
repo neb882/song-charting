@@ -3283,7 +3283,11 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     pause's banner with Carry on, and "All 6 songs: about 1 h 10 min to 3 h 20 min more" (the waiting songs' ranges
     with the charting song's time left). The tab's title reads "2 of 6: Guitar: take 3 of 4" and, at the end, "6
     ready" or "5 ready, 1 did not finish"; the wake lock is held across songs, and the page says to leave the tab in
-    front or set sleep to Never; the update notice waits for the list to empty. "Chart another song" became "Add a
+    front or set sleep to Never; the update notice waits for the list to empty. The wake lock holds only while the
+    tab is in front, so nothing kept the PC awake for an evening (the v0.5.0 advisor's finding 7): with 2 or more
+    songs this evening and one still to chart, a plain line under the list says "Keep your PC awake while these
+    chart: in Windows Settings, set Sleep to Never for now.", and the guide says the same. Windows' own keep-awake
+    call stays a later option (below). "Chart another song" became "Add a
     song", and the progress screen has an "Add songs" strip.
   - In Chromium at 1280x860 and 700 px, light and dark [here, the real App, Jobs and Queue with a stand-in chart
     program and made-up songs]: two songs dropped at once share one form ("2 songs, charted one after the other",

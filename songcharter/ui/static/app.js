@@ -1136,6 +1136,9 @@ function renderQueue() {
   const left = leftText(q);
   text($("queue-left"), left).hidden = !left;
   $("queue-keep").hidden = !(waiting > 0 || (charting && runEntries(q).length > 1));
+  // the advisor's finding 7 on v0.5.0: nothing keeps the PC awake for an evening (the wake lock holds only while the
+  // tab is in front), so with 2 or more songs this evening, one still to chart, the page says how
+  $("queue-awake").hidden = !(runEntries(q).length >= 2 && (charting || waiting > 0));
   $("pause").hidden = !(charting && waiting > 0 && !paused);
   text($("queue-note"), state.note).hidden = !state.note;
   lockLyrics();
