@@ -322,9 +322,11 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
     so the clip to ±1 before the 24-bit cast changed nothing there (the encode of song.ogg clips the same way).
   - **Deterministic:** byte-identical for the same input (the seeded separation; libFLAC's header holds only its
     vendor string and the samples' MD5) [code; tested, two runs].
-  - A run whose separation is cached separates nothing for it; a stems folder holding anything else is refused before
-    any audio work; too little free space (the estimate) or a disk filling while they are written is an `InputError`
-    naming the folder and the space, with the staging folder removed and the chart in place.
+  - A run whose separation is cached separates nothing for it; a stems folder holding anything else (a person's own
+    .flac, a folder) is refused before any audio work; too little free space for the estimate is an `InputError`
+    naming the folder and the space right after the decode, before the long work. A disk that fills while they are
+    written is a warning (M8-12's review): the staging folder is removed, the chart stands with its Install, and the
+    Done screen says in plain words why there are no stems.
   - Piano and "other" are htdemucs_6s's least clean stems (piano at −31 dB on the test song, above), which the page
     says.
 - **Goal 1:** no new separation. Reuse the `ft` stems (lag 0) and the ADTOF test's 6s drum stems (lag 0).
@@ -2223,10 +2225,16 @@ later than Expert.
     summed are 22.1 dB below the decode (htdemucs_6s's residual, which stays in song.ogg).
 - **Gate,** in this order, on the final folder including `song.ogg` (scan-chart reports `playable=false` when there is no audio [here]):
   1. `verify_sync` < 1 sample: of `song.ogg`, or of the split files' decodes summed against the padded decode, the same
-     rule, and each split file against its own samples: its length, and no window lagging a sample or more at a
-     correlation of 0.9 or better and 0.05 better than at no lag (a steady tone correlates as well a period away,
-     which is no shift: a stand-in's sine once read as 4410 samples off). The audio files follow scan-chart's rule (`audio_file_issues`): each a name Clone Hero reads, none
-     twice, one of them the song's music; one file only was the rule before M8-12.
+     rule (the only check on a split folder's song.ogg), and each split file against its own samples: its length;
+     every loud window (within 30 dB of the loudest measured) correlating 0.9 or better at no lag, which a shift past
+     the ±100 ms lag search fails (M8-12's review: 120 to 500 ms late passed before); and no lag of a sample or more
+     correlating 0.9 or better and 0.05 better than no lag (a steady tone correlates as well a period away, which is
+     no shift: a stand-in's sine once read as 4410 samples off). On the seven golden songs' stems every split file's
+     windows correlate 0.992 or better at no lag [here, M8-12's review]. The audio files follow scan-chart's rule
+     (`audio_file_issues`): each a name Clone Hero reads, none twice, one of them the song's music; one file only was
+     the rule before M8-12. guitar.ogg, bass.ogg and drums.ogg are a build's own (replaced, not refused) only where
+     its report.json's `audio_files` lists them, as a background is (M5-12): someone else's multitrack folder given
+     as the output is refused.
   2. scan-chart 8.0.1 (`node tools/scan-chart/scan.cjs <folder> --notes`): playable, and 0 chart issues except `noAlbumArt`.
   3. Self-check: scan-chart's parsed notes match what we wrote (count, ms ±1, HOPO/tap/cymbal flags).
   4. Encore rules: sustains ≥ 200 ms; sustain gaps ≥ 60 ms (target 85 ms); first note ≥ 2 s (`min_lead = 2.5 s` covers this and scan-chart's leading-silence check).
@@ -3254,7 +3262,8 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
   piano and "other" come out the least clean. Both are per song, like the other options: the shared form carries
   them and queue.json keeps them for a waiting song. The Done screen of a run with the stems has "The instruments"
   (outside "Play it", so a chart that failed its check has it too): their count, size and folder, and "Download the
-  stems", a zip of "<song> (stems)" stored without compression (`POST /api/jobs/<ref>/export/stems`). The stems
+  stems", a zip of "<song> (stems)" stored without compression (`POST /api/jobs/<ref>/export/stems`), deleted from
+  exports/ once it is sent (a ~190 MB copy otherwise stayed in WSL each time; M8-12's review). The stems
   stage shows as "Save the stems" in the progress. Listen and the preview read a split folder's files summed.
 - **Status** [code]: screens 1 to 3 built in M4-04; in M4-06 the Done screen (the preview's overview and pages, "Worth a look" from its flags, the zip, Install into Clone Hero, Another folder, Open folder), the "Paste lyrics" box (the text handed to the chart through a memory file, never written to disk or logged), and the diagnostics bundle (`diagnostics.py`, `songcharter diagnostics --out PATH`, `/api/diagnostics`: logs, `doctor.json`, settings and a MANIFEST.txt, every file checked by name, size and first bytes; no audio, chart, image or pasted text). In M4-11 the "Album art" and "Background image" pickers and the album art on the Done screen (§2.16). In M6-09 the Done screen's "Listen" (§2.17). In M7-10 the estimate, the folded stages, the install first, the tab's title, the wake lock, the drop zone's keys and the update notice put away while a chart runs (above). Quick fixes, Preview in Clone Hero and the polish workspace are not built.
 
