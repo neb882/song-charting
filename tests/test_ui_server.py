@@ -621,40 +621,61 @@ def test_the_file_name_gives_the_artist_and_title_the_page_prefills(served, tmp_
         "title": "Some Song", "artist": "Made-Up Band", "album": None, "year": None, "genre": None}
 
 
-def test_one_job_at_a_time_then_cancel(served):
+def test_one_job_at_a_time_a_second_song_waits_then_cancel(served):
+    """M8-10: a second song added while one charts waits (202, no job), its options checked at once (a bad one 400;
+    lyrics refused in a waiting song); cancel ends the charting song only, and the server starts the waiting one."""
     ctx, port = served, served.port
     status, up = upload(ctx, song(ctx.home / "s.wav"), "Song.wav")
     assert status == 200
     status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"], "options": {}}).encode(),
                            guarded(port))
     assert status == 202 and json.loads(body)["job"] == ctx.app.jobs.current.id
+    assert json.loads(body)["state"] == "charting"
     assert ctx.threads == [device.default_threads()]   # doctor's device is the CPU
     job = ctx.app.jobs.current
-    for options, code in (({}, 409), ({"takes": 2}, 400)):
+    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"], "options": {}}).encode(),
+                           guarded(port))
+    waits = json.loads(body)
+    assert status == 202 and waits["job"] is None and waits["state"] == "waiting", body
+    for options in ({"takes": 2}, {"lyrics": "zorp quiv"}):
         status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"], "options": options})
                                .encode(), guarded(port))
-        assert status == code, body
-    assert "takes is 1, or 3 or more" in json.loads(body)["error"]
+        assert status == 400, body
+    assert "takes is 1, or 3 or more" not in json.loads(body)["error"]
+    assert json.loads(body)["error"] == J.LYRICS_WAIT and "zorp" not in "\n".join(ctx.lines)
     for body in (b'{"upload": "0000000000000000"}', b'{"options": {}}', b"[]", b"{"):
         assert call(port, "POST", "/api/jobs", body, guarded(port))[0] == 400, body
     status, _, body = call(port, "GET", "/api/jobs/current")
     snap = json.loads(body)
     assert status == 200 and snap["state"] == "running" and snap["job"] == job.id
-    assert json.loads(call(port, "GET", "/api/status")[2])["job"]["state"] == "running"
+    st = json.loads(call(port, "GET", "/api/status")[2])
+    assert st["job"]["state"] == "running" and ctx.app.jobs.current is job
+    assert [(e["state"], e["job"]) for e in st["queue"]["entries"]] == [("charting", job.id), ("waiting", None)]
+    assert st["queue"]["paused"] is None and st["queue"]["entries"][1]["id"] == waits["entry"]
     deadline = time.monotonic() + 15
     while not any(e["event"] == "take" for e in job.events) and time.monotonic() < deadline:
         time.sleep(0.02)
     pids = next(e for e in job.events if e["event"] == "take")["pids"]
+    ctx.mode = "ok"   # the waiting song's chart, when the server starts it
     status, _, body = call(port, "POST", "/api/jobs/current/cancel", b"", guarded(port))
     assert status == 200 and json.loads(body) == {"job": job.id, "state": "cancelled"}
     assert not any(proc.alive(p) for p in pids)
+    deadline = time.monotonic() + 20
+    while (ctx.app.jobs.current is job or ctx.app.jobs.current.state == "running") and time.monotonic() < deadline:
+        time.sleep(0.02)
+    second = ctx.app.jobs.current
+    assert second is not job and second.state == "done"
+    q = json.loads(call(port, "GET", "/api/queue")[2])
+    assert [(e["state"], e["job"]) for e in q["entries"]] == [("cancelled", job.id), ("ready", second.id)]
+    assert q["left"] is None and q["paused"] is None
     assert call(port, "POST", "/api/jobs/current/cancel", b"", guarded(port))[0] == 409
-    assert json.loads(call(port, "GET", "/api/jobs/current")[2])["state"] == "cancelled"
-    # and a new one may start
-    ctx.mode = "ok"
-    status, _, _ = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"], "options": {"device": "cuda"}})
-                        .encode(), guarded(port))
-    assert status == 202 and wait_state(ctx, "done") and ctx.threads[-1] is None
+    assert json.loads(call(port, "GET", "/api/jobs/current")[2])["state"] == "done"
+    assert json.loads(call(port, "GET", f"/api/jobs/{job.id}")[2])["state"] == "cancelled"   # kept by its id
+    # and a new one starts at once, with lyrics too
+    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"], "options": {
+        "device": "cuda", "lyrics": "zorp quiv"}}).encode(), guarded(port))
+    assert status == 202 and json.loads(body)["state"] == "charting"
+    assert wait_state(ctx, "done") and ctx.threads[-1] is None
 
 
 def test_the_upload_gives_the_songs_length_and_the_job_its_estimate(served, monkeypatch):
@@ -2920,3 +2941,91 @@ def test_best_or_quick_offered_on_the_gpu_with_each_ones_estimate(tmp_path, doct
     best = J.chart_command(Path("s.wav"), Path("out"), J.parse_options({}), None)
     quick = J.chart_command(Path("s.wav"), Path("out"), J.parse_options({"takes": 1}), None)
     assert not any(a.startswith("--takes") for a in best) and quick == best + ["--takes=1"]
+
+
+# ------------------------------------------------------------------------------------------------ the queue (M8-10)
+
+def test_a_finished_songs_routes_by_its_job_id_after_the_next_has_started(finished, tmp_path, monkeypatch):
+    """M8-10: a finished song's Done screen (Look) after the next song is the current job: its results, preview,
+    install, zip, Listen and Open folder by its job id (`current` stays the latest), and after a restart too, from
+    queue.json; an id that is no job's 404."""
+    ctx = finished
+    first = ctx.run()
+    status, ctx.upload = upload(ctx, song(tmp_path / "t.wav", 2.0), "Other Song.wav")
+    assert status == 200
+    second = ctx.run()
+    assert ctx.app.jobs.current is second and first.id != second.id and first.out != second.out
+    status, _, body = get(ctx, f"/api/jobs/{first.id}/results")
+    res = json.loads(body)
+    assert status == 200 and res["job"] == first.id and res["folder"] == str(first.out) and res["installable"]
+    assert res["preview"]["overview"] == f"/api/jobs/{first.id}/preview/overview.png"
+    assert get(ctx, res["preview"]["pages"][0])[0] == 200
+    assert json.loads(get(ctx, "/api/jobs/current/results")[2])["folder"] == str(second.out)
+    snap = json.loads(get(ctx, f"/api/jobs/{first.id}")[2])
+    assert snap["state"] == "done" and snap["events"][-1]["event"] == "result" and snap["kept"] is True
+    for path in ("/api/jobs/20000101-000000/results", "/api/jobs/x/results", "/api/jobs/../current/results",
+                 f"/api/jobs/{first.id}/events", f"/api/jobs/{first.id}/nope", f"/api/jobs/{first.id}/preview/x.png",
+                 f"/api/jobs/{first.id}/art/album.jpg", f"/api/jobs/{first.id}/listen/guitar-expert.ogg"):
+        assert get(ctx, path)[0] == 404, path
+    songs = tmp_path / "Songs"
+    songs.mkdir()
+    assert post(ctx, "/api/clonehero", {"folder": str(songs)})[0] == 200
+    status, answer = post(ctx, f"/api/jobs/{first.id}/install", {"replace": False})
+    assert status == 200 and answer["installed"] == str(songs / first.out.name)
+    status, answer = post(ctx, f"/api/jobs/{first.id}/export/zip")
+    assert status == 200 and answer["name"].startswith(first.out.name) and answer["name"].endswith(".zip")
+    from songcharter import wsl
+    monkeypatch.setattr(wsl, "open_url", lambda url: True)
+    status, answer = post(ctx, "/api/open", {"what": "built", "job": first.id})
+    assert status == 200 and answer["path"] == str(first.out)
+    status, answer = post(ctx, "/api/open", {"what": "built", "job": "../x"})   # not an id: the current one
+    assert status == 200 and answer["path"] == str(second.out)
+    listen_chart(first.out)
+    status, answer = post(ctx, f"/api/jobs/{first.id}/listen", {"part": "guitar", "level": "expert"})
+    assert status == 200 and answer["url"] == f"/api/jobs/{first.id}/listen/guitar-expert.ogg", answer
+    status, headers, body = get(ctx, answer["url"])
+    assert status == 200 and headers["Content-Type"] == "audio/ogg" and body[:4] == b"OggS"
+    assert get(ctx, "/api/jobs/current/listen/guitar-expert.ogg")[0] == 404   # the second's: none rendered
+    # after a restart: the list from queue.json, and Look and Install by the job's id
+    again = S.App(ctx.home, jobs=J.Jobs(ctx.home), log=S.Log(None, console=lambda t: None), report=lambda: DOCTOR)
+    kept = again.queue.job(first.id)
+    assert kept is not None and again.jobs.current is None
+    assert S.results(kept, first.id)["folder"] == str(first.out) and again.queue.snapshot()["paused"] is None
+    assert [e["state"] for e in again.queue.snapshot()["entries"]] == ["ready", "ready"]
+
+
+def test_the_queues_endpoints_are_behind_the_guards(finished, monkeypatch):
+    """Every new endpoint answers only as 127.0.0.1 or localhost, and every POST needs X-Songcharter: 1 and this
+    page's Origin: refused, nothing changes; with them, each answers."""
+    ctx, port = finished, finished.port
+    job = ctx.run()
+    gets = ["/api/queue", f"/api/jobs/{job.id}", f"/api/jobs/{job.id}/results",
+            f"/api/jobs/{job.id}/preview/overview.png"]
+    posts = ["/api/queue/pause", "/api/queue/carry-on", "/api/queue/clear", "/api/queue/remove",
+             f"/api/jobs/{job.id}/install", f"/api/jobs/{job.id}/export/zip", f"/api/jobs/{job.id}/listen"]
+    for path in gets:
+        assert call(port, "GET", path, host=f"evil.example:{port}")[0] == 403, path
+        assert call(port, "GET", path)[0] == 200, path
+    for path in posts:
+        for headers, host in (({"Origin": f"http://127.0.0.1:{port}"}, None),
+                              ({"X-Songcharter": "1", "Origin": "http://evil.example"}, None),
+                              ({"X-Songcharter": "1"}, None), (guarded(port), f"evil.example:{port}")):
+            assert call(port, "POST", path, b"{}", headers, host=host)[0] == 403, (path, headers, host)
+    assert len(ctx.app.queue.snapshot()["entries"]) == 1 and not (ctx.home / "exports").exists()
+    assert post(ctx, "/api/queue/pause")[0] == 409   # none waits
+    assert post(ctx, "/api/queue/remove", {"entry": "nope"})[0] == 409
+    status, q = post(ctx, "/api/queue/carry-on")
+    assert status == 200 and [e["job"] for e in q["entries"]] == [job.id]
+    status, q = post(ctx, "/api/queue/remove", {"entry": q["entries"][0]["id"]})
+    assert status == 200 and q["entries"] == []
+    assert json.loads(J.queue_path(ctx.home).read_text(encoding="utf-8"))["entries"] == []
+    assert post(ctx, "/api/queue/clear")[0] == 200
+    # the disk measured before each song the queue starts: under doctor's MIN_FREE, why
+    monkeypatch.setattr(device, "refresh_disk", lambda r: r)
+    (ctx.home / "doctor.json").write_text(json.dumps({**DOCTOR, "disk": {"home_free_mb": 90000,
+                                                                         "windows_c_free_mb": 900}}))
+    assert ctx.app.disk_low() == ("C: is nearly full (under 6 GB free), so the queue is paused: free some space, "
+                                  "then Carry on")
+    (ctx.home / "doctor.json").write_text(json.dumps({**DOCTOR, "disk": {"home_free_mb": 90000,
+                                                                         "windows_c_free_mb": None}}))
+    assert ctx.app.disk_low() is None

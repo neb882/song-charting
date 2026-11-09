@@ -26,9 +26,9 @@ one chart runs at a time as a child process group (jobs.py). In WSL the Windows 
      printed in every case: http://localhost:<port>/ in WSL (what the self-check proved), http://127.0.0.1:<port>/
      elsewhere, or the fallback address.
   5. **Logs** to $SONGCHARTER_HOME/logs/ui-<yyyyMMdd>.log (every request too) and to the console window. Uploads older
-     than 7 days go.
-  6. **Stops** on SIGHUP or SIGTERM (the window closes) and Ctrl+C: a running job's tree is killed first. A page
-     that closes does not stop it.
+     than 7 days go, but those the queue's waiting songs name (jobs.queued_uploads).
+  6. **Stops** on SIGHUP or SIGTERM (the window closes) and Ctrl+C: a running job's tree is killed first, and its
+     song goes back to waiting at the top of the queue (Queue.shutdown). A page that closes does not stop it.
 
 **The update notice** (M5-07): once the first page (index.html) has been served, never before (nothing on the
 startup path waits on the network, or asks it), a daemon thread runs updates.check once per server process: at most
@@ -63,8 +63,10 @@ Nothing is downloaded or installed; charting never waits for it.
     guards, folder and pruning; upload.json's kind "image"). An extension not in art.EXTENSIONS: 415; over
     art.MAX_BYTES (20 MB): 413. It must decode as art.py's checks say (a JPEG, PNG or WebP within its pixel limit),
     else 415 with why, and nothing is kept. Answers {"id", "name", "bytes", "format", "width", "height"}.
-  * POST /api/jobs {"upload", "options"}: 202 {"job"}; 409 while a job runs; 400 for bad options (Options.check()'s
-    message) or an unknown upload. The options' `album_art` and `background` are image upload ids, which become the
+  * POST /api/jobs {"upload", "options"} (M8-10): the song added to the queue (jobs.Queue), which starts it at once
+    when nothing charts and none waits: 202 {"job" (null when it waits), "entry", "state": "charting" or "waiting"};
+    400 for bad options (Options.check()'s message, checked when it is added), an unknown upload, or lyrics in a
+    song that would wait (jobs.LYRICS_WAIT); 409 with jobs.QUEUE_MAX songs waiting. The options' `album_art` and `background` are image upload ids, which become the
     images' paths here (an unknown one, or a song's: 400), so no path ever comes from the page. The job gets its
     estimate here (M7-10: estimate.for_job, from the upload's length, the options, and the doctor summary's device
     and guitar device); a bug in it is logged, and the chart starts without one.
@@ -76,8 +78,21 @@ Nothing is downloaded or installed; charting never waits for it.
     once the job's process has exited (up to 10 s more), so the state is final then. A Last-Event-ID header resumes
     after that index.
   * POST /api/jobs/current/cancel: 200 with the job's state after the cancel; 409 when no job runs.
+  * The queue (M8-10, DESIGN.md 4.5): GET /api/queue (also /api/status's `queue`): {"paused" (null, "restart",
+    "you", "failures" or "disk", only while a song waits), "why" (the disk's), "restarted" (the songs that were
+    waiting when songcharter closed), "run", "max", "entries" ({"id", "run", "name", "chart", "state" (waiting,
+    charting, ready, check_failed, not_finished, cancelled), "job", "estimate", "added", "started", "ended",
+    "error"}), "left" ({"low_s", "high_s", "songs"}: the whole queue's time left, or null)}. POST /api/queue/pause
+    (after this song; 409 when none waits), /api/queue/carry-on, /api/queue/clear (every song but the charting
+    one), /api/queue/remove {"entry"} (409 for the charting one or none): each answers the queue. A cancel ends the
+    charting song only, and the next starts.
+  * **By job id** (M8-10): every route below on "current" also takes a job's id (/api/jobs/<yyyyMMdd-HHmmss[-n]>/...,
+    JOB_PATH), for a finished song's Done screen once the next has started: the current job, or the queue's record
+    of a finished one (jobs.Kept, from queue.json after a restart too); GET /api/jobs/<id> is its snapshot, with
+    its closing event. The results' URLs name the job as the request did. The events and cancel are the current
+    job's only. POST /api/open {"what": "built", "job"} opens that job's folder.
 
-**After the build** (M4-06). The routes on "the chart" use the current job's `result` event; those that export or
+**After the build** (M4-06). The routes on "the chart" use the job's `result` event (the current one's, or by id); those that export or
 install need one that passed its gate (else 400): a .failed folder is for a look, not for Clone Hero. A job whose
 `result` is out has its chart in place (the chart prints it last), so these routes take it at once, while its process
 is still exiting (a second or more, with its state still `running`): the page asks for the results the moment it
@@ -158,7 +173,8 @@ from ..errors import InputError, ToolError
 from ..timed import DIFFICULTIES, INSTRUMENTS
 from . import estimate
 from . import home as default_home
-from .jobs import CLOSING, ChartOptions, Jobs, JobRunning, NotRunning, parse_options
+from .jobs import (CLOSING, ChartOptions, Jobs, JobRunning, NotInQueue, NotRunning, Queue, QueueFull, parse_options,
+                   queued_uploads)
 
 APP = "songcharter"
 PORTS = range(8765, 8785)          # 8765-8784
@@ -180,7 +196,8 @@ STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; ch
                 ".css": "text/css; charset=utf-8"}
 PREVIEW_NAME = re.compile(r"^(?:overview|page_\d{2,3})\.png$")   # preview.py's files: overview.png, page_01.png, ...
 PREVIEW_PAGE = re.compile(r"^page_\d{2,3}\.png$")
-OPEN = ("song", "exports", "built")   # POST /api/open's only folders: no path comes from the page
+OPEN = ("song", "exports", "built")
+QUEUE_POSTS = ("/api/queue/pause", "/api/queue/carry-on", "/api/queue/clear", "/api/queue/remove")   # POST /api/open's only folders: no path comes from the page
 # preview.render_pages' page_s, which pipeline's preview stage leaves at its default: the seconds of song a page shows
 PAGE_S = 60.0
 # a preview flag's text (preview.Flag's str): "<part>: <kind> <m:ss.s>-<m:ss.s> (<n> measures)"
@@ -188,6 +205,8 @@ FLAG_AT = re.compile(r"^(?P<part>[a-z]+): [^0-9]+? (?P<m>\d+):(?P<s>\d{2}(?:\.\d
 IMAGE_OPTIONS = {"album_art": "album art", "background": "background image"}   # the options that name an image upload
 ART_FILES = (ART.ALBUM,)           # GET /api/jobs/current/art/<name>: only these
 RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")   # one byte range (the audio player's); anything else: the whole file
+# /api/jobs/<current or a job's id, jobs._log_path's yyyyMMdd-HHmmss[-n]>[/<the rest>] (M8-10)
+JOB_PATH = re.compile(r"^/api/jobs/(current|\d{8}-\d{6}(?:-\d{1,4})?)(/.*)?$")
 
 
 def console_line(text: str) -> None:
@@ -254,7 +273,38 @@ class App:
         self._update_asked = False
         self.update: dict | None = None        # what the update check found: {"version", "line", "url"}
         self.listen_lock = threading.Lock()    # one render at a time (M6-09)
-        self.listened: tuple[str, dict[str, Path]] | None = None   # (job id, {"<part>-<level>.ogg": its render})
+        self.listened: dict[str, dict[str, Path]] = {}   # job id -> {"<part>-<level>.ogg": its render}
+        self.queue = Queue(self.jobs, self.home, prepare=self.prepare, disk_low=self.disk_low, log=self.log)
+
+    # --- the queue (M8-10)
+    def prepare(self, entry: dict) -> tuple[dict, ChartOptions, str | None]:
+        """A queued song about to start: its upload's record, its options checked again with the pictures' upload ids
+        made into their paths (none comes from the page), and the doctor's device; an InputError when its file or a
+        picture is gone."""
+        name = entry["upload"].get("name") or "the song"
+        upload = read_upload(self.home, entry["upload"].get("id"))
+        if upload is None:
+            raise InputError(f"{name} is not there any more: drop it again")
+        options = dict(entry.get("options") or {})
+        for key, what in IMAGE_OPTIONS.items():
+            if options.get(key) is not None:
+                image = read_upload(self.home, options[key], kind="image")
+                if image is None:
+                    raise InputError(f"the {what} chosen for {name} is not there any more: choose it again")
+                options[key] = image["path"]
+        return upload, parse_options(options), self.auto_device()
+
+    def disk_low(self) -> str | None:
+        """Why the queue pauses before a song, when the free disk (measured again) is under doctor's MIN_FREE, else
+        None (DESIGN.md 4.5: an evening's work folders stay in the cache for a day, whatever its budget)."""
+        disk = self.doctor().get("disk") or {}
+        gb = device.MIN_FREE // device.GB
+        for key, where in (("windows_c_free_mb", "C:"), ("home_free_mb", "WSL's disk")):
+            free = disk.get(key)
+            if isinstance(free, (int, float)) and free * device.MB < device.MIN_FREE:
+                return (f"{where} is nearly full (under {gb} GB free), so the queue is paused: free some space, then "
+                        "Carry on")
+        return None
 
     # --- the update notice (M5-07)
     def page_served(self) -> None:
@@ -371,6 +421,7 @@ class App:
         return {**{k: r.get(k) for k in ("device", "gpu", "guitar_device", "guitar_reason", "problems", "notes", "ok",
                                           "source", "error")},
                 "job": job.snapshot(events=False) if job is not None else None,
+                "queue": self.queue.snapshot(),
                 "update": dict(self.update) if self.update else None,
                 "defaults": {"instruments": list(INSTRUMENTS), "levels": ["expert"], "solos": "labels", "takes": None,
                              "device": "auto", "preview": True, "threads": None, "threads_default": threads,
@@ -404,9 +455,12 @@ def read_upload(home: Path, upload_id: Any, kind: str = "song") -> dict | None:
     return {**record, "path": str(path)}
 
 
-def prune_uploads(home: Path, days: float = UPLOAD_DAYS, now: float | None = None) -> list[str]:
-    """Delete the uploads (and stray partial uploads) last touched more than `days` ago; their names."""
+def prune_uploads(home: Path, days: float = UPLOAD_DAYS, now: float | None = None,
+                  keep: Iterable[str] = ()) -> list[str]:
+    """Delete the uploads (and stray partial uploads) last touched more than `days` ago, but those in `keep` (the
+    queue's waiting songs and their pictures, jobs.queued_uploads); their names."""
     now = time.time() if now is None else now
+    keep = set(keep)
     gone = []
     folder = uploads_folder(home)
     try:
@@ -414,6 +468,8 @@ def prune_uploads(home: Path, days: float = UPLOAD_DAYS, now: float | None = Non
     except OSError:
         return gone
     for p in entries:
+        if p.name in keep:
+            continue
         try:
             newest = max([p.stat().st_mtime] + ([c.stat().st_mtime for c in p.iterdir()] if p.is_dir() else []))
         except OSError:
@@ -558,26 +614,29 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"app": APP, "version": __version__, "token": app.token, "url": app.url})
         if path == "/api/status":
             return self._json(200, app.status())
-        if path == "/api/jobs/current":
-            job = app.jobs.current
+        if path == "/api/queue":
+            return self._json(200, app.queue.snapshot())
+        m = JOB_PATH.match(path)
+        if m:
+            ref, rest = m[1], m[2] or ""
+            if ref == "current" and rest == "/events":
+                return self._events()
+            job = self._job(ref)
             if job is None:
-                return self._refuse(404, "no job yet")
-            return self._json(200, job.snapshot())
-        if path == "/api/jobs/current/events":
-            return self._events()
-        if path == "/api/jobs/current/results":
-            job = app.jobs.current
-            if job is None:
-                return self._refuse(404, "no job yet")
-            return self._json(200, results(job))
-        if path.startswith("/api/jobs/current/preview/"):
-            return self._preview(unquote(path[len("/api/jobs/current/preview/"):]))
-        if path.startswith("/api/jobs/current/art/"):
-            return self._art(unquote(path[len("/api/jobs/current/art/"):]))
+                return self._refuse(404, "no job yet" if ref == "current" else "no such job")
+            if rest == "":
+                return self._json(200, job.snapshot())
+            if rest == "/results":
+                return self._json(200, results(job, ref))
+            if rest.startswith("/preview/"):
+                return self._preview(job, unquote(rest[len("/preview/"):]))
+            if rest.startswith("/art/"):
+                return self._art(job, unquote(rest[len("/art/"):]))
+            if rest.startswith("/listen/"):
+                return self._listened(job, unquote(rest[len("/listen/"):]))
+            return self._refuse(404, "not found")
         if path.startswith("/api/exports/"):
             return self._export(unquote(path[len("/api/exports/"):]))
-        if path.startswith("/api/jobs/current/listen/"):
-            return self._listened(unquote(path[len("/api/jobs/current/listen/"):]))
         if path == "/api/clonehero":
             return self._json(200, app.clonehero())
         if path == "/api/diagnostics":
@@ -603,6 +662,7 @@ class Handler(BaseHTTPRequestHandler):
             if upload is None:
                 raise Refused(400, f"no such upload: {body.get('upload')!r} (upload the song file again)")
             options = body.get("options")
+            given = dict(options) if isinstance(options, dict) else options   # the queue keeps the pictures' ids
             if isinstance(options, dict):   # the images' upload ids become their paths: none comes from the page
                 options = dict(options)
                 for key, what in IMAGE_OPTIONS.items():
@@ -623,12 +683,16 @@ class Handler(BaseHTTPRequestHandler):
                 app.log(f"estimate: internal error:\n{traceback.format_exc()}", console=False)
                 est = None
             try:
-                job = app.jobs.start(upload, opts, auto_device=auto, estimate=est)
-            except JobRunning as e:
-                raise Refused(409, f"a chart is running already (job {e})") from None
+                entry, job = app.queue.add(upload, given or {}, estimate=est, lyrics=opts.lyrics)
+            except (JobRunning, QueueFull) as e:
+                raise Refused(409, str(e) if isinstance(e, QueueFull) else f"a chart is running already (job {e})"
+                              ) from None
             except InputError as e:
                 raise Refused(400, str(e)) from None
-            return self._json(202, {"job": job.id})
+            return self._json(202, {"job": job.id if job is not None else None, "entry": entry["id"],
+                                    "state": "charting" if job is not None else "waiting"})
+        if path in QUEUE_POSTS:
+            return self._queue(path)
         if path == "/api/jobs/current/cancel":
             self._drain()
             try:
@@ -636,12 +700,20 @@ class Handler(BaseHTTPRequestHandler):
             except NotRunning:
                 raise Refused(409, "no chart is running") from None
             return self._json(200, {"job": job.id, "state": job.state})
-        if path == "/api/jobs/current/export/zip":
-            self._drain()
-            out = clonehero.export_zip(self._built(), app.home)
-            app.log(f"exported {out}")
-            return self._json(200, {"url": export_url(out.name), "name": out.name,
-                                    "windows_path": clonehero.windows_path(out)})
+        m = JOB_PATH.match(path)
+        if m and m[2] in ("/export/zip", "/install", "/listen"):
+            ref, rest = m[1], m[2]
+            job = self._job(ref)
+            if rest == "/export/zip":
+                self._drain()
+                out = clonehero.export_zip(self._built(job), app.home)
+                app.log(f"exported {out}")
+                return self._json(200, {"url": export_url(out.name), "name": out.name,
+                                        "windows_path": clonehero.windows_path(out)})
+            body = self._read_json()
+            if rest == "/install":
+                return self._install(job, body.get("replace") is True)
+            return self._listen(job, ref, body.get("part"), body.get("level"))
         if path == "/api/clonehero":
             folder = self._read_json().get("folder")
             if not isinstance(folder, str):
@@ -653,20 +725,33 @@ class Handler(BaseHTTPRequestHandler):
                     raise Refused(400, str(e)) from None
             app.log(f"the Clone Hero Songs folder is {saved}")
             return self._json(200, app.clonehero())
-        if path == "/api/jobs/current/install":
-            return self._install(self._read_json().get("replace") is True)
         if path == "/api/open":
-            return self._open(self._read_json().get("what"))
-        if path == "/api/jobs/current/listen":
             body = self._read_json()
-            return self._listen(body.get("part"), body.get("level"))
+            return self._open(body.get("what"), body.get("job"))
         raise Refused(404, "not found")
 
+    # --- the queue (M8-10)
+    def _job(self, ref: str):
+        """The job a route names: the current one, or a finished song's by its id (Queue.job); None for none."""
+        return self.app.jobs.current if ref == "current" else self.app.queue.job(ref)
+
+    def _queue(self, path: str) -> None:
+        queue = self.app.queue
+        try:
+            if path == "/api/queue/remove":
+                queue.remove(self._read_json().get("entry"))
+            else:
+                self._drain()
+                {"/api/queue/pause": queue.pause, "/api/queue/carry-on": queue.carry_on,
+                 "/api/queue/clear": queue.clear}[path]()
+        except NotInQueue as e:
+            raise Refused(409, str(e)) from None
+        return self._json(200, queue.snapshot())
+
     # --- after the build
-    def _built(self) -> Path:
-        """The current job's song folder, when its chart passed the gate and is in place (its `result` is out,
-        whatever its process is still doing: the module docstring); else Refused(400)."""
-        job = self.app.jobs.current
+    def _built(self, job) -> Path:
+        """The job's song folder, when its chart passed the gate and is in place (its `result` is out, whatever its
+        process is still doing: the module docstring); else Refused(400)."""
         result = job.result() if job is not None else None
         if result is None:
             raise Refused(400, "no finished chart yet")
@@ -677,8 +762,7 @@ class Handler(BaseHTTPRequestHandler):
             raise Refused(400, f"the chart's folder {folder} is not there any more")
         return folder
 
-    def _preview(self, name: str) -> None:
-        job = self.app.jobs.current
+    def _preview(self, job, name: str) -> None:
         result = job.result() if job is not None else None
         folder = result.get("preview") if result else None
         if not folder or not PREVIEW_NAME.match(name):
@@ -690,9 +774,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._refuse(404, "not found")
         return self._send(200, data, "image/png")
 
-    def _art(self, name: str) -> None:
+    def _art(self, job, name: str) -> None:
         """The result's album art, by its exact name only."""
-        job = self.app.jobs.current
         result = job.result() if job is not None else None
         if result is None or name not in ART_FILES:
             return self._refuse(404, "not found")
@@ -702,13 +785,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._refuse(404, "not found")
         return self._send(200, data, "image/jpeg")
 
-    def _listen(self, part: Any, level: Any) -> None:
-        """Render (or find) one part and level of the current chart and record it as this job's (the module
+    def _listen(self, job, ref: str, part: Any, level: Any) -> None:
+        """Render (or find) one part and level of the job's chart and record it as this job's (the module
         docstring)."""
         app = self.app
         if part not in INSTRUMENTS or level not in DIFFICULTIES:
             raise Refused(400, f"part is one of {', '.join(INSTRUMENTS)} and level one of {', '.join(DIFFICULTIES)}")
-        job = app.jobs.current
         result = job.result() if job is not None else None
         if result is None or not result.get("work"):
             raise Refused(400, "no finished chart yet")
@@ -724,19 +806,15 @@ class Handler(BaseHTTPRequestHandler):
                 raise Refused(400, str(e)) from None
             except (ToolError, OSError) as e:   # ffmpeg failing, a full disk: no bug, said as it is
                 raise Refused(500, f"the {part} on {level.capitalize()} could not be made into sound: {e}") from None
-            held = app.listened if app.listened is not None and app.listened[0] == job.id else (job.id, {})
-            held[1][name] = path
-            app.listened = held
+            app.listened.setdefault(job.id, {})[name] = path
         took = round(time.monotonic() - began, 1)
         app.log(f"listen: {part} on {level}" + (" (rendered before)" if was else f" rendered in {took} s"))
-        return self._json(200, {"url": "/api/jobs/current/listen/" + name, "part": part, "level": level,
+        return self._json(200, {"url": f"/api/jobs/{ref}/listen/" + name, "part": part, "level": level,
                                 "cached": was, "seconds": took})
 
-    def _listened(self, name: str) -> None:
-        """A render of the current job's, by the name the POST recorded it under; anything else 404."""
-        job = self.app.jobs.current
-        held = self.app.listened
-        path = held[1].get(name) if job is not None and held is not None and held[0] == job.id else None
+    def _listened(self, job, name: str) -> None:
+        """A render of the job's, by the name the POST recorded it under; anything else 404."""
+        path = self.app.listened.get(job.id, {}).get(name)
         if path is None:
             return self._refuse(404, "not found")
         try:
@@ -796,9 +874,9 @@ class Handler(BaseHTTPRequestHandler):
             app.log(f"diagnostics: {name} ({out.stat().st_size} bytes)")
             self._download(out, name)
 
-    def _install(self, replace: bool) -> None:
+    def _install(self, job, replace: bool) -> None:
         app = self.app
-        song = self._built()
+        song = self._built(job)
         with app.install_lock:
             songs, source = clonehero.songs_folder(app.home, app.documents)
             if songs is None:
@@ -823,12 +901,13 @@ class Handler(BaseHTTPRequestHandler):
                                 "replaced": None if done.replaced is None else str(done.replaced),
                                 "note": done.note})
 
-    def _open(self, what: Any) -> None:
+    def _open(self, what: Any, ref: Any = None) -> None:
         app = self.app
         if what not in OPEN:
             raise Refused(400, f"what is one of {', '.join(OPEN)}")
-        if what == "built":   # the current result's folder, a .failed one too (it is for a look): no path from the page
-            job = app.jobs.current
+        if what == "built":   # the job's result folder, a .failed one too (it is for a look): no path from the page
+            ref = ref if isinstance(ref, str) and JOB_PATH.match(f"/api/jobs/{ref}") else "current"
+            job = self._job(ref)
             result = job.result() if job is not None else None
             if result is None:
                 raise Refused(400, "no finished chart yet")
@@ -1026,8 +1105,9 @@ def _preview_why(pv: Any) -> str:
     return "its pictures are not there any more"
 
 
-def results(job) -> dict:
-    """GET /api/jobs/current/results (the module docstring), from the job's result event and its pipeline.json."""
+def results(job, ref: str = "current") -> dict:
+    """GET /api/jobs/<ref>/results (the module docstring), from the job's result event and its pipeline.json; its
+    URLs name the job as the request did (`current`, or its id)."""
     result = job.result()
     out: dict[str, Any] = {"job": job.id, "state": job.state, "ok": None, "folder": None, "name": None,
                            "windows_path": None, "installable": False, "preview": None, "lyrics": None, "art": None,
@@ -1051,7 +1131,7 @@ def results(job) -> dict:
                            key=lambda name: int(name[5:-4]))   # page_100 after page_99
         except OSError:
             pages = []
-        base = "/api/jobs/current/preview/"
+        base = f"/api/jobs/{ref}/preview/"
         pv = pv if isinstance(pv, dict) else {}
         flags = [str(f) for f in pv.get("flags") or []]
         out["preview"] = {"overview": base + "overview.png", "pages": [base + p for p in pages],
@@ -1061,7 +1141,7 @@ def results(job) -> dict:
         out["preview"] = {"why": _preview_why(pv)}
     pictures = pipeline.get("art") if isinstance(pipeline.get("art"), dict) else {}
     album = pictures.get("album_art") if isinstance(pictures.get("album_art"), dict) else {}
-    out["art"] = {"album_art": "/api/jobs/current/art/" + ART.ALBUM if (folder / ART.ALBUM).is_file() else None,
+    out["art"] = {"album_art": f"/api/jobs/{ref}/art/" + ART.ALBUM if (folder / ART.ALBUM).is_file() else None,
                   "album_from": album.get("from"), "background": (folder / ART.BACKGROUND).is_file()}
     try:
         out["listen"] = {"parts": listen.available(folder)}
@@ -1302,7 +1382,7 @@ def _main(port: int | None, browser: bool, from_shortcut: bool, home: Path | Non
     log = Log(root / "logs" / f"ui-{time.strftime('%Y%m%d')}.log")
     log(f"songcharter {__version__} ui: home {root}" + (", started from the Start-menu shortcut" if from_shortcut
                                                          else ""))
-    gone = prune_uploads(root)
+    gone = prune_uploads(root, keep=queued_uploads(root))
     if gone:
         log(f"uploads older than {UPLOAD_DAYS} days deleted: {len(gone)}")
     app = App(root, log=log, updates=lambda say: updates.check(root, __version__, say=say))
@@ -1339,7 +1419,7 @@ def _main(port: int | None, browser: bool, from_shortcut: bool, home: Path | Non
         log("Ctrl+C: stopping")
     finally:
         try:
-            app.jobs.shutdown()
+            app.queue.shutdown()   # the charting song goes back to waiting at the top of queue.json
         finally:
             for server in servers:
                 server.shutdown()

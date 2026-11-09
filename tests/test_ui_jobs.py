@@ -7,6 +7,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -471,3 +472,243 @@ def test_the_snapshot_carries_the_time_left_once_the_first_take_is_timed(tmp_pat
         raise ZeroDivisionError("a bug in the time left")
     monkeypatch.setattr(E, "remaining", broken)
     assert job.snapshot()["remaining"] is None and job.snapshot()["state"] == "running"
+
+
+# ------------------------------------------------------------------------------------------------ the queue (M8-10)
+
+# a queued song's chart: its mode is the song's title option ("ok", "check", "dies", "hang"); every run appends
+# "start <time>" and "end <time>" to the record file, so two runs at once would overlap
+QUEUED = r'''
+import json, os, sys, time
+out, record = sys.argv[1], sys.argv[2]
+mode = next((a[len("--title="):] for a in sys.argv if a.startswith("--title=")), "ok")
+
+def ev(**e):
+    sys.stderr.write("@@songcharter " + json.dumps(e) + "\n")
+    sys.stderr.flush()
+
+def mark(what):
+    with open(record, "a") as f:
+        f.write(f"{what} {time.time():.6f} {mode}\n")
+
+mark("start")
+ev(event="plan", stages=["decode", "guitar"])
+time.sleep(0.3)
+if mode == "hang":
+    ev(event="take", index=1, count=1, seed=1, pids=[os.getpid()])
+    time.sleep(60)
+if mode == "dies":
+    mark("end")
+    ev(event="error", kind="tool", message="out of memory, say\nthe rest of it")
+    sys.exit(2)
+mark("end")
+ev(event="result", ok=mode != "check", exit=0 if mode != "check" else 1, folder=out + (".failed" if mode == "check"
+   else ""), work="/w", preview=None, summary="gate")
+sys.exit(0 if mode != "check" else 1)
+'''
+
+
+@pytest.fixture
+def queued(tmp_path):
+    """A Queue over Jobs that run QUEUED, its songs' uploads made up; `add(mode)` adds one with that mode."""
+    script = tmp_path / "queued.py"
+    script.write_text(QUEUED, encoding="utf-8")
+    record = tmp_path / "record.txt"
+    home = tmp_path / "home"
+    lines, disk = [], {"low": None}
+
+    def command(song, out, options, threads):
+        return [sys.executable, str(script), str(out), str(record), f"--title={options.metadata.get('title', 'ok')}"]
+
+    def prepare(entry):
+        if entry["upload"]["id"] == "gone000000000000":
+            raise InputError("Gone.mp3 is not there any more: drop it again")
+        return {**upload(tmp_path), "id": entry["upload"]["id"]}, J.parse_options(entry["options"]), "cpu"
+
+    def make():
+        jobs = J.Jobs(home, command=command, log=lines.append)
+        return J.Queue(jobs, home, prepare=prepare, disk_low=lambda: disk["low"], log=lines.append)
+
+    ctx = SimpleNamespace(home=home, record=record, lines=lines, disk=disk, make=make, queue=make())
+
+    def add(mode, est=None, lyrics=None, uid=None):
+        up = {"id": uid or f"{len(ctx.queue.entries):016x}", "name": f"{mode}.mp3", "seconds": 60}
+        return ctx.queue.add(up, {"title": mode}, est, lyrics=lyrics)
+
+    ctx.add = add
+    yield ctx
+    ctx.queue.shutdown()
+
+
+def settled(queue, timeout=30.0):
+    """Wait until nothing charts and nothing that may start waits."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        snap = queue.snapshot()
+        states = [e["state"] for e in snap["entries"]]
+        if "charting" not in states and ("waiting" not in states or snap["paused"]):
+            return snap
+        time.sleep(0.05)
+    raise AssertionError(f"the queue did not settle: {queue.snapshot()}")
+
+
+def runs(record: Path) -> list[tuple[float, float, str]]:
+    starts, out = {}, []
+    for line in record.read_text().splitlines():
+        what, at, mode = line.split()
+        if what == "start":
+            starts.setdefault(mode, []).append(float(at))
+        else:
+            out.append((starts[mode].pop(0), float(at), mode))
+    return sorted(out)
+
+
+def test_two_charts_never_run_at_once_and_each_starts_when_the_last_ends(queued):
+    """M8-10: songs added while one charts wait, and the server starts each in turn when the last ends (no page
+    asks); a stand-in child records its start and end: the runs never overlap, in the order added."""
+    entry, job = queued.add("ok")
+    assert job is not None and entry["state"] == "charting" and entry["job"] == job.id
+    for mode in ("ok", "check", "ok"):
+        entry, job = queued.add(mode)
+        assert job is None
+    snap = settled(queued.queue)
+    assert [e["state"] for e in snap["entries"]] == ["ready", "ready", "check_failed", "ready"]
+    assert len({e["job"] for e in snap["entries"]}) == 4
+    spans = runs(queued.record)
+    assert [m for _, _, m in spans] == ["ok", "ok", "check", "ok"]
+    for (_, end, _), (start, _, _) in zip(spans, spans[1:]):
+        assert end <= start, spans   # the next starts after the last has ended
+    assert snap["entries"][2]["chart"] == "Ann_Bo - check"   # the folder's name, without .failed
+    assert snap["left"] is None and snap["paused"] is None and snap["run"] == 1
+
+
+def test_two_songs_in_a_row_that_do_not_finish_pause_the_queue(queued):
+    """A failed check is a finished chart; two songs in a row that do not finish (exit 2, or one that cannot start)
+    pause the queue with the rest waiting; Carry on goes on."""
+    queued.add("hang")
+    for mode in ("dies", "check", "dies", "dies", "ok"):
+        queued.add(mode)
+    queued.add("ok", uid="gone000000000000")
+    assert queued.queue.snapshot()["entries"][0]["state"] == "charting"
+    queued.queue.jobs.cancel()
+    snap = settled(queued.queue)
+    assert [e["state"] for e in snap["entries"]] == ["cancelled", "not_finished", "check_failed", "not_finished",
+                                                     "not_finished", "waiting", "waiting"]
+    assert snap["paused"] == "failures" and snap["entries"][1]["error"] == "out of memory, say"
+    queued.queue.carry_on()
+    snap = settled(queued.queue)
+    assert [e["state"] for e in snap["entries"][5:]] == ["ready", "not_finished"]
+    assert snap["entries"][6]["error"] == "Gone.mp3 is not there any more: drop it again"
+    assert snap["paused"] is None   # nothing waits: nothing to pause
+
+
+def test_pause_after_this_song_remove_and_the_disk(queued):
+    """Pause after this song: the charting one finishes and none starts; Remove takes a waiting song out (not the
+    charting one); the disk under MIN_FREE before a song pauses with why; Carry on goes on."""
+    first, _ = queued.add("hang")
+    second, _ = queued.add("ok")
+    third, _ = queued.add("ok")
+    queued.queue.pause()
+    with pytest.raises(J.NotInQueue):
+        queued.queue.remove(first["id"])
+    with pytest.raises(J.NotInQueue):
+        queued.queue.remove("nope")
+    queued.queue.remove(third["id"])
+    queued.queue.jobs.cancel()
+    snap = settled(queued.queue)
+    assert [e["state"] for e in snap["entries"]] == ["cancelled", "waiting"] and snap["paused"] == "you"
+    queued.disk["low"] = "C: is nearly full"
+    queued.queue.carry_on()
+    snap = settled(queued.queue)
+    assert snap["paused"] == "disk" and snap["why"] == "C: is nearly full" and snap["entries"][1]["state"] == "waiting"
+    queued.disk["low"] = None
+    queued.queue.carry_on()
+    assert [e["state"] for e in settled(queued.queue)["entries"]] == ["cancelled", "ready"]
+    with pytest.raises(J.NotInQueue):
+        queued.queue.pause()   # none waits
+
+
+def test_lyrics_only_for_a_song_that_starts_at_once_and_the_lists_limit(queued, monkeypatch):
+    queued.add("hang", lyrics="zorp quiv")   # starts at once: its lyrics go to the chart as before
+    with pytest.raises(InputError, match="Lyrics only for a song that starts at once"):
+        queued.add("ok", lyrics="zorp quiv")
+    monkeypatch.setattr(J, "QUEUE_MAX", 2)
+    queued.add("ok")
+    queued.add("ok")
+    with pytest.raises(J.QueueFull):
+        queued.add("ok")
+    assert len(queued.queue.entries) == 3
+    assert "zorp" not in J.queue_path(queued.home).read_text(encoding="utf-8")
+
+
+def test_a_restart_keeps_the_list_paused_until_carry_on(queued):
+    """queue.json survives the server: the song that was charting goes back to waiting at the top, and the queue is
+    paused ("3 songs were waiting") until Carry on; a finished song is kept by its job id (results, Look) after the
+    restart too; Clear the list empties it."""
+    done, _ = queued.add("ok")
+    settled(queued.queue)
+    queued.add("hang")
+    queued.add("ok")
+    queued.add("check")
+    deadline = time.monotonic() + 20
+    while not any(e["event"] == "take" for e in queued.queue.jobs.current.events):
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+    queued.queue.shutdown()   # the window closes: the tree killed, the song back to waiting
+    data = json.loads(J.queue_path(queued.home).read_text(encoding="utf-8"))
+    assert [e["state"] for e in data["entries"]] == ["ready", "waiting", "waiting", "waiting"]
+    queued.queue = queued.make()
+    snap = queued.queue.snapshot()
+    assert snap["paused"] == "restart" and snap["restarted"] == 3
+    assert [e["state"] for e in snap["entries"]] == ["ready", "waiting", "waiting", "waiting"]
+    job_id = snap["entries"][0]["job"]
+    kept = queued.queue.job(job_id)
+    assert kept.result()["ok"] is True and kept.snapshot()["events"][0]["event"] == "result"
+    assert queued.queue.job("20000101-000000") is None
+    time.sleep(0.5)
+    assert queued.queue.jobs.current is None   # nothing starts by itself
+    queued.queue.entries[1]["options"] = {"title": "ok"}   # the hang, charted this time
+    queued.queue.carry_on()
+    snap = settled(queued.queue)
+    assert [e["state"] for e in snap["entries"]] == ["ready", "ready", "ready", "check_failed"]
+    queued.queue.clear()
+    assert queued.queue.snapshot()["entries"] == [] and J.queued_uploads(queued.home) == set()
+
+
+def test_a_broken_queue_json_starts_an_empty_list(queued):
+    path = J.queue_path(queued.home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for text in ("{not json", "[]", json.dumps({"entries": [{"id": 1}, "x"]})):
+        path.write_text(text, encoding="utf-8")
+        q = queued.make()
+        assert q.entries == [] and q.paused is None
+
+
+def test_the_whole_queues_time_left(queued):
+    """The waiting songs' ranges summed, with the charting song's range less the time it has run (at least 0);
+    None with a song that has no estimate."""
+    est = {"seconds": 60, "takes": 1, "device": "cpu", "low_s": 100.0, "high_s": 300.0, "low_min": 2, "high_min": 5}
+    queued.add("hang", est)
+    queued.add("ok", est)
+    queued.add("ok", {**est, "low_s": 50.0, "high_s": 60.0})
+    left = queued.queue.snapshot()["left"]
+    ran = time.time() - queued.queue.jobs.current.started
+    assert left["songs"] == 3 and abs(left["high_s"] - (360 + 300 - ran)) <= 2 and abs(left["low_s"] - (250 - ran)) <= 2
+    queued.add("ok")
+    assert queued.queue.snapshot()["left"] is None
+
+
+def test_the_queues_uploads_are_kept_past_the_weeks_pruning(tmp_path):
+    from songcharter.ui import server as S
+    home = tmp_path
+    for name in ("a" * 16, "b" * 16, "c" * 16, "d" * 16):
+        (home / "uploads" / name).mkdir(parents=True)
+        (home / "uploads" / name / "x").touch()
+        os.utime(home / "uploads" / name / "x", (1, 1))
+        os.utime(home / "uploads" / name, (1, 1))
+    J.queue_path(home).parent.mkdir(parents=True)
+    J.queue_path(home).write_text(json.dumps({"entries": [
+        {"id": "e1", "run": 1, "state": "waiting", "upload": {"id": "a" * 16}, "options": {"album_art": "b" * 16}},
+        {"id": "e2", "run": 1, "state": "ready", "upload": {"id": "c" * 16}, "options": {}}]}), encoding="utf-8")
+    assert J.queued_uploads(home) == {"a" * 16, "b" * 16}
+    assert sorted(S.prune_uploads(home, keep=J.queued_uploads(home))) == ["c" * 16, "d" * 16]
