@@ -108,6 +108,21 @@ page.
   there), "Open" shows its folder, "Download the stems" gives the separated instruments when you saved them, and
   "Look" shows its preview and Listen for a day or so after charting. Nothing is deleted from the page: to delete a
   chart, Open its folder and delete it in Windows.
+- **Tell us how it played:** under "Ready" and under each chart in "Your charts" there is a line "How did it play?".
+  Click it to open it, then press 1 (no fun) to 5 (great); press the same number again to take it back, or another
+  to change it. To mark a bad spot, write when it is, as Clone Hero shows it (minutes and seconds, such as 2:28),
+  tick what is wrong there (too many chords, missing notes, extra notes, off the beat, hard to read) or "Great part"
+  for a part you liked, add a short note if you want, and press "Mark it". Mark as many spots as you like; "Remove"
+  takes one away. It is all optional, and saved as you go. Your ratings and spots go into the diagnostics zip (below),
+  with your notes as you wrote them, so we can see what to fix.
+- **Chart it differently:** if you don't like how a song's guitar came out, press "Chart it differently" (under
+  "Ready", or beside the chart in "Your charts"). songcharter charts the guitar again another way, with the same
+  options; the bass, drums and sections stay as they were, so it takes about the guitar's time. The new chart is
+  "version 2" (then 3, and so on), listed beside the first in "Your charts"; nothing is overwritten. The versions
+  install into the same Clone Hero folder, so only one is in the game at a time: Install asks before replacing the
+  version that is there ("Version 1 of ... is in Clone Hero now. Replace it with version 2?"). songcharter keeps a
+  song file for 7 days: after that, it asks you to drop the song file again. If the chart had lyrics, paste them
+  again when it asks (songcharter does not keep pasted lyrics), or chart it without them.
 - **Lyrics, if you want them on screen:** before "Chart it", open "Lyrics" and paste the song's words into the box,
   one line for each sung line. songcharter times the words you paste to the singing; it never looks lyrics up. The
   first song with lyrics downloads 1.26 GB, once.
@@ -145,7 +160,7 @@ page.
 - **If downloads keep failing with certificate errors**, usually after the PC slept and WSL's clock went wrong: in
   Terminal (right-click Start), type `wsl --shutdown`, then open Ubuntu and paste the install line again.
 - The "Diagnostics" link at the bottom of songcharter's page saves a zip to your Downloads folder (logs and settings,
-  no audio). Send it. Or, in Ubuntu, type `songcharter diagnostics --out diagnostics.zip`: the line that
+  and your ratings and marked spots with your notes as you wrote them; no audio). Send it. Or, in Ubuntu, type `songcharter diagnostics --out diagnostics.zip`: the line that
   starts "in Windows:" says where the zip is.
 
 ## 7. Remove it
