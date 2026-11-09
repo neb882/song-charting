@@ -19,7 +19,8 @@
 # Env: TOOLS (default "autochart chartgen strum", so STRUM's long test song runs last), SKIP (e.g. "strum:test_song"),
 #      MEM_WAIT_MB (default 4000), EVAL_DATA, EVAL_PY, SET20_DATA (default $EVAL_DATA/set20), SEEDS, SONGS (ids or
 #      labels, for one set), WINDOWS_PROFILE (the Windows profile results writes %USERPROFILE%; default Windows'
-#      own), ALLOW_CPU=1 (start even if the check fails), and thin_spike.sh's ARMS, SEEDS and AC_DEVICE.
+#      own), ALLOW_CPU=1 (start even if the check fails; a thin spike still stops after a take whose transcriber did
+#      not run on AC_DEVICE), and thin_spike.sh's ARMS, SEEDS and AC_DEVICE.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA="${EVAL_DATA:-$HERE/data}"
@@ -259,7 +260,8 @@ _thin() {   # AUDIO...: thin_spike.sh on the files, with --app on the app's auto
 # The thin spike checks its own device: it stops after a take whose transcriber did not run on CUDA (the spike's
 # CUDA library path is songcharter's, not cuda_libs above). With --app, takes' check of the app's autochart runs
 # first (takes.py --app --check: the lane, the CUDA provider, the CUDA 13 and cuDNN libraries), so a setup that would
-# fall back to the CPU stops here rather than after the first take. AC_DEVICE=cpu needs no GPU (a dry run).
+# fall back to the CPU stops here rather than after the first take. ALLOW_CPU=1 skips only this check: the run still
+# stops after a take off AC_DEVICE. AC_DEVICE=cpu needs no GPU (a dry run).
 thin_spike() {   # AUDIO...
   local f dev=${AC_DEVICE:-cuda} files=()
   [ $# -gt 0 ] || { echo "usage: eval/gpu.sh thin-spike [--app] AUDIO... (the songs' audio files)"; exit 2; }

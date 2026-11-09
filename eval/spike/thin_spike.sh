@@ -8,7 +8,9 @@
 # autochart_run/summary.json (the settings and the devices used); <label> is a built set's song id for its input.wav
 # (eval/data/refs/<id>/input.wav: <id>), else "song" (song_2, song_3, ... for a second and a third). The take's
 # song.ogg is deleted; the engine's work folder, OUT/work, keeps its copy of each input and the separation.
-# Resumable: a take whose summary is of the same input (its SHA-256) is kept. At the end OUT/thin_spike_results.zip
+# Resumable: a take is kept only when its summary says it is what this run would make (the input's SHA-256, the
+# seed, the temperature, the knobs, and the transcriber on AC_DEVICE); any other is made again, with the reason in
+# the log. At the end OUT/thin_spike_results.zip
 # holds this run's charts and summaries only, each summary copied field by field (numbers, hashes and short names: no
 # path, no message), checked for this PC's home folder and user name and by check_no_audio.py: send that back. The
 # log, OUT/thin_spike.log, stays here; its lines write the home folder as ~.
@@ -17,7 +19,8 @@
 #             (knobs: speed chords hopos taps movement; speed is the density knob; unset knobs stay "auto")
 #             default "base:T=0.95 hot:T=1.05 dense5:speed=5 dense6:speed=6"
 #      SEEDS  default "20260609 101 202 303" (eval/takes.py's; commas work too)
-#      AC_DEVICE  default cuda; ALLOW_CPU=1 keeps a take whose transcriber ran on the CPU (else the run stops)
+#      AC_DEVICE  default cuda; the run stops after a take whose transcriber ran on another device (always: gpu.sh's
+#             ALLOW_CPU=1 skips only its check before the start)
 #      SPIKE_OUT  OUT (default eval/data/runs/thin_spike)
 #      SONGCHARTER_AUTOCHART  the autochart install (default eval/tools/autochart; gpu.sh --app: the app's), EVAL_PY
 #             its Python (for the CUDA library path and the zip; default .venv/bin/python), node the first on PATH
@@ -28,7 +31,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-[ $# -ge 1 ] || { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+[ $# -ge 1 ] || { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 # TEXT with the home folder written ~ (eval/gpu.sh's tilde), so a line pasted back carries no user name
 tilde() { local text=$1 t='~'; if [ -n "${HOME:-}" ] && [ "$HOME" != / ]; then text=${text//"$HOME"/$t}; fi; printf '%s' "$text"; }
 tilde_lines() { local line; while IFS= read -r line || [ -n "$line" ]; do tilde "$line"; echo; done; }
@@ -96,6 +99,20 @@ fi
 WORK="$OUT/work"; mkdir -p "$WORK"
 say "thin spike: ${LABELS[*]}; arms: $ARMS; seeds: $SEEDS; device $DEVICE"
 
+# SUMMARY SHA SEED T KNOBS DEVICE -> the ways the summary differs from them, comma-separated (none: an empty line)
+DIFFERS='
+const [f, sha, seed, temp, knobs, device] = process.argv.slice(1);
+const s = require(f), have = s.knobs || {}, why = [];
+const want = Object.fromEntries(knobs.split(",").filter(Boolean).map((kv) => kv.split("=").map((x) => x.trim()))
+  .map(([k, v]) => [k, Number.parseInt(v, 10)]));
+if (s.inputSha256 !== sha) why.push("another input");
+if (s.seed !== Number(seed)) why.push("another seed");
+if (s.temperature !== Number(temp)) why.push("another temperature");
+if ([...new Set([...Object.keys(have), ...Object.keys(want)])].some((k) => (have[k] ?? null) !== (want[k] ?? null)))
+  why.push("other knobs");
+const runs = s.runs || [];
+if (!runs.length || runs.some((r) => (r.devices || {}).transcriber !== device)) why.push(`the transcriber not on ${device}`);
+console.log(why.join(", "));'
 TAKES=()   # this run's take folders, relative to OUT: what the zip holds
 for i in "${!AUDIOS[@]}"; do
   AUDIO=${AUDIOS[$i]} label=${LABELS[$i]}
@@ -111,11 +128,11 @@ for i in "${!AUDIOS[@]}"; do
       take="$OUT/$label/$name/seed_$seed"
       TAKES+=("$label/$name/seed_$seed")
       if [ -s "$take/autochart_run/summary.json" ] && [ -s "$take/notes.chart" ]; then
-        if node -e 'process.exit(require(process.argv[1]).inputSha256 === process.argv[2] ? 0 : 1)' \
-             "$take/autochart_run/summary.json" "$sha" 2>/dev/null; then
-          say "$label $name seed $seed: kept"; continue
-        fi
-        say "$label $name seed $seed: a take of another input; made again"
+        # what differs between the take's summary and what this run would make; nothing: the take is kept
+        why=$(node -e "$DIFFERS" "$take/autochart_run/summary.json" "$sha" "$seed" "$temp" "$knobs" "$DEVICE" 2>/dev/null \
+              || echo "its summary cannot be read")
+        if [ -z "$why" ]; then say "$label $name seed $seed: kept"; continue; fi
+        say "$label $name seed $seed: made again ($why)"
       fi
       rm -rf "$take"; mkdir -p "$(dirname "$take")"
       t0=$(date +%s)
@@ -130,8 +147,8 @@ for i in "${!AUDIOS[@]}"; do
       dev=$(node -e 'const s=require(process.argv[1]); console.log((s.runs||[]).map(r=>(r.devices||{}).transcriber||"?").join(","))' "$take/autochart_run/summary.json")
       tok=$(node -e 'const s=require(process.argv[1]); console.log((s.runs||[]).map(r=>`${r.nTokens} tokens, ${r.noteLines} notes`).join(";"))' "$take/autochart_run/summary.json")
       say "$label $name seed $seed: T=$temp knobs=${knobs:-auto}: $tok, transcriber on $dev, $(( $(date +%s) - t0 )) s"
-      if [ "$DEVICE" != cpu ] && [ "$dev" != "$DEVICE" ] && [ "${ALLOW_CPU:-0}" != 1 ]; then
-        say "the transcriber did not run on $DEVICE; stopping (ALLOW_CPU=1 to keep going)"; exit 1
+      if [ "$dev" != "$DEVICE" ]; then
+        say "the transcriber did not run on $DEVICE; stopping"; exit 1
       fi
     done
   done
