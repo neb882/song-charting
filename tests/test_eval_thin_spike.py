@@ -37,8 +37,9 @@ fs.appendFileSync(process.env.FAKE_ENGINE_LOG, JSON.stringify({seed: r.seed, tem
   ffmpeg: process.env.AUTOCHART_FFMPEG_PATH || null}) + "\n");
 fs.mkdirSync(path.join(out, "chart"), {recursive: true});
 const chart = path.join(out, "chart", "notes.chart");
-fs.writeFileSync(chart, (process.env.FAKE_CHART_HEAD || "") + `[Song]\n{\n  Name = "${job.title}"\n  Resolution = 192\n}\n` +
-  `[SyncTrack]\n{\n  0 = B 120000\n}\n[ExpertSingle]\n{\n  0 = N 0 0\n  192 = N ${r.seed % 5} 0\n}\n`);
+fs.writeFileSync(chart, (process.env.FAKE_CHART_HEAD || "") +
+  `[Song]\n{\n  Name = "${job.title}"\n  Resolution = 192\n}\n[SyncTrack]\n{\n  0 = B 120000\n}\n` +
+  `[ExpertSingle]\n{\n  0 = N 0 0\n  192 = N ${r.seed % 5} 0\n}\n`);
 fs.writeFileSync(path.join(out, "chart", "full_song_report.json"), JSON.stringify({note_line_count: 2,
   token_stats: {n_tokens: 9, n_beats: 4, generation_seconds: 0.1}, timing: {tempoBpm: 120, audioDuration: 2}}));
 fs.writeFileSync(path.join(out, "result.json"), JSON.stringify({status: "completed", chartPath: chart,
@@ -115,7 +116,8 @@ def app_spike(tmp_path: Path, lane="cu132"):
     d = inst / "node_modules" / "onnxruntime-node" / "bin"
     d.mkdir(parents=True)
     (d / "libonnxruntime_providers_cuda.so").write_bytes(b"made up")
-    node = stub(app / "runtime" / "node" / "bin" / "node", f"echo \"$*\" >> '{tmp_path / 'node.txt'}'\nexec '{NODE}' \"$@\"\n")
+    node = stub(app / "runtime" / "node" / "bin" / "node",
+                f"echo \"$*\" >> '{tmp_path / 'node.txt'}'\nexec '{NODE}' \"$@\"\n")
     ffmpeg = fake_ffmpeg(app / "runtime" / "ffmpeg", tmp_path / "ff.txt")
     record = json.loads((app / "runtime" / "runtime.json").read_text())
     record.update(autochart=str(inst), node=str(node), ffmpeg=str(ffmpeg))
@@ -265,7 +267,8 @@ def test_a_take_on_the_cpu_stops_the_spike_unless_allowed(spike, allow):
 def test_a_take_is_kept_only_for_the_same_input(spike):
     assert spike().returncode == 0
     p = spike()
-    assert p.returncode == 0 and "song base seed 7: kept" in p.stdout and len(engine_log(spike.tmp / "engine.jsonl")) == 1
+    assert p.returncode == 0 and "song base seed 7: kept" in p.stdout
+    assert len(engine_log(spike.tmp / "engine.jsonl")) == 1
     other = spike.home / "Music" / "another.wav"
     wav(other, 2)
     p = spike(other)   # the same label (song), another input: made again, not kept
