@@ -76,6 +76,11 @@ OPTION_KEYS = (*META_FLAGS, "instruments", "levels", "solos", "takes", "device",
                *IMAGE_FLAGS)
 TAIL_LINES = 8                     # the log's last lines in an error the job writes itself
 END_WAIT_S = 10.0                  # how long a new job waits for one whose closing event is out to exit
+# an error the job writes itself (the child sent none) in plain words, for the queue's list (M8-10's review, P-F4;
+# the Done screen keeps the whole message, with the log's last lines)
+PLAIN_MEMORY = "Stopped: the PC ran short of memory, perhaps (Look shows the details)"
+PLAIN_STOPPED = "Stopped by the system (Look shows the details)"
+PLAIN_SILENT = "It stopped without saying why (Look shows the details)"
 
 
 class JobRunning(Exception):
@@ -433,25 +438,28 @@ class Jobs:
                         why = f"the chart was stopped by {name}" + (" (by the system: out of memory, perhaps)"
                                                                     if -code == signal.SIGKILL else "")
                         kind = "tool"
+                        plain = (PLAIN_MEMORY if -code == signal.SIGKILL else PLAIN_STOPPED)
                     else:
                         why, kind = f"the chart exited {code}", "tool" if code == 2 else "bug"
+                        plain = PLAIN_SILENT
                     message = why + (":\n" + "\n".join(job.tail) if job.tail else "")
-                    job.events.append({"event": "error", "kind": kind, "message": message,
+                    job.events.append({"event": "error", "kind": kind, "message": message, "plain": plain,
                                        "at": round(time.time(), 3)})
             job.ended = time.time()
             job.cond.notify_all()
         self.log(f"job {job.id}: {job.state} (exit {code})")
         self._ended(job)
 
-    def cancel(self) -> Job:
-        """Kill the running job's whole tree, mark it cancelled, delete assemble's staging beside its output. A job
+    def cancel(self, job_id: str | None = None) -> Job:
+        """Kill the running job's whole tree (only when it is `job_id`'s, when one is given: a Cancel the page sent
+        for a song that has ended since must not reach the next, M8-10's review S-S1), mark it cancelled, delete assemble's staging beside its output. A job
         whose result or error is out keeps that outcome (done, or failed), with no `cancelled`: its chart had ended,
         and its process was only exiting (about a second after the result) when the kill came. NotRunning when none
         runs, also for a second cancel while the first is at work (the lock is held throughout, so one cancel, one
         `cancelled` event, and no job starts until the staging is gone)."""
         with self._lock:
             job = self.current
-            if job is None or job.state != "running" or job.tree is None:
+            if job is None or job.state != "running" or job.tree is None or (job_id is not None and job.id != job_id):
                 raise NotRunning()
             with job.cond:
                 job.cancelling = True
@@ -607,7 +615,7 @@ class Queue:
         self.entries = [e for e in data.get("entries") or [] if _entry_ok(e)]
         for e in self.entries:
             if e["state"] == "charting":   # stopped while it charted: back to waiting at the top
-                e.update(state="waiting", job=None, job_state=None, started=None, ended=None, closing=None)
+                self._back(e)
         run = data.get("run")
         self.run = run if isinstance(run, int) else max((e["run"] for e in self.entries), default=0)
         waiting = len(self._waiting())
@@ -665,11 +673,12 @@ class Queue:
         chart = Path(str(folder)).name if folder else None
         if chart and chart.endswith(".failed"):
             chart = chart[:-len(".failed")]
-        message = closing.get("message") if closing.get("event") == "error" else None
+        message = (closing.get("plain") or closing.get("message")) if closing.get("event") == "error" else None
         return {"id": e["id"], "run": e["run"], "name": e["upload"].get("name"), "chart": chart, "state": e["state"],
                 "job": e.get("job"), "estimate": e.get("estimate"), "added": e.get("added"),
                 "started": e.get("started"), "ended": e.get("ended"),
-                "error": str(message).split("\n", 1)[0] if message else None}
+                "error": str(message).split("\n", 1)[0].rstrip(":") if message else None,
+                "lyrics_lost": bool(e.get("lyrics_lost"))}
 
     def _left(self) -> dict | None:
         """The whole queue's time left: the waiting songs' ranges summed, with the charting song's time left (its
@@ -720,13 +729,15 @@ class Queue:
             if not now and lyrics is not None:
                 raise InputError(LYRICS_WAIT)
             if len(waiting) >= QUEUE_MAX:
-                raise QueueFull(f"{QUEUE_MAX} songs are waiting already: add more once some are charted")
+                raise QueueFull(f"{QUEUE_MAX} song{' is' if QUEUE_MAX == 1 else 's are'} waiting already: add more "
+                                "once some are charted")
             if now:   # a new evening
                 self.run, self.failures, self.paused, self.why, self.restarted = self.run + 1, 0, None, None, 0
             entry = {"id": secrets.token_hex(6), "run": self.run,
                      "upload": {k: upload.get(k) for k in ("id", "name", "seconds")},
                      "options": {k: v for k, v in options.items() if k != "lyrics"},
                      "estimate": dict(estimate) if estimate else None, "state": "waiting", "job": None,
+                     "lyrics": lyrics is not None,   # whether it had some, never the text (S-S2)
                      "job_state": None, "added": time.time(), "started": None, "ended": None, "closing": None}
             self.entries.append(entry)
             job = None
@@ -804,8 +815,16 @@ class Queue:
                 if job is not None and job.id == entry.get("job") and job.state in ("done", "failed"):
                     self._record(entry, job)
                 else:
-                    entry.update(state="waiting", job=None, job_state=None, started=None, ended=None, closing=None)
+                    self._back(entry)
             self._save()
+
+    @staticmethod
+    def _back(entry: dict) -> None:
+        """The charting song back to waiting (the window closed, or a crash); its pasted lyrics, which were never
+        kept, are said lost (`lyrics_lost`), so the page can say so (S-S2)."""
+        entry.update(state="waiting", job=None, job_state=None, started=None, ended=None, closing=None)
+        if entry.get("lyrics"):
+            entry["lyrics_lost"] = True
 
     # --- one song's end, and the next
     def _on_end(self, job: Job) -> None:

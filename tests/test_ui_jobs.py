@@ -497,6 +497,17 @@ time.sleep(0.3)
 if mode == "hang":
     ev(event="take", index=1, count=1, seed=1, pids=[os.getpid()])
     time.sleep(60)
+if mode == "linger":   # the result out, then a few seconds of exiting
+    mark("end")
+    ev(event="result", ok=True, exit=0, folder=out, work="/w", preview=None, summary="gate")
+    time.sleep(3)
+    sys.exit(0)
+if mode == "killed":   # the kernel's out-of-memory killer, say
+    mark("end")
+    os.kill(os.getpid(), 9)
+if mode == "silent":   # exit 3 with no error event
+    mark("end")
+    sys.exit(3)
 if mode == "dies":
     mark("end")
     ev(event="error", kind="tool", message="out of memory, say\nthe rest of it")
@@ -725,6 +736,74 @@ def test_the_queues_uploads_are_kept_past_the_weeks_pruning(tmp_path):
     J.queue_path(home).parent.mkdir(parents=True)
     J.queue_path(home).write_text(json.dumps({"entries": [
         {"id": "e1", "run": 1, "state": "waiting", "upload": {"id": "a" * 16}, "options": {"album_art": "b" * 16}},
-        {"id": "e2", "run": 1, "state": "ready", "upload": {"id": "c" * 16}, "options": {}}]}), encoding="utf-8")
-    assert J.queued_uploads(home) == {"a" * 16, "b" * 16}
+        {"id": "e2", "run": 1, "state": "ready", "upload": {"id": "c" * 16}, "options": {}},
+        {"id": "e3", "run": 1, "state": "charting", "upload": {"id": "e" * 16}, "options": {}}]}), encoding="utf-8")
+    assert J.queued_uploads(home) == {"a" * 16, "b" * 16, "e" * 16}   # a crash's charting song: restarted first
     assert sorted(S.prune_uploads(home, keep=J.queued_uploads(home))) == ["c" * 16, "d" * 16]
+
+
+# ------------------------------------------------------------------------------------------------ M8-10's review
+
+def test_a_cancel_naming_a_song_that_has_ended_never_reaches_the_next(queued):
+    """S-S1: A ends and the queue starts B; a Cancel the page sent for A (its dialog open across A's end) answers
+    NotRunning and leaves B charting; one naming B cancels it."""
+    a, _ = queued.add("ok")
+    b, _ = queued.add("hang")
+    deadline = time.monotonic() + 20
+    while queued.queue.snapshot()["entries"][1]["state"] != "charting":
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    first = queued.queue.snapshot()["entries"][0]["job"]
+    with pytest.raises(J.NotRunning):
+        queued.queue.jobs.cancel(first)
+    snap = queued.queue.snapshot()
+    assert [e["state"] for e in snap["entries"]] == ["ready", "charting"]
+    assert queued.queue.jobs.cancel(snap["entries"][1]["job"]).state == "cancelled"
+
+
+def test_a_song_whose_result_was_out_when_the_window_closed_is_not_charted_twice(queued):
+    """S-S3: the window closes while a chart's process is exiting, its result out: the song is recorded as charted
+    (ready), not put back to waiting to be charted again after the restart."""
+    queued.add("linger")
+    deadline = time.monotonic() + 20
+    while not any(e["event"] == "result" for e in queued.queue.jobs.current.events):
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+    queued.queue.shutdown()
+    data = json.loads(J.queue_path(queued.home).read_text(encoding="utf-8"))
+    assert [e["state"] for e in data["entries"]] == ["ready"]
+    assert queued.make().paused is None
+
+
+def test_a_killed_or_silent_song_says_why_in_plain_words(queued):
+    """P-F4: the list's reason for a song the system killed, or one that exited with no error, is plain words, not
+    "the chart exited 3:"; the Done screen keeps the whole message."""
+    queued.add("killed")
+    queued.add("silent")
+    snap = settled(queued.queue)
+    assert [e["error"] for e in snap["entries"]] == [J.PLAIN_MEMORY, J.PLAIN_SILENT]
+    assert queued.queue.job(snap["entries"][0]["job"]).snapshot()["events"][0]["message"].startswith(
+        "the chart was stopped by SIGKILL")
+
+
+def test_a_restart_says_a_songs_pasted_lyrics_were_not_kept(queued):
+    """S-S2: a song that started at once with lyrics and went back to waiting when the window closed keeps a flag
+    that it had some (never the text), and the list says they were lost."""
+    queued.add("hang", lyrics="zorp quiv")
+    deadline = time.monotonic() + 20
+    while not any(e["event"] == "take" for e in queued.queue.jobs.current.events):
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+    queued.queue.shutdown()
+    text = J.queue_path(queued.home).read_text(encoding="utf-8")
+    assert "zorp" not in text and json.loads(text)["entries"][0]["lyrics"] is True
+    snap = queued.make().snapshot()
+    assert snap["entries"][0]["state"] == "waiting" and snap["entries"][0]["lyrics_lost"] is True
+
+
+def test_the_full_lists_words(queued, monkeypatch):
+    monkeypatch.setattr(J, "QUEUE_MAX", 1)
+    queued.add("hang")
+    queued.add("ok")
+    with pytest.raises(J.QueueFull, match="^1 song is waiting already: add more once some are charted$"):
+        queued.add("ok")

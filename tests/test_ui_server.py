@@ -3064,6 +3064,7 @@ let queue = { paused: null, run: 1, entries: [], left: null };
 let job = null;
 const posted = [];
 let started = 0;
+let jobsAnswers = null;   // the next POST /api/jobs answers, when a test sets them
 const ok = (value) => ({ status: 200, json: async () => JSON.parse(JSON.stringify(value)) });
 const ctx = { document, window: { addEventListener() {}, confirm: () => true }, XMLHttpRequest, encodeURIComponent,
   console, navigator, setInterval() {}, clearInterval() {}, setTimeout(f) { setImmediate(f); }, TextDecoder,
@@ -3071,6 +3072,10 @@ const ctx = { document, window: { addEventListener() {}, confirm: () => true }, 
   fetch: async (path, init) => {
     const body = init && init.body ? JSON.parse(init.body) : null;
     if (init && init.method === "POST") posted.push([path, body]);
+    if (path === "/api/jobs" && init.method === "POST" && jobsAnswers) {
+      const a = jobsAnswers.shift();
+      return { status: a.status, json: async () => a.body };
+    }
     if (path === "/api/jobs" && init.method === "POST") {
       started += 1;
       return { status: 202, json: async () => (started === 1 ? { job: "j1", state: "charting" } :
@@ -3121,6 +3126,7 @@ const out = {};
   await settle();
   out.sent = posted.filter((p) => p[0] === "/api/jobs").map((p) => p[1].upload.slice(0, 1));
   out.running = { title: document.title, locks: locks.length, rows: rows(), left: els["queue-left"].textContent,
+    actions: els["queue-actions"].hidden,
     keep: els["queue-keep"].hidden, pause: els.pause.hidden, box: els["queue-box"].hidden };
   ctx.handle({ event: "take", index: 3, count: 4, seed: 3 });
   out.take = document.title;
@@ -3176,6 +3182,59 @@ const out = {};
   out.lyrics = { wait: els["lyrics-wait"].hidden, disabled: els.options.elements.lyrics.disabled,
                  song: els["song-box"].hidden, button: els.chart.textContent };
   out.hours = [5, 59, 60, 70, 200].map(ctx.hoursMinutes);
+  // the review (P-F1): songs refused when several are added (the list full) are said above the list, where the
+  // page lands, until the next drop
+  queue = { paused: null, run: 3, max: 1, left: null, entries: [{ ...entry("h", "charting", "j3"), run: 3 },
+                                                                 { ...entry("i", "waiting", null), run: 3 }] };
+  job = { job: "j3", state: "running", upload: { name: "H.mp3" }, started: 2000, now: 2000, estimate: EST };
+  jobsAnswers = [{ status: 202, body: { job: "j3", state: "charting" } }, { status: 202, body: { job: null } },
+                 { status: 409, body: { error: "1 song is waiting already: add more once some are charted" } }];
+  vm.runInContext(`state.uploads = ${JSON.stringify(["H", "I", "J"].map((x) => ({ id: x, name: `${x}.mp3` })))}`, ctx);
+  ctx.show("options-screen");
+  await ctx.chartIt({ preventDefault() {} });
+  await settle();
+  out.note = { text: els["queue-note"].textContent, hidden: els["queue-note"].hidden,
+               progress: els["progress-screen"].hidden };
+  // S-S1: Cancel names the job the page shows
+  await ctx.cancel();
+  out.cancel = posted.filter((p) => p[0].endsWith("/cancel")).map((p) => p[0]);
+  // a refused upload among several is said on the shared form (P-F3); the next drop clears the note
+  ctx.uploadFiles([{ name: "One.mp3" }, { name: "Bad.txt" }, { name: "Two.mp3" }]);
+  out.noteAfter = els["queue-note"].hidden;
+  for (const [status, body] of [[200, { id: "1", name: "One.mp3", bytes: 1e6 }], [415, { error: "not audio" }],
+                                [200, { id: "2", name: "Two.mp3", bytes: 1e6 }]]) {
+    xhr.status = status;
+    xhr.responseText = JSON.stringify(body);
+    xhr.on.load();
+  }
+  out.uploadRefused = { text: els["options-error"].textContent, hidden: els["options-error"].hidden,
+                        shown: !els["options-screen"].hidden };
+  // P-F2: the next song starts while he fills the form: followed, the form kept; the lyrics' lock follows the end
+  queue = { ...queue, entries: [{ ...entry("h", "ready", "j3"), run: 3 }, { ...entry("i", "charting", "j4"), run: 3 }] };
+  job = { ...job, job: "j4", started: 2100 };
+  ctx.handle({ event: "result", ok: true, folder: "/h/library/x/H", summary: "gate: OK", at: 2050 });
+  await settle();
+  out.kept = { options: els["options-screen"].hidden, progress: els["progress-screen"].hidden,
+               followed: vm.runInContext("state.job.job", ctx), locked: els.options.elements.lyrics.disabled };
+  queue = { ...queue, entries: [queue.entries[0], { ...entry("i", "ready", "j4"), run: 3 }] };
+  ctx.handle({ event: "result", ok: true, folder: "/h/library/x/I", summary: "gate: OK", at: 2200 });
+  await settle();
+  out.ended = { options: els["options-screen"].hidden, done: els["done-screen"].hidden,
+                locked: els.options.elements.lyrics.disabled, wait: els["lyrics-wait"].hidden };
+  // Look from the form switches to the Look's own screen
+  await ctx.look("j1");
+  await settle();
+  out.lookScreens = { options: els["options-screen"].hidden, done: els["done-screen"].hidden };
+  // a song another tab started, while this page follows none: followed (P-F3)
+  queue = { ...queue, entries: [...queue.entries, { ...entry("k", "charting", "j7"), run: 3 }] };
+  job = { ...job, job: "j7", started: 2300 };
+  await ctx.refreshQueue();
+  await settle();
+  out.elsewhere = { followed: vm.runInContext("state.job.job", ctx), title: document.title,
+                    progress: els["progress-screen"].hidden };
+  // S-S2: a song whose pasted lyrics a restart lost says so
+  ctx.setQueue({ paused: "restart", restarted: 1, run: 3, entries: [{ ...entry("z", "waiting", null), lyrics_lost: true }] });
+  out.lost = els["queue-list"].children[0].children[5].textContent;
   console.log(JSON.stringify(out));
 })().catch((e) => { console.error(e); process.exit(1); });
 """
@@ -3204,7 +3263,7 @@ def test_the_page_queues_several_songs_and_follows_them_one_after_the_other(tmp_
                            "head": "2 songs, charted one after the other with these options:"}
     assert "title" not in out["options"] and "lyrics" not in out["options"] and out["options"]["device"] == "auto"
     assert out["sent"] == ["a", "b"]
-    assert out["running"] == {"title": "1 of 2: Charting - songcharter", "locks": 1, "left":
+    assert out["running"] == {"title": "1 of 2: Charting - songcharter", "locks": 1, "actions": True, "left":
                               "All 2 songs: about 1 h 10 min to 3 h 20 min more", "keep": False, "pause": False,
                               "box": False, "rows": [
                                   {"cls": "charting", "name": "a.mp3", "state": "Charting now", "buttons": []},
@@ -3233,7 +3292,46 @@ def test_the_page_queues_several_songs_and_follows_them_one_after_the_other(tmp_
     assert out["disk"].startswith("C: is nearly full")
     assert out["lyrics"] == {"wait": False, "disabled": True, "song": False, "button": "Chart it"}
     assert out["hours"] == ["5 min", "59 min", "1 h", "1 h 10 min", "3 h 20 min"]
+    # the review's fixes
+    assert out["note"] == {"text": "1 song was not added (1 is waiting already): J.mp3. Drop it again once some are "
+                           "charted.", "hidden": False, "progress": False}
+    assert out["cancel"] == ["/api/jobs/j3/cancel"] and out["noteAfter"] is True
+    assert out["uploadRefused"] == {"text": "Bad.txt: That is not a song file songcharter takes. not audio",
+                                    "hidden": False, "shown": True}
+    assert out["kept"] == {"options": False, "progress": True, "followed": "j4", "locked": True}
+    assert out["ended"] == {"options": False, "done": True, "locked": False, "wait": True}
+    assert out["lookScreens"] == {"options": True, "done": False}
+    assert out["elsewhere"] == {"followed": "j7", "title": "3 of 3: Charting - songcharter", "progress": False}
+    assert out["lost"] == ("Its pasted lyrics were not kept when songcharter closed: add it again with its lyrics, or "
+                           "chart it without.")
     html = S.static_files()["index.html"].decode()
     assert 'multiple hidden></label>' in html and html.count(' multiple hidden>') == 2   # the drop zone and Add songs
     assert html.index('id="progress-screen"') < html.index('id="queue-box"') < html.index('id="done-screen"')
     assert '<button type="button" id="again">Add a song</button>' in html
+
+
+def test_a_cancel_by_id_after_its_song_ended_is_refused_and_the_list_full_says_so(served, monkeypatch):
+    """M8-10's review S-S1 through the API: song A ends, the server starts B; POST /api/jobs/<A>/cancel answers 409
+    "that chart has ended" and B charts on; /api/jobs/<B>/cancel cancels it. With QUEUE_MAX 1, the third of three
+    songs is refused (409, "1 song is waiting already")."""
+    ctx, port = served, served.port
+    status, up = upload(ctx, song(ctx.home / "s.wav"), "Song.wav")
+    ctx.mode = "slow"
+    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))
+    a = json.loads(body)["job"]
+    ctx.mode = "hang"   # B's chart, when the server starts it
+    assert call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))[0] == 202
+    deadline = time.monotonic() + 20
+    while ctx.app.jobs.current.id == a or ctx.app.jobs.current.state != "running":
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+    b = ctx.app.jobs.current
+    status, _, body = call(port, "POST", f"/api/jobs/{a}/cancel", b"", guarded(port))
+    assert status == 409 and json.loads(body)["error"] == "that chart has ended"
+    assert b.state == "running" and ctx.app.jobs.current is b
+    monkeypatch.setattr(J, "QUEUE_MAX", 1)
+    assert call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))[0] == 202
+    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))
+    assert status == 409 and json.loads(body)["error"].startswith("1 song is waiting already")
+    status, _, body = call(port, "POST", f"/api/jobs/{b.id}/cancel", b"", guarded(port))
+    assert status == 200 and json.loads(body) == {"job": b.id, "state": "cancelled"}

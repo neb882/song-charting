@@ -32,7 +32,7 @@ const $ = (id) => document.getElementById(id);
 const state = { status: null, upload: null, job: null, stages: {}, offset: 0, ticker: null, follow: 0, ch: null,
   images: { album_art: null, background: null }, sending: 0, version: null, update: null, later: false,
   listen: { parts: {}, job: null }, running: false, wake: null, remaining: null, asking: false,
-  box: { items: [], at: 0 }, queue: null, queueKey: null, uploads: [], shown: null };
+  box: { items: [], at: 0 }, queue: null, queueKey: null, uploads: [], shown: null, note: "" };
 // the Listen control's names for the parts and levels the chart has (the results' `listen`)
 const PART_NAMES = { guitar: "Guitar", bass: "Bass", drums: "Drums" };
 const LEVEL_NAMES = { expert: "Expert", hard: "Hard", medium: "Medium", easy: "Easy" };
@@ -232,6 +232,8 @@ function uploaded(got, failed) {
 
 function uploadFiles(files) {
   const list = [...(files || [])];
+  state.note = "";   // the last drop's refusals go with the next drop
+  renderQueue();
   if (list.length) upload(list[0], list.slice(1));
 }
 
@@ -331,9 +333,7 @@ function fillOptions(up, many) {
   for (const id of ["song-box", "lyrics-box", "pictures-box"]) $(id).hidden = !!many;
   $("song-names").hidden = !many;
   for (const id of ["chart", "chart-top"]) text($(id), many ? "Chart them" : "Chart it");
-  const busy = queueBusy();
-  $("lyrics-wait").hidden = !busy;
-  form.elements.lyrics.disabled = busy;
+  lockLyrics();
   text($("song-name"), `${up.name} (${(up.bytes / 1e6).toFixed(1)} MB)`);
   const tags = up.tags || {}, origin = up.origin || {};
   for (const [field, key] of Object.entries(META)) {
@@ -353,6 +353,19 @@ function fillOptions(up, many) {
 }
 
 // ------------------------------------------------------------------------------------------------ the pictures
+
+// lyrics only for a song that starts at once: the box locked while a song charts or waits, and open again at the
+// end (the review's P-F2)
+function lockLyrics() {
+  const busy = queueBusy();
+  $("lyrics-wait").hidden = !busy;
+  const box = $("options").elements && $("options").elements.lyrics;
+  if (box) box.disabled = busy;
+}
+
+// the options form is being filled (a song or several uploaded, not yet sent): a song's end, or the next one's
+// start, never takes it away (the review's P-F2)
+function adding() { return state.uploads.length > 0 && !$("options-screen").hidden; }
 
 // several songs (M8-10): one form, shared; each song takes its own tags, as a chart with the Song fields blank does
 function fillMany(ups) {
@@ -452,30 +465,51 @@ async function chartIt(e) {
   }
   chartButtons(true);
   const ups = state.uploads.length ? state.uploads : [state.upload];
-  const failed = [];
+  const refused = [];
   let started = false;
   try {
     for (const up of ups) {   // in turn: the first starts at once when nothing charts, the rest wait
       const r = await api("POST", "/api/jobs", { upload: up.id, options });
       if (r.status === 202) started = started || !!r.data.job;
-      else failed.push((ups.length > 1 ? `${up.name}: ` : "") + (r.data.error || `It could not start (${r.status}).`));
+      else refused.push({ name: up.name, status: r.status, error: r.data.error || `It could not start (${r.status}).` });
     }
   } catch (x) {
-    failed.push("songcharter does not answer: is it still running?");
+    refused.push({ name: "", status: 0, error: "songcharter does not answer: is it still running?" });
   } finally {
     chartButtons(false);
   }
-  if (failed.length) text(err, failed.join("\n")).hidden = false;
-  if (failed.length === ups.length) return;   // nothing added: the form stays, with why
+  if (refused.length === ups.length) {   // nothing added: the form stays, with why
+    const many = ups.length > 1;
+    text(err, refused.map((x) => (many && x.name ? `${x.name}: ` : "") + x.error).join("\n")).hidden = false;
+    return;
+  }
   state.uploads = [];
   await refreshQueue();
+  // some were added and some refused (the list full, say): said where the page lands, above the list (the review's
+  // P-F1), until the next drop
+  state.note = refusedNote(refused);
+  renderQueue();
   if (started || queueCharting()) {
     attach();
   } else {   // the list is paused (after a restart, say): the songs wait in it, on the drop screen
     show("drop-screen");
     $("back-row").hidden = true;
-    if (failed.length) dropError(failed.join("\n"));
   }
+}
+
+function refusedNote(refused) {
+  const full = refused.filter((x) => x.status === 409 && x.name);
+  const parts = [];
+  if (full.length) {
+    const n = full.length, max = (state.queue && state.queue.max) || 20;
+    parts.push(`${n === 1 ? "1 song was" : `${n} songs were`} not added (${max} ${max === 1 ? "is" : "are"} ` +
+      `waiting already): ${full.map((x) => x.name).join(", ")}. Drop ${n === 1 ? "it" : "them"} again once some ` +
+      "are charted.");
+  }
+  for (const x of refused.filter((y) => !full.includes(y))) {
+    parts.push(x.name ? `${x.name} was not added: ${x.error}` : x.error);
+  }
+  return parts.join(" ");
 }
 
 // ------------------------------------------------------------------------------------------------ progress
@@ -694,7 +728,7 @@ async function between(c) {
   for (let i = 0; i < 30; i++) {
     await refreshQueue();
     const q = state.queue;
-    if (q && q.entries.some((e) => e.state === "charting" && e.job && e.job !== was)) { attach(); return; }
+    if (q && q.entries.some((e) => e.state === "charting" && e.job && e.job !== was)) { attach(adding()); return; }
     if (!q || q.paused || !q.entries.some((e) => e.state === "waiting")) break;
     await new Promise((ok) => setTimeout(ok, 1000));
   }
@@ -724,6 +758,7 @@ function finish(title, message, summary, how) {
   setTitle(how.tab || title);
   state.running = false;
   letSleep();
+  lockLyrics();
   renderUpdate(state.update, state.version);
   showDone(title, message, summary, how);
 }
@@ -739,6 +774,7 @@ function showDone(title, message, summary, how) {
   $("summary-box").hidden = !summary;
   $("summary-box").open = !!(how && how.report);   // the engines' lines, for a look; open when the check failed
   text($("again"), state.running ? "Back to the chart" : "Add a song");
+  if (adding()) return;   // under the form he is filling: in the list, with Look, until he leaves it
   $("done-screen").hidden = false;
   toDone();
 }
@@ -853,15 +889,19 @@ function gone(down) {
     `again. Chart the song again: ${kept}`, null, { open: true, tab: down ? "Not answering" : "Stopped" });
 }
 
-async function attach() {
+// `quiet` (the next song, or one started elsewhere, while he fills the options form): followed without taking the
+// form away; it shows once he sends or leaves the form
+async function attach(quiet) {
   const r = await api("GET", "/api/jobs/current");
   if (r.status !== 200) return;
   const job = r.data;
   state.job = job;
   state.offset = (job.now || Date.now() / 1000) - Date.now() / 1000;
   resetProgress(job);
-  $("done-screen").hidden = true;
-  show("progress-screen");
+  if (!quiet) {
+    $("done-screen").hidden = true;
+    show("progress-screen");
+  }
   progressTitle("Charting");
   state.running = job.state === "running";   // a finished job's events end it again at once
   renderUpdate(state.update, state.version);
@@ -877,7 +917,9 @@ async function cancel() {
   if (!window.confirm("Cancel this chart? What it has worked out so far is kept for the next try.")) return;
   $("cancel").disabled = true;
   try {
-    const r = await api("POST", "/api/jobs/current/cancel");
+    // the job this page shows: a Cancel confirmed after its song ended never reaches the next (the review's S-S1)
+    const which = state.job && state.job.job;
+    const r = await api("POST", `/api/jobs/${encodeURIComponent(which || "current")}/cancel`);
     if (r.status !== 200 && r.status !== 409) $("cancel").disabled = false;
   } catch (e) {
     $("cancel").disabled = false;
@@ -885,6 +927,7 @@ async function cancel() {
 }
 
 function again() {
+  state.uploads = [];   // the form, if any, is left
   if (state.running) {   // a finished song's Look while the next charts: back to the chart (M8-10)
     stopListening();
     closeBox();
@@ -996,7 +1039,7 @@ async function refreshQueue() {
   setQueue(r.data);
   // a song the server started while this page followed none (Carry on in another tab, say): followed
   const c = queueCharting();
-  if (c && c.job && !state.running && (!state.job || state.job.job !== c.job)) attach();
+  if (c && c.job && !state.running && (!state.job || state.job.job !== c.job)) attach(adding());
 }
 
 function smallButton(label, f, cls) {
@@ -1022,6 +1065,10 @@ function queueRow(e) {
   if (FINISHED.has(e.state) && e.job) actions.append(smallButton("Look", () => look(e.job)));
   if (e.state === "waiting") actions.append(smallButton("Remove", () => removeEntry(e)));
   li.append(actions, msg);
+  if (e.lyrics_lost) {   // the review's S-S2: pasted lyrics are never kept, so a restart lost them
+    li.append(make("span", "queue-msg small warn-text", "Its pasted lyrics were not kept when songcharter closed: " +
+      "add it again with its lyrics, or chart it without."));
+  }
   return li;
 }
 
@@ -1044,6 +1091,8 @@ function renderQueue() {
   text($("queue-left"), left).hidden = !left;
   $("queue-keep").hidden = !(waiting > 0 || (charting && runEntries(q).length > 1));
   $("pause").hidden = !(charting && waiting > 0 && !paused);
+  text($("queue-note"), state.note).hidden = !state.note;
+  lockLyrics();
 }
 
 async function queueAction(path, body) {
@@ -1103,6 +1152,8 @@ async function look(job) {
   if (!ev) return;
   stopListening();
   closeBox();
+  state.uploads = [];   // the form, if any, is left: the Look's own screen (the review's P-F2)
+  show(state.running ? "progress-screen" : null);
   const c = closing(ev);
   state.shown = job;
   showDone(c.title, c.message, c.summary, c.how);

@@ -89,8 +89,10 @@ Nothing is downloaded or installed; charting never waits for it.
   * **By job id** (M8-10): every route below on "current" also takes a job's id (/api/jobs/<yyyyMMdd-HHmmss[-n]>/...,
     JOB_PATH), for a finished song's Done screen once the next has started: the current job, or the queue's record
     of a finished one (jobs.Kept, from queue.json after a restart too); GET /api/jobs/<id> is its snapshot, with
-    its closing event. The results' URLs name the job as the request did. The events and cancel are the current
-    job's only. POST /api/open {"what": "built", "job"} opens that job's folder.
+    its closing event. The results' URLs name the job as the request did. The events are the current job's only;
+    POST /api/jobs/<id>/cancel cancels only while that job is the running one (409 "that chart has ended"
+    otherwise: a Cancel confirmed after its song ended never reaches the next, M8-10's review S-S1). POST
+    /api/open {"what": "built", "job"} opens that job's folder.
 
 **After the build** (M4-06). The routes on "the chart" use the job's `result` event (the current one's, or by id); those that export or
 install need one that passed its gate (else 400): a .failed folder is for a look, not for Clone Hero. A job whose
@@ -693,14 +695,14 @@ class Handler(BaseHTTPRequestHandler):
                                     "state": "charting" if job is not None else "waiting"})
         if path in QUEUE_POSTS:
             return self._queue(path)
-        if path == "/api/jobs/current/cancel":
+        m = JOB_PATH.match(path)
+        if m and m[2] == "/cancel":   # by id (M8-10's review S-S1): only while that job is the running one
             self._drain()
             try:
-                job = app.jobs.cancel()
+                job = app.jobs.cancel(None if m[1] == "current" else m[1])
             except NotRunning:
-                raise Refused(409, "no chart is running") from None
+                raise Refused(409, "no chart is running" if m[1] == "current" else "that chart has ended") from None
             return self._json(200, {"job": job.id, "state": job.state})
-        m = JOB_PATH.match(path)
         if m and m[2] in ("/export/zip", "/install", "/listen"):
             ref, rest = m[1], m[2]
             job = self._job(ref)
