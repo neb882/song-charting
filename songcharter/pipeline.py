@@ -10,9 +10,10 @@
      (engines/adtof.py), bass from the rule engine (engines/bass.py), sections from allin1 or its librosa fallback
      (engines/sections.py), and guitar from autochart's engine (engines/autochart.py), one take per seed: the
      engine's default seed and, for `takes` > 1, seeds 101, 202, ... for the others, which assemble splices
-     section by section (takes.py). By default 1 take on every device (`guitar_takes`; the owner, 2026-11-09); 4
-     spliced takes when asked for (`--takes 4`, the page's "Best chart"). An engine that charts no note leaves its
-     part out (DESIGN.md 2, absent parts).
+     section by section (takes.py); `seed` (0 by default; `--seed N`, the page's "Chart it differently", M8-14)
+     moves each of them on by N (`take_seeds`), so another N gives another guitar from the same song. By default
+     1 take on every device (`guitar_takes`; the owner, 2026-11-09); 4 spliced takes when asked for (`--takes 4`,
+     the page's "Best chart"). An engine that charts no note leaves its part out (DESIGN.md 2, absent parts).
   3b. **Lyrics** (`lyrics`: the text a person gives, else none): aligned to the vocal stem (engines/lyrics.py,
      DESIGN.md 2.15), its own folder work/lyrics/ the cache. Torch or torchaudio missing, the weights out of reach
      or an alignment that fails leaves the lyrics out with a warning: lyrics never fail a chart. The text goes to
@@ -118,6 +119,11 @@
     run made one.
   * **Re-runs.** The decode is rewritten only when the samples change; separation and every engine reuse their
     caches, so a re-run with the same file and options costs the decode, the cache checks and the build.
+  * **The recorded configuration** (M8-14, DESIGN.md 2.7): the same input with the same recorded configuration
+    gives a byte-identical notes.chart on the same machine. report.json's `pipeline` (`folder_record`) records it:
+    the seed asked for and each take's seed, the device asked for and chosen, the takes and each take's device, the
+    fallbacks, and the engines' identities (`engines`: the ones their caches key on, as version strings and short
+    hashes, no path). Seed 0, the default, gives the takes' seeds every version before M8-14 gave.
   * **Report.** work/pipeline.json: the options, the metadata and where each value came from, the device and why
     (`device`), every stage's wall time, cache use, device and fallback, the process's peak RSS after each stage
     (where the OS reports it) and, for the sections, the peak allin1's runner reports for itself; the fallbacks;
@@ -170,6 +176,8 @@ from .timed import DIFFICULTIES, INSTRUMENTS
 SAMPLE_RATE = A.SAMPLE_RATE
 STEMS = ("drums", "bass", "guitar", "other", "vocals")   # the stems assemble reads (piano only reaches allin1)
 EXTRA_SEED_STEP = 101    # takes after the first use seeds 101, 202, 303, ... (the v1 chart's seeds)
+MAX_SEED = 999_999       # `seed` at most this: the engine's seed stays far inside a 32-bit integer [judgement]
+SHORT = 12               # a short hash in report.json's `engines`: this many hex characters
 CUDA_TAKES = 1           # guitar takes by default on CUDA too (guitar_takes; the owner, 2026-11-09), as on the CPU
 CPU_RETRIES = 1          # guitar takes a chart runs again on the CPU after their CUDA run failed (cpu_retry)
 REASON_CHARS = 120       # at most this much of the engine's error line goes into a retry's reason (engine_line)
@@ -231,6 +239,8 @@ class Options:
                                                  # a chart (the module docstring); the page has no control for it
     stems: bool = False                          # also the six stems as FLAC, beside the song folder (step 4b)
     one_audio: bool = False                      # one song.ogg instead of Clone Hero's multitrack audio (step 4)
+    seed: int = 0                                # moves each guitar take's seed on by this (take_seeds; M8-14):
+                                                 # 0 to MAX_SEED, 0 the seeds of every earlier version
 
     def check(self) -> None:
         if not self.instruments:
@@ -253,6 +263,8 @@ class Options:
         for key in ("stems", "one_audio"):
             if not isinstance(getattr(self, key), bool):
                 raise InputError(f"{key} is true or false, not {getattr(self, key)!r}")
+        if isinstance(self.seed, bool) or not isinstance(self.seed, int) or not 0 <= self.seed <= MAX_SEED:
+            raise InputError(f"seed is a whole number from 0 to {MAX_SEED}, not {self.seed!r}")
         if self.threads is not None and (isinstance(self.threads, bool) or not isinstance(self.threads, int)
                                          or self.threads < 1):
             raise InputError(f"threads must be a whole number of at least 1, not {self.threads!r}")
@@ -350,16 +362,54 @@ def guitar_takes(asked: int | None, device: str) -> tuple[int, str]:
 def folder_record(record: Mapping) -> dict:
     """report.json's `pipeline` (assemble's `pipeline=`): what the song folder keeps of pipeline.json's `record`, so
     that a chart made with less than was meant can be told from a good one once the work folder is pruned ("Your
-    charts", a diagnostics zip; v0.5.0's advisor, finding 2): the device asked for and chosen; the guitar's takes
-    (None without a guitar): asked for (None: the default), planned, made (1 when the first of several takes on
-    CUDA was run again on the CPU or moved there), each take's transcriber device and the seeds run again on the
-    CPU; and each fallback's stage, from and to. Numbers and short words only: no reason, as an engine's line can hold a path."""
+    charts", a diagnostics zip; v0.5.0's advisor, finding 2), and so that it can be made again (the recorded
+    configuration, M8-14): the seed asked for (`seed`); the device asked for and chosen; the guitar's takes (None
+    without a guitar): asked for (None: the default), planned, made (1 when the first of several takes on CUDA was
+    run again on the CPU or moved there), each take's seed, each take's transcriber device and the seeds run again
+    on the CPU; each fallback's stage, from and to; and the engines' identities (`engines`, engine_identities).
+    Numbers, short words and short hashes only: no reason, as an engine's line can hold a path."""
     dev, takes = record.get("device") or {}, record.get("takes")
-    return {"device": {"asked": dev.get("asked"), "chosen": dev.get("chosen")},
+    return {"seed": (record.get("options") or {}).get("seed", 0),
+            "device": {"asked": dev.get("asked"), "chosen": dev.get("chosen")},
             "takes": None if takes is None else {
                 "asked": takes.get("asked"), "planned": takes.get("planned"), "made": takes.get("takes"),
-                "devices": takes.get("devices"), "cpu_retries": takes.get("cpu_retries")},
-            "fallbacks": [{k: f.get(k) for k in ("stage", "from", "to")} for f in record.get("fallbacks") or []]}
+                "seeds": takes.get("seeds"), "devices": takes.get("devices"), "cpu_retries": takes.get("cpu_retries")},
+            "fallbacks": [{k: f.get(k) for k in ("stage", "from", "to")} for f in record.get("fallbacks") or []],
+            "engines": dict(record.get("engines") or {})}
+
+
+def short_hash(value: Any) -> str | None:
+    """A short identity (SHORT hex characters): a hex digest's start, or the SHA-256 of anything else's JSON (a
+    weights table, the libraries' versions); None for None."""
+    if value is None:
+        return None
+    if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{16,}", value):
+        return value[:SHORT]
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:SHORT]
+
+
+def engine_identities(stage: str, info: Mapping) -> dict:
+    """What an engine's cache keys on, as report.json's `engines` keeps it (folder_record): version strings and short
+    hashes, never a path or a URL. `info`: the separation's info (separate.SeparationInfo) or the engine's run info
+    (its engine.json; the guitar's, the take's key from take.json as `install`). A key the info lacks is None."""
+    info = info if isinstance(info, Mapping) else {}
+    if stage == "separate":   # separate.cache_key: the model at its pinned revision, the seed
+        return {"model": info.get("model"), "revision": short_hash(info.get("revision")), "seed": info.get("seed")}
+    if stage == "drums":      # adtof.cache_key: ENGINE_VERSION and the weights' SHA-256
+        return {"engine": info.get("version"), "weights": short_hash((info.get("weights") or {}).get("sha256"))}
+    if stage == "bass":       # bass.cache_key: the rules' VERSION and the libraries' versions
+        return {"engine": info.get("version"), "libraries": short_hash(info.get("versions"))}
+    if stage == "sections":   # sections' keys: its ENGINE_VERSION, allin1's package, version, model and weights
+        if info.get("backend") == "allin1":
+            a = info.get("allin1") or {}
+            return {"backend": "allin1", "engine": info.get("engine_version"), "allin1": a.get("version"),
+                    "model": a.get("model"), "weights": short_hash(a.get("weights"))}
+        return {"backend": info.get("backend"), "engine": info.get("engine_version"),
+                "librosa": (info.get("librosa") or {}).get("version")}
+    if stage == "guitar":     # autochart.take_key: the engine's version and the install's hash (install_key)
+        key = info.get("install") or {}
+        return {"engine": key.get("engineVersion"), "install": short_hash(key.get("install"))}
+    raise ValueError(f"no engine identity for the stage {stage!r}")
 
 
 AUTOCHART_EXIT = re.compile(r"autochart seed \d+ failed \(exit (-?\d+)\)")   # engines/autochart.py's ToolError
@@ -553,10 +603,13 @@ def stitch_lines(seed: int, info: dict, song_s: float, playing: Callable[[], flo
     return lines, warnings
 
 
-def take_seeds(takes: int) -> tuple[int, ...]:
-    """The guitar takes' seeds: autochart's default seed, then 101, 202, ..."""
+def take_seeds(takes: int, seed: int = 0) -> tuple[int, ...]:
+    """The guitar takes' seeds: autochart's default seed, then 101, 202, ..., each moved on by `seed` (Options.seed:
+    0 gives the seeds of every version before M8-14). Always distinct within a chart: the default seed is no
+    multiple of 101. Another `seed` gives other seeds for every take but past 100, where a take after the first can
+    meet another seed's (101 + 101 is 202 + 0)."""
     from .engines.autochart import DEFAULT_SEED
-    return (DEFAULT_SEED,) + tuple(EXTRA_SEED_STEP * k for k in range(1, takes))
+    return (DEFAULT_SEED + seed,) + tuple(EXTRA_SEED_STEP * k + seed for k in range(1, takes))
 
 
 # ------------------------------------------------------------------------------------------------ metadata
@@ -814,7 +867,18 @@ class Engines:
         from .engines import autochart
         takes = autochart.generate(autochart.find_install(), audio, out, seeds, device=device, title=title,
                                    artist=artist, work=scratch, on_take=on_take)
-        return [Run(t.chart, t.cached, {**t.summary, "seconds": t.seconds, "devices": t.devices}) for t in takes]
+        return [Run(t.chart, t.cached, {**t.summary, "seconds": t.seconds, "devices": t.devices,
+                                        "install": _take_key(t.chart.parent / autochart.TAKE)}) for t in takes]
+
+
+def _take_key(path: Path) -> dict | None:
+    """A take's key as autochart wrote it beside the take (take.json: its engineVersion and install hash), for
+    report.json's `engines`; None when it cannot be read."""
+    try:
+        key = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return {k: key.get(k) for k in ("engineVersion", "install")} if isinstance(key, dict) else None
 
 
 # ------------------------------------------------------------------------------------------------ the pipeline
@@ -1276,6 +1340,8 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
         fallback("separate", device, info.get("device") or "cpu", moved, warning=f"separation: {moved}")
     end("separate", t0, bool(info.get("cached")), f"{len(stems)} stems on {info.get('device', device)}",
         {"device": info.get("device"), "fallback": moved, "cuda_error": cuda_error, "key": info.get("key")})
+    engines_used = record.setdefault("engines", {})   # report.json's `engines` (folder_record)
+    engines_used["separation"] = engine_identities("separate", info)
     engines.free_gpu(device)
     stem_files = {s: str(folder / f"{s}.wav") for s in STEMS if s in stems}
 
@@ -1293,12 +1359,14 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
         t0 = begin("drums", f"ADTOF on {device}")
         run = engines.drums(mix, stems["drums"], work / "drums", device)
         n = take("drums", run, {"instrument": "drums", "source": str(run.path)})
+        engines_used["drums"] = engine_identities("drums", run.info)
         end("drums", t0, run.cached, f"{n} Expert onsets", {"onsets": n})
         engines.free_gpu(device)
     if "bass" in options.instruments:
         t0 = begin("bass", "rule engine (HFC onsets, pYIN pitch)")
         run = engines.bass(mix, stems["bass"], work / "bass")
         n = take("bass", run, {"instrument": "bass", "source": str(run.path), "hopo": "forced"})
+        engines_used["bass"] = engine_identities("bass", run.info)
         end("bass", t0, run.cached, f"{n} Expert onsets", {"onsets": n})
 
     t0 = begin("sections", "allin1 when it is installed, else the librosa fallback")
@@ -1334,6 +1402,7 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
         fallback("sections", "allin1", "librosa", f"{run.info.get('plain') or FAILED_PLAIN}. {SIMPLER}",
                  warning=f"sections: the librosa fallback ({run.info['why']})")
     n_seg = run.info.get("segments")
+    engines_used["sections"] = engine_identities("sections", run.info)
     end("sections", t0, run.cached, f"{how}, {n_seg} segments", {"backend": backend, "segments": n_seg,
                                                                   "child_peak_rss_mb": child})
     sections = str(run.path)
@@ -1344,7 +1413,7 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
     if "guitar" in options.instruments:
         gdev = "cuda" if device == "cuda" else "cpu"
         n_takes, why = guitar_takes(options.takes, gdev)
-        planned, seeds = n_takes, take_seeds(n_takes)
+        planned, seeds = n_takes, take_seeds(n_takes, options.seed)
         # several takes on CUDA (the page's "Best chart", --takes 4; the default until 2026-11-09) first run one take
         # alone: when autochart moved its transcriber off CUDA by itself (a provider that failed to load), the other
         # three would cost CPU minutes each; when its CUDA run failed and it was run again on the CPU, the others could
@@ -1444,6 +1513,7 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
                            "cut_short": [st.get("cut_short") for st in stitches],
                            "pieces": [len(st.get("pieces") or []) for st in stitches],
                            "last_note_s": [st.get("last_note_s") for st in stitches]}
+        engines_used["guitar"] = engine_identities("guitar", runs[0].info)   # every take of one install
         runs = _distinct_takes(runs, warn)
         n = _expert_onsets(runs[0].path, "guitar")
         part = {"instrument": "guitar", "source": str(runs[0].path), "hopo": "forced"}

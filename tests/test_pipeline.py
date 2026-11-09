@@ -1383,7 +1383,12 @@ def test_a_guitar_take_that_fails_on_cuda_is_run_again_on_the_cpu(charted, tmp_p
         record = json.loads((Path(report["assemble"]["folder"]) / "report.json").read_text(encoding="utf-8"))
         text = json.dumps(record["pipeline"])
         assert "/" not in text and "\\" not in text and "seed_" not in text, text   # no path, no reason
-        return record["pipeline"]
+        # M8-14's recorded configuration (tests/test_seed.py): the seed, each take's seed and the engines
+        rec = {k: v for k, v in record["pipeline"].items() if k not in ("seed", "engines")}
+        rec["takes"] = {k: v for k, v in rec["takes"].items() if k != "seeds"}
+        assert record["pipeline"]["seed"] == 0 and record["pipeline"]["takes"]["seeds"] == report["takes"]["seeds"]
+        assert list(record["pipeline"]["engines"]) == ["separation", "sections", "guitar"]
+        return rec
 
     def run_record(planned, made, devices, retries, fallbacks, asked=4):   # chart_it's "Best chart" (--takes 4)
         return {"device": {"asked": "auto", "chosen": "cuda"},
