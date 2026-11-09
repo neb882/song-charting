@@ -34,3 +34,27 @@ F1 0.962, 7.75 ms). His MP3 charted on the CPU at v0.4.0 gives the identical gri
 start "tracker" 0.512 / 0.843, 105 markers, allin1's downbeats at phase 0): the master, not the GPU. The notes mostly
 land (onsets are placed by time), but measure lines, the reductions and star power follow the grid. For M8: a test case
 on this machine (his MP3 stays with the session's uploads, never committed).
+
+## kimochi_warui, the fairer test (2026-11-09)
+
+A reference with only a community chart (no official game's). The owner's MP3 is the reference's own master here
+(the scorer's audio alignment strong in 9 of 9 windows, MAD 0, the same lag at the start and the end), so the standard
+scorer runs unchanged: AutoChart.eu's audio is his MP3 exactly, ours his MP3 after our 4.49-s lead-in.
+
+| Expert | AutoChart.eu | songcharter v0.4.0 (his MP3, GPU) | songcharter at the gate (CPU) |
+|---|---|---|---|
+| guitar F1@50 (P / R) | 0.674 (0.884 / 0.545) | **0.789** (0.791 / 0.788) | **0.827** |
+| guitar density against the human's | 0.62 | 1.00 | |
+| guitar lane direction / state agreement | 0.656 / 0.715 | 0.554 / 0.661 | 0.717 / 0.756 |
+| bass F1@50 (P / R) | **0.918** (0.848 / 1.000) | 0.710 (0.642 / 0.795) | 0.758 |
+| bass density against the human's | 1.18 | 1.24 | |
+| drums F1@50 | 0.985 | 0.981 | 0.977 |
+| beat / downbeat F1 at 70 ms | 1.000 / 1.000 | 1.000 / 1.000 | 1.000 / 1.000 |
+| scan-chart issues | 139 (106 badSustainGap, 33 difficultyForbiddenNote) | 0 | 0 |
+
+**Reading it.** Without a known chart behind it, AutoChart.eu's guitar charts six notes in ten of the human's (precision
+high, recall 0.55); ours charts the right density with balanced precision and recall, and wins guitar F1 by 0.12-0.15.
+Its bass is clearly better than ours: every human bass note found (recall 1.000) at precision 0.85, where our rule
+engine writes 24 % too many and misses a fifth. Drums and beats are a tie. One song, so a direction, not a verdict:
+the bass is where a better engine pays (M8: the bass engine against a learned transcriber, e.g. on the stress and
+20-song sets' human bass charts).
