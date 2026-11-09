@@ -46,9 +46,8 @@ version: engines/bass.py).
 
 ## Only in the session
 
-- **The usage meter:** `.claude/mods/usage-meter/` (its README installs it); read it before each wave. The owner's
-  limit: keep working up to 90 % of the weekly usage (2026-11-06); for the week ending 2026-11-09 13:00 UTC, up to
-  about 96 % (the owner, 2026-11-08: use all of it), never usage credits.
+- **The usage meter:** `.claude/mods/usage-meter/` (its README installs it); read it before each wave. Never usage
+  credits (PIPELINE, Usage).
 - **Check-ins:** the session schedules its own while agents run (PIPELINE, Long runs), and keeps a tracked local task
   running while it waits on CI (an idle container is reclaimed).
 - **Before every push to main:** `EVAL_DATA=<dev>/eval python -I eval/privacy_check.py` (PIPELINE, the merge).
@@ -58,7 +57,8 @@ version: engines/bass.py).
 - **Messages from the earlier session** arrive; replies to it were refused (a trusted device is needed): the owner
   relays.
 
-## Limits for unattended work (the owner's, unchanged)
+## Limits for unattended work (the owner's: PIPELINE.md, The owner's limits)
 
-No release published without the owner; no session on the owner's PC unless he asks; no force push or branch
-delete; no usage credits; work up to 90 % of the weekly usage (the owner, 2026-11-06; 96 % for the week ending 2026-11-09).
+No release published without the owner; no session on the owner's PC unless he asks (the eval WSL distro, once he
+turns it on); no force push; no branch delete by a session (once he turns on GitHub's automatic deletion of head
+branches, with merges through pull requests and a required CI check, a merge deletes its branch); no usage credits.

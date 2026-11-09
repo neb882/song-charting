@@ -53,15 +53,16 @@ reviewed, merged work then found 3 real issues, none of them major.]
   It routes findings as an order's review does (step 4 below): the minor ones and the test gaps go to the fixer
   unverified.
 - **Usage.** Read the usage meter (`mcp__usage-meter__usage`) before each wave, before starting any builder and before
-  a big run, and give a workflow a token budget. The owner's limit for unattended work: keep working up to 90 % of the
-  weekly usage (the owner, 2026-11-06 afternoon; it was 75 %, and 70 % before), and never draw on usage credits. The meter is a mod whose source is `.claude/mods/usage-meter/`: a
-  new session installs it as that folder's README says (a mod is not loaded from the repository). [On 2026-11-05 a
-  new session had no way to read the usage until the owner relayed the mod from the old one.]
+  a big run, and give a workflow a token budget. Never draw on usage credits: they are the owner's money. Each order
+  names the friend-visible change or the decision it buys; a measurement names the smallest effect it can detect.
+  The meter is a mod whose source is `.claude/mods/usage-meter/`: a new session installs it as that folder's README
+  says (a mod is not loaded from the repository). [On 2026-11-05 a new session had no way to read the usage until the
+  owner relayed the mod from the old one.]
 
 ## An order, from brief to merge
 
 1. **The brief** is a work order in `docs/work-orders/`, or a short brief for a small job. It says:
-   - the intent;
+   - the intent: the friend-visible change or the decision it buys;
    - the files it may and may not touch;
    - the spec;
    - what done means: each check with its command, marked CI, dev container or hardware;
@@ -114,7 +115,7 @@ reviewed, merged work then found 3 real issues, none of them major.]
    - Update PROGRESS (the order leaves `in_flight`), and append to the later orders anything this one deferred to
      them.
    - Remove the worktree, and delete the order's scratch and `/dev/shm` folders; note `df -h /` in the merge's
-     report. [The disk filled twice on 2026-11-03.] Remote branches are deleted by the owner; a session can't.
+     report. [The disk filled twice on 2026-11-03.] Remote branches are deleted by the owner (The owner's limits).
 
 ## Measurements and bars
 
@@ -164,6 +165,16 @@ A plan fixes each question's bar before any number is seen, and each order resta
 
   [The Overclock project's per-change checks missed a flashing chorus that only a whole-film check caught.]
 
+## The owner's limits
+
+- No release published without the owner; no force push; no usage credits.
+- **Branches:** remote branches are deleted by the owner; a session can't. From when the owner turns on GitHub's
+  "automatically delete head branches", with merges through pull requests and a required CI check: every merge goes
+  through a pull request, CI must pass before it, and the branch is deleted on merge.
+- **His PC:** a session uses it only when he asks. The prepared option, attached when he turns it on: a dedicated eval
+  WSL distro, with Windows drive mounting and interop off, holding only the app and the eval set, and returning
+  numbers-only results. WSL distros share one VM, so it is weaker isolation than a separate machine.
+
 ## Briefs and reports
 
 - **Reports:** an agent writes its full detail to a file and returns about 1–2k tokens, with the file's path.
@@ -184,7 +195,8 @@ A plan fixes each question's bar before any number is seen, and each order resta
   A builder resumed to fix its review's findings counts as one of the two; reviewers, skeptics and measurers don't.
   An order waiting for a slot waits: its review fixes go first when the slot frees.
 - **The orchestrator's own commits** (PROGRESS, reports, merges) are made in a worktree of its own, detached at
-  `origin/main` and pushed with `git push origin HEAD:main`, never in the checkout a golden run may be reading.
+  `origin/main` and pushed with `git push origin HEAD:main` (through a pull request, from when the owner turns that
+  on: The owner's limits), never in the checkout a golden run may be reading.
 - **A pushed branch is never rebased**: bring main in by a merge (a rebase needs a force push, which is forbidden). A
   branch already rebased is pushed under a new name, and the owner deletes the stale one.
 - **A commit a branch was made from is never amended**, pushed or not: fix it with a new commit. [M5-11's branch
