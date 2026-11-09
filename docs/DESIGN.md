@@ -195,7 +195,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
     the test song (6:52) 1.19 GB, Take Me Out (4:01) 696 MB, a 35-s excerpt 101 MB [here, pipeline-defaults runs],
     so 5 GB holds four to seven songs [inference].
   - `--work DIR` puts the work folder anywhere, with autochart's scratch inside it, as before.
-- **Determinism.** Seeds are fixed and nothing depends on the wall clock. Two CPU runs must give a byte-identical `notes.chart`.
+- **Determinism.** Reproducible: the same input with the same recorded configuration (seeds, device, engine versions, fallbacks; recorded in report.json's `pipeline` field) gives a byte-identical notes.chart on that machine. A seed the user asks for is configuration (`--seed N`, the page's "Chart it differently": §2.7, "The seed as configuration"). Nothing depends on the wall clock; the default seed (0) gives the seeds every version before M8-14 gave, so two CPU runs with the defaults give a byte-identical `notes.chart`.
   - Demucs's default `shifts=1` draws a random time shift from Python's global `random` (demucs 4.1.0: `apply.py` line 245, `api.py` line 59); the ADTOF test called `apply_model(..., shifts=1)` [here]. So two fresh separations differ unless `random` (and torch) is seeded right before each separation, or `shifts=0` is used. Record the choice in `doctor.json`. M1 is safe only because it reuses cached stems.
   - The chosen guitar take's tokens and seed are cached with the stems and in the polish workspace, and re-runs reuse them unless the user asks to regenerate. Determinism is promised only on the same machine and device: one flipped token changes the whole rest of a take (critique G6).
   - Not yet shown on CUDA: the golden charts run 1 CPU take, and the GPU smoke test's rerun reused its cached takes, so two cold charts of 4 CUDA takes have never been compared. M4-08's A18 charts the test song twice from cold on the 5070 and compares the two `notes.chart` files; this line then says what it found (the advisor on the release candidate, finding 5).
@@ -3470,13 +3470,23 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
   - **Chart it differently** (on the Done screen and on each chart in Your charts with a guitar part, a failed check
     too): `POST /api/jobs/<id>/again` charts the song again with the next seed for its song (`App.next_seed`: one more
     than any its versions in the library, its songs in the queue and `<home>/state/versions.json` have used, so a
-    version he deleted in Windows is never made again by it) and the options its report.json records
+    version he deleted in Windows is never made again by it; versions.json is written only once the queue has taken
+    the song, so a refused press uses no number: the review's F3) and the options its report.json records
     (`jobs.rechart`: the parts it charted, the levels, the solos, one audio file or split, the song.ini's values, the
     device and takes asked for; a picture he gave, which is in the chart's folder, as an image upload again; not the
-    stems, which do not change with the seed: the first chart's are the same). It joins the queue as any song does.
+    stems, which do not change with the seed: the first chart's are the same). It joins the queue as any song does,
+    with an estimate of the guitar's takes and the build when the song's work folder is still in the cache (its other
+    stages come from there: `estimate.CACHED` [est.]), else a whole chart's.
     A chart without a guitar part would come out the same: refused, in words.
   - **Versions:** a chart with seed N is version N + 1, in `<home>/library/<16 hex>/v<N + 1>/<the same name>/`, beside
-    the first, never over it; its id is `<16 hex>:<name>:v<N + 1>` (`jobs.LIBRARY_ID`). Your charts lists a song's
+    the first, never over it; its id is `<16 hex>:<name>:v<N + 1>` (`jobs.LIBRARY_ID`). The same name is the charted
+    folder's own (without .failed), given as the `name` option (one path component, `jobs.folder_name`; kept in the
+    queue entry, so through a restart and the song file dropped again), not one made again from report.json's
+    metadata: a several-song drop names version 1 from upload.json (the dropped name, up to 80 characters) while its
+    song.ini comes from the uploaded file's 40-character stem, so a rebuilt name could differ and the version install
+    as a second song (the review's F1). The song.ini's name and artist are the same in every version: "Chart it
+    differently" gives version 1's resolved values as the song's fields [tests/test_ui_feedback.py: a several-song
+    drop's long untagged name, the page's fields, a tagged file]. Your charts lists a song's
     versions together (each song by its newest chart, each version newest first), each saying "version N", its date
     and its rating; the queue's list says "(version N)". The versions install into the same Clone Hero folder, so one
     is in the game at a time: the replace question (409, now with `version` and `installed_version`, the second read
@@ -3488,6 +3498,12 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     file has the same id), not to the options form; another file is refused in words.
   - **Lyrics:** never kept, so a chart made with pasted lyrics asks for them again before it is charted differently
     ("paste them again ... or chart it without them"); as for any song, only one that starts at once can have them.
+    A refusal keeps the pasted text in its box and says why; the box empties once the list has taken the song.
+  - **Nothing typed is lost** (the review's F2): a saved rating or removal, or a refusal, leaves a half-typed spot
+    (its time, ticks and note) as it is, and only a spot saved clears the form; Your charts makes again only the rows
+    whose chart changed, keeping the others as they are (an open box, what is typed in it, a lyrics panel, a row's
+    message), and a changed row keeps its open box, panel and message. A saved spot that does not read (a damaged
+    file) is left out where it is read, and a time that is no finite number is the plain 400 of any bad time (F5).
   - **The queue's duplicate rule** (the v0.5.0 review's install-01) keys on the upload and the seed: another version
     of a song in the list is not refused as the same song.
   - In Chromium at 1280x860 and 700 px, light and dark [here, the real App and Queue with a stand-in chart, on a
