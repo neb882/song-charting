@@ -231,6 +231,7 @@ footer { max-width: 52rem; margin: 0 auto; padding: 0.5rem 1.25rem 2rem; }
 
 /* your charts (M8-13): every chart in the library, under the drop zone (and the queue), folded when long */
 #charts-box { margin-top: 1rem; }
+#charts-fold { border: 0; padding: 0; margin: 0; }   /* the section is the card: no box in a box */
 #charts-fold > summary { font-size: 1.05rem; }
 .charts-list li.unreadable .queue-state { color: var(--warn); }
 .chart-artist { color: var(--muted); overflow-wrap: anywhere; }
