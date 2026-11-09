@@ -18,7 +18,10 @@ from songcharter.ui import server as S
 DOCTOR = {"device": {"chosen": "cpu", "reason": "no NVIDIA GPU found"}, "gpu": None, "guitar_device": "cpu",
           "guitar_reason": "no GPU", "notes": [], "ok": True, "cpu": {"logical": 4, "threads_default": 3},
           "problems": [], "components": {}}
-A, B, C, D = "aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb", "cccccccccccccccc", "dddddddddddddddd"
+A, B, C, D, F = "aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb", "cccccccccccccccc", "dddddddddddddddd", "ffffffffffffffff"
+# report.json files that are JSON of the wrong shape (M8-13's review F2): each "can't be read", never a 500
+SHAPES = {"Made-Up Band - Shape 1": {"gate": {}}, "Made-Up Band - Shape 2": [],
+          "Made-Up Band - Shape 3": {"gate": {"ok": "yes"}}, "Made-Up Band - Shape 4": {"gate": None}}
 FIRST = "Made-Up Band - First Song"
 SECOND = "Other Made-Up Band - Second Song.failed"
 DAMAGED = "Made-Up Band - Damaged"
@@ -56,8 +59,8 @@ def work(root, key, made: Path, preview=True):
 
 def made_up_library(home: Path, root: Path) -> SimpleNamespace:
     """Four charts (a split one with its stems and its work folder, a failed one-file one with its stems, one
-    whose report.json is damaged, an older one whose work folder a later chart of the song took) and four folders
-    that are not charts."""
+    whose report.json is damaged, an older one whose work folder a later chart of the song took, four whose
+    report.json is JSON of the wrong shape) and four folders that are not charts."""
     first = chart(home, A, FIRST, 1000, files=SPLIT, audio_files=SPLIT,
                   ini="[song]\nname = First Song\nartist = Made-Up Band\ncharter = songcharter\n")
     stems = first.with_name(FIRST + " (stems)")
@@ -71,6 +74,8 @@ def made_up_library(home: Path, root: Path) -> SimpleNamespace:
     (failed_stems / "drums.flac").write_bytes(b"fLaC")
     damaged = chart(home, C, DAMAGED, 2000, report="{not json")
     old = chart(home, D, OLD, 500)   # before M8-12: no audio_files, song.ogg alone
+    for i, (name, value) in enumerate(SHAPES.items()):
+        chart(home, F, name, 400 - 100 * i, report=json.dumps(value))
     (home / "library" / C / "No Report").mkdir()   # not a chart: no report.json
     hidden = home / "library" / A / f".{FIRST}.x1y2.partial"   # assemble's staging
     hidden.mkdir()
@@ -91,8 +96,9 @@ def test_the_library_lists_every_chart_newest_first(tmp_path):
     home, root = tmp_path / "home", tmp_path / "cache"
     lib = made_up_library(home, root)
     charts = J.library(home, root)
-    assert [c["id"] for c in charts] == [f"{B}:{SECOND}", f"{C}:{DAMAGED}", f"{A}:{FIRST}", f"{D}:{OLD}"]
-    assert [c["time"] for c in charts] == [3000, 2000, 1000, 500]
+    assert [c["id"] for c in charts] == [f"{B}:{SECOND}", f"{C}:{DAMAGED}", f"{A}:{FIRST}", f"{D}:{OLD}",
+                                         *(f"{F}:{name}" for name in SHAPES)]
+    assert [c["time"] for c in charts] == [3000, 2000, 1000, 500, 400, 300, 200, 100]
     by = {c["folder"]: {k: v for k, v in c.items() if k not in ("id", "time")} for c in charts}
     assert by[FIRST] == {"folder": FIRST, "name": "First Song", "artist": "Made-Up Band", "readable": True, "ok": True,
                          "audio": "split", "stems": True, "look": True}
@@ -102,10 +108,13 @@ def test_the_library_lists_every_chart_newest_first(tmp_path):
                            "audio": "one", "stems": False, "look": False}
     assert by[OLD] == {"folder": OLD, "name": OLD, "artist": None, "readable": True, "ok": True, "audio": "one",
                        "stems": False, "look": False}
+    for name in SHAPES:   # break: the shape check weakened (`isinstance(gate, dict)`): a KeyError, the list a 500
+        assert by[name] == {"folder": name, "name": name, "artist": None, "readable": False, "ok": False,
+                            "audio": "one", "stems": False, "look": False}, name
     assert J.library(home, None)[2]["look"] is False   # no cache: no Look
     shutil.rmtree(root / "work" / f"song-{A}")   # the cache pruned it: no Look, the chart stays listed
-    assert [c["look"] for c in J.library(home, root)] == [False] * 4
-    assert [c["stems"] for c in J.library(home, root)] == [True, False, True, False]
+    assert [c["look"] for c in J.library(home, root)] == [False] * 8
+    assert [c["stems"] for c in J.library(home, root)] == [True, False, True, False] + [False] * 4
     (lib.old / "guitar.ogg").write_bytes(b"OggS")   # an earlier build's split files, by what is there
     assert J.read_chart(lib.old, root)["audio"] == "split"
     assert J.library(tmp_path / "nobody", root) == []
@@ -188,7 +197,8 @@ def test_the_list_install_and_its_409_by_a_charts_id(library_server):
     ctx = library_server
     status, _, body = get(ctx, "/api/library")
     charts = json.loads(body)["charts"]
-    assert status == 200 and [c["folder"] for c in charts] == [SECOND, DAMAGED, FIRST, OLD]
+    assert status == 200 and [c["folder"] for c in charts] == [SECOND, DAMAGED, FIRST, OLD, *SHAPES]
+    assert [c["readable"] for c in charts] == [True, False, True, True] + [False] * 4
     first = f"{A}:{FIRST}"
     status, answer = post(ctx, by_id(first, "/install"), {"replace": False})
     assert status == 200 and answer["installed"] == str(ctx.songs / FIRST), answer
@@ -200,8 +210,9 @@ def test_the_list_install_and_its_409_by_a_charts_id(library_server):
     status, answer = post(ctx, by_id(f"{B}:{SECOND}", "/install"), {"replace": False})
     assert status == 400 and "did not pass its check" in answer["error"]
     assert post(ctx, by_id(f"{C}:{DAMAGED}", "/install"), {"replace": False})[0] == 400   # can't be read: no Install
-    for bad in (f"{'e' * 16}:{FIRST}", f"{A}:{FIRST} (stems)"):
-        assert post(ctx, by_id(bad, "/install"), {"replace": False}) == (400, {"error": "no finished chart yet"}), bad
+    for bad, name in ((f"{'e' * 16}:{FIRST}", FIRST), (f"{A}:{FIRST} (stems)", FIRST + " (stems)")):
+        assert post(ctx, by_id(bad, "/install"), {"replace": False}) == (
+            400, {"error": f"{name}'s folder is not there any more: it was moved or deleted"}), bad
     for path in (f"/api/jobs/{A}/{urllib.parse.quote(FIRST)}/install", f"/api/jobs/{A}%2F..%2F{B}/install",
                  "/api/jobs/" + urllib.parse.quote(str(ctx.lib.first), safe="") + "/install"):
         assert post(ctx, path, {"replace": False})[0] == 404, path
@@ -222,9 +233,10 @@ def test_open_by_a_charts_id_and_never_a_path(library_server, monkeypatch):
     for bad in (str(ctx.lib.first), f"{A}:../{B}/{SECOND}", "../x", ["x"]):
         assert post(ctx, "/api/open", {"what": "built", "job": bad}) == (
             400, {"error": "job is a chart's id: no such chart"}), bad
-    for unknown in (f"{'e' * 16}:{FIRST}", f"{C}:No Report", "20000101-000000"):
-        assert post(ctx, "/api/open", {"what": "built", "job": unknown}) == (
-            400, {"error": "no finished chart yet"}), unknown
+    for unknown, error in ((f"{'e' * 16}:{FIRST}", f"{FIRST}'s folder is not there any more: it was moved or deleted"),
+                           (f"{C}:No Report", "No Report's folder is not there any more: it was moved or deleted"),
+                           ("20000101-000000", "no finished chart yet")):
+        assert post(ctx, "/api/open", {"what": "built", "job": unknown}) == (400, {"error": error}), unknown
 
 
 def test_the_stems_and_look_by_a_charts_id(library_server):
@@ -263,6 +275,29 @@ def test_the_stems_and_look_by_a_charts_id(library_server):
         400, {"error": "no finished chart yet"})
     assert get(ctx, by_id(old, "/preview/overview.png"))[0] == 404
     assert get(ctx, by_id(f"{'e' * 16}:{OLD}"))[0] == 404
+
+
+def test_a_chart_deleted_after_the_list_was_read(library_server, monkeypatch):
+    """A chart deleted in Windows after the page read the list (the list says to delete one that way): Install,
+    Open, the zip and the stems say in M8-04's words that its folder is not there any more, by its name without
+    .failed, and the list no longer has it (M8-13's review F1; break: the library id answered "no finished chart
+    yet")."""
+    ctx = library_server
+    monkeypatch.setattr(wsl, "open_url", lambda url: True)
+    first = f"{A}:{FIRST}"
+    shutil.rmtree(ctx.lib.first)   # its stems folder stays beside it
+    shutil.rmtree(ctx.lib.second)
+    gone = (400, {"error": f"{FIRST}'s folder is not there any more: it was moved or deleted"})
+    assert post(ctx, by_id(first, "/install"), {"replace": False}) == gone
+    assert post(ctx, by_id(first, "/export/stems")) == gone
+    assert post(ctx, by_id(first, "/export/zip")) == gone
+    assert post(ctx, by_id(first, "/listen"), {"part": "guitar", "level": "expert"}) == gone
+    assert post(ctx, "/api/open", {"what": "built", "job": first}) == gone
+    assert post(ctx, "/api/open", {"what": "built", "job": f"{B}:{SECOND}"}) == (
+        400, {"error": "Other Made-Up Band - Second Song's folder is not there any more: it was moved or deleted"})
+    assert get(ctx, by_id(first))[0] == 404
+    charts = json.loads(get(ctx, "/api/library")[2])["charts"]
+    assert [c["folder"] for c in charts] == [DAMAGED, OLD, *SHAPES]
 
 
 def test_your_charts_routes_are_guarded(library_server, monkeypatch):
@@ -305,7 +340,9 @@ const charts = [
     artist: "Made-Up Band", time: 1762509600, readable: true, ok: true, audio: "split", stems: true, look: true },
 ];
 const answer = (status, value) => ({ status, json: async () => JSON.parse(JSON.stringify(value)) });
-const ctx = { document, window: { addEventListener() {}, confirm: (m) => { confirms.push(m); return true; } },
+let openAnswer = [200, { opened: false, path: "/h/x", windows_path: "C:\\made\\up" }];
+const navigator = {};
+const ctx = { navigator, document, window: { addEventListener() {}, confirm: (m) => { confirms.push(m); return true; } },
   encodeURIComponent, console, setInterval() {}, clearInterval() {}, setTimeout(f) { setImmediate(f); },
   sessionStorage: { setItem() {}, getItem() { return null; } }, Date,
   fetch: async (path, init) => {
@@ -313,7 +350,7 @@ const ctx = { document, window: { addEventListener() {}, confirm: (m) => { confi
     asked.push([init.method, path, body]);
     if (path === "/api/library") return answer(200, { charts });
     if (path.endsWith("/install")) return answer(...installs.shift());
-    if (path === "/api/open") return answer(200, { opened: false, path: "/h/x", windows_path: "C:\\made\\up" });
+    if (path === "/api/open") return answer(...openAnswer);
     if (path.endsWith("/export/stems")) return answer(200, { url: "/api/exports/F%20(stems).zip", name: "F (stems).zip" });
     if (path.endsWith("/results")) return answer(200, { job: charts[2].id, installable: false, preview: { why: "x" },
       art: null, lyrics: null, listen: null, folder: "/h/library/a/Made-Up Band - First Song", stems: null });
@@ -365,10 +402,14 @@ const settle = () => new Promise((ok) => setImmediate(ok));
   els["charts-fold"].open = false;
   ctx.toCharts();
   out.to = { open: els["charts-fold"].open, scrolled };
-  vm.runInContext("state.charts = null; state.chartsKey = null", ctx);
+  vm.runInContext("state.charts = null; state.chartsKey = null; state.chartsOwn = false", ctx);
+  ctx.setCharts([]);   // his first evening: an empty library at load, then his first chart (the review's F3)
+  ctx.setCharts([charts[2]]);
+  out.first = { open: els["charts-fold"].open, title: els["charts-title"].textContent };
   ctx.setCharts(Array.from({ length: 7 }, (_, i) => ({ ...charts[2], id: `${charts[2].id} ${i}` })));
   out.long = { open: els["charts-fold"].open, title: els["charts-title"].textContent };
-  els["charts-fold"].open = true;   // his own: kept when the list is read again
+  ctx.ownFold();   // his own click on the title: kept when the list is read again
+  els["charts-fold"].open = true;
   ctx.setCharts(Array.from({ length: 8 }, (_, i) => ({ ...charts[2], id: `${charts[2].id} ${i}` })));
   out.kept = els["charts-fold"].open;
   ctx.setCharts([]);
@@ -382,6 +423,19 @@ const settle = () => new Promise((ok) => setImmediate(ok));
   ctx.setQueue(q("ready"));      // the song ended: its chart is in the library
   await settle();
   out.reads = reads() - before;
+  const atVisible = reads();
+  document.visibilityState = "visible";
+  ctx.visible();   // the tab back in front: read again (a chart deleted in Windows meanwhile goes)
+  await settle();
+  out.visible = reads() - atVisible;
+  // a row's action on a chart deleted after the list was read: said above the list, which is read again
+  ctx.setCharts(charts);
+  openAnswer = [400, { error: "Second Song's folder is not there any more: it was moved or deleted" }];
+  const gone = reads();
+  await els["charts-list"].children[0].children.find((c) => c.className === "queue-actions").children
+    .find((b) => b.textContent === "Open").on.click();
+  await settle();
+  out.gone = { msg: els["charts-msg"].textContent, hidden: els["charts-msg"].hidden, reads: reads() - gone };
   console.log(JSON.stringify(out));
 })().catch((e) => { console.error(e); process.exit(1); });
 """
@@ -441,10 +495,14 @@ def test_the_page_lists_your_charts(tmp_path):
         ["GET", f"/api/jobs/{enc}/results", None]]
     assert out["clicked"] == ["/api/exports/F%20(stems).zip"]
     assert out["to"]["open"] is True and out["to"]["scrolled"][-1] == "charts-box"   # after Look's done-screen
+    assert out["first"] == {"open": True, "title": "Your charts (1)"}   # break: the fold set on the first read only
     assert out["long"] == {"open": False, "title": "Your charts (7)"} and out["kept"] is True
     assert out["empty"] == [True, True, True]
     assert out["reads"] == 1   # the song's end; not the first list (start reads it) nor the same list again
     # (break: renderQueue not reading it, or reading it on every refresh)
+    assert out["visible"] == 1   # break: visible() not reading it
+    assert out["gone"] == {"msg": "Second Song's folder is not there any more: it was moved or deleted",
+                           "hidden": False, "reads": 1}   # break: the gone answer left in its row, not read again
     html = files["index.html"].decode()
     assert html.index('id="queue-box"') < html.index('id="done-screen"') < html.index('id="charts-box"')
     assert '<summary id="charts-title">Your charts</summary>' in html

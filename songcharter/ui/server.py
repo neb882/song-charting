@@ -743,7 +743,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"job": job.id, "state": job.state})
         if m and m[2] in ("/export/zip", "/export/stems", "/install", "/listen"):
             ref, rest = unquote(m[1]), m[2]
-            job = self._job(ref)
+            job = self._job(ref, gone=True)
             if rest.startswith("/export/"):
                 self._drain()
                 if rest == "/export/stems":   # one stems zip at a time: an earlier one never fetched goes
@@ -775,12 +775,20 @@ class Handler(BaseHTTPRequestHandler):
         raise Refused(404, "not found")
 
     # --- the queue (M8-10)
-    def _job(self, ref: str):
+    def _job(self, ref: str, gone: bool = False):
         """The job a route names: the current one, a finished song's by its id (Queue.job), or a library chart's
-        (M8-13: App.chart); None for none."""
+        (M8-13: App.chart); None for none. `gone`: a library id whose folder is not among the library's any more (the
+        list read before it was deleted in Windows) is Refused(400) in M8-04's words, by its folder's name."""
         if ref == "current":
             return self.app.jobs.current
-        return self.app.chart(ref) if LIBRARY_ID.match(ref) else self.app.queue.job(ref)
+        m = LIBRARY_ID.match(ref)
+        if m is None:
+            return self.app.queue.job(ref)
+        chart = self.app.chart(ref)
+        if chart is None and gone:
+            name = m[2][:-len(".failed")] if m[2].endswith(".failed") else m[2]
+            raise Refused(400, f"{name}'s folder is not there any more: it was moved or deleted")
+        return chart
 
     def _queue(self, path: str) -> None:
         queue = self.app.queue
@@ -972,7 +980,7 @@ class Handler(BaseHTTPRequestHandler):
                 ref = "current"
             elif not isinstance(ref, str) or not (JOB_REF.match(ref) or LIBRARY_ID.match(ref)):
                 raise Refused(400, "job is a chart's id: no such chart")   # never a path (M8-13)
-            job = self._job(ref)
+            job = self._job(ref, gone=True)
             result = job.result() if job is not None else None
             if result is None:
                 raise Refused(400, "no finished chart yet")

@@ -34,7 +34,7 @@ const state = { status: null, upload: null, job: null, stages: {}, offset: 0, ti
   images: { album_art: null, background: null }, sending: 0, version: null, update: null, later: false,
   listen: { parts: {}, job: null }, running: false, wake: null, remaining: null, asking: false,
   box: { items: [], at: 0 }, queue: null, queueKey: null, uploads: [], shown: null, note: "",
-  charts: null, chartsKey: null };
+  charts: null, chartsKey: null, chartsOwn: false };
 // the Listen control's names for the parts and levels the chart has (the results' `listen`)
 const PART_NAMES = { guitar: "Guitar", bass: "Bass", drums: "Drums" };
 const LEVEL_NAMES = { expert: "Expert", hard: "Hard", medium: "Medium", easy: "Easy" };
@@ -839,7 +839,9 @@ function letSleep() {
 }
 
 function visible() {
-  if (document.visibilityState === "visible") holdAwake();
+  if (document.visibilityState !== "visible") return;
+  holdAwake();
+  refreshCharts();   // a chart deleted in Windows while he was away goes from the list (M8-13's review)
 }
 
 async function follow(token) {
@@ -1626,7 +1628,7 @@ function setCharts(charts) {
     state.chartsKey = key;
     $("charts-list").replaceChildren(...charts.map(chartRow));
   }
-  if (state.charts == null && charts.length) $("charts-fold").open = charts.length <= CHARTS_OPEN;   // then his own
+  if (!state.chartsOwn) $("charts-fold").open = charts.length <= CHARTS_OPEN;   // until he opens or folds it himself
   state.charts = charts;
   const title = `Your charts (${charts.length})`;
   text($("charts-title"), title);
@@ -1644,8 +1646,12 @@ function placeCharts() {
   $("queue-charts").hidden = !n;
 }
 
+// he opened or folded the list himself (its title clicked, or a "Your charts" button): every read keeps it so
+function ownFold() { state.chartsOwn = true; }
+
 function toCharts() {
   const box = $("charts-box");
+  ownFold();
   $("charts-fold").open = true;
   if (!box.hidden && typeof box.scrollIntoView === "function") box.scrollIntoView({ block: "start" });
   refreshCharts();
@@ -1662,6 +1668,19 @@ function chartVerdict(c) {
   return c.ok ? "Passed its check" : "Did not pass its check: kept for a look, not for Clone Hero";
 }
 
+// a row's action: its answer in the row; a chart whose folder has gone (deleted in Windows after the list was read)
+// says so above the list, which is read again without it
+function chartAction(msg, f) {
+  return async () => {
+    text($("charts-msg"), "").hidden = true;
+    await f();
+    if (/not there any more/.test(msg.textContent)) {
+      text($("charts-msg"), msg.textContent).hidden = false;
+      refreshCharts();
+    }
+  };
+}
+
 function chartRow(c) {
   const li = make("li", c.readable ? (c.ok ? "ready" : "check_failed") : "unreadable");
   li.append(make("span", "queue-name", c.name));
@@ -1675,13 +1694,13 @@ function chartRow(c) {
   const msg = make("span", "queue-msg small");
   msg.hidden = true;
   if (c.ok) {
-    actions.append(smallButton("Install", () => installFrom({ job: c.id, chart: c.name, look: !!c.look }, msg),
-                               "small-button"));
+    actions.append(smallButton("Install", chartAction(msg, () => installFrom({ job: c.id, chart: c.name,
+                                                                                look: !!c.look }, msg)), "small-button"));
   }
-  actions.append(smallButton("Open", () => openFolder("built", msg, c.id)));
+  actions.append(smallButton("Open", chartAction(msg, () => openFolder("built", msg, c.id))));
   if (c.stems) {
-    const b = smallButton("Download the stems", () => exportStems(`/api/jobs/${encodeURIComponent(c.id)}/export/stems`,
-                                                                  msg, b));
+    const b = smallButton("Download the stems", chartAction(msg, () => exportStems(
+      `/api/jobs/${encodeURIComponent(c.id)}/export/stems`, msg, b)));
     actions.append(b);
   }
   if (c.look) actions.append(smallButton("Look", () => look(c.id)));
@@ -1722,6 +1741,7 @@ async function start() {
   $("back").addEventListener("click", () => show("progress-screen"));
   $("to-charts").addEventListener("click", toCharts);
   $("queue-charts").addEventListener("click", toCharts);
+  $("charts-title").addEventListener("click", ownFold);
   document.addEventListener("visibilitychange", visible);
   show("drop-screen");
   let st;
