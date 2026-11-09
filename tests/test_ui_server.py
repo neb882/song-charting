@@ -120,11 +120,11 @@ def upload(ctx, data: bytes, name: str) -> tuple[int, dict]:
     return status, json.loads(body)
 
 
-def sse(port, last_id=None, timeout=15) -> list[tuple[int | None, dict | str]]:
+def sse(port, last_id=None, timeout=15, job="current") -> list[tuple[int | None, dict | str]]:
     """The stream's items until it closes: (id, event) for events, (None, comment) for comments."""
     headers = {"Last-Event-ID": str(last_id)} if last_id is not None else {}
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
-    conn.request("GET", "/api/jobs/current/events", headers={"Host": f"127.0.0.1:{port}", **headers})
+    conn.request("GET", f"/api/jobs/{job}/events", headers={"Host": f"127.0.0.1:{port}", **headers})
     r = conn.getresponse()
     assert r.status == 200 and r.headers["Content-Type"].startswith("text/event-stream") and secure(r.headers)
     items, block = [], []
@@ -623,22 +623,30 @@ def test_the_file_name_gives_the_artist_and_title_the_page_prefills(served, tmp_
 
 def test_one_job_at_a_time_a_second_song_waits_then_cancel(served):
     """M8-10: a second song added while one charts waits (202, no job), its options checked at once (a bad one 400;
-    lyrics refused in a waiting song); cancel ends the charting song only, and the server starts the waiting one."""
+    lyrics refused in a waiting song); a song added again while it charts or waits is refused in plain words (the
+    v0.5.0 review's install-01: it would chart twice); cancel ends the charting song only, and the server starts the
+    waiting one; a finished song may be charted again."""
     ctx, port = served, served.port
     status, up = upload(ctx, song(ctx.home / "s.wav"), "Song.wav")
     assert status == 200
+    _, other = upload(ctx, song(ctx.home / "t.wav", 1.5), "Other Song.wav")
+    _, third = upload(ctx, song(ctx.home / "u.wav", 1.2), "Third Song.wav")
     status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"], "options": {}}).encode(),
                            guarded(port))
     assert status == 202 and json.loads(body)["job"] == ctx.app.jobs.current.id
     assert json.loads(body)["state"] == "charting"
     assert ctx.threads == [device.default_threads()]   # doctor's device is the CPU
     job = ctx.app.jobs.current
-    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"], "options": {}}).encode(),
+    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": other["id"], "options": {}}).encode(),
                            guarded(port))
     waits = json.loads(body)
     assert status == 202 and waits["job"] is None and waits["state"] == "waiting", body
+    for which, why in ((up, J.ALREADY["charting"]), (other, J.ALREADY["waiting"])):   # the same upload again
+        status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": which["id"], "options": {
+            "takes": 3}}).encode(), guarded(port))
+        assert status == 400 and json.loads(body)["error"] == why, body
     for options in ({"takes": 2}, {"lyrics": "zorp quiv"}):
-        status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"], "options": options})
+        status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": third["id"], "options": options})
                                .encode(), guarded(port))
         assert status == 400, body
     assert "takes is 1, or 3 or more" not in json.loads(body)["error"]
@@ -755,6 +763,36 @@ def test_sse_replays_to_a_late_client_and_streams_to_an_early_one(served, monkey
     assert call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))[0] == 202
     ctx.app.jobs.cancel()
     assert sse(port)[-1][1]["event"] == "cancelled"
+
+
+def test_a_page_that_reconnects_after_its_song_ended_gets_that_songs_end_not_the_next_songs_events(served):
+    """The v0.5.0 review's correct-2 (and tests-1): song A ends and the queue starts B while the page's connection is
+    down; the page reconnects to A's events (/api/jobs/<A>/events, as app.js's follow() asks) with the last id it saw.
+    It gets A's closing event alone, never B's events from A's index on; B's own stream starts at its first event,
+    and a resume within B stays in B (break: the events route on the current job whatever the id, or app.js
+    following /api/jobs/current/events: B's stage_end and result arrive as A's)."""
+    ctx, port = served, served.port
+    _, a_up = upload(ctx, song(ctx.home / "a.wav"), "Song A.wav")
+    _, b_up = upload(ctx, song(ctx.home / "b.wav", 1.5), "Song B.wav")
+    ctx.mode = "slow"
+    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": a_up["id"]}).encode(), guarded(port))
+    a = ctx.app.jobs.current
+    assert status == 202 and json.loads(body)["job"] == a.id
+    ctx.mode = "ok"
+    assert call(port, "POST", "/api/jobs", json.dumps({"upload": b_up["id"]}).encode(), guarded(port))[0] == 202
+    deadline = time.monotonic() + 20
+    while ctx.app.jobs.current is a or ctx.app.jobs.current.state == "running":
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+    b = ctx.app.jobs.current
+    assert a.state == "done" and b is not a and len(b.events) == 4
+    resumed = sse(port, last_id=1, job=a.id)   # a page that saw A's plan and first stage
+    assert resumed == [(2, a.events[-1])] and resumed[0][1]["folder"] == str(a.out) != str(b.out)
+    assert sse(port, job=a.id) == [(0, a.events[-1])]   # nothing seen yet: still A's end alone
+    assert sse(port, job=b.id) == [(n, e) for n, e in enumerate(b.events)]   # the page then follows B from 0
+    assert sse(port, last_id=2, job=b.id) == [(3, b.events[3])]   # a resume within B
+    assert call(port, "GET", "/api/jobs/20000101-000000/events")[0] == 404   # no such job (a restart: gone)
+    assert sse(port, last_id=1, job="current")[-1][1]["folder"] == str(b.out)   # `current`: whichever is current
 
 
 # ------------------------------------------------------------------------------------------------ startup
@@ -2138,7 +2176,7 @@ const ctx = { document, window: { addEventListener() {} }, XMLHttpRequest: class
     if (path === "/api/status") return { status: 200, json: async () => ({ device: { chosen: "cpu" }, problems: [],
       notes: [], job: null, update: UP }) };
     if (path === "/api/hello") return { status: 200, json: async () => ({ app: "songcharter", version: "0.3.1" }) };
-    if (path === "/api/jobs/current/events") {   // a stream that stays open: the test hands the events in
+    if (/^\/api\/jobs\/[^/]+\/events$/.test(path)) {   // a stream that stays open: the test hands the events in
       return { status: 200, body: { getReader: () => ({ read: () => new Promise(() => {}) }) } };
     }
     return { status: 404, json: async () => ({}) };
@@ -2329,6 +2367,8 @@ let job = { job: "j1", state: "running", upload: { name: "Some Song.mp3" }, star
 // the events' answers, one a call, the last one again when they run out: "404", "down" (nothing answers), "ended" (a
 // stream that ends with no event), "open" (a stream that stays open)
 let answers = ["open"], asked = 0;
+let queue = null;   // GET /api/queue's answer from a songcharter started since; none: 404
+const paths = [];   // the events' paths asked for
 const stream = (read) => ({ status: 200, body: { getReader: () => ({ read }) } });
 const ctx = { document, window: { addEventListener() {} }, XMLHttpRequest: class {}, encodeURIComponent, console,
   navigator, setInterval() {}, clearInterval() {}, TextDecoder,
@@ -2336,7 +2376,9 @@ const ctx = { document, window: { addEventListener() {} }, XMLHttpRequest: class
   sessionStorage: { setItem() {}, getItem() { return null; } },
   fetch: async (path) => {
     if (path === "/api/jobs/current") return { status: 200, json: async () => JSON.parse(JSON.stringify(job)) };
-    if (path !== "/api/jobs/current/events") return { status: 404, json: async () => ({}) };
+    if (path === "/api/queue" && queue) return { status: 200, json: async () => JSON.parse(JSON.stringify(queue)) };
+    if (!/^\/api\/jobs\/[^/]+\/events$/.test(path)) return { status: 404, json: async () => ({}) };
+    if (!paths.includes(path)) paths.push(path);
     const a = answers[Math.min(asked, answers.length - 1)];
     asked += 1;
     if (a === "down") throw new TypeError("Failed to fetch");
@@ -2357,7 +2399,15 @@ const run = async (name, seq) => { answers = seq; asked = 0; job = { ...job, job
   await ctx.attach(); await settle(); return look(); };
 const out = { tries: vm.runInContext("FOLLOW_TRIES", ctx) };
 (async () => {
-  out.gone = await run("j1", ["404"]);   // the window closed, songcharter started again: no job
+  out.gone = await run("j1", ["404"]);   // the window closed, songcharter started again: no job, no list
+  ctx.again();
+  // the v0.5.0 review's install-01: the list a songcharter started since answers holds the song, waiting
+  queue = { paused: "restart", restarted: 1, run: 1, entries: [{ id: "e1", run: 1, name: "Some Song.mp3",
+                                                                 state: "waiting", job: null }] };
+  out.listed = await run("j0", ["404"]);
+  queue = { ...queue, entries: [{ ...queue.entries[0], name: "Other Song.mp3" }] };   // another song waits
+  out.other = (await run("j0b", ["404"])).text;
+  queue = null;
   ctx.again();
   const T = out.tries;
   out.down = await run("j2", ["down"]);   // nothing answers any more
@@ -2369,6 +2419,7 @@ const out = { tries: vm.runInContext("FOLLOW_TRIES", ctx) };
   out.errors = await run("j4", ["500"]);   // an answer that is not the events counts as a failure too
   ctx.again();
   out.open = await run("j5", ["open"]);   // a chart that runs on: nothing ends
+  out.paths = paths;
   console.log(JSON.stringify(out));
 })().catch((e) => { console.error(e); process.exit(1); });
 """
@@ -2381,7 +2432,11 @@ def test_the_page_lets_go_when_songcharter_is_gone(tmp_path):
     working reconnect starts the count again), the page ends the chart: the screen's lock let go, not running, the
     tab's title "Stopped", the update notice back, the rows left open, and what to do. With no answer at all the
     window may still be open (the page lost it for a while, after the PC slept, while the chart runs on), so the text
-    says to reload first, which reattaches, and then what to do if it was closed (the v0.4.0 gate's advisor)."""
+    says to reload first, which reattaches, and then what to do if it was closed (the v0.4.0 gate's advisor). What to
+    do once songcharter is started again (the v0.5.0 review's install-01): reload and press Carry on, as the song
+    waits at the top of the list, unless the list it answers has no such song waiting, then chart it again; each
+    chart's events asked by its own job id (correct-2; breaks: the old "chart the song again" text, follow() on
+    /api/jobs/current/events)."""
     script = tmp_path / "gone.cjs"
     script.write_text(GONE_PAGE, encoding="utf-8")
     app_js = tmp_path / "app.js"
@@ -2396,17 +2451,24 @@ def test_the_page_lets_go_when_songcharter_is_gone(tmp_path):
     kept = "what it had worked out is kept, so it goes faster."
     assert out["gone"] == {**ended, "asked": 1, "text": "songcharter was closed while it charted (closing its "
                            f"window stops the chart) and has been started again. Chart the song again: {kept}"}
+    # the v0.5.0 review's install-01: the song back at the top of the list is to be carried on, not charted twice
+    carry = f"press Carry on: the song waits at the top of the list, and {kept}"
+    assert out["listed"] == {**out["gone"], "text": "songcharter was closed while it charted (closing its window "
+                             f"stops the chart) and has been started again. Reload this page (press F5) and {carry}"}
+    assert out["other"] == out["gone"]["text"]   # another song waits: this one is to be charted again
     # M8-04 (the v0.4.0 gate's note): with nothing answering, the heading and the tab say so, not "stopped"
     assert out["down"] == {**ended, "title": "Not answering - songcharter", "heading": "songcharter is not answering",
                            "asked": tries, "text": "songcharter is not answering. If the songcharter window "
                            "is still open, reload this page (press F5) to follow the chart. If the window was "
-                           "closed, which stops the chart, start songcharter again from the Start menu, then chart the "
-                           f"song again: {kept}"}
+                           "closed, which stops the chart, start songcharter again from the Start menu, then reload "
+                           f"this page and {carry}"}
     running = {"title": "Charting - songcharter", "running": True, "held": 1, "update": True, "done": True,
                "cancel": False}
     assert {k: out["flaky"][k] for k in running} == running and out["flaky"]["asked"] == 2 * tries
     assert out["errors"] == {**out["down"], "asked": tries}
     assert {k: out["open"][k] for k in running} == running and out["open"]["asked"] == 1
+    # the v0.5.0 review's correct-2: each chart's events by its own job id, never "current"
+    assert out["paths"] == [f"/api/jobs/{j}/events" for j in ("j1", "j0", "j0b", "j2", "j3", "j4", "j5")]
 
 
 def test_the_done_screen_puts_the_install_first_and_folds_the_rest():
@@ -2716,7 +2778,7 @@ const ctx = { document, window: { addEventListener() {}, confirm: () => true }, 
     // M8-10: the Done screen names its song by the job id the results gave
     if (path === "/api/jobs/j1/listen") return { status: 200, json: async () => ({ url: "/l/guitar-expert.ogg" }) };
     if (path === "/api/open") return { status: openAnswer[0], json: async () => openAnswer[1] };
-    if (path === "/api/jobs/current/events") return { status: 200, body: { getReader: () => ({
+    if (/^\/api\/jobs\/[^/]+\/events$/.test(path)) return { status: 200, body: { getReader: () => ({
       read: () => new Promise(() => {}) }) } };
     return { status: 404, json: async () => ({}) };
   } };
@@ -3091,7 +3153,7 @@ def test_a_finished_songs_routes_by_its_job_id_after_the_next_has_started(finish
     snap = json.loads(get(ctx, f"/api/jobs/{first.id}")[2])
     assert snap["state"] == "done" and snap["events"][-1]["event"] == "result" and snap["kept"] is True
     for path in ("/api/jobs/20000101-000000/results", "/api/jobs/x/results", "/api/jobs/../current/results",
-                 f"/api/jobs/{first.id}/events", f"/api/jobs/{first.id}/nope", f"/api/jobs/{first.id}/preview/x.png",
+                 "/api/jobs/20000101-000000/events", f"/api/jobs/{first.id}/nope", f"/api/jobs/{first.id}/preview/x.png",
                  f"/api/jobs/{first.id}/art/album.jpg", f"/api/jobs/{first.id}/listen/guitar-expert.ogg"):
         assert get(ctx, path)[0] == 404, path
     songs = tmp_path / "Songs"
@@ -3270,7 +3332,7 @@ const ctx = { document, window: { addEventListener() {}, confirm: () => true }, 
     if (path.endsWith("/results")) return ok({ job: path.split("/")[3], installable: false, preview: { why: "off" },
       art: null, lyrics: null, listen: null, folder: "/x/y" });
     if (path.endsWith("/install")) return ok({ installed: "/s", windows_path: null, replaced: null, note: null });
-    if (path === "/api/jobs/current/events") return { status: 200, body: { getReader: () => ({
+    if (/^\/api\/jobs\/[^/]+\/events$/.test(path)) return { status: 200, body: { getReader: () => ({
       read: () => new Promise(() => {}) }) } };
     return { status: 404, json: async () => ({}) };
   } };
@@ -3496,12 +3558,12 @@ def test_a_cancel_by_id_after_its_song_ended_is_refused_and_the_list_full_says_s
     "that chart has ended" and B charts on; /api/jobs/<B>/cancel cancels it. With QUEUE_MAX 1, the third of three
     songs is refused (409, "1 song is waiting already")."""
     ctx, port = served, served.port
-    status, up = upload(ctx, song(ctx.home / "s.wav"), "Song.wav")
+    ups = [upload(ctx, song(ctx.home / f"{n}.wav", 1.0 + n / 10), f"Song {n}.wav")[1] for n in range(4)]
     ctx.mode = "slow"
-    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))
+    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": ups[0]["id"]}).encode(), guarded(port))
     a = json.loads(body)["job"]
     ctx.mode = "hang"   # B's chart, when the server starts it
-    assert call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))[0] == 202
+    assert call(port, "POST", "/api/jobs", json.dumps({"upload": ups[1]["id"]}).encode(), guarded(port))[0] == 202
     deadline = time.monotonic() + 20
     while ctx.app.jobs.current.id == a or ctx.app.jobs.current.state != "running":
         assert time.monotonic() < deadline
@@ -3511,8 +3573,8 @@ def test_a_cancel_by_id_after_its_song_ended_is_refused_and_the_list_full_says_s
     assert status == 409 and json.loads(body)["error"] == "that chart has ended"
     assert b.state == "running" and ctx.app.jobs.current is b
     monkeypatch.setattr(J, "QUEUE_MAX", 1)
-    assert call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))[0] == 202
-    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))
+    assert call(port, "POST", "/api/jobs", json.dumps({"upload": ups[2]["id"]}).encode(), guarded(port))[0] == 202
+    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": ups[3]["id"]}).encode(), guarded(port))
     assert status == 409 and json.loads(body)["error"].startswith("1 song is waiting already")
     status, _, body = call(port, "POST", f"/api/jobs/{b.id}/cancel", b"", guarded(port))
     assert status == 200 and json.loads(body) == {"job": b.id, "state": "cancelled"}

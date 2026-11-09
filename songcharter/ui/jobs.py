@@ -526,6 +526,11 @@ STATES = ("waiting", "charting", "ready", "check_failed", "not_finished", "cance
 FINISHED = STATES[2:]
 LYRICS_WAIT = ("Lyrics only for a song that starts at once: songcharter keeps pasted lyrics only while it uses them. "
                "Chart this song without them, or add it once nothing is charting.")
+# a song added again while it waits or charts (the same upload; the v0.5.0 review's install-01): it would chart twice,
+# into the same library folder. By where it is: charting, waiting (the list paused: after a restart, say), waiting
+ALREADY = {"charting": "This song is already in the list: it is charting now.",
+           "paused": "This song is already in the list: press Carry on to chart it.",
+           "waiting": "This song is already in the list: it is charted in its turn."}
 
 
 class QueueFull(Exception):
@@ -757,8 +762,9 @@ class Queue:
         """A song at the end of the list, with the page's `options` as checked (the pictures as upload ids, no
         lyrics) and its estimate: (its entry, its job when it starts at once: nothing charting and none waiting).
         `lyrics` only for a song that starts at once, else an InputError (LYRICS_WAIT); QueueFull at QUEUE_MAX waiting;
-        prepare's InputError, or JobRunning, for a song that cannot start at once (it is not kept). A chart whose
-        result is out and whose process is still exiting is waited for first, as Jobs.start does."""
+        an InputError (ALREADY) for a song whose upload is already waiting or charting (a finished one may be charted
+        again); prepare's InputError, or JobRunning, for a song that cannot start at once (it is not kept). A chart
+        whose result is out and whose process is still exiting is waited for first, as Jobs.start does."""
         cur = self.jobs.current
         if cur is not None and cur.state == "running":
             with cur.cond:
@@ -767,6 +773,11 @@ class Queue:
                 cur.wait_end(END_WAIT_S)
         with self._lock:
             self._settle()
+            same = next((e for e in self.entries if e["state"] in ("waiting", "charting")
+                         and e["upload"].get("id") == upload.get("id")), None)
+            if same is not None:
+                raise InputError(ALREADY["charting" if same["state"] == "charting" else
+                                         "paused" if self.paused is not None else "waiting"])
             waiting = self._waiting()
             now = self._charting() is None and not waiting
             if not now and lyrics is not None:

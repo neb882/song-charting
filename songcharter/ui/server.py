@@ -76,7 +76,12 @@ Nothing is downloaded or installed; charting never waits for it.
   * GET /api/jobs/current/events: Server-Sent Events. Every event so far, then each new one, as `id: <index>` and
     `data: <json>`; a comment every 15 s keeps the connection open; it closes after `result`, `error` or `cancelled`,
     once the job's process has exited (up to 10 s more), so the state is final then. A Last-Event-ID header resumes
-    after that index.
+    after that index. GET /api/jobs/<id>/events is the same for the job of that id, which is what the page follows
+    (the v0.5.0 review's correct-2): `current`'s index would be applied to whichever job is current, and the queue
+    starts the next song by itself, so a page whose connection dropped while one song ended and the next started
+    got the next song's events from the old index on, as the old song's. By id, a reconnect resumes within that job
+    only; once it has ended and is no longer current, its closing event alone comes (the end the page missed), and
+    the page then follows the next song from its first event.
   * POST /api/jobs/current/cancel: 200 with the job's state after the cancel; 409 when no job runs.
   * The queue (M8-10, DESIGN.md 4.5): GET /api/queue (also /api/status's `queue`): {"paused" (null, "restart",
     "you", "failures" or "disk", only while a song waits), "why" (the disk's), "restarted" (the songs that were
@@ -92,7 +97,7 @@ Nothing is downloaded or installed; charting never waits for it.
     list, Remove, the trim), its chart in the library (jobs.Queue.dropped_chart: the server's own record of its
     result's folder, for the server's life; never a path from the page), named by its job id, so a Look still open
     on it keeps working; GET /api/jobs/<id> is its snapshot, with its closing event. The results' URLs name the job
-    as the request did. The events are the current job's only;
+    as the request did. The events by id (above);
     POST /api/jobs/<id>/cancel cancels only while that job is the running one (409 "that chart has ended"
     otherwise: a Cancel confirmed after its song ended never reaches the next, M8-10's review S-S1). POST
     /api/open {"what": "built", "job"} opens that job's folder.
@@ -193,7 +198,7 @@ from ..errors import InputError, ToolError
 from ..timed import DIFFICULTIES, INSTRUMENTS
 from . import estimate
 from . import home as default_home
-from .jobs import (CLOSING, LIBRARY_ID, ChartOptions, Charted, Jobs, JobRunning, NotInQueue, NotRunning, Queue,
+from .jobs import (CLOSING, LIBRARY_ID, ChartOptions, Charted, Job, Jobs, JobRunning, NotInQueue, NotRunning, Queue,
                    QueueFull, find_chart, library, parse_options, queued_uploads)
 
 APP = "songcharter"
@@ -663,8 +668,8 @@ class Handler(BaseHTTPRequestHandler):
         m = JOB_PATH.match(path)
         if m:
             ref, rest = unquote(m[1]), m[2] or ""
-            if ref == "current" and rest == "/events":
-                return self._events()
+            if rest == "/events":
+                return self._events(ref)
             job = self._job(ref)
             if job is None:
                 return self._refuse(404, "no job yet" if ref == "current" else "no such job")
@@ -1122,10 +1127,12 @@ class Handler(BaseHTTPRequestHandler):
         return {"id": target.name, "name": name, "bytes": n, "format": source["format"], "width": source["width"],
                 "height": source["height"]}
 
-    def _events(self) -> None:
-        job = self.app.jobs.current
+    def _events(self, ref: str = "current") -> None:
+        """GET /api/jobs/<ref>/events (the module docstring): the job's events from Last-Event-ID on; a finished
+        song's record (once the next has started) sends its closing event alone, as the end its page missed."""
+        job = self._job(ref)
         if job is None:
-            return self._refuse(404, "no job yet")
+            return self._refuse(404, "no job yet" if ref == "current" else "no such job")
         try:
             after = int(self.headers.get("Last-Event-ID", "")) + 1
         except ValueError:
@@ -1137,6 +1144,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Connection", "close")
         self.end_headers()
         n = max(0, after)
+        if not isinstance(job, Job):   # jobs.Kept or jobs.Charted: it has ended, and its closing event is the last
+            for event in [e for e in job.snapshot()["events"] if e.get("event") in CLOSING][-1:]:
+                self.wfile.write(f"id: {n}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n".encode("utf-8"))
+            self.wfile.flush()
+            return None
         while True:
             new, ended = job.wait_events(n, KEEPALIVE_S)
             if not new and not ended:

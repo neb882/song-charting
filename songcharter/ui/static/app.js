@@ -844,16 +844,21 @@ function visible() {
   refreshCharts();   // a chart deleted in Windows while he was away goes from the list (M8-13's review)
 }
 
-async function follow(token) {
+// The events of the job `id` (the one attach() read), by its id: a reconnect resumes within that job only. Once it
+// has ended and the queue has started the next song, the server sends its closing event alone, which ends it here as
+// usual (and between() then follows the next song from its first event); "current" would resume the next song's
+// events from this one's index, as this one's (the v0.5.0 review's correct-2)
+async function follow(token, id) {
+  const url = `/api/jobs/${encodeURIComponent(id || "current")}/events`;
   let last = -1, failed = 0;
   for (;;) {
     if (token !== state.follow) return;
     try {
       const headers = { ...HEADER };
       if (last >= 0) headers["Last-Event-ID"] = String(last);
-      const r = await fetch("/api/jobs/current/events", { headers, cache: "no-store" });
+      const r = await fetch(url, { headers, cache: "no-store" });
       if (token !== state.follow) return;
-      if (r.status === 404) {   // a songcharter started again, with no job: this chart stopped with the old one
+      if (r.status === 404) {   // a songcharter started again does not know it: it stopped with the old one
         gone(false);
         return;
       }
@@ -892,21 +897,41 @@ async function follow(token) {
   }
 }
 
-// The chart's songcharter is gone: a songcharter started since has no job (its window was closed, which stops
-// the chart), or nothing answers any more (`down`): the window may have been closed, or the page may only have lost
-// it for a while (after the PC sleeps, say) while the chart runs on, so a reload, which reattaches, comes first (the
-// v0.4.0 gate's advisor). The page ends the chart as a cancel does: the screen let go, the title, the update notice
-// back, and what to do. The heading and the tab say which (the gate's note): "songcharter is not answering" and "Not
-// answering" when nothing answers, "songcharter stopped" and "Stopped" when one started since has no job.
-function gone(down) {
+// The chart's songcharter is gone: a songcharter started since does not know its job (its window was closed, which
+// stops the chart), or nothing answers any more (`down`): the window may have been closed, or the page may only have
+// lost it for a while (after the PC sleeps, say) while the chart runs on, so a reload, which reattaches, comes first
+// (the v0.4.0 gate's advisor). The page ends the chart as a cancel does: the screen let go, the title, the update
+// notice back, and what to do. The heading and the tab say which (the gate's note): "songcharter is not answering"
+// and "Not answering" when nothing answers, "songcharter stopped" and "Stopped" when one started since does not know
+// it. What to do (the v0.5.0 review's install-01): a closed window puts the charting song back to waiting at the top
+// of the list, which a songcharter started again holds for Carry on (M8-10), so the text says to reload and press
+// Carry on, never to chart it again, which would chart it twice (the server now refuses a song already in the list,
+// but the advice should not lead there). Only when the list the songcharter started since answers has no such song
+// waiting (its queue.json lost, or the list cleared) does it say to chart the song again.
+async function gone(down) {
   stopRunningRows("stopped");
   const kept = "what it had worked out is kept, so it goes faster.";
+  const carry = `press Carry on: the song waits at the top of the list, and ${kept}`;
+  const listed = down || await waitsInList();
   finish(down ? "songcharter is not answering" : "songcharter stopped", down ?
     "songcharter is not answering. If the songcharter window is still open, reload this page (press F5) to " +
     "follow the chart. If the window was closed, which stops the chart, start songcharter again from the Start " +
-    `menu, then chart the song again: ${kept}` :
-    "songcharter was closed while it charted (closing its window stops the chart) and has been started " +
-    `again. Chart the song again: ${kept}`, null, { open: true, tab: down ? "Not answering" : "Stopped" });
+    `menu, then reload this page and ${carry}` :
+    "songcharter was closed while it charted (closing its window stops the chart) and has been started again. " +
+    (listed ? `Reload this page (press F5) and ${carry}` : `Chart the song again: ${kept}`), null,
+    { open: true, tab: down ? "Not answering" : "Stopped" });
+}
+
+// whether the list (a songcharter started since: it answers) has this chart's song waiting
+async function waitsInList() {
+  const name = state.job && state.job.upload ? state.job.upload.name : null;
+  try {
+    const r = await api("GET", "/api/queue");
+    return r.status === 200 && Array.isArray(r.data.entries) &&
+      r.data.entries.some((e) => e.state === "waiting" && e.name === name);
+  } catch (e) {
+    return false;
+  }
 }
 
 // `quiet` (the next song, or one started elsewhere, while he fills the options form): followed without taking the
@@ -929,7 +954,7 @@ async function attach(quiet) {
   clearInterval(state.ticker);
   state.ticker = setInterval(tick, 1000);
   state.follow += 1;
-  follow(state.follow);
+  follow(state.follow, job.job);
   renderQueue();
 }
 
