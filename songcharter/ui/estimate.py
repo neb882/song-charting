@@ -63,17 +63,21 @@ minutes with the GPU's 4 takes, 2 to 7 with 1, 6 to 11 on the CPU; a 9-minute so
 page says how long is left once the guitar's first take is timed). The pipeline's `take` event comes as each take
 starts, with no seconds; jobs.py stamps every event with `at`, the server's clock, so a take's time is `at` of the next
 take's event less its own (the v0.4.0 advisor's finding 5). From the second take's start: the takes left (this one
-and those after it) at that first take's time less its own separation and timing (`GUITAR_ONCE`'s rate times d, its
-high rate for the low end and its low rate for the high end; nothing taken off when the first take that ran was not
-take 1: the cache answered take 1, and the beat map with it), plus the stages after the guitar (`ASSEMBLE`, and
+and those after it) at that first take's time less its own separation and timing at the low end (`GUITAR_ONCE`'s
+high rate times d), and at that first take's time itself at the high end: the events do not say whether autochart's
+cache already held take 1's separation and timing (a song charted again after a cancel, as the page's "gone" text
+suggests, runs take 1 about as fast as a later take), and taking them off a take that did not run them put the range
+too low (M8-04's review, F3: on the 9:05 song 1182-1543 s against about 1636 s left). Nothing is taken off when the
+first take that ran was not take 1 (the cache answered take 1, and the beat map with it). Plus the stages after the
+guitar (`ASSEMBLE`, and
 `PREVIEW` when the plan has it). After the guitar's `stage_end` (a 1-take chart has only that) the stages after it
 alone. It is worked out once, at that event (`from`), and the page counts it down. **The evidence:** the takes
 experiment's later takes against the first on the 5070 (above: the five ordinary songs' first takes 13-72 s longer
 than the mean of their later three, inside the rate's range; Kimochi Warui's later takes slower than its first, which
-the high end does not cover), so the test song's 4 takes (264, 224, 164 and 187 s) give, at take 2's start, 158-235 s
-a take for the three left, 495-769 s with the build and the preview, against the 602 s they took [here,
+the high end does not cover), so the test song's 4 takes (264, 224, 164 and 187 s) give, at take 2's start, 158-264 s
+a take for the three left, 495-856 s with the build and the preview, against the 602 s they took [here,
 tests/test_ui_estimate.py]; the owner's 9:05 song's 4 takes (2173 s; its single takes were not kept) split with the
-mean first-take part (0.13 s a second) give 1394-1756 s against its 1577 s of later takes and its build. **The build**
+mean first-take part (0.13 s a second) give 1394-1870 s against its 1577 s of later takes and its build. **The build**
 (assemble and its checks, either device): 16 s and 17.2 s for the test song (the 5070's PC; the release gate's run),
 19.3 s for Take Me Out on this CPU, about 1 s for CI's 20-s clip: 0.5-5 s and 0.025-0.08 s a second. None when a take
 was run again on the CPU after its GPU run failed (the event's `device`): that take's time is no longer the model's.
@@ -240,7 +244,9 @@ def remaining(est: Any, events: Any) -> dict | None:
         if not first >= 0 or index > count:
             return None
         once = GUITAR_ONCE[guitar]
-        each = (max(0.0, first - once[1] * d), max(0.0, first - once[0] * d)) if took_one else (first, first)
+        # the low end takes off take 1's own separation and timing at its high rate; the high end takes off nothing,
+        # as the events do not say whether autochart's cache already held them (a chart run again after a cancel)
+        each = (max(0.0, first - once[1] * d), first) if took_one else (first, first)
         start, left = b.get("at"), count - index + 1
         low, high = (left * each[i] + rest[i] for i in (0, 1))
     if isinstance(start, bool) or not isinstance(start, (int, float)):

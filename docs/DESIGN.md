@@ -3106,12 +3106,15 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     charted and passed its check."), not the Linux path he cannot open; a build that failed its check is named
     without its ".failed". Under it, **Open folder** (`POST /api/open {"what": "built"}`: the server opens its own
     current result's folder, a failed one too, which is for a look; no path is read from the request), before an
-    install too, with the folder's Windows form (`\\wsl.localhost\...`) only as the button's hover text.
+    install too, with the folder's Windows form (`\\wsl.localhost\...`) only as the button's hover text. A folder
+    that has gone is refused by the song's name ("<name>'s folder is not there any more: it was moved or deleted"),
+    and the refusal is cleared when a later open is asked.
   - **Flags to pictures and sound:** the results carry each flag's part, start and page (`flag_at`: the start read
     from the flag's own text, `preview.Flag`'s "m:ss.s"; the page `floor(start / 60) + 1`, 60 s being
     `preview.render_pages`' default page, which the pipeline uses, kept among the pages there are, so a flag on a
-    page's edge is on the next page and one past the last on the last). In "Worth a look" each flag's start is a link
-    to its page, and the overview and the pages open in a lightbox: one `<dialog>` opened modal (Escape closes it,
+    page's edge is on the next page and one past the last on the last; a page the preview lacks gets no link). In
+    "Worth a look" each flag's start is a link to its page, and the overview and the pages open in a lightbox, titled
+    "Overview" or "Page N of M" (M the pages alone): one `<dialog>` opened modal (Escape closes it,
     the browser's own; the arrow keys go to the page before or after; a click beside the picture or Close puts it
     away; a ctrl- or middle-click still opens the picture in a new tab), with nothing added to the CSP. **Listen
     here** on a flag whose part the chart has sets the Listen box to that part on Expert and plays the render from a
@@ -3133,17 +3136,19 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     `take` event comes as each take starts with no seconds, and jobs.py stamps every event with `at`, so the first
     take's time is `at` of the second take's event less the first's (the v0.4.0 advisor's finding 5). From the second
     take's start: the takes left (that one and the rest) at the first take's time less its own separation and
-    timing (`GUITAR_ONCE`'s rate times the song's length: the high rate for the low end, the low rate for the high
-    end; nothing off when the cache answered take 1), plus the build (`ASSEMBLE`: 0.5-5 s and 0.025-0.08 s a second,
+    timing at the low end (`GUITAR_ONCE`'s high rate times the song's length) and at the first take's time itself at
+    the high end, as the events do not say whether autochart's cache held take 1's separation (a song charted again
+    after a cancel; taking it off put the 9:05 song's range at 1182-1543 s against about 1636 s left, the review's
+    F3); nothing off when the cache answered take 1 itself; plus the build (`ASSEMBLE`: 0.5-5 s and 0.025-0.08 s a second,
     from the test song's 16 and 17.2 s, Take Me Out's 19.3 s and CI's clip) and the preview at their rates. A 1-take
     chart has only the guitar's `stage_end`, after which the stages after it alone. None after a take was run again
     on the CPU. The job's snapshot carries it (`remaining`); the page asks for it at a take and at the guitar's end,
     and counts it down on the server's clock: "About 8 to 13 more minutes, from how long the first guitar take
     took.", the first estimate struck through above it, "Nearly done, or taking longer than estimated." past its high
-    end. On the test song's takes on the 5070 (264, 224, 164, 187 s) it gives 495-769 s at take 2's start against the
-    602 s they and the build and preview took [here, tests/test_ui_estimate.py]; on the owner's 9:05 song (2173 s for
-    its 4 takes, split with the ordinary songs' mean first-take part) 1394-1756 s against 1577 s of later takes and
-    a build.
+    end; a later take or the guitar's end asks again, so after the guitar the stages after it alone. On the test
+    song's takes on the 5070 (264, 224, 164, 187 s) it gives 495-856 s at take 2's start against the 602 s they and
+    the build and preview took [here, tests/test_ui_estimate.py]; on the owner's 9:05 song (2173 s for its 4 takes,
+    split with the ordinary songs' mean first-take part) 1394-1870 s against 1577 s of later takes and a build.
   - **The not-answering heading** (the gate's note): when nothing answers, the heading is "songcharter is not
     answering" and the tab "Not answering"; a 404 from a songcharter started since keeps "songcharter stopped".
   - In Chromium at 1280x860 and 700 px, light and dark [here, a stand-in server on a golden folder, M7-10's route]:

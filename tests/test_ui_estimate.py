@@ -287,17 +287,18 @@ def takes_at(times, start=1000.0, count=None, first=1):
 
 def test_the_time_left_from_the_test_songs_first_take():
     """The test song's 4 takes on the 5070 (264, 224, 164 and 187 s: the takes experiment's table). At take 2's start
-    (its event's `at` less take 1's: 264 s), by hand: the first take's own part is 0.07 to 0.19 * 1.35 = 0.2565 s a
-    second, 28.868 to 105.78 s on 412.4 s, so a take left costs 264 - 105.78 = 158.22 to 264 - 28.868 = 235.13 s;
-    the build 0.5 + 0.025 * 412.4 = 10.81 to 5 + 0.08 * 412.4 = 37.99 s, the preview 5 + 0.01 * 412.4 = 9.12 to 5 +
-    0.05 * 412.4 = 25.62 s; with 3 takes left, 3 * 158.22 + 19.93 = 494.6 to 3 * 235.13 + 63.61 = 769.0 s, about 8 to
-    13 minutes, from take 2's `at`. They took 224 + 164 + 187 s and the build and preview 16 + 11 s: 602 s, inside."""
+    (its event's `at` less take 1's: 264 s), by hand: the first take's own part at its high rate is 0.19 * 1.35 =
+    0.2565 s a second, 105.78 s on 412.4 s, so a take left costs 264 - 105.78 = 158.22 s at the low end and 264 s at
+    the high end (nothing off: the events do not say whether take 1's part was cached, M8-04's review F3); the build
+    0.5 + 0.025 * 412.4 = 10.81 to 5 + 0.08 * 412.4 = 37.99 s, the preview 5 + 0.01 * 412.4 = 9.12 to 5 + 0.05 *
+    412.4 = 25.62 s; with 3 takes left, 3 * 158.22 + 19.93 = 494.6 to 3 * 264 + 63.61 = 855.6 s, about 8 to 15
+    minutes, from take 2's `at`. They took 224 + 164 + 187 s and the build and preview 16 + 11 s: 602 s, inside."""
     est = {"seconds": 412.4, "takes": 4, "device": "cuda"}
     events = [PLAN] + takes_at([264, 224, 164, 187])
     assert E.remaining(est, events[:2]) is None   # one take started: nothing timed yet
     left = E.remaining(est, events[:3])
-    assert left == {"from": 1264.0, "low_s": 494.6, "high_s": 769.0, "low_min": 8, "high_min": 13, "takes_left": 3,
-                    "first_s": 264.0, "take_s": [158.2, 235.1]}
+    assert left == {"from": 1264.0, "low_s": 494.6, "high_s": 855.6, "low_min": 8, "high_min": 15, "takes_left": 3,
+                    "first_s": 264.0, "take_s": [158.2, 264.0]}
     assert left["low_s"] <= 224 + 164 + 187 + 16 + 11 <= left["high_s"]
     assert E.remaining(est, events) == left   # worked out once, at take 2: the page counts it down
     no_preview = {**PLAN, "stages": PLAN["stages"][:-1]}
@@ -307,17 +308,34 @@ def test_the_time_left_from_the_test_songs_first_take():
 def test_the_time_left_from_the_905_songs_first_take():
     """The owner's 9:05 song (545 s): its 4 takes took 2173 s on the 5070, its single takes not kept, so they are split
     here with the five ordinary songs' mean first-take part, 0.13 s a second (70.85 s): later takes 525.54 s each, the
-    first 596.39 s. By hand at take 2's start: its own part 0.07 * 545 = 38.15 to 0.2565 * 545 = 139.79 s, so a take
-    left 456.60 to 558.24 s; the build 14.13 to 48.60 s, the preview 10.45 to 32.25 s; with 3 left, 1394.4 to 1755.6
-    s: 23 to 30 minutes (30 up to the next 5). The three later takes (1576.6 s) and a build fall inside."""
+    first 596.39 s. By hand at take 2's start: its own part at the high rate 0.2565 * 545 = 139.79 s, so a take left
+    596.39 - 139.79 = 456.60 s at the low end and 596.39 s at the high end; the build 14.13 to 48.60 s, the preview
+    10.45 to 32.25 s; with 3 left, 1394.4 to 1870.0 s: 23 to 35 minutes (32 up to the next 5). The three later takes
+    (1576.6 s) and a build fall inside."""
     once = 0.13 * 545
     later = (2173 - once) / 4
     first = later + once
     est = {"seconds": 545.0, "takes": 4, "device": "cuda"}
     left = E.remaining(est, [PLAN] + takes_at([first, later, later, later], start=0.0))
-    assert left == {"from": round(first, 4), "low_s": 1394.4, "high_s": 1755.6, "low_min": 23, "high_min": 30,
-                    "takes_left": 3, "first_s": 596.4, "take_s": [456.6, 558.2]}
+    assert left == {"from": round(first, 4), "low_s": 1394.4, "high_s": 1870.0, "low_min": 23, "high_min": 35,
+                    "takes_left": 3, "first_s": 596.4, "take_s": [456.6, 596.4]}
     assert left["low_s"] <= 3 * later + 14.13 + 10.45 and 3 * later + 48.6 + 32.25 <= left["high_s"]
+
+
+def test_the_time_left_when_take_1_found_its_separation_cached():
+    """M8-04's review, F3: a song charted again after a cancel runs take 1 with autochart's separation and timing
+    from its cache, as fast as a later take, and the events do not say so; the high end then takes nothing off. The
+    9:05 song with take 1 at a later take's 525.54 s: 3 * (525.54 - 139.79) + 24.58 = 1181.8 to 3 * 525.54 + 80.85 =
+    1657.5 s, against 1576.6 s of takes and a build and preview of about 60 s (about 1636 s); taking the part off the
+    high end too gave 1542.9, below it. The test song with take 1 at 210.4 s: 3 * (210.4 - 105.78) + 19.93 = 333.8 to
+    3 * 210.4 + 63.61 = 694.8 s, against the 602 s left."""
+    later = (2173 - 0.13 * 545) / 4
+    nine = E.remaining({"seconds": 545.0, "takes": 4, "device": "cuda"},
+                       [PLAN] + takes_at([later, later, later, later], start=0.0))
+    assert (nine["low_s"], nine["high_s"], nine["take_s"]) == (1181.8, 1657.5, [385.7, 525.5])
+    assert nine["low_s"] <= 3 * later + 60 <= nine["high_s"]
+    test = E.remaining({"seconds": 412.4, "takes": 4, "device": "cuda"}, [PLAN] + takes_at([210.4, 224, 164, 187]))
+    assert (test["low_s"], test["high_s"]) == (333.8, 694.8) and test["low_s"] <= 602 <= test["high_s"]
 
 
 def test_the_time_left_after_the_guitar_and_when_it_cannot_say():
@@ -328,8 +346,13 @@ def test_the_time_left_after_the_guitar_and_when_it_cannot_say():
     events = [PLAN] + takes_at([500]) + [{"event": "stage_end", "stage": "guitar", "seconds": 500.0, "cached": False,
                                           "at": 1500.0}]
     assert E.remaining(est, events[:2]) is None
-    assert E.remaining(est, events) == {"from": 1500.0, "low_s": 19.9, "high_s": 63.6, "low_min": 1, "high_min": 2,
-                                        "takes_left": 0, "first_s": None, "take_s": None}
+    after = {"from": 1500.0, "low_s": 19.9, "high_s": 63.6, "low_min": 1, "high_min": 2, "takes_left": 0,
+             "first_s": None, "take_s": None}
+    assert E.remaining(est, events) == after
+    # a 4-take chart too: once the guitar ends, the stages after it alone, not take 2's count (M8-04's review, F1)
+    four = [PLAN] + takes_at([264, 224, 164, 187], start=500.0) + [
+        {"event": "stage_end", "stage": "guitar", "seconds": 839.0, "cached": False, "at": 1339.0}]
+    assert E.remaining({"seconds": 412.4, "takes": 4, "device": "cuda"}, four) == {**after, "from": 1339.0}
     gpu = {"seconds": 412.4, "takes": 4, "device": "cuda"}
     cached = E.remaining(gpu, [PLAN] + takes_at([200, 190], first=2, count=4))   # take 1 from the cache
     assert cached["take_s"] == [200.0, 200.0] and cached["takes_left"] == 2

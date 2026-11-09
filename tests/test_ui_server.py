@@ -2547,6 +2547,7 @@ els.options = Object.assign(node("form"), { elements,
     return inputs.filter((i) => i.name === m[1] && (!m[2] || i.checked)); },
   reset() { for (const i of inputs) i.checked = i.defaultChecked; elements.takes.value = ""; } });
 const posted = [];
+let openAnswer = [200, { opened: true }];
 let job = { job: "j1", state: "running", upload: { name: "Song.mp3" }, started: 1000, now: 1000,
   estimate: { seconds: 412.4, takes: 4, device: "cuda", low_min: 9, high_min: 23 }, remaining: null };
 const RESULTS = { job: "j1", state: "done", ok: true, folder: "/h/library/0123/Made-Up Band - A Song",
@@ -2566,7 +2567,7 @@ const ctx = { document, window: { addEventListener() {}, confirm: () => true }, 
     if (path === "/api/jobs/current") return { status: 200, json: async () => JSON.parse(JSON.stringify(job)) };
     if (path === "/api/jobs/current/results") return { status: 200, json: async () => RESULTS };
     if (path === "/api/jobs/current/listen") return { status: 200, json: async () => ({ url: "/l/guitar-expert.ogg" }) };
-    if (path === "/api/open") return { status: 200, json: async () => ({ opened: true }) };
+    if (path === "/api/open") return { status: openAnswer[0], json: async () => openAnswer[1] };
     if (path === "/api/jobs/current/events") return { status: 200, body: { getReader: () => ({
       read: () => new Promise(() => {}) }) } };
     return { status: 404, json: async () => ({}) };
@@ -2633,6 +2634,10 @@ const out = {};
   ctx.handle({ event: "take", index: 2, count: 4, seed: 202, at: 3264 });   // the second take: the server is asked
   await settle();
   out.asked = left();
+  job = { ...job, remaining: { from: 3400, low_s: 19.9, high_s: 63.6, takes_left: 0 }, now: 3400 };
+  ctx.handle({ event: "stage_end", stage: "guitar", seconds: 400, cached: false, at: 3400 });   // asked again
+  await settle();
+  out.guitarEnded = left();
   // the end names the song; Open folder with the Windows path as its hover text
   ctx.handle({ event: "result", ok: true, exit: 0, folder: RESULTS.folder, work: "/w", preview: "/p", summary: "",
                at: 3500 });
@@ -2640,8 +2645,14 @@ const out = {};
   out.builtBefore = els["built-row"].hidden;
   await settle();
   out.built = { hidden: els["built-row"].hidden, title: els["open-built"].title };
+  openAnswer = [400, { error: "A Song's folder is not there any more: it was moved or deleted" }];
   els["open-built"].on.click({});
   await settle();
+  out.refused = { hidden: els["built-msg"].hidden, text: els["built-msg"].textContent };
+  openAnswer = [200, { opened: true }];
+  els["open-built"].on.click({});
+  await settle();
+  out.openedLater = els["built-msg"].hidden;
   out.failedText = (ctx.handle({ event: "result", ok: false, exit: 1, folder: "/h/library/0123/A Song.failed",
                                  work: "/w", preview: null, summary: "", at: 3600 }), els["done-text"].textContent);
   await settle();
@@ -2658,7 +2669,7 @@ const out = {};
   out.box = { open: els.lightbox.open, modal: els.lightbox.modal, src: els["lightbox-img"].src,
               title: els["lightbox-title"].textContent, prevented };
   els.lightbox.on.keydown({ key: "ArrowRight", preventDefault() {} });
-  out.right = els["lightbox-img"].src;
+  out.right = [els["lightbox-img"].src, els["lightbox-title"].textContent];
   els.lightbox.on.keydown({ key: "ArrowRight", preventDefault() {} });
   out.last = { src: els["lightbox-img"].src, next: els["lightbox-next"].disabled };
   linkOf(items[1]).on.click({ button: 0, ctrlKey: true, preventDefault() { prevented += 1; } });   // a new tab
@@ -2666,7 +2677,8 @@ const out = {};
   els["lightbox-close"].on.click({});
   out.closed = els.lightbox.open;
   els["overview-link"].on.click({ button: 0, preventDefault() {} });
-  out.overview = { src: els["lightbox-img"].src, prev: els["lightbox-prev"].disabled, open: els.lightbox.open };
+  out.overview = { src: els["lightbox-img"].src, prev: els["lightbox-prev"].disabled, open: els.lightbox.open,
+                   title: els["lightbox-title"].textContent };
   els["listen-level"].value = "hard";   // chosen in the Listen box earlier: Listen here is on Expert
   listenOf(items[0]).on.click({});
   await settle();
@@ -2690,6 +2702,10 @@ const out = {};
   out.found = { form: els["ch-form"].hidden, where: els["ch-where"].textContent };
   ctx.renderCloneHero(true);
   out.editing = els["ch-form"].elements.folder.value;
+  // a flag whose page is past the pages there are: its text without a link, and no TypeError (M8-04's review, F2)
+  ctx.renderPreview({ ...RESULTS.preview, flags: ["guitar: gap 9:00.0-9:10.0 (2 measures)"],
+                      at: [{ part: "guitar", start: 540, page: 9 }] }, "j1");
+  out.pastEnd = els.flags.children.map((li) => li.children.map((c) => (typeof c === "string" ? c : c.tag)));
   out.rounding = JSON.parse(process.argv[3]).map(([lo, hi]) => ctx.roundMinutes(lo, hi));
   out.big = ctx.remainingText({ from: 0, low_s: 1900, high_s: 2300, takes_left: 1 }, 0);
   console.log(JSON.stringify(out));
@@ -2737,6 +2753,8 @@ def test_the_ui_pass_page(tmp_path):
                                  "struck": True}
     assert out["none"] == {"text": "", "hidden": True, "struck": False}
     assert out["asked"] == {"text": f"About 8 to 13 more minutes{first}", "hidden": False, "struck": True}
+    assert out["guitarEnded"] == {"text": "About 1 to 2 more minutes: the guitar is done.", "hidden": False,
+                                  "struck": True}
     assert out["doneText"] == "Made-Up Band - A Song is charted and passed its check." and "/" not in out["doneText"]
     assert out["builtBefore"] is True
     assert out["built"] == {"hidden": False, "title": "\\\\wsl.localhost\\Ubuntu\\h\\library\\0123\\Made-Up Band - A Song"}
@@ -2746,17 +2764,20 @@ def test_the_ui_pass_page(tmp_path):
         {"link": ["1:00.0", "Page 2"], "listen": True, "text": "guitar: gap 1:00.0-1:19.0 (5 measures) Listen here"},
         {"link": ["0:59.9", "Page 1"], "listen": False, "text": "bass: gap 0:59.9-1:02.0 (1 measures)"},
         {"link": None, "listen": False, "text": "an odd line"}]
-    assert out["box"] == {"open": True, "modal": 1, "src": "/p/page_02.png?job=j1", "title": "Page 2 (3 of 4)",
+    assert out["box"] == {"open": True, "modal": 1, "src": "/p/page_02.png?job=j1", "title": "Page 2 of 3",
                           "prevented": 1}
-    assert out["right"] == "/p/page_03.png?job=j1"
+    assert out["right"] == ["/p/page_03.png?job=j1", "Page 3 of 3"]
     assert out["last"] == {"src": "/p/page_03.png?job=j1", "next": True}
     assert out["ctrl"] == {"prevented": 1, "modal": 1}
     assert out["closed"] is False
-    assert out["overview"] == {"src": "/p/overview.png?job=j1", "prev": True, "open": True}
+    assert out["overview"] == {"src": "/p/overview.png?job=j1", "prev": True, "open": True, "title": "Overview"}
+    assert out["pastEnd"] == [["guitar: gap 9:00.0-9:10.0 (2 measures)"]]
     assert out["listen"] == {"posted": [["/api/jobs/current/listen", {"part": "guitar", "level": "expert"}]],
                              "at": 59, "part": "guitar", "level": "expert", "box": False}
     assert out["seekAgain"] == 59
-    assert out["opened"] == [["/api/open", {"what": "built"}]]
+    assert out["opened"] == [["/api/open", {"what": "built"}]] * 2
+    assert out["refused"] == {"hidden": False, "text": "A Song's folder is not there any more: it was moved or deleted"}
+    assert out["openedLater"] is True   # a later open that works clears the refusal
     assert out["guess"]["form"] is False and out["guess"]["value"] == "C:\\Users\\Made Up\\Documents\\Clone Hero\\Songs"
     assert "The box holds a guess" in out["guess"]["where"] and "no folder is there" in out["guess"]["where"]
     assert out["noGuess"] == {"value": "", "where": "songcharter did not find your Clone Hero Songs folder: give it "
@@ -2801,8 +2822,32 @@ def test_open_folder_built_opens_the_results_own_folder_only(finished, tmp_path,
     status, answer = post(ctx, "/api/open", {"what": "built"})
     assert status == 200 and answer["path"] == str(job.out) and opened[-1].endswith(job.out.name)
     shutil.rmtree(job.out)
-    status, answer = post(ctx, "/api/open", {"what": "built"})
-    assert status == 400 and "is not there any more" in answer["error"]
+    status, answer = post(ctx, "/api/open", {"what": "built"})   # by the song's name, never the Linux path
+    assert status == 400 and answer["error"] == f"{job.out.name}'s folder is not there any more: it was moved or deleted"
+    assert str(job.out.parent) not in answer["error"]
+
+
+def test_the_results_link_each_flag_to_a_page_there_is(finished):
+    """M8-04's review, F2: the results route counts the preview's pages for the flags' links: with three pages, flags
+    at a page's edges link to the page that shows them, and one past the last page to the last, never a page the
+    route does not serve (the page would find no picture for it)."""
+    ctx = finished
+    ctx.run()
+    preview = ctx.work / "preview"
+    (preview / "page_03.png").write_bytes(b"\x89PNG")
+    flags = ["guitar: gap 0:59.9-1:02.0 (1 measures)", "bass: gap 1:00.0-1:04.0 (2 measures)",
+             "drums: notes in silence 1:59.9-2:01.0 (1 measures)", "guitar: gap 2:00.0-2:10.0 (3 measures)",
+             "bass: notes after audio 3:30.0-3:31.0 (1 measures)", "no Hard level"]
+    pipeline = json.loads((ctx.work / "pipeline.json").read_text(encoding="utf-8"))
+    pipeline["preview"]["flags"] = flags
+    (ctx.work / "pipeline.json").write_text(json.dumps(pipeline), encoding="utf-8")
+    pv = json.loads(get(ctx, "/api/jobs/current/results")[2])["preview"]
+    assert len(pv["pages"]) == 3 and pv["flags"] == flags
+    assert [a and (a["part"], a["start"], a["page"]) for a in pv["at"]] == [
+        ("guitar", 59.9, 1), ("bass", 60.0, 2), ("drums", 119.9, 2), ("guitar", 120.0, 3), ("bass", 210.0, 3), None]
+    for a in pv["at"]:
+        if a:
+            assert get(ctx, pv["pages"][a["page"] - 1])[0] == 200
 
 
 def test_a_flag_links_to_the_page_that_shows_its_start():

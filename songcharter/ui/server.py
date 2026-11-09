@@ -833,8 +833,9 @@ class Handler(BaseHTTPRequestHandler):
             if result is None:
                 raise Refused(400, "no finished chart yet")
             folder = Path(str(result.get("folder")))
-            if not folder.is_dir():
-                raise Refused(400, f"the chart's folder {folder} is not there any more")
+            if not folder.is_dir():   # the song by its folder's name: the page shows no Linux path (M8-04)
+                name = folder.name[:-len(".failed")] if folder.name.endswith(".failed") else folder.name
+                raise Refused(400, f"{name}'s folder is not there any more: it was moved or deleted")
         elif what == "song":
             if app.installed is None or not app.installed.is_dir():
                 raise Refused(400, "no song was installed into Clone Hero from this page")

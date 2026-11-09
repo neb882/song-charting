@@ -840,7 +840,9 @@ function renderLyrics(ly) {
 
 // a link that opens the lightbox at `at` (its href stays the picture, for a middle click or a new tab)
 function boxLink(a, at) {
-  a.href = state.box.items[at].url;
+  const item = state.box.items[at];
+  if (!item) return a;   // nothing to show: no link, and the rest of the Done screen still renders
+  a.href = item.url;
   a.addEventListener("click", (e) => {
     if (e.button || e.ctrlKey || e.metaKey || e.shiftKey) return;   // a new tab, as the browser does it
     e.preventDefault();
@@ -864,7 +866,7 @@ function thumb(at, cls) {
 function flagItem(textOf, at) {
   const li = make("li");
   const m = at ? /\d+:\d{2}(?:\.\d+)?/.exec(textOf) : null;
-  if (!m || !at.page) {
+  if (!m || !at.page || !state.box.items[at.page]) {
     li.append(textOf);
     return li;
   }
@@ -919,7 +921,7 @@ function showBox(at) {
   const item = items[state.box.at];
   $("lightbox-img").src = item.url;
   $("lightbox-img").alt = item.label;
-  text($("lightbox-title"), `${item.label} (${state.box.at + 1} of ${items.length})`);
+  text($("lightbox-title"), state.box.at === 0 ? item.label : `Page ${state.box.at} of ${items.length - 1}`);
   $("lightbox-full").href = item.url;
   $("lightbox-prev").disabled = state.box.at === 0;
   $("lightbox-next").disabled = state.box.at === items.length - 1;
@@ -1152,6 +1154,7 @@ async function exportZip() {
 }
 
 async function openFolder(what, where) {
+  text(where, "").hidden = true;   // an earlier refusal goes once this one is asked
   try {
     const r = await api("POST", "/api/open", { what });
     if (r.status === 200 && !r.data.opened) {
