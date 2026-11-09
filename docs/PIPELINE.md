@@ -122,8 +122,8 @@ reviewed, merged work then found 3 real issues, none of them major.]
 A plan fixes each question's bar before any number is seen, and each order restates its own.
 - **One primary measure** per question, one that sees its aim (chords: chord precision; repeats: consistency; fast
   runs: recall in the fast windows), named before the numbers.
-- **Adopt** when that measure's 95 % confidence interval is above 0 and the lower end of F1@50's is above -0.005
-  (non-inferiority).
+- **Adopt** when the 95 % confidence interval of that measure's difference is above 0, and the lower end of F1@50's
+  difference is above -0.005 (non-inferiority).
 - **The worst song** is looked at or listened to, and said in the report; it is not a veto by itself.
 - **Each bar states its smallest detectable effect** at the songs it has.
 - **Neither adopted nor refuted:** the result is recorded as `inconclusive`, with the condition that reopens it, or
