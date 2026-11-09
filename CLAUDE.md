@@ -39,14 +39,17 @@ the lock itself.
   `docs/work-orders/M4-10-lyrics.md`, beside the app's own rule: it keeps the text a user pasted only in its state
   folder until that song is charted, then deletes it, and never puts it in the diagnostics zip, a log or a report.
 - Never commit audio, stems, reference charts or model weights.
-- No names or identifiers of the AI assistant models that build songcharter in code, docs or commit messages, apart
-  from the attribution trailer the session's instructions require on each commit. The machine-learning models
-  songcharter runs (Demucs, Fretformer 2, wav2vec 2.0, ...) are named wherever needed.
+- No names or identifiers of the AI assistant models that build songcharter in code, docs, the agent definitions
+  (`.claude/agents/`) or commit messages, apart from the attribution trailer the session's instructions require on
+  each commit. The machine-learning models songcharter runs (Demucs, Fretformer 2, wav2vec 2.0, ...) are named
+  wherever needed.
 - No personal details: the repository is public, so its history keeps everything. That means no names, emails,
   usernames, machine names, or home, Windows-profile or folder paths, and nothing about the owner's or the friend's PC
   beyond what a check needs, written as the requirement: the GPU model and its VRAM, the RAM, a driver "new enough for"
   a lane, Smart App Control on. No exact driver, Windows or WSL versions of their PCs, and nothing installed on them.
   Test fixtures use made-up names, paths and versions.
+- The eval songs' titles, artists, charters and package md5s stay private: in this repository a song is its label
+  (`eval/privacy_check.py` checks; the reference set's public metadata in `eval/refs.json` apart).
 - Deterministic: the same input gives a byte-identical chart (seeded separation, seeded takes).
 - User-facing errors are `errors.InputError` or `errors.ToolError`. Exit codes: 0 ok, 1 the gate failed, 2 bad input
   or environment, 3 a bug, with its traceback.
