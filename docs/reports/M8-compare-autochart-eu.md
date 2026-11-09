@@ -78,3 +78,24 @@ The review judged ours by the guitar stem's level and its own viewing; the human
   both miss it; cymbal or tom on yellow, blue and green agree 0.994 and 0.979. Its snare is better than ours (red F1 0.98
   against 0.88); both write far more hi-hats than the human (yellow 513 and 634 against 216).
 - **Lyrics:** a backing line inside a lead line's phrase is one phrase on our side; noted for the lyrics, not measured.
+
+## Chord shapes held: the owner's follow-up on kimochi_warui, checked (2026-11-09)
+
+The follow-up named our chart's long runs of one chord shape where the song's chords move. Measured on his v0.4.0 GPU
+chart against the human chart (the scorer's readers and alignment: lag MAD 0 over 9 windows, guitar F1@50 0.789 as
+above; `eval/m8/compare/held_shapes.py`; times on his MP3):
+
+| Expert guitar | ours: onsets, shapes, shape changes | the human's: onsets, shapes, shape changes (longest run) |
+|---|---|---|
+| 17.9-35.6 s (a verse) | 61, 1 (G+R), 0 | 63, 3, 7 (13 onsets) |
+| 196.3-215.0 s (the break) | 65, 1 (Y+B), 0 | 67, 6, 7 (45 onsets, 12.3 s, mostly G+Y) |
+| 223.2-264.4 s (the last choruses) | 148, 1 (G+R), 0 | 147, 9, 72 (16 onsets; 57 % chords) |
+| the whole song | 764, 109 changes (one in 7.0 onsets) | 767, 291 changes (one in 2.6 onsets) |
+
+The claim holds: ours keeps one shape for 18, 19 and 41 seconds where the human moves every few seconds. A held shape
+is not wrong by itself (the human holds G+Y for 92 onsets at 95.4-120.9 s, and for 45 in the break); ours holds through
+the sections where the human moves. No code of ours picks a chord's lanes (the quantizer only caps a chord's size and
+moves lanes above the top lane down): the shapes are the transcriber's, on the take the selector picked, and whether
+the other takes move is not known (the chart keeps one take). So the GPU takes fix it only if a take that moves exists
+and the selector picks it. A direction for M8 or M9, measured before built: shape changes per onset and lane direction
+on the sets' human charts, then a pass that moves a held shape where the stem's harmony changes.
