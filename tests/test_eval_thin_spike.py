@@ -87,8 +87,9 @@ def members(zpath: Path) -> dict[str, str]:
 
 @pytest.fixture
 def spike(tmp_path):
-    """thin_spike.sh run directly (eval/tools' way): a made-up home holding the song, the install and OUT."""
-    home = tmp_path / "home"
+    """thin_spike.sh run directly (eval/tools' way) from tmp_path: a made-up home (its folder's name a made-up user
+    name, not USER) holding the song, the install and OUT."""
+    home = tmp_path / "zorbleton"
     inst = spike_install(home / "ac")
     song = home / "Music" / "made up song.wav"
     wav(song, 1)
@@ -98,7 +99,7 @@ def spike(tmp_path):
                SEEDS="7", AUTOCHART_FFMPEG_PATH=str(fake_ffmpeg(tmp_path / "bin" / "ffmpeg", tmp_path / "ff.txt")))
 
     def run(*audio, **more):
-        return subprocess.run(["bash", str(SPIKE), *map(str, audio or [song])], env={**env, **more},
+        return subprocess.run(["bash", str(SPIKE), *map(str, audio or [song])], env={**env, **more}, cwd=tmp_path,
                               capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=300)
     run.home, run.inst, run.song, run.out, run.tmp = home, inst, song, home / "out", tmp_path
     return run
@@ -192,6 +193,17 @@ def test_app_spike_refuses_before_anything_detaches(tmp_path, change, code, why)
     assert not (data / "runs").exists() and str(home) not in p.stdout + p.stderr
 
 
+def test_allow_cpu_skips_the_check_only_and_the_run_still_stops_off_cuda(tmp_path):
+    env, home, data, _, song = app_spike(tmp_path, lane="cu126")
+    p = gpu(["thin-spike", "--app", song], {**env, "ALLOW_CPU": "1", "FAKE_DEVICE": "cpu"})
+    # it starts despite the check (a run this short may end before the front sees it running: no rc asserted)
+    assert "problem: the app is on the cu126 lane" in p.stdout and "check failed" not in p.stdout, p.stdout + p.stderr
+    assert "thin spike finished (exit 1)" in finished(data)
+    out = data / "runs" / "thin_spike"
+    assert "the transcriber did not run on cuda; stopping" in (out / "thin_spike.log").read_text()
+    assert len(engine_log(tmp_path / "engine.jsonl")) == 1 and not (out / "thin_spike_results.zip").exists()
+
+
 def test_the_spike_without_app_runs_eval_tools_autochart_as_before(tmp_path):
     """_thin, the detached half, without --app: SONGCHARTER_AUTOCHART (eval/tools'), PATH's Node, EVAL_PY."""
     home, data = tmp_path / "home", tmp_path / "data"
@@ -207,6 +219,9 @@ def test_the_spike_without_app_runs_eval_tools_autochart_as_before(tmp_path):
     assert p.returncode == 0 and "thin spike finished (exit 0)" in p.stdout, p.stdout + p.stderr
     assert sorted(members(data / "runs" / "thin_spike" / "thin_spike_results.zip")) == [
         "song/base/seed_7/autochart_run/summary.json", "song/base/seed_7/notes.chart"]
+    p = gpu(["status"], env)   # how the owner follows it
+    assert "--- thin_spike.log" in p.stdout and "song base seed 7: T=0.95" in p.stdout, p.stdout
+    assert "send this file back" in p.stdout
 
 
 # --------------------------------------------------------------------------------------- thin_spike.sh
@@ -240,13 +255,14 @@ def test_the_install_driver_patches_and_records_the_knobs(spike):
 @pytest.mark.parametrize("head, kind", [
     ("// {home}/Music\n", "path"),
     ("// made by {user}\n", "user name"),
+    ("// made by {home_name}\n", "user name"),   # the home folder's name, not USER
     ("// /mnt/c/Users/x/Music\n", "path"),
     ("RIFF made up\n", "check_no_audio: FAIL"),
 ])
 def test_the_guard_stops_a_zip_with_a_path_a_user_name_or_audio(spike, head, kind):
     spike(SEEDS="8")   # a zip from before: a stopped run leaves none
     assert (spike.out / "thin_spike_results.zip").exists()
-    p = spike(FAKE_CHART_HEAD=head.format(home=spike.home, user=USER.upper()))
+    p = spike(FAKE_CHART_HEAD=head.format(home=spike.home, user=USER.upper(), home_name=spike.home.name))
     assert p.returncode == 1 and kind in p.stdout, p.stdout + p.stderr
     if kind != "check_no_audio: FAIL":
         assert "song/base/seed_7/notes.chart: " + kind in p.stdout and "the guard stopped it" in p.stdout
@@ -254,14 +270,62 @@ def test_the_guard_stops_a_zip_with_a_path_a_user_name_or_audio(spike, head, kin
     assert str(spike.home) not in p.stdout + p.stderr + (spike.out / "thin_spike.log").read_text()
 
 
-@pytest.mark.parametrize("allow", [False, True])
-def test_a_take_on_the_cpu_stops_the_spike_unless_allowed(spike, allow):
-    p = spike(SEEDS="7 8", FAKE_DEVICE="cpu", **({"ALLOW_CPU": "1"} if allow else {}))
-    if allow:
-        assert p.returncode == 0 and (spike.out / "thin_spike_results.zip").exists(), p.stdout + p.stderr
-    else:
-        assert p.returncode == 1 and "the transcriber did not run on cuda; stopping" in p.stdout
-        assert len(engine_log(spike.tmp / "engine.jsonl")) == 1 and not (spike.out / "thin_spike_results.zip").exists()
+@pytest.mark.parametrize("env", [{}, {"ALLOW_CPU": "1"}])
+def test_a_take_off_its_device_stops_the_spike_even_with_allow_cpu(spike, env):
+    p = spike(SEEDS="7 8", FAKE_DEVICE="cpu", **env)
+    assert p.returncode == 1 and "the transcriber did not run on cuda; stopping" in p.stdout, p.stdout + p.stderr
+    assert len(engine_log(spike.tmp / "engine.jsonl")) == 1 and not (spike.out / "thin_spike_results.zip").exists()
+
+
+def test_a_cpu_dry_run_is_not_stopped(spike):
+    p = spike(SEEDS="7 8", AC_DEVICE="cpu")
+    assert p.returncode == 0 and (spike.out / "thin_spike_results.zip").exists(), p.stdout + p.stderr
+    p = spike(SEEDS="7 8", AC_DEVICE="cpu")
+    assert p.stdout.count(": kept") == 2 and len(engine_log(spike.tmp / "engine.jsonl")) == 2
+
+
+def test_a_summary_keeps_no_path_however_short(spike):
+    """the driver records ffmpeg as it was given: here a short relative path, which no guard would stop"""
+    p = spike(AUTOCHART_FFMPEG_PATH="bin/ffmpeg")
+    assert p.returncode == 0, p.stdout + p.stderr
+    raw = (spike.out / "song" / "base" / "seed_7" / "autochart_run" / "summary.json").read_text()
+    assert '"ffmpeg": "bin/ffmpeg"' in raw
+    summary = members(spike.out / "thin_spike_results.zip")["song/base/seed_7/autochart_run/summary.json"]
+    assert "/" not in summary and "ffmpeg" not in summary
+
+
+def test_a_cpu_take_or_a_changed_arm_is_made_again_on_a_rerun(spike):
+    p = spike(FAKE_DEVICE="cpu")   # stops after the take, which stays on disk
+    assert p.returncode == 1 and (spike.out / "song" / "base" / "seed_7" / "notes.chart").exists()
+    p = spike()
+    assert p.returncode == 0 and "song base seed 7: made again (the transcriber not on cuda)" in p.stdout, p.stdout
+    s = json.loads(members(spike.out / "thin_spike_results.zip")["song/base/seed_7/autochart_run/summary.json"])
+    assert s["runs"][0]["devices"] == {"transcriber": "cuda"}
+    p = spike(ARMS="base:T=1.2")
+    assert "song base seed 7: made again (another temperature)" in p.stdout, p.stdout
+    p = spike(ARMS="base:T=1.2,speed=4")
+    assert "song base seed 7: made again (other knobs)" in p.stdout, p.stdout
+    assert [j["temperature"] for j in engine_log(spike.tmp / "engine.jsonl")] == [0.95, 0.95, 1.2, 1.2]
+
+
+@pytest.mark.parametrize("field, value, why", [
+    (None, None, None),
+    ("inputSha256", "0" * 64, "another input"),
+    ("seed", 8, "another seed"),
+    ("temperature", 1.05, "another temperature"),
+    ("knobs", {**dict.fromkeys(KNOBS), "speed": 5}, "other knobs"),
+    ("runs", [{"devices": {"transcriber": "cpu"}}], "the transcriber not on cuda"),
+    ("runs", [], "the transcriber not on cuda"),
+])
+def test_a_take_is_kept_only_when_its_summary_is_what_the_run_would_make(spike, field, value, why):
+    assert spike().returncode == 0
+    path = spike.out / "song" / "base" / "seed_7" / "autochart_run" / "summary.json"
+    if field:
+        path.write_text(json.dumps({**json.loads(path.read_text()), field: value}))
+    p = spike()
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert (f"song base seed 7: made again ({why})" if why else "song base seed 7: kept") in p.stdout, p.stdout
+    assert len(engine_log(spike.tmp / "engine.jsonl")) == (2 if why else 1)
 
 
 def test_a_take_is_kept_only_for_the_same_input(spike):
@@ -272,10 +336,23 @@ def test_a_take_is_kept_only_for_the_same_input(spike):
     other = spike.home / "Music" / "another.wav"
     wav(other, 2)
     p = spike(other)   # the same label (song), another input: made again, not kept
-    assert p.returncode == 0 and "a take of another input; made again" in p.stdout, p.stdout
+    assert p.returncode == 0 and "song base seed 7: made again (another input)" in p.stdout, p.stdout
     s = json.loads(members(spike.out / "thin_spike_results.zip")["song/base/seed_7/autochart_run/summary.json"])
     assert s["inputSha256"] == hashlib.sha256(other.read_bytes()).hexdigest()
     p = spike(other, spike.song, SEEDS="7,9")   # labels in order: song, song_2; commas in SEEDS
     assert p.returncode == 0, p.stdout + p.stderr
     assert sorted(n for n in members(spike.out / "thin_spike_results.zip") if n.endswith(".chart")) == [
         f"{label}/base/seed_{s}/notes.chart" for label in ("song", "song_2") for s in (7, 9)]
+    made = len(engine_log(spike.tmp / "engine.jsonl"))
+    p = spike(other, spike.song, SEEDS="7,9")   # the same two files again: each song's takes kept, the second's too
+    assert p.returncode == 0 and p.stdout.count(": kept") == 4 and "made again" not in p.stdout, p.stdout
+    assert len(engine_log(spike.tmp / "engine.jsonl")) == made
+
+
+def test_the_readme_names_the_six_references_of_refs_json():
+    """eval/README.md's references' arm: the brace list is eval/refs.json's ids (no test song)"""
+    import re
+    text = (ROOT / "eval" / "README.md").read_text(encoding="utf-8")
+    listed = re.findall(r"eval/data/refs/\{([a-z0-9_,]+)\}/input\.wav", text)
+    refs = sorted(r["id"] for r in json.loads((ROOT / "eval" / "refs.json").read_text(encoding="utf-8")))
+    assert len(listed) == 1 and sorted(listed[0].split(",")) == refs and "test_song" not in refs
