@@ -338,12 +338,13 @@ eval/gpu.sh stop                                       # only if needed: the sam
 ```
 
 - **The check** runs first, as `check --app` does: the GPU, the app's lane, onnxruntime-node's CUDA provider, the CUDA
-  13 and cuDNN libraries. A problem stops it before anything starts (`ALLOW_CPU=1` starts it anyway). The run itself
-  stops after a take whose transcriber did not run on CUDA.
+  13 and cuDNN libraries. A problem stops it before anything starts. The run itself stops after a take whose
+  transcriber did not run on CUDA. `ALLOW_CPU=1` skips only the check before the start, never that stop: don't set it.
 - **Time:** 16 takes (4 arms x 4 seeds), about 2.5 hours of the GPU (M8-11's estimate), unattended. Keep one Ubuntu
   window open while it runs.
 - **The takes** are in `eval/data/runs/thin_spike/song/<arm>/seed_<seed>/`. After a stop, the same line keeps every
-  take already made from the same file (by its SHA-256) and makes the rest.
+  take already made as this run would make it (the same file by its SHA-256, the seed, the arm's settings, the
+  transcriber on CUDA), and makes the rest; the log says why a take is made again.
 - **The zip**, `eval/data/runs/thin_spike/thin_spike_results.zip`, is made at the end of the run. It holds this run's
   takes: each one's `notes.chart` as the engine wrote it, and its `autochart_run/summary.json` copied field by field
   (the settings, the devices, tokens and timings: no path, no message). There is no log and no audio in it. A guard
@@ -353,16 +354,18 @@ eval/gpu.sh stop                                       # only if needed: the sam
 
 **Later, the references' arm.** If an arm clears M5-99's bar, M8-11 checks it on the references before adopting it:
 the same steps with `ARMS` set to the winner and `base`, on each reference's `input.wav`. `eval/gpu.sh build --app
-refs` builds those (GPU takes with the installed app, above). One line runs them all, one after the other, each song's
-takes under its id (`.../thin_spike/<id>/<arm>/seed_<seed>/`):
+refs` builds those (GPU takes with the installed app, above). One line runs the six (eval/refs.json's ids; not the test
+song: the bar is the references' pooled F1@50), one after the other, each song's takes under its id
+(`.../thin_spike/<id>/<arm>/seed_<seed>/`):
 
 ```sh
-ARMS="base:T=0.95 dense5:speed=5" eval/gpu.sh thin-spike --app eval/data/refs/*/input.wav   # the winner for dense5
+# the winner in place of dense5:speed=5
+ARMS="base:T=0.95 dense5:speed=5" eval/gpu.sh thin-spike --app \
+  eval/data/refs/{all_the_small_things,creep,drunk_drivers,kimochi_warui,lucretia,take_me_out}/input.wav
 ```
 
-That is 8 takes a song (2 arms x 4 seeds), twice the takes of `eval/gpu.sh takes --app refs`, with the test song's
-too if it was built. The zip is made again in the same place, with this run's takes only, so send the first one
-before starting this run.
+That is 8 takes a song (2 arms x 4 seeds), twice the takes of `eval/gpu.sh takes --app refs` for those six. The zip
+is made again in the same place, with this run's takes only, so send the first one before starting this run.
 
 ## Rebuilding the dev machine
 
