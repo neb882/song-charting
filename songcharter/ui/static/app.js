@@ -36,7 +36,8 @@ const state = { status: null, upload: null, job: null, stages: {}, offset: 0, ti
   images: { album_art: null, background: null }, sending: 0, version: null, update: null, later: false,
   listen: { parts: {}, job: null }, running: false, wake: null, remaining: null, asking: false,
   box: { items: [], at: 0 }, queue: null, queueKey: null, uploads: [], shown: null, note: "",
-  charts: null, chartsKey: null, chartsOwn: false, again: null, feedbackRows: new Map(), feedbackDone: null };
+  charts: null, chartsKey: null, chartsOwn: false, again: null, feedbackRows: new Map(), feedbackDone: null,
+  chartRows: new Map() };
 // the Listen control's names for the parts and levels the chart has (the results' `listen`)
 const PART_NAMES = { guitar: "Guitar", bass: "Bass", drums: "Drums" };
 const LEVEL_NAMES = { expert: "Expert", hard: "Hard", medium: "Medium", easy: "Easy" };
@@ -1684,9 +1685,22 @@ function setCharts(charts) {
   if (key !== state.chartsKey) {   // the rows made again only when a chart changed (a message is not lost)
     state.chartsKey = key;
     // a song with versions (M8-14): each of its rows says which
+    // M8-14: a row is made again only when its own chart changed; the others stay the same elements, in the new
+    // order, so an open "How did it play?" box, what is typed in it, an open lyrics panel and a row's message survive
+    // a song that ends or another chart's change (the review's F2); a changed row keeps them too (chartRow's `was`)
     const versioned = new Set(charts.filter((c) => c.version > 1).map((c) => c.upload));
-    state.feedbackRows = new Map();   // the rows' "How did it play?" boxes, by chart id (M8-14)
-    $("charts-list").replaceChildren(...charts.map((c) => chartRow(c, versioned.has(c.upload))));
+    const old = state.chartRows, rows = new Map();
+    state.feedbackRows = new Map();   // the rows' "How did it play?" boxes, by chart id
+    const lis = charts.map((c) => {
+      const key = JSON.stringify(c) + (versioned.has(c.upload) ? "|versioned" : "");
+      const was = old.get(c.id);
+      const li = was && was.key === key ? was.li : chartRow(c, versioned.has(c.upload), was && was.li);
+      rows.set(c.id, { key, li });
+      if (li.feedback) state.feedbackRows.set(c.id, li.feedback);
+      return li;
+    });
+    state.chartRows = rows;
+    $("charts-list").replaceChildren(...lis);
   }
   if (!state.chartsOwn) $("charts-fold").open = charts.length <= CHARTS_OPEN;   // until he opens or folds it himself
   state.charts = charts;
@@ -1741,7 +1755,9 @@ function chartAction(msg, f) {
   };
 }
 
-function chartRow(c, versioned) {
+// `was`: the chart's row before (its chart changed): its message, its lyrics panel and its "How did it play?" box go
+// into the new row, the box's line saying the new rating unless it is open
+function chartRow(c, versioned, was) {
   const li = make("li", c.readable ? (c.ok ? "ready" : "check_failed") : "unreadable");
   li.append(make("span", "queue-name", c.name));
   if (c.artist) li.append(" ", make("span", "chart-artist", c.artist));
@@ -1751,8 +1767,8 @@ function chartRow(c, versioned) {
   if (c.stems) facts.push("stems saved");
   li.append(make("span", "chart-facts small", facts.filter(Boolean).join(" · ")));
   const actions = make("span", "queue-actions");
-  const msg = make("span", "queue-msg small");
-  msg.hidden = true;
+  const msg = was && was.msg ? was.msg : make("span", "queue-msg small");
+  if (!(was && was.msg)) msg.hidden = true;
   if (c.ok) {
     actions.append(smallButton("Install", chartAction(msg, () => installFrom({ job: c.id, chart: c.name,
                                                                                 look: !!c.look }, msg)), "small-button"));
@@ -1764,14 +1780,25 @@ function chartRow(c, versioned) {
     actions.append(b);
   }
   if (c.look) actions.append(smallButton("Look", () => look(c.id)));
-  const extra = make("div", "chart-again");
+  const extra = was && was.panel ? was.panel : make("div", "chart-again");
   if (c.readable && c.guitar) {
     const b = smallButton("Chart it differently", chartAction(msg, () => offerAgain(c.id, { name: c.name,
       lyrics: !!c.lyrics, msg, button: b, panel: extra })));
     actions.append(b);
   }
   li.append(actions, msg, extra);
-  if (c.ok) li.append(feedbackBox(c.id, { rating: c.rating, spots: c.spots }, "row"));
+  li.msg = msg;
+  li.panel = extra;
+  li.feedback = null;
+  if (c.ok && was && was.feedback && was.feedback.ref === c.id) {   // the same box, its line up to date
+    li.feedback = was.feedback;
+    if (!li.feedback.data) text(li.feedback.line, feedbackLine({ rating: c.rating, spots: c.spots }));
+    state.feedbackRows.set(c.id, li.feedback);
+    li.append(li.feedback.box);
+  } else if (c.ok) {
+    li.append(feedbackBox(c.id, { rating: c.rating, spots: c.spots }, "row"));
+    li.feedback = state.feedbackRows.get(c.id);
+  }
   return li;
 }
 
@@ -1818,6 +1845,8 @@ function syncFeedback(fb) {
     c.rating = fb.data.rating;
     c.spots = (fb.data.spots || []).length;
     state.chartsKey = JSON.stringify(state.charts);
+    const row = state.chartRows.get(c.id);
+    if (row) row.key = JSON.stringify(c) + (row.key.endsWith("|versioned") ? "|versioned" : "");
   }
 }
 
@@ -1839,7 +1868,7 @@ async function sendFeedback(fb, body, msg) {
   try { r = await api("POST", `/api/jobs/${encodeURIComponent(fb.ref)}/feedback`, body); } catch (e) { r = null; }
   if (r && r.status === 200) {
     fb.data = r.data;
-    renderFeedback(fb);
+    renderFeedback(fb, !!body.add);   // a spot saved clears the form; a rating or a removal keeps what is typed
     syncFeedback(fb);
     return true;
   }
@@ -1848,8 +1877,12 @@ async function sendFeedback(fb, body, msg) {
   return false;
 }
 
-function renderFeedback(fb) {
+// `clear`: the spot just typed was saved, so the form starts empty; else what is typed in it (the time, the ticks,
+// the note) is put back into the new form (the review's F2: a rating pressed once wiped a half-typed spot)
+function renderFeedback(fb, clear) {
   const d = fb.data;
+  const was = fb.form && !clear ? { at: fb.form.at.value, note: fb.form.note.value,
+    ticks: fb.form.boxes.filter((x) => x.tick.checked).map((x) => x.tick.value) } : null;
   text(fb.line, feedbackLine(d));
   const msg = make("p", "error feedback-msg");
   msg.hidden = true;
@@ -1900,6 +1933,12 @@ function renderFeedback(fb) {
   const length = d.length > 0 ? ` (the song is ${mmss(Math.floor(d.length))})` : "";   // the server's own end
   const reasons = make("span", "spot-reasons");
   reasons.append(...boxes.map((x) => x.label));
+  if (was) {
+    at.value = was.at;
+    note.value = was.note;
+    for (const x of boxes) x.tick.checked = was.ticks.includes(x.tick.value);
+  }
+  fb.form = { at, note, boxes };
   form.append(make("p", "spot-head", "Mark a spot"),
     make("p", "small", `When, as Clone Hero shows it${length}, and what is wrong there (or great):`),
     at, reasons, note, add);
@@ -1917,7 +1956,8 @@ function offerAgain(ref, o) {
   const area = make("textarea");
   area.rows = 6;
   area.spellcheck = false;
-  const go = (lyrics) => { o.panel.replaceChildren(); return chartAgain(ref, { ...o, lyrics }); };
+  // the panel, and the lyrics in it, stay until the list has taken the song (the review's F4: a refusal kept nothing)
+  const go = (lyrics) => chartAgain(ref, { ...o, lyrics });
   const row = make("p", "actions");
   row.append(smallButton("Chart it", () => go(area.value.trim() ? area.value : null), "small-button"), " ",
     smallButton("Without lyrics", () => go(null)));
@@ -1939,6 +1979,7 @@ async function chartAgain(ref, o) {
     if (r.status === 202) {
       text(msg, r.data.state === "charting" ? `Version ${r.data.version} is charting now.` :
         `Version ${r.data.version} waits in the list: it is charted in its turn.`);
+      if (o.panel) o.panel.replaceChildren();   // taken: the lyrics panel goes
       endAgain();
       await refreshQueue();
       refreshCharts();
@@ -1959,6 +2000,7 @@ async function chartAgain(ref, o) {
 // the drop screen asks for the song file again; the upload then goes to "Chart it differently", not to the options
 function askForFile(ref, o) {
   state.again = { ref, name: o.name, lyrics: o.lyrics || null };
+  Object.defineProperty(state.again, "panel", { value: o.panel || null, enumerable: false });   // not in its JSON
   text($("again-drop-text"), `To chart ${o.name} differently, drop its song file again: songcharter keeps a song ` +
     "file for 7 days, and this chart's options are kept.");
   $("again-drop").hidden = false;
@@ -1977,7 +2019,8 @@ function endAgain() {
 function againDropped(got) {
   const want = state.again;
   if (got.length > 1) { dropError(`Drop only the song file of ${want.name}.`); return; }
-  chartAgain(want.ref, { name: want.name, lyrics: want.lyrics, upload: got[0].id, msg: $("drop-error") });
+  chartAgain(want.ref, { name: want.name, lyrics: want.lyrics, upload: got[0].id, msg: $("drop-error"),
+    panel: want.panel });
 }
 
 // the Done screen's part (M8-14): its version, "How did it play?" for a chart that passed, "Chart it differently"
