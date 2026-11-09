@@ -3100,8 +3100,9 @@ def test_a_finished_songs_routes_by_its_job_id_after_the_next_has_started(finish
     monkeypatch.setattr(wsl, "open_url", lambda url: True)
     status, answer = post(ctx, "/api/open", {"what": "built", "job": first.id})
     assert status == 200 and answer["path"] == str(first.out)
-    status, answer = post(ctx, "/api/open", {"what": "built", "job": "../x"})   # not an id: the current one
-    assert status == 200 and answer["path"] == str(second.out)
+    status, answer = post(ctx, "/api/open", {"what": "built", "job": "../x"})   # not an id: refused (M8-13)
+    assert status == 400 and answer["error"] == "job is a chart's id: no such chart"
+    assert post(ctx, "/api/open", {"what": "built"})[1]["path"] == str(second.out)   # none: the current one
     listen_chart(first.out)
     status, answer = post(ctx, f"/api/jobs/{first.id}/listen", {"part": "guitar", "level": "expert"})
     assert status == 200 and answer["url"] == f"/api/jobs/{first.id}/listen/guitar-expert.ogg", answer
