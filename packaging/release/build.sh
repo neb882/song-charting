@@ -72,7 +72,9 @@ git -C "$root" archive --format=tar.gz --prefix="songcharter-$version/" --add-fi
 mv -f "$out/$tarball.part" "$out/$tarball"
 app_sha=$(sha256sum "$out/$tarball" | cut -d' ' -f1)
 
-published=$(curl -fsSL --retry 3 "$UV_URL.sha256" | cut -d' ' -f1)
+# GitHub's release downloads answer 504 now and then for a minute or so (four CI runs in a row on 2026-11-09):
+# curl retries a 504 itself; --retry 3 gave up within about 7 s, so retry for up to two minutes.
+published=$(curl -fsSL --retry 8 --retry-max-time 120 --connect-timeout 20 "$UV_URL.sha256" | cut -d' ' -f1)
 if [ "$published" != "$UV_SHA256" ]; then
   echo "build.sh: uv $UV_VERSION's published SHA-256 is '$published', not the pinned $UV_SHA256" >&2
   exit 1
