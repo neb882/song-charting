@@ -6,12 +6,16 @@ What the UI keeps is in $SONGCHARTER_HOME (`home`: the launcher sets it, ~/.loca
 
     uploads/<16 hex>/<name><ext>, upload.json   a dropped song file (16 hex of its SHA-256), with its tags and length
     library/<16 hex>/<artist - title>/          the song folder a job builds (its .failed beside it)
+    library/<16 hex>/v<N>/<artist - title>/     version N of it, charted differently (another seed, M8-14)
     logs/ui-<yyyyMMdd>.log, logs/job-<yyyyMMdd-HHmmss>.log
     doctor.json                                 the install's doctor report: the page's header
     exports/<name>.zip                          a zip the Done screen saved (M4-06)
     replaced/<stamp>/<artist - title>/          an older chart of ours that an install replaced (M4-06)
     ui.json                                     the page's settings: the Songs folder chosen (M4-06)
     state/update.json                           the update check's last answer, kept a day (updates.py, M5-07)
+    state/queue.json, state/chart.pid           the queue's songs and the running chart (jobs.py, M8-10)
+    state/feedback/<24 hex>.json                a chart's rating and marked spots, by its id (feedback.py, M8-14)
+    state/versions.json                         each song's last seed "Chart it differently" gave (M8-14)
 """
 from __future__ import annotations
 

@@ -1573,7 +1573,8 @@ def test_clone_hero_through_the_api(finished, tmp_path, monkeypatch):
     status, answer = post(ctx, "/api/jobs/current/install", {"replace": False, "folder": str(elsewhere),
                                                               "path": str(elsewhere)})
     target = songs / job.out.name
-    assert status == 200 and answer == {"installed": str(target), "windows_path": None, "replaced": None, "note": None}
+    assert status == 200 and answer == {"installed": str(target), "windows_path": None, "replaced": None, "note": None,
+                                        "version": 1}   # M8-14: the version installed
     assert sorted(p.name for p in target.iterdir()) == ["notes.chart", "report.json", "song.ini", "song.ogg"]
     assert list(elsewhere.iterdir()) == []
     status, answer = post(ctx, "/api/jobs/current/install", {"replace": False})

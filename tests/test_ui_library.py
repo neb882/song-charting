@@ -99,18 +99,21 @@ def test_the_library_lists_every_chart_newest_first(tmp_path):
     assert [c["id"] for c in charts] == [f"{B}:{SECOND}", f"{C}:{DAMAGED}", f"{A}:{FIRST}", f"{D}:{OLD}",
                                          *(f"{F}:{name}" for name in SHAPES)]
     assert [c["time"] for c in charts] == [3000, 2000, 1000, 500, 400, 300, 200, 100]
-    by = {c["folder"]: {k: v for k, v in c.items() if k not in ("id", "time")} for c in charts}
+    by = {c["folder"]: {k: v for k, v in c.items() if k not in ("id", "time", "upload", "version", "seed")}
+          for c in charts}
+    # M8-14: each chart's song file, version and seed (all the first's here: tests/test_ui_feedback.py has versions)
+    assert all((c["upload"], c["version"], c["seed"]) == (c["id"][:16], 1, 0) for c in charts)
     assert by[FIRST] == {"folder": FIRST, "name": "First Song", "artist": "Made-Up Band", "readable": True, "ok": True,
-                         "audio": "split", "stems": True, "look": True}
+                         "audio": "split", "stems": True, "look": True, "guitar": False, "lyrics": False}
     assert by[SECOND] == {"folder": SECOND, "name": "Second Song", "artist": "Other Made-Up Band", "readable": True,
-                          "ok": False, "audio": "one", "stems": True, "look": False}
+                          "ok": False, "audio": "one", "stems": True, "look": False, "guitar": False, "lyrics": False}
     assert by[DAMAGED] == {"folder": DAMAGED, "name": DAMAGED, "artist": None, "readable": False, "ok": False,
-                           "audio": "one", "stems": False, "look": False}
+                           "audio": "one", "stems": False, "look": False, "guitar": False, "lyrics": False}
     assert by[OLD] == {"folder": OLD, "name": OLD, "artist": None, "readable": True, "ok": True, "audio": "one",
-                       "stems": False, "look": False}
+                       "stems": False, "look": False, "guitar": False, "lyrics": False}
     for name in SHAPES:   # break: the shape check weakened (`isinstance(gate, dict)`): a KeyError, the list a 500
         assert by[name] == {"folder": name, "name": name, "artist": None, "readable": False, "ok": False,
-                            "audio": "one", "stems": False, "look": False}, name
+                            "audio": "one", "stems": False, "look": False, "guitar": False, "lyrics": False}, name
     assert J.library(home, None)[2]["look"] is False   # no cache: no Look
     shutil.rmtree(root / "work" / f"song-{A}")   # the cache pruned it: no Look, the chart stays listed
     assert [c["look"] for c in J.library(home, root)] == [False] * 8
@@ -361,8 +364,9 @@ const ctx = { navigator, document, window: { addEventListener() {}, confirm: (m)
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(process.argv[2], "utf8"), ctx);
 const flat = (n) => typeof n === "string" ? n : [n.textContent, ...(n.children || []).map(flat)].join(" ");
-const row = (li) => ({ cls: li.className, text: li.children.filter((c) => typeof c === "string" || !c.className.startsWith("queue-")
-  || c.className === "queue-name" || c.className === "queue-state").map(flat).join(" ").replace(/\s+/g, " ").trim(),
+const row = (li) => ({ cls: li.className, text: li.children.filter((c) => typeof c === "string" || (!c.className.startsWith("queue-")
+  || c.className === "queue-name" || c.className === "queue-state") && !/^(fold|chart-again)/.test(c.className))  // M8-14's
+  .map(flat).join(" ").replace(/\s+/g, " ").trim(),
   buttons: li.children.find((c) => c.className === "queue-actions").children.map((b) => b.textContent) });
 const button = (li, label) => li.children.find((c) => c.className === "queue-actions").children
   .find((b) => b.textContent === label);

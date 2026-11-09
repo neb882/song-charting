@@ -13,9 +13,14 @@
     marker's last use): pipeline.json (with the memory samples and the fallbacks), assemble.json, the marker
     (songcharter-work.json), preview.json (pipeline.json's preview: its flags, remarks or why there is none) and the
     built folder's report.json (pipeline.json's assemble.folder: the song folder or its .failed);
+  * feedback.json (M8-14): every chart's rating and marked spots from the page (ui/feedback.py,
+    <home>/state/feedback), each with its chart as it is now, its report.json's `pipeline` among it (the seeds,
+    takes, devices, fallbacks and engines), so a bad spot can be charted again here; the chart named by its library
+    id, no path. A spot's note is the player's own words, as he wrote them. Left out when no chart has a rating
+    or a spot (the manifest says so);
   * MANIFEST.txt: every file with its size and where it came from, then every file left out and why.
 
-**Never** (`refused`, each candidate checked by its name, its size and its first bytes): an audio extension or audio
+**Never** (`refused`, each candidate checked by its name, its size and its first bytes, the files made here too): an audio extension or audio
 magic bytes (packaging/ci/check_no_audio.py's test, copied here since that script is not part of the package), a
 notes.chart (it holds the lyrics), a stem, a picture (PNG, JPEG or WebP by its extension or its first bytes: the
 previews, and the album art and backgrounds of M4-11, which may be a person's photo), or any file over MAX_BYTES
@@ -117,10 +122,17 @@ class Bundle:
         self.added.append((arcname, len(data), str(path)))
         return True
 
-    def json(self, arcname: str, value: Any, source: str) -> None:
+    def json(self, arcname: str, value: Any, source: str) -> bool:
+        """`value` as JSON into the zip as `arcname`, when it passes `refused` as a file would (its name, size and
+        first bytes: M8-14, the made files under the same guard); whether it went in."""
         data = (json.dumps(value, indent=1, ensure_ascii=False, default=str) + "\n").encode("utf-8")
+        why = refused(arcname, data, len(data))
+        if why is not None:
+            self.left.append((source, why))
+            return False
         self.z.writestr(arcname, data)
         self.added.append((arcname, len(data), source))
+        return True
 
 
 def newest_logs(home: Path, n: int = LOGS) -> list[Path]:
@@ -158,6 +170,13 @@ def _read_json(path: Path) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+def _feedback(home: Path) -> dict:
+    """feedback.json (the module docstring): ui/feedback.py's record of every chart rated, with the library's own
+    lookup of each chart by its id."""
+    from .ui import feedback, jobs
+    return feedback.for_diagnostics(home, jobs.find_chart)
 
 
 def _quick_report() -> dict:
@@ -212,12 +231,22 @@ def bundle(home: Path | str, out: Path | str, *, report: Callable[[], dict] | No
                 built = (pipeline.get("assemble") or {}).get("folder")
                 if isinstance(built, str) and built:
                     b.file(f"{where}/report.json", Path(built) / "report.json")
+            try:
+                rated = _feedback(home)
+            except Exception as e:  # noqa: BLE001  the rest of the bundle goes all the same
+                rated = {"error": f"{type(e).__name__}: {e}"}
+            if rated.get("charts") or "error" in rated:
+                b.json("feedback.json", rated, "the page's ratings and marked spots (state/feedback), with each "
+                       "chart's report.json pipeline")
             lines = [f"songcharter {__version__} diagnostics, made {made}", f"home: {home}", f"cache: {root}",
                      "", "files (bytes, from):"]
             lines += [f"  {name}  {size}  {src}" for name, size, src in b.added]
             lines += ["", "left out (why):"] + ([f"  {src}: {why}" for src, why in b.left] or ["  nothing"])
             lines += ["", "Never in this file: audio, stems, charts (notes.chart), pictures, or a file over "
-                          f"{MAX_BYTES // 10 ** 6} MB."]
+                          f"{MAX_BYTES // 10 ** 6} MB.",
+                      "feedback.json holds each chart's rating and marked spots; a spot's note is the player's own "
+                      "words, as he wrote them." if rated.get("charts") or "error" in rated else
+                      "No chart has a rating or a marked spot yet, so there is no feedback.json."]
             z.writestr("MANIFEST.txt", "\n".join(lines) + "\n")
         os.replace(part, out)
     finally:
