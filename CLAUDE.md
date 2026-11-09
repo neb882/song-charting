@@ -50,7 +50,9 @@ the lock itself.
   Test fixtures use made-up names, paths and versions.
 - The eval songs' titles, artists, charters and package md5s stay private: in this repository a song is its label
   (`eval/privacy_check.py` checks; the reference set's public metadata in `eval/refs.json` apart).
-- Deterministic: the same input gives a byte-identical chart (seeded separation, seeded takes).
+- Reproducible: the same input with the same recorded configuration (seeds, device, engine versions, fallbacks;
+  recorded in report.json's `pipeline` field) gives a byte-identical notes.chart on that machine. A seed the user asks
+  for is configuration. The golden diff and the caches still need byte-identical charts at a fixed configuration.
 - User-facing errors are `errors.InputError` or `errors.ToolError`. Exit codes: 0 ok, 1 the gate failed, 2 bad input
   or environment, 3 a bug, with its traceback.
 
