@@ -3490,6 +3490,15 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     ("paste them again ... or chart it without them"); as for any song, only one that starts at once can have them.
   - **The queue's duplicate rule** (the v0.5.0 review's install-01) keys on the upload and the seed: another version
     of a song in the list is not refused as the same song.
+  - In Chromium at 1280x860 and 700 px, light and dark [here, the real App and Queue with a stand-in chart, on a
+    made-up library: a song in two versions, version 2 rated 4 with two spots]: Your charts shows "version 2" and
+    "version 1" together, each line "How did it play? 4 of 5, 2 spots marked" folded; opened, the five buttons, the
+    spots with Remove and the "Mark a spot" form; a time past the song's end was refused in words ("4:10 is after the
+    song's end (3:34)"), what was typed kept; the Done screen of a new chart, rated and with a spot, then "Chart it
+    differently" charted version 2, whose Done screen says "Version 2: this song charted differently.", and whose
+    Install asked "Version 1 of this song is in Clone Hero now (...). Replace it with version 2?"; with the song file
+    gone, the drop screen asked for it again. No horizontal scroll at 700 px; the console lines were Chromium's own
+    for the 400 and 409 answers; no script error.
 - **Status** [code]: screens 1 to 3 built in M4-04; in M4-06 the Done screen (the preview's overview and pages, "Worth a look" from its flags, the zip, Install into Clone Hero, Another folder, Open folder), the "Paste lyrics" box (the text handed to the chart through a memory file, never written to disk or logged), and the diagnostics bundle (`diagnostics.py`, `songcharter diagnostics --out PATH`, `/api/diagnostics`: logs, `doctor.json`, settings and a MANIFEST.txt, every file checked by name, size and first bytes; no audio, chart, image or pasted text). In M4-11 the "Album art" and "Background image" pickers and the album art on the Done screen (§2.16). In M6-09 the Done screen's "Listen" (§2.17). In M7-10 the estimate, the folded stages, the install first, the tab's title, the wake lock, the drop zone's keys and the update notice put away while a chart runs (above). Quick fixes, Preview in Clone Hero and the polish workspace are not built.
 
 ### 4.6 CI (with the Windows build)
