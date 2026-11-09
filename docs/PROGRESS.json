@@ -134,7 +134,7 @@
     },
     {
       "order": "M8-12: the stems as files, and Clone Hero's multitrack audio",
-      "stage": "to start 2026-11-09 after M8-10's merge (abde048), branch m8-12-stems-out; the builder returns at 96 % of the week's meter and is resumed after the reset",
+      "stage": "built 2026-11-09 on branch m8-12-stems-out (worktree <wt>/m8-12): part A (--stems, the six stems as 24-bit FLAC in \"<song> (stems)\" beside the song folder, the page's option and \"Download the stems\"), part B (guitar.ogg, bass.ogg, drums.ogg and song.ogg the rest by default, --one-audio for one file, the Ogg serial fixed), the docs; the golden charts against v040f (--rerun drums,bass,sections, as v040f): no UNEXPECTED change, every notes.chart and song.ini byte-identical, scores and the alignment's lag identical, only the audio split; the builder's report <scratchpad>/m8/m8-12.report.md",
       "then": "review (screens too), merge"
     }
   ],

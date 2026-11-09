@@ -106,6 +106,15 @@ page.
 - **Pictures, if you want them:** a song file with its own cover picture gets it as the album art. Under "Pictures"
   (open it) in the options you can choose another album art, and a background image to show behind the highway (JPEG, PNG or
   WebP). To see song backgrounds in Clone Hero, turn on Settings > Gameplay > "Use Song Backgrounds".
+- **When you miss a note, that instrument's sound stops** until you hit again, as on Clone Hero's official songs: the
+  guitar, bass and drums each get a sound file of their own (made from the separated instruments, so a little of the
+  guitar can still be heard in the rest while it is muted). If you would rather the music never drops out, tick "One
+  audio file" under "Audio" in the options.
+- **The separated instruments for sampling:** tick "Also save the separated instruments (stems)" under "Audio". The
+  six instruments (drums, bass, guitar, piano, vocals, and "other" for the rest) are saved as lossless FLAC files
+  that line up with your song file, in a folder beside the song's; the options say how much disk they take (about
+  190 MB for a 4-minute song). When the song is done, "Download the stems" saves them as one zip to your Downloads
+  folder. Piano and "other" come out the least clean.
 - When it is done, the page shows "Ready" at the top with the song's name, "Open folder" (the song's folder in
   Windows' File Explorer) and "Install into Clone Hero" right under it. Press Install (the preview and Listen,
   further down, are there for a look first if you want one). The first time, it may ask where your Clone Hero Songs
