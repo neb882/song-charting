@@ -106,6 +106,7 @@ def test_a_jobs_device_and_takes():
     assert est["takes"] == 0 and est["low_s"] == round(E.chart_seconds(d, 0, "cuda")[0], 1)
     est = E.for_job(d, options(preview=False, lyrics="a line\n"), "cpu", "cpu")
     assert est["high_s"] == round(E.chart_seconds(d, 1, "cpu", lyrics=True, preview=False)[1], 1)
+    assert est["audio"] == "split" and E.for_job(d, options(one_audio=True), "cpu", "cpu")["audio"] == "one"
 
 
 @pytest.mark.parametrize("seconds, auto", [(None, "cuda"), (0, "cuda"), (-3.0, "cuda"), (True, "cuda"),
@@ -251,6 +252,29 @@ def test_the_first_takes_own_part_and_the_preview_fall_inside_their_ranges(the_5
         assert low <= seconds <= high, (song, seconds, round(low, 1), round(high, 1))
 
 
+# the build (assemble and its checks) on this CPU, every level (the golden runs' builds; s, the song's length):
+# split audio, the default since M8-12, at v0.5.0's candidate; one song.ogg, at the golden set's kept builds before
+# M8-12 [here, each run's pipeline.json stage times]; and M8-12's creep, Expert only: 35.1 s split, 17.1 s one file
+BUILD_SPLIT = {"atst": 25.76, "creep": 33.06, "dd": 33.79, "kw": 38.9, "luc": 32.8, "tmo": 34.36, "test": 59.8}
+BUILD_ONE = {"atst": 10.5, "creep": 15.51, "dd": 13.3, "kw": 18.72, "luc": 14.86, "tmo": 16.14, "test": 29.63}
+
+
+def test_the_builds_fall_inside_their_range_split_or_one_file():
+    """The v0.5.0 review's docs-assemble-estimate-split: the build's rates are split builds' since M8-12 made the split
+    audio the default (it about doubled the build), and one-file builds' for "One audio file"; each measured build
+    falls inside its range (break: the split builds against the one-file rates: creep's 35.1 s over 24.2 s)."""
+    def inside(rates, d, seconds):
+        low, high = (fixed + rate * d for fixed, rate in zip(*rates))
+        return low <= seconds <= high
+    for song, seconds in BUILD_SPLIT.items():
+        assert inside(E.ASSEMBLE, LENGTH[song], seconds), (song, seconds)
+    for song, seconds in BUILD_ONE.items():
+        assert inside(E.ASSEMBLE_ONE, LENGTH[song], seconds), (song, seconds)
+    assert inside(E.ASSEMBLE, 240.0, 35.1) and inside(E.ASSEMBLE_ONE, 240.0, 17.1)   # M8-12's creep
+    assert inside(E.ASSEMBLE_ONE, LENGTH["test"], 16.0) and inside(E.ASSEMBLE_ONE, LENGTH["test"], 17.2)   # the 5070
+    assert inside(E.STEMS, 240.0, 4.3)   # M8-12's creep: "Save the stems"
+
+
 @pytest.mark.parametrize("minutes, song, takes, device, preview", [
     (5.05, "test", 1, "cuda", True),    # M4-08 A6, through the real install on the 5070
     (12.7, "test", 1, "cpu", False),    # M3 on this CPU, before the preview
@@ -289,64 +313,74 @@ def test_the_time_left_from_the_test_songs_first_take():
     """The test song's 4 takes on the 5070 (264, 224, 164 and 187 s: the takes experiment's table). At take 2's start
     (its event's `at` less take 1's: 264 s), by hand: the first take's own part at its high rate is 0.19 * 1.35 =
     0.2565 s a second, 105.78 s on 412.4 s, so a take left costs 264 - 105.78 = 158.22 s at the low end and 264 s at
-    the high end (nothing off: the events do not say whether take 1's part was cached, M8-04's review F3); the build
-    0.5 + 0.025 * 412.4 = 10.81 to 5 + 0.08 * 412.4 = 37.99 s, the preview 5 + 0.01 * 412.4 = 9.12 to 5 + 0.05 *
-    412.4 = 25.62 s; with 3 takes left, 3 * 158.22 + 19.93 = 494.6 to 3 * 264 + 63.61 = 855.6 s, about 8 to 15
-    minutes, from take 2's `at`. They took 224 + 164 + 187 s and the build and preview 16 + 11 s: 602 s, inside."""
+    the high end (nothing off: the events do not say whether take 1's part was cached, M8-04's review F3); the split
+    build 0.5 + 0.05 * 412.4 = 21.12 to 5 + 0.16 * 412.4 = 70.98 s, the preview 5 + 0.01 * 412.4 = 9.12 to 5 + 0.05 *
+    412.4 = 25.62 s; with 3 takes left, 3 * 158.22 + 30.24 = 504.9 to 3 * 264 + 96.6 = 888.6 s, about 8 to 15
+    minutes, from take 2's `at`. They took 224 + 164 + 187 s and the build and preview 16 + 11 s: 602 s, inside, and
+    so is about 618 s with a split build, about twice the one-file build's 16 s (M8-12) [est.]. With one song.ogg,
+    the build at 0.5 + 0.025 * 412.4 = 10.81 to 5 + 0.08 * 412.4 = 37.99 s; with the stems saved, 4.62 to 18.5 s
+    more."""
     est = {"seconds": 412.4, "takes": 4, "device": "cuda"}
     events = [PLAN] + takes_at([264, 224, 164, 187])
     assert E.remaining(est, events[:2]) is None   # one take started: nothing timed yet
     left = E.remaining(est, events[:3])
-    assert left == {"from": 1264.0, "low_s": 494.6, "high_s": 855.6, "low_min": 8, "high_min": 15, "takes_left": 3,
+    assert left == {"from": 1264.0, "low_s": 504.9, "high_s": 888.6, "low_min": 8, "high_min": 15, "takes_left": 3,
                     "first_s": 264.0, "take_s": [158.2, 264.0]}
     assert left["low_s"] <= 224 + 164 + 187 + 16 + 11 <= left["high_s"]
-    assert E.remaining(est, events) == left   # worked out once, at take 2: the page counts it down
+    assert left["low_s"] <= 224 + 164 + 187 + 2 * 16 + 11 <= left["high_s"]
+    assert E.remaining({**est, "audio": "split"}, events) == E.remaining(est, events) == left   # once, at take 2
     no_preview = {**PLAN, "stages": PLAN["stages"][:-1]}
-    assert E.remaining(est, [no_preview] + events[1:3])["low_s"] == pytest.approx(3 * 158.22 + 10.81, abs=0.1)
+    assert E.remaining(est, [no_preview] + events[1:3])["low_s"] == pytest.approx(3 * 158.22 + 21.12, abs=0.1)
+    one = E.remaining({**est, "audio": "one"}, events[:3])
+    assert (one["low_s"], one["high_s"]) == pytest.approx((3 * 158.22 + 10.81 + 9.12, 3 * 264 + 37.99 + 25.62),
+                                                          abs=0.1)
+    stems = {**PLAN, "stages": [*PLAN["stages"][:-1], "stems", "preview"]}   # the plan with "Save the stems"
+    with_stems = E.remaining(est, [stems] + events[1:3])
+    assert (with_stems["low_s"], with_stems["high_s"]) == pytest.approx((504.9 + 4.62, 888.6 + 18.5), abs=0.1)
 
 
 def test_the_time_left_from_the_905_songs_first_take():
     """The owner's 9:05 song (545 s): its 4 takes took 2173 s on the 5070, its single takes not kept, so they are split
     here with the five ordinary songs' mean first-take part, 0.13 s a second (70.85 s): later takes 525.54 s each, the
     first 596.39 s. By hand at take 2's start: its own part at the high rate 0.2565 * 545 = 139.79 s, so a take left
-    596.39 - 139.79 = 456.60 s at the low end and 596.39 s at the high end; the build 14.13 to 48.60 s, the preview
-    10.45 to 32.25 s; with 3 left, 1394.4 to 1870.0 s: 23 to 35 minutes (32 up to the next 5). The three later takes
-    (1576.6 s) and a build fall inside."""
+    596.39 - 139.79 = 456.60 s at the low end and 596.39 s at the high end; the split build 27.75 to 92.20 s, the
+    preview 10.45 to 32.25 s; with 3 left, 1408.0 to 1913.6 s: 23 to 35 minutes (32 up to the next 5). The three
+    later takes (1576.6 s) and a build fall inside."""
     once = 0.13 * 545
     later = (2173 - once) / 4
     first = later + once
     est = {"seconds": 545.0, "takes": 4, "device": "cuda"}
     left = E.remaining(est, [PLAN] + takes_at([first, later, later, later], start=0.0))
-    assert left == {"from": round(first, 4), "low_s": 1394.4, "high_s": 1870.0, "low_min": 23, "high_min": 35,
+    assert left == {"from": round(first, 4), "low_s": 1408.0, "high_s": 1913.6, "low_min": 23, "high_min": 35,
                     "takes_left": 3, "first_s": 596.4, "take_s": [456.6, 596.4]}
-    assert left["low_s"] <= 3 * later + 14.13 + 10.45 and 3 * later + 48.6 + 32.25 <= left["high_s"]
+    assert left["low_s"] <= 3 * later + 27.75 + 10.45 and 3 * later + 92.2 + 32.25 <= left["high_s"]
 
 
 def test_the_time_left_when_take_1_found_its_separation_cached():
     """M8-04's review, F3: a song charted again after a cancel runs take 1 with autochart's separation and timing
     from its cache, as fast as a later take, and the events do not say so; the high end then takes nothing off. The
-    9:05 song with take 1 at a later take's 525.54 s: 3 * (525.54 - 139.79) + 24.58 = 1181.8 to 3 * 525.54 + 80.85 =
-    1657.5 s, against 1576.6 s of takes and a build and preview of about 60 s (about 1636 s); taking the part off the
-    high end too gave 1542.9, below it. The test song with take 1 at 210.4 s: 3 * (210.4 - 105.78) + 19.93 = 333.8 to
-    3 * 210.4 + 63.61 = 694.8 s, against the 602 s left."""
+    9:05 song with take 1 at a later take's 525.54 s: 3 * (525.54 - 139.79) + 38.2 = 1195.4 to 3 * 525.54 + 124.45 =
+    1701.1 s, against 1576.6 s of takes and a build and preview of about 60 s (about 1636 s); taking the part off the
+    high end too gave 1542.9 with the one-file build's rates, below it. The test song with take 1 at 210.4 s:
+    3 * (210.4 - 105.78) + 30.24 = 344.1 to 3 * 210.4 + 96.6 = 727.8 s, against the 602 s left."""
     later = (2173 - 0.13 * 545) / 4
     nine = E.remaining({"seconds": 545.0, "takes": 4, "device": "cuda"},
                        [PLAN] + takes_at([later, later, later, later], start=0.0))
-    assert (nine["low_s"], nine["high_s"], nine["take_s"]) == (1181.8, 1657.5, [385.7, 525.5])
+    assert (nine["low_s"], nine["high_s"], nine["take_s"]) == (1195.4, 1701.1, [385.7, 525.5])
     assert nine["low_s"] <= 3 * later + 60 <= nine["high_s"]
     test = E.remaining({"seconds": 412.4, "takes": 4, "device": "cuda"}, [PLAN] + takes_at([210.4, 224, 164, 187]))
-    assert (test["low_s"], test["high_s"]) == (333.8, 694.8) and test["low_s"] <= 602 <= test["high_s"]
+    assert (test["low_s"], test["high_s"]) == (344.1, 727.8) and test["low_s"] <= 602 <= test["high_s"]
 
 
 def test_the_time_left_after_the_guitar_and_when_it_cannot_say():
-    """A 1-take chart has only the guitar's stage_end: then the stages after it alone (the test song: 19.9 to 63.6 s,
+    """A 1-take chart has only the guitar's stage_end: then the stages after it alone (the test song: 30.2 to 96.6 s,
     about 1 to 2 minutes). A first take the cache answered (take 2's event first) is a later take, with nothing taken
     off. None without an estimate or a guitar, and once a take was run again on the CPU after its GPU run failed."""
     est = {"seconds": 412.4, "takes": 1, "device": "cpu"}
     events = [PLAN] + takes_at([500]) + [{"event": "stage_end", "stage": "guitar", "seconds": 500.0, "cached": False,
                                           "at": 1500.0}]
     assert E.remaining(est, events[:2]) is None
-    after = {"from": 1500.0, "low_s": 19.9, "high_s": 63.6, "low_min": 1, "high_min": 2, "takes_left": 0,
+    after = {"from": 1500.0, "low_s": 30.2, "high_s": 96.6, "low_min": 1, "high_min": 2, "takes_left": 0,
              "first_s": None, "take_s": None}
     assert E.remaining(est, events) == after
     # a 4-take chart too: once the guitar ends, the stages after it alone, not take 2's count (M8-04's review, F1)
@@ -356,7 +390,7 @@ def test_the_time_left_after_the_guitar_and_when_it_cannot_say():
     gpu = {"seconds": 412.4, "takes": 4, "device": "cuda"}
     cached = E.remaining(gpu, [PLAN] + takes_at([200, 190], first=2, count=4))   # take 1 from the cache
     assert cached["take_s"] == [200.0, 200.0] and cached["takes_left"] == 2
-    assert cached["low_s"] == pytest.approx(400 + 19.93, abs=0.1) and cached["high_s"] == pytest.approx(463.6, abs=0.1)
+    assert cached["low_s"] == pytest.approx(400 + 30.24, abs=0.1) and cached["high_s"] == pytest.approx(496.6, abs=0.1)
     retried = [PLAN] + takes_at([264]) + [{"event": "take", "index": 1, "count": 4, "seed": 101, "device": "cpu",
                                            "at": 1100.0}, {"event": "take", "index": 2, "count": 4, "at": 1500.0}]
     assert E.remaining(gpu, retried) is None
