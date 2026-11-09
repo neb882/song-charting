@@ -1,12 +1,13 @@
-# M8-12: the stems as files of their own
+# M8-12: the stems as files of their own, and Clone Hero's multitrack audio
 
 **Branch:** `m8-12-stems-out`, from `main` after M8-04's merge (both change the options form; M8-10's queue then carries
-the option per song like the others). **Agent:** `sc-builder`, then `sc-reviewer` (who also looks at the screens). May
-push its branch to run CI. **Files:** `songcharter/pipeline.py` (only the export after the separate stage),
-`songcharter/cli.py` (the flag), `songcharter/ui/{jobs.py,server.py}`, `songcharter/ui/static/{app.js,index.html,app.css}`,
-`tests/`, `docs/guide/windows-wsl.md`, `docs/DESIGN.md` (2.2 and 4.5). **Not:** the separation itself (model, seed,
-device), the chart, `song.ogg`, Clone Hero's song folder (part B is its own decision). **Time budget:** half a day to a
-day. **Rough cost:** 2-3 % of a week's meter.
+the options per song like the others). **Agent:** `sc-builder`, then `sc-reviewer` (who also looks at the screens). May
+push its branch to run CI. **Files:** `songcharter/pipeline.py` (the export after the separate stage), `songcharter/assemble.py`
+(the song folder's audio files, part B), `songcharter/preview.py` and whatever else reads `song.ogg` (part B, item 3),
+`songcharter/cli.py` (the flags), `songcharter/ui/{jobs.py,server.py}`, `songcharter/ui/static/{app.js,index.html,app.css}`,
+`tests/`, `docs/guide/windows-wsl.md`, `docs/DESIGN.md` (2.2, the audio's section and 4.5). **Not:** the separation
+itself (model, seed, device), the notes. **Time budget:** one to one and a half days. **Rough cost:** 3-5 % of a week's
+meter.
 
 **Environment:** eval/README.md's step 9, and `SONGCHARTER_HEAVY_MIN_FREE_GB=1` on every heavy job (the suite, builds).
 
@@ -50,9 +51,23 @@ can use them costs no separation, only a copy and an encode.
 - One real chart of a short reference with the option on: the stems open in an audio editor's reader (ffprobe: codec,
   rate, length equal to the input's), summed they come back to within Demucs's residual of the input (say the number).
 
-## Part B, not in this order: Clone Hero's own multitrack audio
+## Part B: Clone Hero's multitrack audio, on by default
 
-Official Clone Hero songs ship `guitar.ogg`, `bass.ogg`, `drums.ogg`, `vocals.ogg` and `song.ogg` (the rest), and the
-game mutes an instrument's track on a missed note. Writing our stems that way is a game-feel change with risks the
-stems for sampling do not have (the guitar stem's bleed, the stems' sum against the mix, Clone Hero's per-track
-volumes): the owner listens to one song charted both ways before an order is written.
+Official Clone Hero songs ship `guitar.ogg`, `bass.ogg`, `drums.ogg` and `song.ogg` (the rest), and the game mutes the
+instrument's own track on a missed note. The owner's second tester, a drummer, on it (2026-11-09): "makes it feel much
+more like you're playing bc if you stop that track stops"; "a lot of people naturally like that".
+
+1. **The song folder's audio:** `guitar.ogg`, `bass.ogg` and `drums.ogg` from the stems, and `song.ogg` the mix less
+   those three (so the separation's residual stays in `song.ogg`): played together they sum to today's single
+   `song.ogg` within the encoder's noise, so a player who misses nothing hears what he hears today. Vocals, piano and
+   "other" stay in `song.ogg` (no part we chart mutes them). The same lead-in pad, length, rate and encoder settings
+   for each file; a part we do not chart (none today) gets no file of its own.
+2. **One audio file instead:** an option ("One audio file: the music does not drop out on a miss") and
+   `--one-audio`, which writes today's single `song.ogg`.
+3. **Everything that reads `song.ogg` reads the folder's audio summed:** the page's Listen and the preview, the gate's
+   checks, scan-chart's audio list, eval/scorer (check it already sums a folder's audio files), the install's copy.
+4. **Done means (part B):** the four files summed against the single-file chart of the same song (the difference in
+   dB below the mix, say the number); scan-chart lists the four; byte-identical across two runs (the Ogg stream serial
+   fixed: today's `song.ogg` differs run to run in its serial only, the GPU smoke test's finding); the tests as part A's.
+   The release gate's play test plays one song with a few notes missed on purpose and says how the drop-out sounds
+   (the guitar stem's bleed stays audible in `song.ogg`; whether that is acceptable is the owner's call there).
