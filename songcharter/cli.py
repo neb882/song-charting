@@ -3,6 +3,7 @@
     songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums]
                       [--levels expert|all|expert,hard,...] [--solos labels|stems|off|"NAME,NAME"] [--takes N]
                       [--device auto|cpu|cuda] [--no-cpu-retry] [--threads N] [--no-preview] [--lyrics FILE]
+                      [--stems] [--one-audio]
                       [--album-art FILE] [--background FILE] [--title ...] [--artist ...] [--album ...] [--year ...]
                       [--genre ...] [--events]
     songcharter assemble <config.json> [--out DIR]
@@ -27,7 +28,8 @@ sound over the song (or alone), so a wrong, late or missing note can be heard: a
 
 `chart --events` also writes the run's events (pipeline.py's module docstring) to stderr, each as one line
 `@@songcharter <json>` (ASCII), for the UI's job (ui/jobs.py); then, after the summary, `result` {"ok", "exit",
-"folder", "work", "preview" (the work folder's preview/, or null when no preview ran), "summary" (stdout's text)},
+"folder", "work", "preview" (the work folder's preview/, or null when no preview ran), "stems" (the stems folder,
+or null without --stems), "summary" (stdout's text)},
 or, before exit 2, 3 or 130, `error` {"kind", "message"}: kind "input" for an errors.InputError or an OSError,
 "tool" for an errors.ToolError (or another errors.SongcharterError), "bug" (exit 3), "interrupted" (130). Without
 --events nothing of this is written.
@@ -288,9 +290,12 @@ def main(argv: list[str] | None = None) -> int:
                                    "folder: one decode, one stem separation, the drums, bass, guitar and "
                                    "sections engines, then our grid, tiers, star power, fills and sections, and "
                                    "the gate. Every stage caches its work in the work folder, so a re-run is "
-                                   "quick. Writes notes.chart, song.ini, song.ogg and report.json, and album.jpg and "
-                                   "background.jpg when there are pictures, into the output folder (into "
-                                   "<output>.failed when the gate fails).")
+                                   "quick. Writes notes.chart, song.ini, the audio (guitar.ogg, bass.ogg and "
+                                   "drums.ogg for the parts charted and song.ogg the rest, so Clone Hero mutes a "
+                                   "part on a missed note; one song.ogg with --one-audio) and report.json, and "
+                                   "album.jpg and background.jpg when there are pictures, into the output folder "
+                                   "(into <output>.failed when the gate fails); with --stems also the six separated "
+                                   "instruments as FLAC into \"<output> (stems)\" beside it.")
     c.add_argument("song", type=Path, help="the song file")
     c.add_argument("--out", type=Path, required=True, help="the song folder to write")
     c.add_argument("--work", type=Path, help="the work folder for the decode, stems and engine outputs (default: "
@@ -330,6 +335,13 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--no-preview", action="store_true",
                    help="no preview (by default the overview and pages of the built folder go into the work "
                         "folder's preview/ when matplotlib and librosa are installed)")
+    c.add_argument("--stems", action="store_true",
+                   help="also save the six separated instruments (drums, bass, guitar, piano, vocals, other) as 24-bit "
+                        "FLAC at 44.1 kHz, lined up with the song file (no lead-in), into a folder of their own beside "
+                        "the song folder, named after it with \" (stems)\"; about 190 MB for a 4-minute song")
+    c.add_argument("--one-audio", action="store_true",
+                   help="one song.ogg instead of a file per part charted (guitar.ogg, bass.ogg, drums.ogg, and "
+                        "song.ogg the rest): the music does not drop out on a missed note")
     for flag, key in (("--title", "name"), ("--artist", "artist"), ("--album", "album"), ("--year", "year"),
                       ("--genre", "genre")):
         c.add_argument(flag, dest=f"meta_{key}", metavar="TEXT",
@@ -411,7 +423,7 @@ def main(argv: list[str] | None = None) -> int:
                                        threads=args.threads, work=args.work, metadata=meta, levels=args.levels,
                                        solos=args.solos, preview=not args.no_preview, lyrics=lyrics,
                                        album_art=args.album_art, background=args.background,
-                                       cpu_retry=not args.no_cpu_retry)
+                                       cpu_retry=not args.no_cpu_retry, stems=args.stems, one_audio=args.one_audio)
             done = pipeline.chart(args.song, args.out, options, events=_event if events else None)
             result, extra = done.assembled, pipeline.summary(done)
         else:
@@ -437,6 +449,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.flush()   # the summary before the result in a stream that merges the two
         _event({"event": "result", "ok": result.ok, "exit": code, "folder": str(result.folder), "work": str(done.work),
                 "preview": str(done.work / "preview") if done.preview else None,
+                "stems": str(done.stems) if done.stems is not None else None,
                 "summary": text + (f"\n{extra}" if extra else "")})
     return code
 

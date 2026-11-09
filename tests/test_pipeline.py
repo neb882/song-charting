@@ -308,7 +308,8 @@ def test_the_song_folder_passes_the_gate(charted):
     root, result, _, _ = charted
     assert result.ok, [i for i in result.assembled.issues if i.error]
     assert result.folder == root / "out" / "Click Song"
-    assert sorted(p.name for p in result.folder.iterdir()) == ["notes.chart", "report.json", "song.ini", "song.ogg"]
+    assert sorted(p.name for p in result.folder.iterdir()) == ["bass.ogg", "drums.ogg", "guitar.ogg", "notes.chart",
+                                                               "report.json", "song.ini", "song.ogg"]  # split: M8-12
     assert sorted(p.name for p in (root / "out").iterdir()) == ["Click Song"]  # the work folder is in the cache
     report = result.assembled.report
     assert report["gate"]["ok"] and report["sync"]["ok"] and abs(report["grid"]["bpm_median"] - 120) < 0.05
