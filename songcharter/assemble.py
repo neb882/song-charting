@@ -180,6 +180,9 @@ SCAN_ALLOWED = {"noAlbumArt"}  # the folder issue the gate accepts
 # what a build writes: an output folder holding anything else is not replaced (it may be Clone Hero's Songs folder)
 OUTPUT_FILES = {"notes.chart", "song.ini", "song.ogg", "guitar.ogg", "bass.ogg", "drums.ogg", "album.png", "album.jpg",
                 "album.jpeg", "background.png", "background.jpg", "background.jpeg", "report.json"}
+# a split audio file is ours only when the earlier build's report.json lists it (`_ours`, as for a background): a
+# multitrack folder of someone else's, used as the output, is refused, not overwritten (M8-12's review)
+SPLIT_AUDIO = {"guitar.ogg", "bass.ogg", "drums.ogg"}
 # a background is ours only when the earlier build's report.json says it wrote it (`_ours`): v0.1 wrote none, so one
 # in a folder it made is the person's, which a build refuses to replace, as v0.1 did (M5-12)
 BACKGROUNDS = {"background.png", "background.jpg", "background.jpeg"}
@@ -505,13 +508,16 @@ def failed_folder(output: Path) -> Path:
 
 
 def _ours(folder: Path) -> set[str]:
-    """The names (lower case) an earlier build in `folder` may have left there: OUTPUT_FILES but the backgrounds, and
-    the background its report.json's `art` says it added, while the file there still has the size it recorded (a
+    """The names (lower case) an earlier build in `folder` may have left there: OUTPUT_FILES but the backgrounds and
+    the split audio files, the split files its report.json's `audio_files` lists (M8-12), and the background its
+    report.json's `art` says it added, while the file there still has the size it recorded (a
     picture the person put in its place under the same name is theirs). A background nothing recorded is the
     person's."""
-    names = OUTPUT_FILES - BACKGROUNDS
+    names = OUTPUT_FILES - BACKGROUNDS - SPLIT_AUDIO
     try:
-        record = json.loads((folder / "report.json").read_text(encoding="utf-8"))["art"]["background"]
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        names |= {str(f).lower() for f in report.get("audio_files") or []} & SPLIT_AUDIO
+        record = report["art"]["background"]
         name = str(record.get("file")).lower()
         if record.get("added") is True and name in BACKGROUNDS:
             size = record.get("bytes")

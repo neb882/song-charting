@@ -14,9 +14,12 @@ from .ini import write_ini
 
 
 SPLIT_PARTS = ("guitar", "bass", "drums")   # the parts whose stem gets a file of its own (<part>.ogg) when split
-CONFIDENT = 0.9   # a split file's window that correlates this well with its own samples at a lag of a sample or more
-BETTER = 0.05     # ... and this much better there than at no lag is out of sync (`_shifted`); a tone's period away
-                  # correlates as well as no lag (a stand-in's sine was "4410 samples off"), a real shift far worse
+CONFIDENT = 0.9   # a split file's loud window must correlate this well with its own samples at no lag (`_shifted`;
+                  # every one of the seven references' split files: 0.992 or better [M8-12's review])
+BETTER = 0.05     # and no lag of a sample or more may correlate CONFIDENT or better and this much better than no lag;
+                  # a tone's period away correlates as well as no lag (a stand-in's sine was "4410 samples off")
+MAX_LAG_MS = 100  # audio.measure_offset's lag search
+LOUD_DB = 30.0    # a window this far under the loudest one measured is too quiet to judge at no lag
 
 
 @dataclass
@@ -35,20 +38,21 @@ def safe_folder_name(artist: str, name: str) -> str:
 
 
 def _shifted(own: np.ndarray, decoded: np.ndarray, offsets: list, sample_rate: int, window_s: float = 1.0) -> list:
-    """The windows of `offsets` (audio.measure_offset's, of `decoded` against `own`) where the file is shifted: a lag of
-    a sample or more that correlates CONFIDENT or better, and BETTER than the same window at no lag."""
+    """The windows of `offsets` (audio.measure_offset's, of `decoded` against `own`) where the file does not line up:
+    (centre, lag, corr, corr at no lag) for a loud window (within LOUD_DB of the loudest) that correlates under
+    CONFIDENT at no lag, which a shift beyond measure_offset's ±100 ms search reads as (M8-12's review: 120 to 500 ms
+    late passed), and for a lag of a sample or more that correlates CONFIDENT or better and BETTER than no lag."""
     a, b, w = own.mean(axis=0), decoded.mean(axis=0), int(window_s * sample_rate)
-    out = []
+    rows = []
     for centre, lag, corr in offsets:
-        if abs(lag) < 1.0 or corr < CONFIDENT:
-            continue
         s = max(0, int(round(centre * sample_rate - w / 2)))
         x, y = a[s:s + w].astype(np.float64), b[s:s + w].astype(np.float64)
         n = min(len(x), len(y))
         at_zero = float(np.dot(x[:n], y[:n]) / (np.linalg.norm(x[:n]) * np.linalg.norm(y[:n]) + 1e-12))
-        if corr - at_zero > BETTER:
-            out.append((centre, lag, corr))
-    return out
+        rows.append((centre, lag, corr, at_zero, float(np.sqrt(np.mean(x[:n] ** 2))) if n else 0.0))
+    top = max((r[4] for r in rows), default=0.0)
+    return [r[:4] for r in rows if (r[4] >= top * 10 ** (-LOUD_DB / 20) and r[3] < CONFIDENT)
+            or (abs(r[1]) >= 1.0 and r[2] >= CONFIDENT and r[2] - r[3] > BETTER)]
 
 
 def build_song_folder(out_dir, chart: Chart, song_audio: np.ndarray, pad_samples: int,
@@ -99,8 +103,10 @@ def build_song_folder(out_dir, chart: Chart, song_audio: np.ndarray, pad_samples
             tracks[name] = {"windows": len(offsets), "shifted": len(shifted),
                             "length_difference": int(decoded.shape[1] - own.shape[1])}
             if shifted or decoded.shape[1] != own.shape[1]:
-                why = (f"{max(abs(o[1]) for o in shifted):.2f} samples off" if shifted else
-                       f"{decoded.shape[1] - own.shape[1]:+d} samples long")
+                worst = min(shifted, key=lambda o: o[3]) if shifted else None
+                why = (f"{decoded.shape[1] - own.shape[1]:+d} samples long" if worst is None else
+                       f"{abs(worst[1]):.2f} samples off" if worst[2] >= CONFIDENT else
+                       f"more than {MAX_LAG_MS} ms off (correlation {worst[3]:.2f} at no lag)")
                 raise ToolError(f"{name} is out of sync with the chart: {why}")
         del decoded, own
     if split:

@@ -1521,7 +1521,8 @@ function renderStems(st) {
   $("stems-box").hidden = !st;
   text($("stems-msg"), "").hidden = true;
   if (!st) return;
-  text($("stems-line"), `${st.files.length} instruments as lossless files (${Math.round(st.bytes / 1e6)} MB), in the folder "${st.name}" beside the song's. Piano and "other" come out the least clean.`);
+  $("stems-zip").hidden = !!st.why;   // asked for and not saved: why, in plain words (the disk filled)
+  text($("stems-line"), st.why || `${st.files.length} instruments as lossless files (${Math.round(st.bytes / 1e6)} MB), in the folder "${st.name}" beside the song's. Piano and "other" come out the least clean.`);
 }
 
 async function exportStems() {

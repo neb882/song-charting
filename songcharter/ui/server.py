@@ -108,8 +108,9 @@ reads that event (the release gate's finding: the Done screen once hid "Install 
     given; the folder's art ({"album_art": its URL or null, "album_from": "embedded", "given" or null,
     "background": whether there is one}); what the Listen control offers ({"parts": {"guitar": ["expert", ...],
     ...}}, the parts with notes and their levels, with "why" when the chart could not be read); the stems the run
-    saved ({"name", "files", "bytes"}: the stems folder's name, its .flac files and their size), null without. 404
-    before the first job.
+    saved ({"name", "files", "bytes"}: the stems folder's name, its .flac files and their size), {"why"} in plain words
+    when they were asked for and not saved (pipeline.json's stems.why: the disk filled), null without. 404 before the
+    first job.
   * GET /api/jobs/current/art/album.jpg: the result's album art (image/jpeg), that one name only; anything else 404.
   * GET /api/jobs/current/preview/<name>: only overview.png and page_NN.png from the result's preview folder (the
     work folder's preview/), by an exact pattern; anything else 404.
@@ -118,7 +119,9 @@ reads that event (the release gate's finding: the Done screen once hid "Install 
     (Content-Disposition: attachment): a single name ending .zip that is a file in exports/; anything else 404.
     POST /api/jobs/current/export/stems (M8-12): the same for the stems folder the run saved ("<song> (stems).zip",
     stored without compression: FLAC does not shrink), a gate that failed too (the stems do not depend on the
-    chart); 400 when the run saved none or they are not there any more.
+    chart); 400 when the run saved none or they are not there any more. A stems zip is about 190 MB for 4 minutes,
+    so it is deleted once its GET has sent it, and a new one deletes any other stems zip left there (a download never
+    fetched): exports/ never keeps more than the one being fetched (M8-12's review).
   * GET /api/clonehero: clonehero.describe ({"folder", "windows_path", "source", "under_onedrive", "guess"}), with
     `guess` (<Documents>\\Clone Hero\\Songs, Windows' form) always given, not only when no folder is found (M8-04).
     POST /api/clonehero {"folder"}: clonehero.set_songs_folder (400 with why when it does not exist or cannot be
@@ -189,6 +192,7 @@ CSP = ("default-src 'self'; img-src 'self' data:; connect-src 'self'; script-src
 SECURITY_HEADERS = {"Content-Security-Policy": CSP, "X-Content-Type-Options": "nosniff",
                     "Referrer-Policy": "no-referrer"}
 AUDIO = (".mp3", ".wav", ".flac", ".ogg", ".opus", ".m4a", ".aac", ".wma", ".aiff", ".aif")
+STEMS_ZIP = " (stems).zip"   # the stems' zip in exports/ (pipeline.STEMS_SUFFIX and .zip): deleted once sent
 MAX_UPLOAD = 10 ** 9               # 1 GB (10^9 bytes, the unit of the project's limits)
 MAX_JSON = 1 << 20                 # a JSON request body
 DRAIN = 16 << 20                   # a refused body this small is read first, so the client sees the answer
@@ -712,7 +716,11 @@ class Handler(BaseHTTPRequestHandler):
             job = self._job(ref)
             if rest.startswith("/export/"):
                 self._drain()
-                out = clonehero.export_zip(self._built(job) if rest == "/export/zip" else self._stems(job), app.home)
+                if rest == "/export/stems":   # one stems zip at a time: an earlier one never fetched goes
+                    stems = self._stems(job)
+                    for old in (app.home / clonehero.EXPORTS).glob("*" + STEMS_ZIP):
+                        old.unlink(missing_ok=True)
+                out = clonehero.export_zip(self._built(job) if rest == "/export/zip" else stems, app.home)
                 app.log(f"exported {out}")
                 return self._json(200, {"url": export_url(out.name), "name": out.name,
                                         "windows_path": clonehero.windows_path(out)})
@@ -864,7 +872,11 @@ class Handler(BaseHTTPRequestHandler):
         path = folder / name
         if path.parent != folder or not path.is_file():
             return self._refuse(404, "not found")
-        return self._download(path, name)
+        try:
+            return self._download(path, name)
+        finally:   # a stems zip is as big as the stems: kept only until it is sent (the module docstring)
+            if name.endswith(STEMS_ZIP) and self.command == "GET":
+                path.unlink(missing_ok=True)
 
     def _download(self, path: Path, name: str) -> None:
         """A file as an attachment, streamed: the browser saves it into Downloads."""
@@ -1180,6 +1192,8 @@ def results(job, ref: str = "current") -> dict:
         files = sorted(saved.glob("*.flac"))
         out["stems"] = {"name": saved.name, "files": [f.name for f in files],
                         "bytes": sum(f.stat().st_size for f in files)}
+    elif isinstance(pipeline.get("stems"), dict) and pipeline["stems"].get("saved") is False:
+        out["stems"] = {"why": str(pipeline["stems"].get("why") or "They were not saved.")}
     ly = pipeline.get("lyrics")
     if isinstance(ly, dict):
         out["lyrics"] = {"given": bool(ly.get("given")), "added": bool(ly.get("added")), "words": ly.get("words"),

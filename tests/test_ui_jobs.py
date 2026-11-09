@@ -183,10 +183,15 @@ def test_the_stems_and_one_audio_options_become_their_flags(tmp_path, monkeypatc
     assert seen["options"].stems is True and seen["options"].one_audio is True
     assert main(J.chart_command(Path("/s.mp3"), out, off, None)[3:]) == 130
     assert seen["options"].stems is False and seen["options"].one_audio is False
-    # a cancelled chart's stems staging goes with assemble's (partial_folders)
-    for name in (".Ann - T.x1.partial", ".Ann - T (stems).x2.partial", ".Other.x3.partial"):
+    # a cancelled chart's stems staging goes with assemble's (partial_folders), for a name a glob would misread too
+    # (break: glob.escape left off the stems' name: M8-12's review)
+    live = tmp_path / "Ann - T [Live]"
+    for name in (".Ann - T.x1.partial", ".Ann - T (stems).x2.partial", ".Other.x3.partial",
+                 ".Ann - T [Live].x4.partial", ".Ann - T [Live] (stems).x5.partial", ".Ann - T L (stems).x6.partial"):
         (tmp_path / name).mkdir()
     assert [p.name for p in J.partial_folders(out)] == [".Ann - T (stems).x2.partial", ".Ann - T.x1.partial"]
+    assert [p.name for p in J.partial_folders(live)] == [".Ann - T [Live] (stems).x5.partial",
+                                                        ".Ann - T [Live].x4.partial"]
 
 
 @pytest.mark.parametrize("raw, message", [

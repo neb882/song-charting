@@ -130,8 +130,10 @@ def test_two_runs_give_byte_identical_audio_and_stems(runs, tmp_path, monkeypatc
 
 
 def test_a_full_disk_while_saving_the_stems(runs, tmp_path, monkeypatch, capsys):
-    """Too little free space, or the disk filling while they are written: an InputError naming the folder and the
-    space needed, no stems folder or staging folder left, and the chart in place (break: the staging folder kept)."""
+    """The disk filling while they are written: a warning, the run ends as its gate says with no stems (the page says
+    why in plain words), no stems folder or staging folder left, the chart in place (break: the staging folder kept;
+    the error raised, which hid a good chart from the page: M8-12's review). Too little room at the export: NoRoom
+    naming the folder and the space needed."""
     root, _, out = runs
     monkeypatch.setenv("SONGCHARTER_CACHE", str(root / "cache"))
     real = A.write_flac
@@ -145,11 +147,16 @@ def test_a_full_disk_while_saving_the_stems(runs, tmp_path, monkeypatch, capsys)
 
     monkeypatch.setattr(A, "write_flac", full)
     target = tmp_path / "out" / "Click Song"
-    with pytest.raises(InputError, match=r"the disk filled while the stems were written into .*Click Song \(stems\): "
-                                         r"they need about \d+ MB"):
-        P.chart(root / "song.flac", target, P.Options(stems=True), engines=standins()(), log=lambda line: None,
-                sampler=None)
-    assert sorted(p.name for p in target.parent.iterdir()) == ["Click Song"] and (target / "notes.chart").is_file()
+    events = []
+    done = P.chart(root / "song.flac", target, P.Options(stems=True), engines=standins()(), log=lambda line: None,
+                   sampler=None, events=events.append)
+    assert done.ok and done.stems is None and (target / "notes.chart").is_file()
+    assert sorted(p.name for p in target.parent.iterdir()) == ["Click Song"]
+    assert [w for w in done.warnings if w.startswith("stems: not saved (the disk filled while the stems were written "
+                                                     "into ")] and "they need about 51 MB" in done.warnings[-1]
+    record = json.loads((done.work / "pipeline.json").read_text(encoding="utf-8"))["stems"]
+    assert record["saved"] is False and record["why"] == P.STEMS_NO_ROOM.format(mb="51 MB")
+    assert [e["stage"] for e in events if e["event"] == "stage_end"][-2:] == ["stems", "preview"]
     source = next((root / "cache" / "work").glob("song-*")) / "stems" / standin_key(A.decode(root / "song.flac"))
     with pytest.raises(InputError, match=r"no room for the stems in .*: they need about 51 MB, and 1 MB are free"):
         P.export_stems(source, tmp_path / "x (stems)", free=lambda p: 1)
@@ -264,3 +271,100 @@ def test_package_refuses_a_split_file_out_of_sync(tmp_path, monkeypatch):
     monkeypatch.setattr(A, "decode", late)
     with pytest.raises(ToolError, match="guitar.ogg is out of sync with the chart: 5.00 samples off"):
         PK.build_song_folder(tmp_path / "late", chart, mix, 100, split={"guitar": guitar})
+
+
+def test_no_room_for_the_stems_stops_right_after_the_decode(runs, tmp_path, monkeypatch):
+    """The stems' room is checked once the decode gives their size, before the separation and the engines (break:
+    the check only at the export, after the whole chart: M8-12's review)."""
+    root, _, _ = runs
+    monkeypatch.setenv("SONGCHARTER_CACHE", str(root / "cache"))
+    monkeypatch.setattr(P, "disk_free", lambda path: 10_000_000)
+    engines = standins()()
+    with pytest.raises(InputError, match=r"no room for the stems in .*: they need about 51 MB, and 10 MB are free"):
+        P.chart(root / "song.flac", tmp_path / "Click Song", P.Options(stems=True), engines=engines,
+                log=lambda line: None, sampler=None)
+    assert [c[0] for c in engines.calls] == ["threads"] or not any(c[0] == "separate" for c in engines.calls)
+    assert not (tmp_path / "Click Song").exists()
+    P.chart(root / "song.flac", tmp_path / "Without", P.Options(), engines=standins()(), log=lambda line: None,
+            sampler=None)   # without the stems the room is not asked about
+
+
+def test_a_foreign_flac_or_folder_in_the_stems_folder_is_refused(runs, tmp_path, monkeypatch):
+    """A person's own .flac, or a folder, in "<song> (stems)" is not one of ours (break: any .flac counted as ours,
+    which the export's replace would delete: M8-12's review)."""
+    root, _, _ = runs
+    monkeypatch.setenv("SONGCHARTER_CACHE", str(root / "cache"))
+    folder = tmp_path / "Click Song (stems)"
+    for name, make in (("my mix.flac", lambda f: f.write_bytes(b"fLaC")), ("takes", lambda f: f.mkdir())):
+        folder.mkdir(exist_ok=True)
+        make(folder / name)
+        with pytest.raises(InputError, match=f"holds {name}, which songcharter did not write"):
+            P.check_stems_folder(folder)
+        (folder / name).unlink() if (folder / name).is_file() else (folder / name).rmdir()
+    (folder / "drums.flac").write_bytes(b"old")
+    P.check_stems_folder(folder)   # an earlier export's own
+
+
+def _late(monkeypatch, name: str, samples: int = 0, cut: int = 0):
+    real = A.decode
+
+    def decode(path, *args, **kwargs):
+        y = real(path, *args, **kwargs)
+        if Path(path).name == name:
+            y = np.pad(y, ((0, 0), (samples, 0)))[:, :y.shape[1] - cut]
+        return y
+    monkeypatch.setattr(A, "decode", decode)
+
+
+@pytest.mark.parametrize("name, samples, cut, why", [
+    ("song.ogg", 2205, 0, "the song's audio files together are out of sync with the chart"),   # 50 ms
+    ("guitar.ogg", 0, 100, "guitar.ogg is out of sync with the chart: -100 samples long"),
+    ("guitar.ogg", 8820, 0, r"guitar.ogg is out of sync with the chart: more than 100 ms off \(correlation"),
+])
+def test_package_refuses_song_ogg_late_a_short_file_and_a_shift_past_the_search(tmp_path, monkeypatch, name, samples,
+                                                                              cut, why):
+    """song.ogg late (only the sum checks it), a split file short (only the length checks it), and a split file
+    200 ms late, past measure_offset's 100 ms search (a loud window that does not line up at no lag), each fail the
+    build (breaks: the sum compared with itself, the length test dropped, a window under CONFIDENT skipped; M8-12's
+    review: each left these tests green)."""
+    from songcharter.chart import Chart, SongInfo
+    from songcharter.errors import ToolError
+    from songcharter.tempo import Tempo, TempoMap
+    rng = np.random.default_rng(3)
+    mix = (0.2 * rng.standard_normal((2, 12 * SR))).astype(np.float32)
+    guitar = (0.05 * rng.standard_normal((2, 12 * SR))).astype(np.float32)
+    chart = Chart(SongInfo("x", "songcharter"), TempoMap(480, [Tempo(0, 120000)]), [], [])
+    _late(monkeypatch, name, samples, cut)
+    with pytest.raises(ToolError, match=why):
+        PK.build_song_folder(tmp_path / "x", chart, mix, 100, split={"guitar": guitar})
+
+
+def test_a_strangers_multitrack_folder_is_not_ours(tmp_path):
+    """guitar.ogg, bass.ogg and drums.ogg are ours only where our report.json lists them: someone else's multitrack
+    folder given as the output is refused, not overwritten (break: the three counted as ours always: M8-12's
+    review); an earlier split build of ours is replaced."""
+    from songcharter.assemble import check_output
+    folder = tmp_path / "Theirs"
+    folder.mkdir()
+    for name in ("notes.chart", "song.ini", "song.ogg", "guitar.ogg", "bass.ogg", "drums.ogg"):
+        (folder / name).write_bytes(b"x")
+    with pytest.raises(InputError, match=r"bass.ogg, drums.ogg, guitar.ogg"):
+        check_output(folder)
+    (folder / "report.json").write_text(json.dumps({"gate": {"ok": True}}), encoding="utf-8")   # no audio_files
+    with pytest.raises(InputError, match=r"bass.ogg, drums.ogg, guitar.ogg"):
+        check_output(folder)
+    (folder / "report.json").write_text(json.dumps({"audio_files": ["song.ogg", "guitar.ogg", "bass.ogg",
+                                                                    "drums.ogg"]}), encoding="utf-8")
+    check_output(folder)
+
+
+def test_preview_and_crowd_are_not_the_songs_music(tmp_path):
+    """A folder's preview.ogg and crowd.ogg are left out of the song's audio, which Listen and the preview read (break:
+    every audio name taken as music)."""
+    t = np.arange(SR) / SR
+    for name, gain in (("song.ogg", 0.1), ("guitar.ogg", 0.1), ("preview.ogg", 0.4), ("crowd.ogg", 0.4)):
+        A.encode_ogg(np.stack([gain * np.sin(2 * np.pi * 220 * t)] * 2).astype(np.float32), tmp_path / name)
+    (tmp_path / "notes.chart").write_text("x", encoding="utf-8")
+    assert [p.name for p in A.song_audio_files(tmp_path)] == ["guitar.ogg", "song.ogg"]
+    peak = float(np.abs(A.decode_song_audio(tmp_path)).max())
+    assert 0.18 < peak < 0.22, peak   # the two at 0.1: not the 0.4s

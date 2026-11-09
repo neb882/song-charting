@@ -1295,6 +1295,13 @@ def test_the_stems_download(finished):
         assert sorted(z.namelist()) == [f"{folder.name}/{f}" for f in STEM_NAMES]
         assert {i.compress_type for i in z.infolist()} == {zipfile.ZIP_STORED}
         assert z.read(f"{folder.name}/piano.flac") == (folder / "piano.flac").read_bytes()
+    # sent, it is gone: no second copy of the stems in exports/ (M8-12's review); one never fetched goes with the next
+    assert not list((ctx.home / "exports").glob("*.zip")) and get(ctx, answer["url"])[0] == 404
+    post(ctx, f"/api/jobs/{job.id}/export/stems")
+    post(ctx, "/api/jobs/current/export/zip")   # the song's own zip stays: it is small
+    (ctx.home / "exports" / "Other Song (stems).zip").write_bytes(b"PK")   # another song's, never fetched
+    assert post(ctx, f"/api/jobs/{job.id}/export/stems")[0] == 200
+    assert sorted(p.name for p in (ctx.home / "exports").glob("*.zip")) == sorted([f"{job.out.name}.zip", name])
     ctx.mode = "fail"
     job = ctx.run({"stems": True})
     assert post(ctx, "/api/jobs/current/export/zip")[0] == 400   # not the chart: it failed its check
@@ -1303,6 +1310,11 @@ def test_the_stems_download(finished):
     status, answer = post(ctx, "/api/jobs/current/export/stems")
     assert status == 400 and answer["error"] == f"the stems are not in {folder} any more"
     assert json.loads(get(ctx, "/api/jobs/current/results")[2])["stems"] is None
+    # asked for and not saved (the disk filled): the results say why, from pipeline.json
+    pipeline = json.loads((ctx.work / "pipeline.json").read_text(encoding="utf-8"))
+    pipeline["stems"] = {"saved": False, "why": "The disk ran out of room ..."}
+    (ctx.work / "pipeline.json").write_text(json.dumps(pipeline), encoding="utf-8")
+    assert json.loads(get(ctx, "/api/jobs/current/results")[2])["stems"] == {"why": "The disk ran out of room ..."}
 
 
 STEMS_TAIL = r"""
@@ -1331,6 +1343,8 @@ ctx.exportStems().then(() => {
   out.msg = els["stems-msg"].textContent;
   ctx.renderStems(null);
   out.none = els["stems-box"].hidden;
+  ctx.renderStems({ why: "The disk ran out of room." });
+  out.why = { box: els["stems-box"].hidden, line: els["stems-line"].textContent, button: els["stems-zip"].hidden };
   console.log(JSON.stringify(out));
 });
 """
@@ -1358,6 +1372,7 @@ def test_the_page_offers_the_stems_and_their_download(tmp_path):
                                                   'the least clean.'}
     assert out["asked"] == ["POST /api/jobs/20261109-101500/export/stems", "click /api/exports/S%20(stems).zip"]
     assert out["msg"].startswith("The zip is S (stems).zip: your browser saves it") and out["none"] is True
+    assert out["why"] == {"box": False, "line": "The disk ran out of room.", "button": True}
     html = files["index.html"].decode()
     assert '<input type="checkbox" name="stems"> Also save the separated instruments (stems)</label>' in html
     assert '<input type="checkbox" name="one_audio"> One audio file: the music does not drop out on a miss</label>' in html
