@@ -422,8 +422,53 @@ function estimateText(est) {
          "a dense song takes longer, as the guitar's time grows with the notes it writes.";
 }
 
+// M8-04: how long is left once the guitar's first take is timed (the job's `remaining`: estimate.remaining on the
+// server, from when the second take started, or the guitar ended), counted down on the page's clock; the first
+// estimate stays above it, struck through
+function roundMinutes(low, high) {   // estimate.round_minutes
+  let lo = Math.max(1, Math.floor(low / 60));
+  let hi = Math.ceil(high / 60);
+  if (lo >= 30) lo = Math.floor(lo / 5) * 5;
+  if (hi >= 30) hi = Math.ceil(hi / 5) * 5;
+  return [lo, Math.max(hi, lo + 1)];
+}
+
+function remainingText(rem, now) {
+  if (!rem || !(rem.high_s > 0) || rem.from == null) return "";
+  const gone = Math.max(0, now - rem.from);
+  const low = rem.low_s - gone, high = rem.high_s - gone;
+  if (high <= 0) return "Nearly done, or taking longer than estimated.";
+  const [lo, hi] = roundMinutes(Math.max(0, low), high);
+  return `About ${lo} to ${hi} more minutes` + (rem.takes_left > 0 ?
+    ", from how long the first guitar take took." : ": the guitar is done.");
+}
+
+function renderRemaining() {
+  const line = remainingText(state.remaining, serverNow());
+  text($("progress-remaining"), line).hidden = !line;
+  $("progress-estimate").classList.toggle("struck", !!line);
+}
+
+// the job's snapshot carries `remaining`: asked for when a take or the guitar's end may have changed it
+async function askRemaining() {
+  if (state.asking) return;
+  state.asking = true;
+  try {
+    const r = await api("GET", "/api/jobs/current");
+    if (r.status === 200 && state.job && r.data.job === state.job.job && state.running) {
+      state.remaining = r.data.remaining || null;
+      renderRemaining();
+    }
+  } catch (e) {
+    // the events' own retries say when songcharter is gone
+  } finally {
+    state.asking = false;
+  }
+}
+
 function resetProgress(job) {
   state.stages = {};
+  state.remaining = (job && job.remaining) || null;
   $("stages").replaceChildren();
   $("warnings").replaceChildren();
   $("fallbacks").replaceChildren();
@@ -433,6 +478,7 @@ function resetProgress(job) {
   text($("progress-song"), job && job.upload ? job.upload.name : "");
   const est = estimateText(job && job.estimate);
   text($("progress-estimate"), est).hidden = !est;
+  renderRemaining();
   $("progress-keep").hidden = false;
   $("stages-box").open = true;   // the rows while it runs; folded into one line at the end
   text($("stages-line"), "").hidden = true;
@@ -462,6 +508,7 @@ function tick() {
   for (const row of Object.values(state.stages)) {
     if (row.started != null && !row.ended) text(row.time, seconds(serverNow() - row.started));
   }
+  if (state.remaining) renderRemaining();
 }
 
 function stopRunningRows(how) {
@@ -495,6 +542,7 @@ function handle(ev) {
       text(row.detail, ev.detail);
       text(row.time, ev.cached ? `${seconds(ev.seconds)} (cached)` : seconds(ev.seconds));
       text(row.takes, "");
+      if (ev.stage === "guitar" && state.running) askRemaining();
       break;
     }
     case "take":
@@ -502,6 +550,7 @@ function handle(ev) {
       text(stageRow("guitar").takes,
            `take ${ev.index} of ${ev.count}${ev.device === "cpu" ? " (on the CPU)" : ""}`);
       setTitle(`${stageLabel("guitar")}: take ${ev.index} of ${ev.count}`);
+      if (state.running && !state.remaining) askRemaining();   // from the second take on, the server times the first
       break;
     case "warning":
       $("warnings").append(make("li", null, ev.text));

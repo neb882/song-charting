@@ -69,7 +69,8 @@ Nothing is downloaded or installed; charting never waits for it.
     estimate here (M7-10: estimate.for_job, from the upload's length, the options, and the doctor summary's device
     and guitar device); a bug in it is logged, and the chart starts without one.
   * GET /api/jobs/current: its state (running, done, failed, cancelled), its `estimate` ({"seconds", "takes",
-    "device", "low_s", "high_s", "low_min", "high_min"}, or null) and events; 404 before the first job.
+    "device", "low_s", "high_s", "low_min", "high_min"}, or null), its `remaining` (M8-04: estimate.remaining, the
+    time left once the first take is timed, or null) and events; 404 before the first job.
   * GET /api/jobs/current/events: Server-Sent Events. Every event so far, then each new one, as `id: <index>` and
     `data: <json>`; a comment every 15 s keeps the connection open; it closes after `result`, `error` or `cancelled`,
     once the job's process has exited (up to 10 s more), so the state is final then. A Last-Event-ID header resumes

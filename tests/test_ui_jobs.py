@@ -448,3 +448,26 @@ def test_the_child_gets_the_environment_and_pythonutf8(tmp_path):
     with open(job.log, encoding="utf-8") as f:
         assert f.readline().startswith(f"songcharter ui job {job.id}: {sys.executable} ")
     assert json.loads(json.dumps(job.snapshot()))["options"]["instruments"] == ["guitar", "bass", "drums"]
+
+
+def test_the_snapshot_carries_the_time_left_once_the_first_take_is_timed(tmp_path, monkeypatch):
+    """M8-04: the snapshot's `remaining` is estimate.remaining of the job's estimate and its events, each stamped with
+    `at` as it is read (the take events carry no seconds of their own); None before take 2, and when a bug in it is
+    caught (the snapshot still answers)."""
+    from songcharter.ui import estimate as E
+    est = {"seconds": 412.4, "takes": 4, "device": "cuda", "low_s": 400.0, "high_s": 1400.0, "low_min": 6,
+           "high_min": 24}
+    job = J.Job("j", dict(UPLOAD), J.ChartOptions(), ["x"], tmp_path / "out", tmp_path / "log", estimate=est)
+    job.add({"event": "plan", "stages": ["decode", "guitar", "assemble", "preview"]})
+    job.add({"event": "take", "index": 1, "count": 4, "seed": 101})
+    assert job.snapshot()["remaining"] is None and job.snapshot(events=False)["remaining"] is None
+    job.add({"event": "take", "index": 2, "count": 4, "seed": 202})
+    snap = job.snapshot()
+    assert all("at" in e for e in snap["events"])
+    assert snap["remaining"] == E.remaining(est, snap["events"]) and snap["remaining"]["takes_left"] == 3
+    assert snap["remaining"]["from"] == snap["events"][2]["at"]
+
+    def broken(*args):
+        raise ZeroDivisionError("a bug in the time left")
+    monkeypatch.setattr(E, "remaining", broken)
+    assert job.snapshot()["remaining"] is None and job.snapshot()["state"] == "running"
