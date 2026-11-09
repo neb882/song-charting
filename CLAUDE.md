@@ -5,9 +5,11 @@ friend, who plays Guitar on Expert on a Windows PC with an RTX 4070; v0.1 runs t
 
 ## Start here
 
-- `docs/PROGRESS.json`: where things stand, what is next, the dead ends and the deferred findings. Read it first,
-  and update it when a milestone, a decision or a dead end lands.
-- `docs/PIPELINE.md`: how work is run (roles, an order's lifecycle, the gates). Read it before starting agents.
+- `docs/PROGRESS.json`: where things stand, what is next, the dead ends and the deferred findings. The orchestrator
+  reads it at the start and updates it when a milestone, a decision or a dead end lands; a builder reads it only when
+  its brief says so.
+- `docs/PIPELINE.md`: how work is run (roles, an order's lifecycle, the gates): the orchestrator's. Read it before
+  starting agents.
 - `docs/DESIGN.md`: the design and the evidence behind each choice. It is long: read the sections you need.
 - `docs/work-orders/`: one file per job; `docs/reports/`: each merged order's report.
 
@@ -52,9 +54,11 @@ the lock itself.
 `docs/PIPELINE.md` has the process: the agent roles, an order's path from brief to merge, the gates, and the release
 gate. In short:
 - size the process to the risk;
-- one builder, then one reviewer who also tests the tests;
+- one builder, who runs the affected tests and says which test covers each change, then one reviewer who also tests
+  the tests by breaking them;
 - a skeptic for a major finding that would change code;
-- CI on GitHub as the inspection, and the golden charts when the charting path changes;
+- CI on GitHub on every branch as the inspection (the full suite, green before a merge), and the golden charts when
+  the charting path changes;
 - an advisor from a different model before a plan's build and before a measurement report's results are closed (at a
   release, only with the full review);
 - bars fixed before the numbers, with one primary measure each;

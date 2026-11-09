@@ -23,7 +23,7 @@ folders a role may write to are the role's own rule, not the harness's.
 |---|---|---|---|---|
 | orchestrator (the main session) | writes briefs, merges, keeps PROGRESS | session's | the largest | yes |
 | planner | turns a milestone into work orders | xhigh | the most capable, as a fresh agent that reads only the repository | its plan branch only |
-| `sc-builder` | builds one order | xhigh | the largest | its worktree only |
+| `sc-builder` | builds one order | high, a trial for the next two orders (then kept, or xhigh again) | the largest | its worktree only |
 | `sc-reviewer` | reviews a diff, testing the tests | high | the largest | no |
 | `sc-skeptic` | tries to refute a major finding | xhigh | the largest | no |
 | `sc-inspector` | facts from fresh checkouts | medium | a smaller one | no |
@@ -75,9 +75,12 @@ reviewed, merged work then found 3 real issues, none of them major.]
      2026-11-04 two orders were building while `in_flight` was empty, and one of them carried a hard-rule exception
      that only its brief in the session's scratch folder held: a fresh session could not have picked either up.]
 2. **`sc-builder`** builds in its own worktree.
-   - It checks its own tests by breaking the code they cover.
+   - It reads CLAUDE.md and its brief, plus the files the brief names. This file is the orchestrator's; PROGRESS is
+     read only when the brief says so.
+   - It runs the affected test files; the full suite runs on CI, which must be green before a merge.
+   - It says which test covers each change; the reviewer breaks them (step 3).
    - It runs the golden charts when the change touches the charting path.
-   - It pushes its branch to run CI, and writes its full report to a file.
+   - It pushes its branch, which runs CI, and writes its full report to a file.
 3. **`sc-reviewer`** reviews the diff for correctness only, and tests the tests: it breaks each new check a few ways.
    [A reviewer asked to find problems always finds something; on 2026-11-03, two of three findings that slipped past
    single reviewers were checks whose own tests could be gutted unnoticed.]
@@ -89,11 +92,13 @@ reviewed, merged work then found 3 real issues, none of them major.]
    - **Minor findings:** the fixer reproduces each one, fixes the cheap ones, and lists the rest under `deferred` in
      PROGRESS.
    - **The fixer** is the order's builder, resumed with its context.
-5. **The inspection** is CI on GitHub: a fresh checkout on a clean runner, reporting pass or fail. Read its log to
-   make sure the order's own hook ran and wasn't skipped. Golden charts run locally, by the builder or by
-   `sc-inspector`, when the charting path changed, since CI can't run them.
+5. **The inspection** is CI on GitHub, on every push to any branch: a fresh checkout on a clean runner, running the
+   full suite and the hooks, reporting pass or fail. Read its log to make sure the order's own hook ran and wasn't
+   skipped. Golden charts run locally, by the builder or by `sc-inspector`, when the charting path changed, since CI
+   can't run them.
 6. **The merge** is `--no-ff`, with a message that says what the order did and how it was checked. Before it, read
-   the CI run on the branch's head commit yourself (its conclusion and head SHA), not only the builder's word. Then:
+   the CI run on the branch's head commit yourself (its conclusion and head SHA), not only the builder's word: it must
+   be green. Then:
    - **The report:** copy the builder's report (and the review's, and a skeptic's) into `docs/reports/<order>.md`,
      after scanning it for personal details and lyrics. Replace the machine's paths with placeholders (`<scratchpad>`,
      `$DEV`, `<wt>`), and the stress set's package md5s (or their prefixes) and song titles with `<primary>` / `<alt>`
