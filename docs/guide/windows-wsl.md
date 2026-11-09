@@ -75,9 +75,11 @@ page.
 - **How long it takes:** about 5 to 15 minutes for a 4-minute song with the default options (a busy or long song
   takes longer: a 9-minute song can take over half an hour). The page says how long when the chart starts, and the
   browser tab's title says what it is doing. Most of that is the guitar: songcharter charts it 4 times over (4
-  "takes") and combines them into a better chart, and the page shows which take it is on ("take 2 of 4"). For a
-  quicker chart, type 1 in the "Guitar takes" box (in the options, under Guitar) before you press "Chart it": then a
-  4-minute song takes about 2 to 7 minutes. These times are estimates.
+  "takes") and combines them into a better chart, and the page shows which take it is on ("take 2 of 4"). At the
+  top of the options you choose "Best chart" (4 takes) or "Quick chart" (1 take), each with its minutes for your
+  song: a 4-minute song's quick chart takes about 2 to 7 minutes. Once the first take is done, the page says how
+  many more minutes it should take, from how long that take took. These times are estimates. (On a PC without a
+  graphics card songcharter makes 1 take, and the page says so.)
 - **If a guitar take fails on the graphics card** (a game, Clone Hero or a browser left open can take the memory it
   needs), songcharter runs that take again on the CPU, once a song, and carries on. The page says so: a note at the
   top, and "take 3 of 4 (on the CPU)". That take takes a few minutes longer. If a second take fails, or a take was
@@ -89,16 +91,22 @@ page.
   cannot. So for the evening, set its sleep to Never in Windows' power settings.
 - **You can close the page while a song charts:** keep the songcharter window open (closing it stops the
   chart). To come back, start songcharter again from the Start menu: the page shows the chart where it is.
-- Drop the song file on the page (or use "Choose a file"), then press "Chart it".
-- **Lyrics, if you want them on screen:** before "Chart it", paste the song's words into the "Paste lyrics" box,
+- Drop the song file on the page (or use "Choose a file"), then press "Chart it". The options you rarely need (the
+  number of takes, the device, the preview) are under "More options".
+- **Lyrics, if you want them on screen:** before "Chart it", open "Lyrics" and paste the song's words into the box,
   one line for each sung line. songcharter times the words you paste to the singing; it never looks lyrics up. The
   first song with lyrics downloads 1.26 GB, once.
 - **Pictures, if you want them:** a song file with its own cover picture gets it as the album art. Under "Pictures"
-  in the options you can choose another album art, and a background image to show behind the highway (JPEG, PNG or
+  (open it) in the options you can choose another album art, and a background image to show behind the highway (JPEG, PNG or
   WebP). To see song backgrounds in Clone Hero, turn on Settings > Gameplay > "Use Song Backgrounds".
-- When it is done, the page shows "Ready" at the top, with "Install into Clone Hero" right under it. Press it (the
-  preview and Listen, further down, are there for a look first if you want one). The first time, it may ask where
-  your Clone Hero Songs folder is.
+- When it is done, the page shows "Ready" at the top with the song's name, "Open folder" (the song's folder in
+  Windows' File Explorer) and "Install into Clone Hero" right under it. Press Install (the preview and Listen,
+  further down, are there for a look first if you want one). The first time, it may ask where your Clone Hero Songs
+  folder is: the box then holds a guess, where Clone Hero usually keeps it; change it to your Songs folder if yours
+  is elsewhere.
+- **The preview's pictures** open larger on the page when you click them (Escape, or Close, puts them away; the
+  arrow keys go to the page before or after). Under "Worth a look", each time is a link to the page that shows it,
+  and "Listen here" plays the chart from just before it.
 - **Listen to the chart** without playing it: under the preview, choose a part and a level and press "Listen". After
   a few seconds the page plays the chart over the song, a tone for each note (green lowest, orange highest; HOPOs
   softer than strums) or a drum sound for each hit. Listen for a note that comes late or not at all, a part playing

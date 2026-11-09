@@ -3,6 +3,7 @@
     seconds = duration(path)                                       # the song's length from ffmpeg's header, or None
     est = for_job(seconds, options, auto_device, guitar_device)    # {"low_min", "high_min", ...}, or None
     low_s, high_s = chart_seconds(seconds, takes=4, device="cuda")
+    left = remaining(est, job_events)   # M8-04: the time left once the first take is timed, or None
 
 **The model** (`chart_seconds`): every stage but the guitar costs a fixed part and a rate per second of the song
 (`OTHER`, `PREVIEW`, `LYRICS`); the guitar costs, once a chart, its first take's own separation and timing (a rate
@@ -58,6 +59,29 @@ Against whole charts: the test song with 1 take on the 5070 took 5.05 min (the r
 min (11.5-20.9, no preview then); Take Me Out with 1 take on this CPU 6.8 min (6.0-10.1). A 4-minute song: 4 to 14
 minutes with the GPU's 4 takes, 2 to 7 with 1, 6 to 11 on the CPU; a 9-minute song 16 to 60, 5 to 21, 16 to 35.
 
+**The time left** (`remaining`, M8-04, the v0.4.0 gate's note: a dense song's guitar can pass the high end, so the
+page says how long is left once the guitar's first take is timed). The pipeline's `take` event comes as each take
+starts, with no seconds; jobs.py stamps every event with `at`, the server's clock, so a take's time is `at` of the next
+take's event less its own (the v0.4.0 advisor's finding 5). From the second take's start: the takes left (this one
+and those after it) at that first take's time less its own separation and timing at the low end (`GUITAR_ONCE`'s
+high rate times d), and at that first take's time itself at the high end: the events do not say whether autochart's
+cache already held take 1's separation and timing (a song charted again after a cancel, as the page's "gone" text
+suggests, runs take 1 about as fast as a later take), and taking them off a take that did not run them put the range
+too low (M8-04's review, F3: on the 9:05 song 1182-1543 s against about 1636 s left). Nothing is taken off when the
+first take that ran was not take 1 (the cache answered take 1, and the beat map with it). Plus the stages after the
+guitar (`ASSEMBLE`, and
+`PREVIEW` when the plan has it). After the guitar's `stage_end` (a 1-take chart has only that) the stages after it
+alone. It is worked out once, at that event (`from`), and the page counts it down. **The evidence:** the takes
+experiment's later takes against the first on the 5070 (above: the five ordinary songs' first takes 13-72 s longer
+than the mean of their later three, inside the rate's range; Kimochi Warui's later takes slower than its first, which
+the high end does not cover), so the test song's 4 takes (264, 224, 164 and 187 s) give, at take 2's start, 158-264 s
+a take for the three left, 495-856 s with the build and the preview, against the 602 s they took [here,
+tests/test_ui_estimate.py]; the owner's 9:05 song's 4 takes (2173 s; its single takes were not kept) split with the
+mean first-take part (0.13 s a second) give 1394-1870 s against its 1577 s of later takes and its build. **The build**
+(assemble and its checks, either device): 16 s and 17.2 s for the test song (the 5070's PC; the release gate's run),
+19.3 s for Take Me Out on this CPU, about 1 s for CI's 20-s clip: 0.5-5 s and 0.025-0.08 s a second. None when a take
+was run again on the CPU after its GPU run failed (the event's `device`): that take's time is no longer the model's.
+
 `duration` reads the length ffmpeg's header gives (the container's, or one estimated from the bit rate), without a
 decode: a few hundredths of a second; only the container's own line, never a tag that holds "Duration: ...". None
 when ffmpeg cannot say.
@@ -87,6 +111,9 @@ LYRICS = {"cpu": ((10.0, 10.0), (0.45, 0.60)), "cuda": ((10.0, 10.0), (0.10, 0.3
 GUITAR_ONCE = {"cpu": (0.35, 0.50), "cuda": (0.07, 0.19 * FRIEND_GPU)}
 GUITAR_TAKE = {"cpu": (0.0012, 0.0033), "cuda": (0.0007, 0.0018 * FRIEND_GPU)}
 TAKE_FIXED = (0.0, 10.0)
+# the build and its checks (assemble), after the guitar: (fixed s, rate s a second), each as (low, high), on either
+# device (the time left, `remaining`)
+ASSEMBLE = ((0.5, 5.0), (0.025, 0.08))
 
 # the container's own line, which ffmpeg prints indented by two spaces after the input's Metadata block; a tag's line
 # (its key, a value's later lines) is indented by four or more, so a tag holding "Duration: 1:00:00" is not read
@@ -169,3 +196,62 @@ def for_job(seconds: Any, options: Any, auto_device: str | None, guitar_device: 
     low_min, high_min = round_minutes(low_s, high_s)
     return {"seconds": float(seconds), "takes": takes, "device": guitar, "low_s": round(low_s, 1),
             "high_s": round(high_s, 1), "low_min": low_min, "high_min": high_min}
+
+
+def remaining(est: Any, events: Any) -> dict | None:
+    """The time left (the module docstring) from a job's estimate (`for_job`'s dict) and its events so far (each with
+    `at`): {"from", "low_s", "high_s", "low_min", "high_min", "takes_left", "take_s", "first_s"} once the second take
+    has started (`first_s` the timed take, `take_s` the range a take left is given) or the guitar has ended
+    (`takes_left` 0, both None), counted from `from` (that event's `at`); None before, without a guitar or an
+    estimate, or after a take was run again on the CPU."""
+    if not isinstance(est, dict) or not est.get("takes") or not isinstance(events, (list, tuple)):
+        return None
+    d = est.get("seconds")
+    guitar = est.get("device")
+    if isinstance(d, bool) or not isinstance(d, (int, float)) or not 0 < d < math.inf or guitar not in DEVICES:
+        return None
+    plan: list = []
+    takes: list[dict] = []
+    ended = None
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        kind = e.get("event")
+        if kind == "plan" and isinstance(e.get("stages"), list):
+            plan = e["stages"]
+        elif kind == "take":
+            if e.get("device") is not None:   # run again on the CPU: its times are not the model's
+                return None
+            takes.append(e)
+        elif kind == "stage_end" and e.get("stage") == "guitar":
+            ended = e
+    after = plan[plan.index("guitar") + 1:] if "guitar" in plan else ["assemble", "preview"]
+    parts = [ASSEMBLE] * ("assemble" in after) + [PREVIEW] * ("preview" in after)
+    rest = [sum(fixed[i] + rate[i] * d for fixed, rate in parts) for i in (0, 1)]
+    if ended is not None:
+        start, left, first, each = ended.get("at"), 0, None, None
+        low, high = rest
+    else:
+        if len(takes) < 2:
+            return None
+        a, b = takes[0], takes[1]
+        try:
+            first = float(b["at"]) - float(a["at"])
+            index, count = int(b["index"]), int(b["count"])
+            took_one = int(a["index"]) == 1
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not first >= 0 or index > count:
+            return None
+        once = GUITAR_ONCE[guitar]
+        # the low end takes off take 1's own separation and timing at its high rate; the high end takes off nothing,
+        # as the events do not say whether autochart's cache already held them (a chart run again after a cancel)
+        each = (max(0.0, first - once[1] * d), first) if took_one else (first, first)
+        start, left = b.get("at"), count - index + 1
+        low, high = (left * each[i] + rest[i] for i in (0, 1))
+    if isinstance(start, bool) or not isinstance(start, (int, float)):
+        return None
+    low_min, high_min = round_minutes(low, high)
+    return {"from": start, "low_s": round(low, 1), "high_s": round(high, 1), "low_min": low_min,
+            "high_min": high_min, "takes_left": left, "first_s": None if first is None else round(first, 1),
+            "take_s": None if each is None else [round(each[0], 1), round(each[1], 1)]}

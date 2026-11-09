@@ -49,6 +49,15 @@
     <h2>2. Options</h2>
     <p id="song-name" class="small"></p>
     <form id="options" novalidate>
+      <div id="choice-box">
+        <fieldset id="choice" hidden>
+          <legend>Chart</legend>
+          <label class="check"><input type="radio" name="how" value="best" checked> <span id="best-label">Best chart (4 guitar takes)</span></label>
+          <label class="check"><input type="radio" name="how" value="quick"> <span id="quick-label">Quick chart (1 take)</span></label>
+        </fieldset>
+        <p id="choice-cpu" class="small" hidden></p>
+        <p class="actions"><button type="submit" id="chart-top">Chart it</button></p>
+      </div>
       <fieldset>
         <legend>Song</legend>
         <label>Title <input name="title" autocomplete="off"></label>
@@ -82,26 +91,31 @@
           </select>
         </label>
         <label id="solo-names-label" hidden>Section names, separated by commas <input name="solo_names" placeholder="Solo 1, Solo 2" autocomplete="off"></label>
-        <label>Guitar takes <input name="takes" type="number" min="1" step="1" placeholder="default: 4 on a GPU, 1 on the CPU"></label>
       </fieldset>
-      <fieldset>
-        <legend>Run</legend>
-        <label>Device
-          <select name="device">
-            <option value="auto" selected>Auto: the GPU when it works (default)</option>
-            <option value="cpu">CPU</option>
-            <option value="cuda">GPU (CUDA)</option>
-          </select>
-        </label>
-        <label class="check"><input type="checkbox" name="preview" checked> Make a preview</label>
-      </fieldset>
-      <fieldset>
-        <legend>Lyrics (optional)</legend>
+      <details id="more" class="fold">
+        <summary>More options</summary>
+        <fieldset>
+          <label>Guitar takes <input name="takes" type="number" min="1" step="1" placeholder="default: 4 on a GPU, 1 on the CPU"></label>
+          <label>Device
+            <select name="device">
+              <option value="auto" selected>Auto: the GPU when it works (default)</option>
+              <option value="cpu">CPU</option>
+              <option value="cuda">GPU (CUDA)</option>
+            </select>
+          </label>
+          <label class="check"><input type="checkbox" name="preview" checked> Make a preview</label>
+        </fieldset>
+      </details>
+      <details id="lyrics-box" class="fold">
+        <summary>Lyrics (optional)</summary>
+        <fieldset>
         <label>Paste lyrics <textarea name="lyrics" rows="8" autocomplete="off" spellcheck="false"></textarea></label>
         <p class="small">A line per phrase, a blank line between sections. songcharter times them to the singing; it never looks lyrics up.</p>
-      </fieldset>
-      <fieldset>
-        <legend>Pictures (optional)</legend>
+        </fieldset>
+      </details>
+      <details id="pictures-box" class="fold">
+        <summary>Pictures (optional)</summary>
+        <fieldset>
         <div class="picture" id="album_art-box">
           <label class="button plain">Album art<input id="album_art-file" type="file" accept=".jpg,.jpeg,.png,.webp" hidden></label>
           <span id="album_art-name" class="small">None chosen: the song file's own picture, if it has one</span>
@@ -115,7 +129,8 @@
           <p id="background-error" class="error" hidden></p>
         </div>
         <p class="small">JPEG, PNG or WebP, up to 20 MB. The album art is cut to a square; Clone Hero shows the background behind the highway when Settings &gt; Gameplay &gt; Use Song Backgrounds is on.</p>
-      </fieldset>
+        </fieldset>
+      </details>
       <p id="options-error" class="error" hidden></p>
       <p class="actions"><button type="submit" id="chart">Chart it</button> <button type="button" id="other-song" class="plain">Another song</button></p>
     </form>
@@ -125,6 +140,7 @@
     <h2 id="progress-title">3. Charting</h2>
     <p id="progress-song" class="small"></p>
     <p id="progress-estimate" class="small" hidden></p>
+    <p id="progress-remaining" hidden></p>
     <p id="progress-keep" class="small">Keep the songcharter window open: closing it stops the chart. You can close this tab, though: start songcharter again from the Start menu to come back to the chart.</p>
     <div id="fallbacks"></div>
     <details id="stages-box" open>
@@ -138,6 +154,8 @@
   <section id="done-screen" hidden>
     <h2 id="done-title"></h2>
     <p id="done-text"></p>
+    <p id="built-row" class="actions" hidden><button type="button" id="open-built" class="plain">Open folder</button></p>
+    <p id="built-msg" class="small" hidden></p>
     <div id="results" hidden>
       <div id="export-box" hidden>
         <h3>Play it</h3>
@@ -181,10 +199,11 @@
         <div id="preview" hidden>
           <h3>Preview</h3>
           <a id="overview-link" target="_blank" rel="noopener"><img id="overview" class="overview" alt="The overview: every instrument's notes against its sound"></a>
-          <p class="small">Blue bars are notes per beat; red marks a stretch where the instrument plays but the chart has no notes.</p>
+          <p class="small">Blue bars are notes per beat; red marks a stretch where the instrument plays but the chart has no notes. Click a picture to see it larger.</p>
           <div id="pages" class="pages"></div>
           <div id="flags-box">
             <h3>Worth a look</h3>
+            <p class="small">A time opens its page; Listen here plays the chart from there.</p>
             <ul id="flags"></ul>
             <ul id="remarks" class="small"></ul>
           </div>
@@ -210,6 +229,16 @@
     <p class="actions"><button type="button" id="again">Chart another song</button></p>
   </section>
 </main>
+<dialog id="lightbox" aria-labelledby="lightbox-title">
+  <p class="lightbox-bar">
+    <span id="lightbox-title"></span>
+    <button type="button" id="lightbox-prev" class="plain" aria-label="The page before">&lsaquo; Before</button>
+    <button type="button" id="lightbox-next" class="plain" aria-label="The page after">After &rsaquo;</button>
+    <a id="lightbox-full" target="_blank" rel="noopener">Full size</a>
+    <button type="button" id="lightbox-close">Close</button>
+  </p>
+  <img id="lightbox-img" alt="">
+</dialog>
 <footer>
   <p><a href="/api/diagnostics" download id="diagnostics">Diagnostics</a> <span class="small">This file holds logs and settings, no audio.</span></p>
 </footer>

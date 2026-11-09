@@ -3085,8 +3085,9 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     window open (closing it stops the chart); the tab may close, and songcharter started again from the Start menu
     opens the running server's page, which reattaches. **A chart whose songcharter is gone** (its window
     closed mid-chart: its events answer 404 from a songcharter started since, or nothing answers 10 times in a row,
-    2 s apart; a working reconnect starts the count again) ends on the page as a cancel does: "songcharter stopped",
-    what to do, the lock let go, the tab's title "Stopped", the update notice back (M7-10's review: the page had held
+    2 s apart; a working reconnect starts the count again) ends on the page as a cancel does: "songcharter stopped"
+    (since M8-04, "songcharter is not answering" and the tab "Not answering" when nothing answers), what to do, the
+    lock let go, the tab's title "Stopped", the update notice back (M7-10's review: the page had held
     the screen awake for good). When nothing answers, the window may still be open: the page can lose the server
     for 20 s while the chart runs on (localhost after the PC sleeps or wakes), and a song dropped again would get
     "a chart is running already". So that text says to reload first, which reattaches: "songcharter is not
@@ -3097,7 +3098,64 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     update notice** is hidden while a chart runs (its line says to close the songcharter window, which would stop
     the chart) and shown again at its end.
   - Left for a UI pass after v0.4 (M5-99): the review's items 5-10 (the quick or best choice among them), and a
-    finer estimate from the last charts' stage times.
+    finer estimate from the last charts' stage times. Items 5-8 and 10 and the gate's two notes are M8-04 (below);
+    item 9, the queue, is M8-10 after its design note (docs/work-orders/M8-10-queue.md, "Design").
+- **The UI pass after v0.4** (M8-04: the second model's review's items 5-8 and 10, and the v0.4.0 gate's two notes)
+  [code]:
+  - **The built folder:** the Done screen's sentence names the song by its folder's name ("Made-Up Band - A Song is
+    charted and passed its check."), not the Linux path he cannot open; a build that failed its check is named
+    without its ".failed". Under it, **Open folder** (`POST /api/open {"what": "built"}`: the server opens its own
+    current result's folder, a failed one too, which is for a look; no path is read from the request), before an
+    install too, with the folder's Windows form (`\\wsl.localhost\...`) only as the button's hover text. A folder
+    that has gone is refused by the song's name ("<name>'s folder is not there any more: it was moved or deleted"),
+    and the refusal is cleared when a later open is asked.
+  - **Flags to pictures and sound:** the results carry each flag's part, start and page (`flag_at`: the start read
+    from the flag's own text, `preview.Flag`'s "m:ss.s"; the page `floor(start / 60) + 1`, 60 s being
+    `preview.render_pages`' default page, which the pipeline uses, kept among the pages there are, so a flag on a
+    page's edge is on the next page and one past the last on the last; a page the preview lacks gets no link). In
+    "Worth a look" each flag's start is a link to its page, and the overview and the pages open in a lightbox, titled
+    "Overview" or "Page N of M" (M the pages alone): one `<dialog>` opened modal (Escape closes it,
+    the browser's own; the arrow keys go to the page before or after; a click beside the picture or Close puts it
+    away; a ctrl- or middle-click still opens the picture in a new tab), with nothing added to the CSP. **Listen
+    here** on a flag whose part the chart has sets the Listen box to that part on Expert and plays the render from a
+    second before the flag's start (`audio.currentTime`, set again once the file's length is known).
+  - **The Songs folder:** `/api/clonehero` gives `guess` (`<Documents>\Clone Hero\Songs` in Windows' form) whether
+    or not a folder is found (`clonehero.describe` gives it only when none is), and when none is found the field
+    holds it with a sentence saying it is a guess and that no folder is there. Nothing is read from Clone Hero's own
+    settings (M8-00 section 7: their keys are unverified).
+  - **Best or Quick:** "Chart it" at the top of the options as well as at the end. On a PC that charts the guitar on
+    the GPU (the doctor summary's device CUDA, the guitar not found on the CPU), a two-way choice: "Best chart (4
+    guitar takes, about N to M minutes)" and "Quick chart (1 take, about N to M minutes)", each `estimate.for_job`'s
+    range for this song with the other options at their defaults (the upload's `choices`); elsewhere a line, "This
+    PC charts the guitar on the CPU, so it makes 1 guitar take: about N to M minutes for this song." The choice only
+    fills the Guitar takes box (Best: empty, the default; Quick: 1), so the options sent are what they were for each
+    (Best the defaults, Quick `--takes=1`), and a number typed in the box checks the matching choice, or neither.
+    The takes box, the device and "Make a preview" are under a folded "More options"; Lyrics and Pictures are folded
+    each in a `<details>` of their own.
+  - **The time left after the first take** (the gate's note; `estimate.remaining`, no change to `pipeline.py`): the
+    `take` event comes as each take starts with no seconds, and jobs.py stamps every event with `at`, so the first
+    take's time is `at` of the second take's event less the first's (the v0.4.0 advisor's finding 5). From the second
+    take's start: the takes left (that one and the rest) at the first take's time less its own separation and
+    timing at the low end (`GUITAR_ONCE`'s high rate times the song's length) and at the first take's time itself at
+    the high end, as the events do not say whether autochart's cache held take 1's separation (a song charted again
+    after a cancel; taking it off put the 9:05 song's range at 1182-1543 s against about 1636 s left, the review's
+    F3); nothing off when the cache answered take 1 itself; plus the build (`ASSEMBLE`: 0.5-5 s and 0.025-0.08 s a second,
+    from the test song's 16 and 17.2 s, Take Me Out's 19.3 s and CI's clip) and the preview at their rates. A 1-take
+    chart has only the guitar's `stage_end`, after which the stages after it alone. None after a take was run again
+    on the CPU. The job's snapshot carries it (`remaining`); the page asks for it at a take and at the guitar's end,
+    and counts it down on the server's clock: "About 8 to 13 more minutes, from how long the first guitar take
+    took.", the first estimate struck through above it, "Nearly done, or taking longer than estimated." past its high
+    end; a later take or the guitar's end asks again, so after the guitar the stages after it alone. On the test
+    song's takes on the 5070 (264, 224, 164, 187 s) it gives 495-856 s at take 2's start against the 602 s they and
+    the build and preview took [here, tests/test_ui_estimate.py]; on the owner's 9:05 song (2173 s for its 4 takes,
+    split with the ordinary songs' mean first-take part) 1394-1870 s against 1577 s of later takes and a build.
+  - **The not-answering heading** (the gate's note): when nothing answers, the heading is "songcharter is not
+    answering" and the tab "Not answering"; a 404 from a songcharter started since keeps "songcharter stopped".
+  - In Chromium at 1280x860 and 700 px, light and dark [here, a stand-in server on a golden folder, M7-10's route]:
+    the options page is 1536 px tall with its folds closed (the review: about 2,000), Best and Quick read "about 4 to
+    14" and "about 2 to 7 minutes" for a 4:01 song on a GPU summary; "Ready" at y=17, Open folder at y=107 and "Play
+    it" from y=154; a flag's page in the lightbox fills the window; Listen here plays from 0:59 for a flag at 0:59.9.
+    No console errors.
 - **Status** [code]: screens 1 to 3 built in M4-04; in M4-06 the Done screen (the preview's overview and pages, "Worth a look" from its flags, the zip, Install into Clone Hero, Another folder, Open folder), the "Paste lyrics" box (the text handed to the chart through a memory file, never written to disk or logged), and the diagnostics bundle (`diagnostics.py`, `songcharter diagnostics --out PATH`, `/api/diagnostics`: logs, `doctor.json`, settings and a MANIFEST.txt, every file checked by name, size and first bytes; no audio, chart, image or pasted text). In M4-11 the "Album art" and "Background image" pickers and the album art on the Done screen (§2.16). In M6-09 the Done screen's "Listen" (§2.17). In M7-10 the estimate, the folded stages, the install first, the tab's title, the wake lock, the drop zone's keys and the update notice put away while a chart runs (above). Quick fixes, Preview in Clone Hero and the polish workspace are not built.
 
 ### 4.6 CI (with the Windows build)

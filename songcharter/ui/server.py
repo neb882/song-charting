@@ -53,9 +53,12 @@ Nothing is downloaded or installed; charting never waits for it.
     a newer release (`line` null when its SHA256SUMS could not be read), else null (before the check has run too).
   * POST /api/upload: the raw file as the body, X-Filename its name (percent-encoded). An extension not in AUDIO: 415;
     over 1 GB: 413; no Content-Length: 411. Streamed to uploads/<16 hex of its SHA-256>/<cache.safe_name(stem)><ext>,
-    with upload.json beside it; answers {"id", "name", "bytes", "tags", "origin", "seconds"}: the song.ini values
-    the chart would take from the tags or the file's name (pipeline.read_tags and song_metadata), where each came
-    from, and the song's length as ffmpeg's header gives it (estimate.duration; null when it cannot say).
+    with upload.json beside it; answers {"id", "name", "bytes", "tags", "origin", "seconds", "choices"}: the song.ini
+    values the chart would take from the tags or the file's name (pipeline.read_tags and song_metadata), where each
+    came from, the song's length as ffmpeg's header gives it (estimate.duration; null when it cannot say), and the
+    options screen's Best or Quick (M8-04, `App.choices`): {"gpu", "best", "quick"}, `gpu` when the doctor summary
+    charts the guitar on the GPU, `best` estimate.for_job's range with every option at its default, `quick` with 1
+    take (null off the GPU).
   * POST /api/upload/image (M4-11): a picture for the album art or the background, as the song is uploaded (the same
     guards, folder and pruning; upload.json's kind "image"). An extension not in art.EXTENSIONS: 415; over
     art.MAX_BYTES (20 MB): 413. It must decode as art.py's checks say (a JPEG, PNG or WebP within its pixel limit),
@@ -66,7 +69,8 @@ Nothing is downloaded or installed; charting never waits for it.
     estimate here (M7-10: estimate.for_job, from the upload's length, the options, and the doctor summary's device
     and guitar device); a bug in it is logged, and the chart starts without one.
   * GET /api/jobs/current: its state (running, done, failed, cancelled), its `estimate` ({"seconds", "takes",
-    "device", "low_s", "high_s", "low_min", "high_min"}, or null) and events; 404 before the first job.
+    "device", "low_s", "high_s", "low_min", "high_min"}, or null), its `remaining` (M8-04: estimate.remaining, the
+    time left once the first take is timed, or null) and events; 404 before the first job.
   * GET /api/jobs/current/events: Server-Sent Events. Every event so far, then each new one, as `id: <index>` and
     `data: <json>`; a comment every 15 s keeps the connection open; it closes after `result`, `error` or `cancelled`,
     once the job's process has exited (up to 10 s more), so the state is final then. A Last-Event-ID header resumes
@@ -78,8 +82,11 @@ install need one that passed its gate (else 400): a .failed folder is for a look
 `result` is out has its chart in place (the chart prints it last), so these routes take it at once, while its process
 is still exiting (a second or more, with its state still `running`): the page asks for the results the moment it
 reads that event (the release gate's finding: the Done screen once hid "Install into Clone Hero" after a normal chart).
-  * GET /api/jobs/current/results: {"job", "state", "ok", "folder", "name", "installable", "preview", "lyrics",
-    "art", "listen"}: the preview's overview and pages as URLs with its flags and remarks, or {"why"} there is none;
+  * GET /api/jobs/current/results: {"job", "state", "ok", "folder", "name", "windows_path", "installable",
+    "preview", "lyrics", "art", "listen"} (`windows_path`: the folder's, Open folder's hover text): the preview's
+    overview and pages as URLs with its flags and remarks, `page_s` (PAGE_S, the seconds a page shows) and `at`, for
+    each flag {"part", "start", "page"} (`flag_at`: its start read from its text, its page floor(start / page_s) + 1
+    within the pages there are) or null, or {"why"} there is none;
     pipeline.json's lyrics as counts ({"given", "added", "words", "phrases", "why", "low"}), null when none were
     given; the folder's art ({"album_art": its URL or null, "album_from": "embedded", "given" or null,
     "background": whether there is one}); what the Listen control offers ({"parts": {"guitar": ["expert", ...],
@@ -91,7 +98,8 @@ reads that event (the release gate's finding: the Done screen once hid "Install 
   * POST /api/jobs/current/export/zip: clonehero.export_zip into $SONGCHARTER_HOME/exports/<name>.zip; answers
     {"url": "/api/exports/<name>.zip", "name", "windows_path"}. GET /api/exports/<name>.zip downloads it
     (Content-Disposition: attachment): a single name ending .zip that is a file in exports/; anything else 404.
-  * GET /api/clonehero: clonehero.describe ({"folder", "windows_path", "source", "under_onedrive", "guess"}).
+  * GET /api/clonehero: clonehero.describe ({"folder", "windows_path", "source", "under_onedrive", "guess"}), with
+    `guess` (<Documents>\\Clone Hero\\Songs, Windows' form) always given, not only when no folder is found (M8-04).
     POST /api/clonehero {"folder"}: clonehero.set_songs_folder (400 with why when it does not exist or cannot be
     written), then the same answer.
   * POST /api/jobs/current/install {"replace"}: clonehero.install of the chart into the Songs folder (no path comes
@@ -100,8 +108,10 @@ reads that event (the release gate's finding: the Done screen once hid "Install 
     make is refused the same way); 403 {"blocked", "why", "zip_url", "under_onedrive", "older"}, after making the
     zip, when Windows did not let it finish (`older`: where the older chart stays when it could not be put back,
     also named in `why`). One install at a time.
-  * POST /api/open {"what": "song" | "exports"}: explorer.exe on the last installed song's folder or the exports
-    folder (wsl.open_url with its Windows path), only those two; {"opened", "path", "windows_path"}.
+  * POST /api/open {"what": "song" | "exports" | "built"}: explorer.exe (wsl.open_url with its Windows path) on the
+    last installed song's folder, the exports folder, or the current result's folder (M8-04: "Open folder" before an
+    install, and for a build that failed its check, which is for a look), only those three: no path is read from the
+    request; {"opened", "path", "windows_path"}.
   * GET /api/diagnostics: the diagnostics bundle (diagnostics.py) as a download, songcharter-diagnostics-<stamp>.zip.
   * POST /api/jobs/current/listen {"part", "level"} (M6-09): listen.cached renders that part and level of the
     result's chart (a gate that failed too: it is for a look) over the song, into the work folder's listen/ (a few
@@ -120,6 +130,7 @@ import errno
 import hashlib
 import ipaddress
 import json
+import math
 import os
 import secrets
 import re
@@ -147,7 +158,7 @@ from ..errors import InputError, ToolError
 from ..timed import DIFFICULTIES, INSTRUMENTS
 from . import estimate
 from . import home as default_home
-from .jobs import CLOSING, Jobs, JobRunning, NotRunning, parse_options
+from .jobs import CLOSING, ChartOptions, Jobs, JobRunning, NotRunning, parse_options
 
 APP = "songcharter"
 PORTS = range(8765, 8785)          # 8765-8784
@@ -169,7 +180,11 @@ STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; ch
                 ".css": "text/css; charset=utf-8"}
 PREVIEW_NAME = re.compile(r"^(?:overview|page_\d{2,3})\.png$")   # preview.py's files: overview.png, page_01.png, ...
 PREVIEW_PAGE = re.compile(r"^page_\d{2,3}\.png$")
-OPEN = ("song", "exports")         # POST /api/open's only two folders
+OPEN = ("song", "exports", "built")   # POST /api/open's only folders: no path comes from the page
+# preview.render_pages' page_s, which pipeline's preview stage leaves at its default: the seconds of song a page shows
+PAGE_S = 60.0
+# a preview flag's text (preview.Flag's str): "<part>: <kind> <m:ss.s>-<m:ss.s> (<n> measures)"
+FLAG_AT = re.compile(r"^(?P<part>[a-z]+): [^0-9]+? (?P<m>\d+):(?P<s>\d{2}(?:\.\d+)?)-\d+:\d{2}")
 IMAGE_OPTIONS = {"album_art": "album art", "background": "background image"}   # the options that name an image upload
 ART_FILES = (ART.ALBUM,)           # GET /api/jobs/current/art/<name>: only these
 RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")   # one byte range (the audio player's); anything else: the whole file
@@ -270,7 +285,29 @@ class App:
             return self._documents[0]
 
     def clonehero(self) -> dict:
-        return clonehero.describe(self.home, self.documents)
+        """clonehero.describe, with its `guess` (<Documents>\\Clone Hero\\Songs, Windows' form) given always, not only
+        when no Songs folder is found: the page's field starts from it whenever it has nothing better (M8-04)."""
+        found = clonehero.describe(self.home, self.documents)
+        guess = self.documents()
+        return {**found, "guess": clonehero.windows_path(guess) if guess is not None else None}
+
+    # --- the options screen's choice (M8-04)
+    def choices(self, seconds: Any) -> dict:
+        """Best or Quick for a song of `seconds`: {"gpu", "best", "quick"}. `gpu`: the doctor summary charts the guitar
+        on the GPU (its device CUDA, the guitar not found on the CPU), where the page offers the two; `best` is
+        estimate.for_job's range with every option at its default (4 takes there, 1 on the CPU), `quick` with 1 take
+        (None off the GPU). A bug in the estimate is logged, and both are None."""
+        doctor = self.doctor()
+        auto = (doctor.get("device") or {}).get("chosen")
+        guitar = doctor.get("guitar_device")
+        gpu = auto == "cuda" and guitar != "cpu"
+        try:
+            best = estimate.for_job(seconds, ChartOptions(), auto, guitar)
+            quick = estimate.for_job(seconds, ChartOptions(takes=1), auto, guitar) if gpu else None
+        except Exception:  # noqa: BLE001  the choice is offered without its minutes
+            self.log(f"estimate: internal error:\n{traceback.format_exc()}", console=False)
+            best = quick = None
+        return {"gpu": gpu, "best": best, "quick": quick}
 
     # --- the guards' lists
     def allow(self, host: str, port: int) -> None:
@@ -556,7 +593,8 @@ class Handler(BaseHTTPRequestHandler):
     def _post(self, path: str) -> None:
         app = self.app
         if path == "/api/upload":
-            return self._json(200, self._upload())
+            answer = self._upload()
+            return self._json(200, {**answer, "choices": app.choices(answer.get("seconds"))})
         if path == "/api/upload/image":
             return self._json(200, self._upload_image())
         if path == "/api/jobs":
@@ -789,7 +827,16 @@ class Handler(BaseHTTPRequestHandler):
         app = self.app
         if what not in OPEN:
             raise Refused(400, f"what is one of {', '.join(OPEN)}")
-        if what == "song":
+        if what == "built":   # the current result's folder, a .failed one too (it is for a look): no path from the page
+            job = app.jobs.current
+            result = job.result() if job is not None else None
+            if result is None:
+                raise Refused(400, "no finished chart yet")
+            folder = Path(str(result.get("folder")))
+            if not folder.is_dir():   # the song by its folder's name: the page shows no Linux path (M8-04)
+                name = folder.name[:-len(".failed")] if folder.name.endswith(".failed") else folder.name
+                raise Refused(400, f"{name}'s folder is not there any more: it was moved or deleted")
+        elif what == "song":
             if app.installed is None or not app.installed.is_dir():
                 raise Refused(400, "no song was installed into Clone Hero from this page")
             folder = app.installed
@@ -947,6 +994,25 @@ def export_url(name: str) -> str:
     return "/api/exports/" + quote(name, safe="")
 
 
+def flag_page(start: float, pages: int, page_s: float = PAGE_S) -> int | None:
+    """The preview page (from 1) that shows the song's second `start`: floor(start / page_s) + 1, kept among the
+    `pages` there are (a flag past the last page, such as notes after the audio's end, links to the last); None
+    without pages. A page shows [(n - 1) * page_s, n * page_s): a flag starting on a page's edge is on the next."""
+    if pages < 1:
+        return None
+    return max(1, min(pages, math.floor(max(0.0, start) / page_s) + 1))
+
+
+def flag_at(text: str, pages: int, page_s: float = PAGE_S) -> dict | None:
+    """A flag's part, its start in seconds (as its text has it, to a tenth) and its page: {"part", "start", "page"},
+    or None for a text that is not a flag's (FLAG_AT)."""
+    m = FLAG_AT.match(text)
+    if m is None or m["part"] not in INSTRUMENTS:
+        return None
+    start = int(m["m"]) * 60 + float(m["s"])
+    return {"part": m["part"], "start": start, "page": flag_page(start, pages, page_s)}
+
+
 def _preview_why(pv: Any) -> str:
     """Why there is no preview, from pipeline.json's `preview`."""
     if not isinstance(pv, dict):
@@ -964,12 +1030,13 @@ def results(job) -> dict:
     """GET /api/jobs/current/results (the module docstring), from the job's result event and its pipeline.json."""
     result = job.result()
     out: dict[str, Any] = {"job": job.id, "state": job.state, "ok": None, "folder": None, "name": None,
-                           "installable": False, "preview": None, "lyrics": None, "art": None,
+                           "windows_path": None, "installable": False, "preview": None, "lyrics": None, "art": None,
                            "listen": None}
     if result is None:
         return out
     folder = Path(str(result.get("folder")))
     out.update(ok=bool(result.get("ok")), folder=str(folder), name=folder.name,
+               windows_path=clonehero.windows_path(folder),   # Open folder's hover text
                installable=bool(result.get("ok")) and folder.is_dir())   # its state may still be running: exiting
     try:
         pipeline = json.loads((Path(str(result.get("work"))) / "pipeline.json").read_text(encoding="utf-8"))
@@ -986,8 +1053,10 @@ def results(job) -> dict:
             pages = []
         base = "/api/jobs/current/preview/"
         pv = pv if isinstance(pv, dict) else {}
+        flags = [str(f) for f in pv.get("flags") or []]
         out["preview"] = {"overview": base + "overview.png", "pages": [base + p for p in pages],
-                          "flags": list(pv.get("flags") or []), "remarks": list(pv.get("remarks") or [])}
+                          "flags": flags, "remarks": list(pv.get("remarks") or []), "page_s": PAGE_S,
+                          "at": [flag_at(f, len(pages)) for f in flags]}
     else:
         out["preview"] = {"why": _preview_why(pv)}
     pictures = pipeline.get("art") if isinstance(pipeline.get("art"), dict) else {}

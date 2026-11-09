@@ -356,7 +356,7 @@ const vm = require("vm"), fs = require("fs");
 const els = {};
 const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [],
   replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); },
-  addEventListener() {}, classList: { add() {}, remove() {} }, removeAttribute() {}, pause() {} });
+  addEventListener() {}, classList: { add() {}, remove() {}, toggle() {} }, removeAttribute() {}, pause() {} });
 const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node,
   addEventListener() {} };
 let xhr = null;
@@ -496,7 +496,7 @@ def test_uploads(served, monkeypatch):
     status, body = upload(ctx, data, "C:\\Music\\Jörg's Söng: 1/2.WAV")
     key = hashlib.sha256(data).hexdigest()
     assert status == 200, body
-    assert set(body) == {"id", "name", "bytes", "tags", "origin", "seconds"} and body["id"] == key[:16]
+    assert set(body) == {"id", "name", "bytes", "tags", "origin", "seconds", "choices"} and body["id"] == key[:16]
     assert body["bytes"] == len(data) and body["name"] == "2.WAV"   # a path in the name: only its last part
     folder = ctx.home / "uploads" / key[:16]
     assert sorted(p.name for p in folder.iterdir()) == ["2.wav", "upload.json"]
@@ -560,7 +560,7 @@ const vm = require("vm"), fs = require("fs");
 const els = {};
 const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [], value: 0,
   replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); },
-  addEventListener() {}, classList: { add() {}, remove() {} } });
+  addEventListener() {}, classList: { add() {}, remove() {}, toggle() {} } });
 const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node,
   addEventListener() {} };
 const META = ["title", "artist", "album", "year", "genre"];
@@ -1182,7 +1182,8 @@ def test_the_results_and_the_preview_by_exact_name_only(finished):
     assert res["name"] == job.out.name and res["folder"] == str(job.out)
     base = "/api/jobs/current/preview/"
     assert res["preview"] == {"overview": base + "overview.png", "pages": [base + "page_01.png", base + "page_02.png"],
-                              "flags": ["guitar: gap 0:12.0-0:16.0 (2 measures)"], "remarks": ["no Hard level"]}
+                              "flags": ["guitar: gap 0:12.0-0:16.0 (2 measures)"], "remarks": ["no Hard level"],
+                              "page_s": 60.0, "at": [{"part": "guitar", "start": 12.0, "page": 1}]}
     for name in ("overview.png", "page_01.png", "page_02.png"):
         status, headers, body = get(ctx, base + name + "?job=1")
         assert status == 200 and headers["Content-Type"] == "image/png" and secure(headers)
@@ -1589,7 +1590,7 @@ const vm = require("vm"), fs = require("fs");
 const els = {};
 const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [], src: "",
   replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); },
-  addEventListener() {}, classList: { add() {}, remove() {} } });
+  addEventListener() {}, classList: { add() {}, remove() {}, toggle() {} } });
 const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node,
   addEventListener() {} };
 const field = (value) => ({ value, checked: true });
@@ -1854,11 +1855,12 @@ const vm = require("vm"), fs = require("fs");
 const els = {};
 const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [], value: "",
   on: {}, replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); },
-  addEventListener(kind, f) { this.on[kind] = f; }, classList: { add() {}, remove() {} },
+  addEventListener(kind, f) { this.on[kind] = f; }, classList: { add() {}, remove() {}, toggle() {} },
   focus() { this.focused = true; }, select() { this.selected = true; } });
 const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node,
   addEventListener() {} };
-els.options = Object.assign(node("form"), { elements: { solos: node("select") } });
+els.options = Object.assign(node("form"), { querySelectorAll: () => [],
+  elements: { solos: node("select"), takes: node("input") } });
 const asked = [];
 const status = { device: { chosen: "cpu", reason: "r" }, problems: [], notes: [], job: null, update: null };
 const fetch = async (path) => { asked.push(path);
@@ -1963,12 +1965,13 @@ const els = {};
 const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [],
   value: "", open: false, on: {}, scrolled: 0, clicked: 0,
   replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); },
-  addEventListener(kind, f) { this.on[kind] = f; }, classList: { add() {}, remove() {} }, removeAttribute() {},
+  addEventListener(kind, f) { this.on[kind] = f; }, classList: { add() {}, remove() {}, toggle() {} }, removeAttribute() {},
   pause() {}, scrollIntoView(how) { this.scrolled += 1; this.how = how; }, click() { this.clicked += 1; } });
 const docOn = {};
 const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node, title: "songcharter",
   visibilityState: "visible", addEventListener(kind, f) { docOn[kind] = f; } };
-els.options = Object.assign(node("form"), { elements: { solos: node("select") } });
+els.options = Object.assign(node("form"), { querySelectorAll: () => [],
+  elements: { solos: node("select"), takes: node("input") } });
 const locks = [];
 const lock = (type) => ({ type, released: false, on: {}, addEventListener(k, f) { this.on[k] = f; },
   release() { this.released = true; return Promise.resolve(); } });
@@ -2169,7 +2172,7 @@ const els = {};
 const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [],
   value: "", open: false, on: {}, replaceChildren(...c) { this.children = c; },
   append(...c) { this.children.push(...c); }, addEventListener(kind, f) { this.on[kind] = f; },
-  classList: { add() {}, remove() {} }, removeAttribute() {}, pause() {}, scrollIntoView() {}, click() {} });
+  classList: { add() {}, remove() {}, toggle() {} }, removeAttribute() {}, pause() {}, scrollIntoView() {}, click() {} });
 const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node, title: "songcharter",
   visibilityState: "visible", addEventListener() {} };
 const locks = [];
@@ -2247,7 +2250,9 @@ def test_the_page_lets_go_when_songcharter_is_gone(tmp_path):
     kept = "what it had worked out is kept, so it goes faster."
     assert out["gone"] == {**ended, "asked": 1, "text": "songcharter was closed while it charted (closing its "
                            f"window stops the chart) and has been started again. Chart the song again: {kept}"}
-    assert out["down"] == {**ended, "asked": tries, "text": "songcharter is not answering. If the songcharter window "
+    # M8-04 (the v0.4.0 gate's note): with nothing answering, the heading and the tab say so, not "stopped"
+    assert out["down"] == {**ended, "title": "Not answering - songcharter", "heading": "songcharter is not answering",
+                           "asked": tries, "text": "songcharter is not answering. If the songcharter window "
                            "is still open, reload this page (press F5) to follow the chart. If the window was "
                            "closed, which stops the chart, start songcharter again from the Start menu, then chart the "
                            f"song again: {kept}"}
@@ -2428,7 +2433,7 @@ const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", dis
       if (!c.some((o) => o.value === this.value)) this.value = c.length ? c[0].value : "";
     }
   },
-  append(...c) { this.children.push(...c); }, addEventListener() {}, classList: { add() {}, remove() {} },
+  append(...c) { this.children.push(...c); }, addEventListener() {}, classList: { add() {}, remove() {}, toggle() {} },
   removeAttribute(k) { if (k === "src") this.src = undefined; },
   pause() { this.paused = true; }, play() { this.paused = false; this.played += 1; return Promise.resolve(); } });
 const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node,
@@ -2510,3 +2515,408 @@ def test_the_page_offers_the_charts_parts_and_plays_the_render(tmp_path):
     html = files["index.html"].decode()
     assert '<audio id="listen-audio" controls preload="auto" hidden></audio>' in html
     assert html.index('id="export-box"') < html.index('id="preview"') < html.index('id="listen-box"')   # M7-10
+
+
+# ------------------------------------------------------------------------------------------------ M8-04: the UI pass
+
+UI_PASS_PAGE = r"""
+const vm = require("vm"), fs = require("fs");
+const els = {};
+const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [],
+  value: "", checked: false, open: false, title: "", href: "", src: "", on: {}, currentTime: 0,
+  classes: new Set(), modal: 0,
+  get classList() { const c = this.classes; return { add: (k) => c.add(k), remove: (k) => c.delete(k),
+    toggle: (k, on) => (on ? c.add(k) : c.delete(k)) }; },
+  replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); },
+  addEventListener(kind, f) { this.on[kind] = f; }, removeAttribute(k) { this[k] = ""; }, pause() {},
+  play() { return Promise.resolve(); }, scrollIntoView() {}, click() { if (this.on.click) this.on.click({}); },
+  showModal() { this.open = true; this.modal += 1; }, close() { this.open = false; }, focus() {}, select() {},
+  reset() {} });
+const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node, title: "songcharter",
+  visibilityState: "visible", addEventListener() {}, body: node("body") };
+// the options form: the boxes and radios its selectors ask for, by name and value
+const box = (name, value, checked) => Object.assign(node("input"), { name, value, checked, defaultChecked: checked });
+const inputs = [box("instruments", "guitar", true), box("instruments", "bass", true), box("instruments", "drums", true),
+  box("levels", "expert", true), box("levels", "hard", false), box("how", "best", true), box("how", "quick", false)];
+const field = (value) => Object.assign(node("input"), { value });
+const elements = { title: field(""), artist: field(""), album: field(""), year: field(""), genre: field(""),
+  solos: field("labels"), solo_names: field(""), takes: field(""), device: field("auto"),
+  preview: Object.assign(node("input"), { checked: true }), lyrics: field("") };
+els.options = Object.assign(node("form"), { elements,
+  querySelectorAll(sel) { const m = /name=(\w+)\](:checked)?/.exec(sel);
+    return inputs.filter((i) => i.name === m[1] && (!m[2] || i.checked)); },
+  reset() { for (const i of inputs) i.checked = i.defaultChecked; elements.takes.value = ""; } });
+const posted = [];
+let openAnswer = [200, { opened: true }];
+let job = { job: "j1", state: "running", upload: { name: "Song.mp3" }, started: 1000, now: 1000,
+  estimate: { seconds: 412.4, takes: 4, device: "cuda", low_min: 9, high_min: 23 }, remaining: null };
+const RESULTS = { job: "j1", state: "done", ok: true, folder: "/h/library/0123/Made-Up Band - A Song",
+  name: "Made-Up Band - A Song", windows_path: "\\\\wsl.localhost\\Ubuntu\\h\\library\\0123\\Made-Up Band - A Song",
+  installable: false, art: null, lyrics: null,
+  listen: { parts: { guitar: ["expert", "hard"], drums: ["expert"] } },
+  preview: { overview: "/p/overview.png", pages: ["/p/page_01.png", "/p/page_02.png", "/p/page_03.png"],
+    page_s: 60, remarks: [],
+    flags: ["guitar: gap 1:00.0-1:19.0 (5 measures)", "bass: gap 0:59.9-1:02.0 (1 measures)", "an odd line"],
+    at: [{ part: "guitar", start: 60.0, page: 2 }, { part: "bass", start: 59.9, page: 1 }, null] } };
+const ctx = { document, window: { addEventListener() {}, confirm: () => true }, XMLHttpRequest: class {},
+  encodeURIComponent, console, setInterval() {}, clearInterval() {}, setTimeout() {}, TextDecoder,
+  navigator: {}, sessionStorage: { setItem() {}, getItem() { return null; } },
+  fetch: async (path, init) => {
+    const body = init && init.body ? JSON.parse(init.body) : null;
+    if (init && init.method === "POST") posted.push([path, body]);
+    if (path === "/api/jobs/current") return { status: 200, json: async () => JSON.parse(JSON.stringify(job)) };
+    if (path === "/api/jobs/current/results") return { status: 200, json: async () => RESULTS };
+    if (path === "/api/jobs/current/listen") return { status: 200, json: async () => ({ url: "/l/guitar-expert.ogg" }) };
+    if (path === "/api/open") return { status: openAnswer[0], json: async () => openAnswer[1] };
+    if (path === "/api/jobs/current/events") return { status: 200, body: { getReader: () => ({
+      read: () => new Promise(() => {}) }) } };
+    return { status: 404, json: async () => ({}) };
+  } };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(process.argv[2], "utf8"), ctx);
+const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
+const how = () => inputs.filter((i) => i.name === "how" && i.checked).map((i) => i.value);
+const out = {};
+(async () => {
+  await ctx.start();   // the page's listeners, as the browser starts it (no job yet)
+  const up = { id: "u1", name: "Song.mp3", bytes: 4e6, tags: {}, origin: {} };
+  // Best or Quick on a GPU: each with its minutes; what each sends
+  ctx.fillOptions({ ...up, choices: { gpu: true, best: { takes: 4, low_min: 9, high_min: 23 },
+                                      quick: { takes: 1, low_min: 4, high_min: 10 } } });
+  out.gpu = { choice: els.choice.hidden, cpu: els["choice-cpu"].hidden, best: els["best-label"].textContent,
+              quick: els["quick-label"].textContent, folded: ["more", "lyrics-box", "pictures-box"].map((i) => els[i].open) };
+  out.best = ctx.readOptions();
+  inputs.find((i) => i.value === "quick").checked = true;
+  inputs.find((i) => i.value === "best").checked = false;
+  vm.runInContext("choose()", ctx);
+  out.quick = ctx.readOptions();
+  inputs.find((i) => i.value === "best").checked = true;
+  inputs.find((i) => i.value === "quick").checked = false;
+  vm.runInContext("choose()", ctx);
+  out.bestAgain = ctx.readOptions();
+  elements.takes.value = "3";
+  vm.runInContext("typedTakes()", ctx);
+  out.typed3 = { how: how(), takes: ctx.readOptions().takes };
+  elements.takes.value = "1";
+  vm.runInContext("typedTakes()", ctx);
+  out.typed1 = how();
+  elements.takes.value = "";
+  vm.runInContext("typedTakes()", ctx);
+  out.typedNone = how();
+  // the CPU: no choice, a line with its minutes; what it sends is the defaults
+  ctx.fillOptions({ ...up, choices: { gpu: false, best: { takes: 1, low_min: 12, high_min: 21 }, quick: null } });
+  out.cpu = { choice: els.choice.hidden, cpu: els["choice-cpu"].hidden, line: els["choice-cpu"].textContent,
+              sent: ctx.readOptions() };
+  ctx.fillOptions({ ...up, choices: { gpu: false, best: null, quick: null } });
+  out.cpuNoMinutes = els["choice-cpu"].textContent;
+  // the time left: struck first estimate, the line counted down on the server's clock
+  job = { ...job, remaining: { from: 1264, low_s: 494.6, high_s: 769.0, takes_left: 3 }, now: 1264 };
+  await ctx.attach();
+  await settle();
+  const left = () => ({ text: els["progress-remaining"].textContent, hidden: els["progress-remaining"].hidden,
+                        struck: els["progress-estimate"].classes.has("struck") });
+  out.left = left();
+  vm.runInContext("state.offset += 300", ctx);   // five minutes on
+  vm.runInContext("tick()", ctx);
+  out.later = left();
+  vm.runInContext("state.offset += 600", ctx);   // past the high end
+  vm.runInContext("tick()", ctx);
+  out.past = left();
+  job = { ...job, remaining: { from: 2000, low_s: 19.9, high_s: 63.6, takes_left: 0 }, now: 2000 };
+  await ctx.attach();
+  await settle();
+  out.guitarDone = left();
+  job = { ...job, remaining: null, now: 3000 };
+  await ctx.attach();
+  await settle();
+  out.none = left();
+  job = { ...job, remaining: { from: 3264, low_s: 494.6, high_s: 769.0, takes_left: 3 } };
+  ctx.handle({ event: "take", index: 2, count: 4, seed: 202, at: 3264 });   // the second take: the server is asked
+  await settle();
+  out.asked = left();
+  job = { ...job, remaining: { from: 3400, low_s: 19.9, high_s: 63.6, takes_left: 0 }, now: 3400 };
+  ctx.handle({ event: "stage_end", stage: "guitar", seconds: 400, cached: false, at: 3400 });   // asked again
+  await settle();
+  out.guitarEnded = left();
+  // the end names the song; Open folder with the Windows path as its hover text
+  ctx.handle({ event: "result", ok: true, exit: 0, folder: RESULTS.folder, work: "/w", preview: "/p", summary: "",
+               at: 3500 });
+  out.doneText = els["done-text"].textContent;
+  out.builtBefore = els["built-row"].hidden;
+  await settle();
+  out.built = { hidden: els["built-row"].hidden, title: els["open-built"].title };
+  openAnswer = [400, { error: "A Song's folder is not there any more: it was moved or deleted" }];
+  els["open-built"].on.click({});
+  await settle();
+  out.refused = { hidden: els["built-msg"].hidden, text: els["built-msg"].textContent };
+  openAnswer = [200, { opened: true }];
+  els["open-built"].on.click({});
+  await settle();
+  out.openedLater = els["built-msg"].hidden;
+  out.failedText = (ctx.handle({ event: "result", ok: false, exit: 1, folder: "/h/library/0123/A Song.failed",
+                                 work: "/w", preview: null, summary: "", at: 3600 }), els["done-text"].textContent);
+  await settle();
+  // the flags: their start a link to the page that shows it, in the lightbox; Listen here for the parts it has
+  ctx.renderListen(RESULTS.listen, "j1");
+  ctx.renderPreview(RESULTS.preview, "j1");
+  const items = els.flags.children;
+  const linkOf = (li) => li.children.find((c) => c && c.tag === "a");
+  const listenOf = (li) => li.children.find((c) => c && c.tag === "button");
+  out.flags = items.map((li) => ({ link: linkOf(li) ? [linkOf(li).textContent, linkOf(li).title] : null,
+    listen: !!listenOf(li), text: li.children.map((c) => (typeof c === "string" ? c : c.textContent)).join("") }));
+  let prevented = 0;
+  linkOf(items[0]).on.click({ button: 0, preventDefault() { prevented += 1; } });
+  out.box = { open: els.lightbox.open, modal: els.lightbox.modal, src: els["lightbox-img"].src,
+              title: els["lightbox-title"].textContent, prevented };
+  els.lightbox.on.keydown({ key: "ArrowRight", preventDefault() {} });
+  out.right = [els["lightbox-img"].src, els["lightbox-title"].textContent];
+  els.lightbox.on.keydown({ key: "ArrowRight", preventDefault() {} });
+  out.last = { src: els["lightbox-img"].src, next: els["lightbox-next"].disabled };
+  linkOf(items[1]).on.click({ button: 0, ctrlKey: true, preventDefault() { prevented += 1; } });   // a new tab
+  out.ctrl = { prevented, modal: els.lightbox.modal };
+  els["lightbox-close"].on.click({});
+  out.closed = els.lightbox.open;
+  els["overview-link"].on.click({ button: 0, preventDefault() {} });
+  out.overview = { src: els["lightbox-img"].src, prev: els["lightbox-prev"].disabled, open: els.lightbox.open,
+                   title: els["lightbox-title"].textContent };
+  els["listen-level"].value = "hard";   // chosen in the Listen box earlier: Listen here is on Expert
+  listenOf(items[0]).on.click({});
+  await settle();
+  out.listen = { posted: posted.filter((p) => p[0] === "/api/jobs/current/listen"), at: els["listen-audio"].currentTime,
+                 part: els["listen-part"].value, level: els["listen-level"].value, box: els.lightbox.open };
+  els["listen-audio"].currentTime = 0;
+  els["listen-audio"].on.loadedmetadata();
+  out.seekAgain = els["listen-audio"].currentTime;
+  out.opened = posted.filter((p) => p[0] === "/api/open");
+  // the Songs folder: the guess in the box, said to be a guess; a found folder as before
+  const ch = (value) => vm.runInContext(`state.ch = ${JSON.stringify(value)}`, ctx);
+  ch({ folder: null, windows_path: null, source: "not found", guess: "C:\\Users\\Made Up\\Documents\\Clone Hero\\Songs" });
+  document.getElementById("ch-form").elements = { folder: field("") };
+  ctx.renderCloneHero(false);
+  out.guess = { form: els["ch-form"].hidden, value: els["ch-form"].elements.folder.value, where: els["ch-where"].textContent };
+  ch({ folder: null, windows_path: null, source: "not found", guess: null });
+  ctx.renderCloneHero(false);
+  out.noGuess = { value: els["ch-form"].elements.folder.value, where: els["ch-where"].textContent };
+  ch({ folder: "/mnt/d/CH/Songs", windows_path: "D:\\CH\\Songs", source: "saved", guess: "C:\\G" });
+  ctx.renderCloneHero(false);
+  out.found = { form: els["ch-form"].hidden, where: els["ch-where"].textContent };
+  ctx.renderCloneHero(true);
+  out.editing = els["ch-form"].elements.folder.value;
+  // a flag whose page is past the pages there are: its text without a link, and no TypeError (M8-04's review, F2)
+  ctx.renderPreview({ ...RESULTS.preview, flags: ["guitar: gap 9:00.0-9:10.0 (2 measures)"],
+                      at: [{ part: "guitar", start: 540, page: 9 }] }, "j1");
+  out.pastEnd = els.flags.children.map((li) => li.children.map((c) => (typeof c === "string" ? c : c.tag)));
+  out.rounding = JSON.parse(process.argv[3]).map(([lo, hi]) => ctx.roundMinutes(lo, hi));
+  out.big = ctx.remainingText({ from: 0, low_s: 1900, high_s: 2300, takes_left: 1 }, 0);
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_ui_pass_page(tmp_path):
+    """M8-04 (app.js in node with a stand-in DOM): Best or Quick on a GPU, each with its minutes, filling only the
+    takes box, so Best sends today's defaults (no takes) and Quick takes 1, a typed number checking the matching choice
+    or neither; on the CPU no choice and a line; the time left once the first take is timed, under the struck first
+    estimate and counted down; the Done screen naming the song, not its Linux path, with Open folder ("built") and the
+    Windows path as its hover text; each flag's start a link to its page in the lightbox (arrows, Close, a ctrl-click
+    left to the browser) and Listen here from a second before it, on Expert; the Songs folder's guess said to be one."""
+    script = tmp_path / "ui_pass.cjs"
+    script.write_text(UI_PASS_PAGE, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(S.static_files()["app.js"])
+    from songcharter.ui import estimate as E
+    grid = [(lo, hi) for lo in (0, 59, 60, 61, 119, 1799, 1800, 1861, 3000) for hi in (0, 61, 90, 1510, 1799, 1801,
+                                                                                        1861, 2300, 3601)]
+    done = subprocess.run(["node", str(script), str(app_js), json.dumps(grid)], capture_output=True, text=True,
+                          timeout=60)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["rounding"] == [list(E.round_minutes(lo, hi)) for lo, hi in grid]   # the page's copy of the rounding
+    assert out["big"] == "About 30 to 40 more minutes, from how long the first guitar take took."
+    defaults = {"instruments": ["guitar", "bass", "drums"], "levels": ["expert"], "solos": "labels", "device": "auto",
+                "preview": True}
+    assert out["gpu"] == {"choice": False, "cpu": True, "best": "Best chart (4 guitar takes, about 9 to 23 minutes)",
+                          "quick": "Quick chart (1 take, about 4 to 10 minutes)", "folded": [False, False, False]}
+    assert out["best"] == defaults and out["bestAgain"] == defaults   # Best: what the form sent before M8-04
+    assert out["quick"] == {**defaults, "takes": 1}
+    assert out["typed3"] == {"how": [], "takes": 3} and out["typed1"] == ["quick"] and out["typedNone"] == ["best"]
+    assert out["cpu"] == {"choice": True, "cpu": False, "sent": defaults,
+                          "line": "This PC charts the guitar on the CPU, so it makes 1 guitar take: about 12 to 21 "
+                                  "minutes for this song."}
+    assert out["cpuNoMinutes"] == "This PC charts the guitar on the CPU, so it makes 1 guitar take."
+    first = ", from how long the first guitar take took."
+    assert out["left"] == {"text": f"About 8 to 13 more minutes{first}", "hidden": False, "struck": True}
+    assert out["later"] == {"text": f"About 3 to 8 more minutes{first}", "hidden": False, "struck": True}
+    assert out["past"] == {"text": "Nearly done, or taking longer than estimated.", "hidden": False, "struck": True}
+    assert out["guitarDone"] == {"text": "About 1 to 2 more minutes: the guitar is done.", "hidden": False,
+                                 "struck": True}
+    assert out["none"] == {"text": "", "hidden": True, "struck": False}
+    assert out["asked"] == {"text": f"About 8 to 13 more minutes{first}", "hidden": False, "struck": True}
+    assert out["guitarEnded"] == {"text": "About 1 to 2 more minutes: the guitar is done.", "hidden": False,
+                                  "struck": True}
+    assert out["doneText"] == "Made-Up Band - A Song is charted and passed its check." and "/" not in out["doneText"]
+    assert out["builtBefore"] is True
+    assert out["built"] == {"hidden": False, "title": "\\\\wsl.localhost\\Ubuntu\\h\\library\\0123\\Made-Up Band - A Song"}
+    assert out["failedText"] == ("A Song did not pass the check, so it is kept for a look (Open folder), not for "
+                                 "Clone Hero.")
+    assert out["flags"] == [
+        {"link": ["1:00.0", "Page 2"], "listen": True, "text": "guitar: gap 1:00.0-1:19.0 (5 measures) Listen here"},
+        {"link": ["0:59.9", "Page 1"], "listen": False, "text": "bass: gap 0:59.9-1:02.0 (1 measures)"},
+        {"link": None, "listen": False, "text": "an odd line"}]
+    assert out["box"] == {"open": True, "modal": 1, "src": "/p/page_02.png?job=j1", "title": "Page 2 of 3",
+                          "prevented": 1}
+    assert out["right"] == ["/p/page_03.png?job=j1", "Page 3 of 3"]
+    assert out["last"] == {"src": "/p/page_03.png?job=j1", "next": True}
+    assert out["ctrl"] == {"prevented": 1, "modal": 1}
+    assert out["closed"] is False
+    assert out["overview"] == {"src": "/p/overview.png?job=j1", "prev": True, "open": True, "title": "Overview"}
+    assert out["pastEnd"] == [["guitar: gap 9:00.0-9:10.0 (2 measures)"]]
+    assert out["listen"] == {"posted": [["/api/jobs/current/listen", {"part": "guitar", "level": "expert"}]],
+                             "at": 59, "part": "guitar", "level": "expert", "box": False}
+    assert out["seekAgain"] == 59
+    assert out["opened"] == [["/api/open", {"what": "built"}]] * 2
+    assert out["refused"] == {"hidden": False, "text": "A Song's folder is not there any more: it was moved or deleted"}
+    assert out["openedLater"] is True   # a later open that works clears the refusal
+    assert out["guess"]["form"] is False and out["guess"]["value"] == "C:\\Users\\Made Up\\Documents\\Clone Hero\\Songs"
+    assert "The box holds a guess" in out["guess"]["where"] and "no folder is there" in out["guess"]["where"]
+    assert out["noGuess"] == {"value": "", "where": "songcharter did not find your Clone Hero Songs folder: give it "
+                                                    "below."}
+    assert out["found"] == {"form": True, "where": "Into D:\\CH\\Songs"}
+    assert out["editing"] == "D:\\CH\\Songs"
+    html = S.static_files()["index.html"].decode()
+    assert html.count('type="submit"') == 3   # "Chart it" at the top and at the end, and the Songs folder's form
+    assert html.index('id="chart-top"') < html.index('name="title"') < html.index('id="chart"')
+    for fold in ('<details id="more" class="fold">', '<details id="lyrics-box" class="fold">',
+                 '<details id="pictures-box" class="fold">'):
+        assert fold in html
+    more = html[html.index('<details id="more"'):html.index("</details>", html.index('<details id="more"'))]
+    assert 'name="takes"' in more and 'name="device"' in more and 'name="preview"' in more
+    assert html.count("<dialog") == 1 and 'id="lightbox"' in html
+
+
+def test_open_folder_built_opens_the_results_own_folder_only(finished, tmp_path, monkeypatch):
+    """M8-04 item 5: POST /api/open {"what": "built"} opens the current result's folder, before any install and for a
+    build that failed its check too (it is for a look); the page never names a path: any other `what` (a path among
+    them) is refused, and a path beside "built" is not read. The results carry the folder's Windows path, the button's
+    hover text."""
+    from songcharter import wsl
+    ctx = finished
+    assert post(ctx, "/api/open", {"what": "built"})[0] == 400   # no job yet
+    job = ctx.run()
+    monkeypatch.setattr(wsl, "is_wsl", lambda: True)
+    monkeypatch.setattr(wsl, "distro", lambda: "Ubuntu")
+    opened = []
+    monkeypatch.setattr(wsl, "open_url", lambda target: opened.append(target) or True)
+    windows = "\\\\wsl.localhost\\Ubuntu" + str(job.out).replace("/", "\\")
+    status, answer = post(ctx, "/api/open", {"what": "built", "path": str(tmp_path)})
+    assert status == 200 and answer == {"opened": True, "path": str(job.out), "windows_path": windows}
+    assert opened == [windows]
+    assert json.loads(get(ctx, "/api/jobs/current/results")[2])["windows_path"] == windows
+    for what in (str(job.out), str(tmp_path), "../built", "Built", None, ["built"]):
+        status, answer = post(ctx, "/api/open", {"what": what})
+        assert status == 400 and answer["error"] == "what is one of song, exports, built", what
+    assert opened == [windows]
+    ctx.mode = "fail"
+    job = ctx.run()
+    status, answer = post(ctx, "/api/open", {"what": "built"})
+    assert status == 200 and answer["path"] == str(job.out) and opened[-1].endswith(job.out.name)
+    shutil.rmtree(job.out)
+    status, answer = post(ctx, "/api/open", {"what": "built"})   # by the song's name, never the Linux path
+    assert status == 400 and answer["error"] == f"{job.out.name}'s folder is not there any more: it was moved or deleted"
+    assert str(job.out.parent) not in answer["error"]
+
+
+def test_the_results_link_each_flag_to_a_page_there_is(finished):
+    """M8-04's review, F2: the results route counts the preview's pages for the flags' links: with three pages, flags
+    at a page's edges link to the page that shows them, and one past the last page to the last, never a page the
+    route does not serve (the page would find no picture for it)."""
+    ctx = finished
+    ctx.run()
+    preview = ctx.work / "preview"
+    (preview / "page_03.png").write_bytes(b"\x89PNG")
+    flags = ["guitar: gap 0:59.9-1:02.0 (1 measures)", "bass: gap 1:00.0-1:04.0 (2 measures)",
+             "drums: notes in silence 1:59.9-2:01.0 (1 measures)", "guitar: gap 2:00.0-2:10.0 (3 measures)",
+             "bass: notes after audio 3:30.0-3:31.0 (1 measures)", "no Hard level"]
+    pipeline = json.loads((ctx.work / "pipeline.json").read_text(encoding="utf-8"))
+    pipeline["preview"]["flags"] = flags
+    (ctx.work / "pipeline.json").write_text(json.dumps(pipeline), encoding="utf-8")
+    pv = json.loads(get(ctx, "/api/jobs/current/results")[2])["preview"]
+    assert len(pv["pages"]) == 3 and pv["flags"] == flags
+    assert [a and (a["part"], a["start"], a["page"]) for a in pv["at"]] == [
+        ("guitar", 59.9, 1), ("bass", 60.0, 2), ("drums", 119.9, 2), ("guitar", 120.0, 3), ("bass", 210.0, 3), None]
+    for a in pv["at"]:
+        if a:
+            assert get(ctx, pv["pages"][a["page"] - 1])[0] == 200
+
+
+def test_a_flag_links_to_the_page_that_shows_its_start():
+    """M8-04 item 6: floor(start / page seconds) + 1, a page showing [(n - 1) * 60, n * 60) s; a flag on a page's edge
+    is on the next page, one past the last page on the last, a negative start on the first; the start read from the
+    flag's text (preview.Flag's form); the page length is preview.render_pages' default, which the pipeline uses."""
+    import inspect
+    from songcharter import preview
+    assert S.PAGE_S == inspect.signature(preview.render_pages).parameters["page_s"].default == 60.0
+    edges = {0.0: 1, 59.9: 1, 59.99: 1, 60.0: 2, 60.1: 2, 119.9: 2, 120.0: 3, 179.9: 3, 180.0: 3, 1e6: 3, -1.0: 1}
+    assert {s: S.flag_page(s, 3) for s in edges} == edges
+    assert S.flag_page(10.0, 0) is None and S.flag_page(10.0, 1) == 1
+    assert S.flag_page(45.0, 3, page_s=30.0) == 2
+    flag = preview.Flag("bass", "rings past its sustain", 605.34, 609.0, 1)
+    assert str(flag) == "bass: rings past its sustain 10:05.3-10:09.0 (1 measures)"
+    assert S.flag_at(str(flag), 11) == {"part": "bass", "start": 605.3, "page": 11}
+    assert S.flag_at("guitar: gap 1:00.0-1:19.0 (5 measures)", 4) == {"part": "guitar", "start": 60.0, "page": 2}
+    assert S.flag_at("drums: notes after audio 3:59.9-4:02.0 (1 measures)", 4)["page"] == 4
+    assert S.flag_at("guitar: gap 0:12-0:16", 4)["start"] == 12.0   # whole seconds read too
+    for text in ("no Hard level", "vocals: gap 0:12.0-0:16.0 (2 measures)", "guitar: gap 0:12.0", ""):
+        assert S.flag_at(text, 4) is None, text
+
+
+def test_the_songs_folders_guess_is_always_given(finished, tmp_path, monkeypatch):
+    """M8-04 item 7: /api/clonehero gives `guess` (<Documents>\\Clone Hero\\Songs as Windows names it) whether or not a
+    Songs folder is found (clonehero.describe gives it only when none is), so the page's field can start from it;
+    nothing read from Clone Hero's own settings. Without Documents, no guess."""
+    from songcharter import wsl
+    ctx = finished
+    assert json.loads(get(ctx, "/api/clonehero")[2])["guess"] is None   # not in WSL: no Documents
+    mnt = tmp_path / "mnt" / "c"
+    documents = mnt / "Users" / "Made Up" / "Documents" / "Clone Hero" / "Songs"
+    monkeypatch.setattr(wsl, "MNT_C", mnt)
+    monkeypatch.setattr(wsl, "is_wsl", lambda: True)
+    ctx.app._documents = (documents,)
+    guess = "C:\\Users\\Made Up\\Documents\\Clone Hero\\Songs"
+    found = json.loads(get(ctx, "/api/clonehero")[2])
+    assert found["folder"] is None and found["guess"] == guess
+    other = mnt / "Games" / "Songs"
+    other.mkdir(parents=True)
+    assert post(ctx, "/api/clonehero", {"folder": str(other)})[0] == 200
+    found = json.loads(get(ctx, "/api/clonehero")[2])
+    assert found["folder"] == str(other) and found["source"] == "saved" and found["guess"] == guess
+    documents.mkdir(parents=True)
+    found = json.loads(get(ctx, "/api/clonehero")[2])
+    assert found["guess"] == guess
+
+
+@pytest.mark.parametrize("doctor, gpu", [
+    ({"device": {"chosen": "cuda"}, "guitar_device": "cuda"}, True),
+    ({"device": {"chosen": "cuda"}, "guitar_device": None}, True),
+    ({"device": {"chosen": "cuda"}, "guitar_device": "cpu"}, False),   # autochart's CUDA provider did not load
+    ({"device": {"chosen": "cpu"}, "guitar_device": "cpu"}, False),
+    ({"device": {"chosen": None}}, False)])
+def test_best_or_quick_offered_on_the_gpu_with_each_ones_estimate(tmp_path, doctor, gpu):
+    """M8-04 item 8: the upload's `choices`: on a PC that charts the guitar on the GPU, Best (every option at its
+    default: 4 takes) and Quick (1 take), each estimate.for_job's range for this song; elsewhere no choice, and Best's
+    range (1 take) for the line; and what each choice sends is the command line's own: Best no --takes (the
+    pipeline's 4 on CUDA), Quick --takes=1."""
+    from songcharter.ui import estimate as E
+    app = S.App(tmp_path, report=lambda: {**DOCTOR, **doctor})
+    c = app.choices(241.0)
+    auto, guitar = doctor["device"]["chosen"], doctor.get("guitar_device")
+    assert c["gpu"] is gpu
+    assert c["best"] == E.for_job(241.0, J.parse_options({}), auto, guitar)
+    assert c["quick"] == (E.for_job(241.0, J.parse_options({"takes": 1}), auto, guitar) if gpu else None)
+    if gpu:
+        assert (c["best"]["takes"], c["quick"]["takes"]) == (4, 1) and c["quick"]["high_s"] < c["best"]["low_s"] * 2
+    assert app.choices(None) == {"gpu": gpu, "best": None, "quick": None}
+    best = J.chart_command(Path("s.wav"), Path("out"), J.parse_options({}), None)
+    quick = J.chart_command(Path("s.wav"), Path("out"), J.parse_options({"takes": 1}), None)
+    assert not any(a.startswith("--takes") for a in best) and quick == best + ["--takes=1"]

@@ -38,7 +38,9 @@
     --album-art and --background. The job's options say whether each was given.
   * **The estimate** (M7-10): how long the chart usually takes (estimate.for_job, which the server works out from
     the upload's length, the options and the doctor summary), given to `start` and kept as it is in the job's
-    snapshot (`estimate`, None without one) for the progress screen.
+    snapshot (`estimate`, None without one) for the progress screen; and with it, the time left once the guitar's
+    first take is timed (`remaining`: estimate.remaining from the estimate and the events' `at`, M8-04; None before,
+    without an estimate, or when a bug in it is caught: the snapshot never fails for it).
 """
 from __future__ import annotations
 
@@ -57,6 +59,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from .. import cache, device, proc
 from ..errors import InputError
+from . import estimate as estimates
 from ..timed import DIFFICULTIES, INSTRUMENTS
 
 EVENT_PREFIX = "@@songcharter "   # cli.EVENT_PREFIX (not imported: the cli module is the child's)
@@ -273,10 +276,17 @@ class Job:
                                                                    "name": self.upload.get("name")},
                    "options": self.options.as_dict(), "out": str(self.out), "log": str(self.log),
                    "started": self.started, "ended": self.ended, "exit": self.returncode, "now": time.time(),
-                   "estimate": dict(self.estimate) if self.estimate else None}
+                   "estimate": dict(self.estimate) if self.estimate else None, "remaining": self._remaining()}
             if events:
                 out["events"] = list(self.events)
             return out
+
+    def _remaining(self) -> dict | None:
+        """The time left (estimate.remaining; the module docstring), with the condition held."""
+        try:
+            return estimates.remaining(self.estimate, self.events)
+        except Exception:  # noqa: BLE001  the progress screen keeps the first estimate
+            return None
 
     def result(self) -> dict | None:
         """The `result` event (chart --events: ok, exit, folder, work, preview, summary), None before or without one."""

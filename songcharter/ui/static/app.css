@@ -181,5 +181,35 @@ a.button { color: #fff; text-decoration: none; }
 }
 .update-copy button { margin-top: 0; }
 #update .actions a { margin-right: 1rem; }
+/* M8-04: Best or Quick at the top of the options, the rest folded; the time left; the lightbox */
+#choice-box { margin: 0 0 0.75rem; }
+#choice-box .actions { margin-top: 0.25rem; }
+#choice label.check { display: block; margin: 0.3rem 0; }
+#choice-cpu { margin: 0 0 0.25rem; }
+details.fold { border: 1px solid var(--line); border-radius: 6px; margin: 0 0 0.75rem; padding: 0.4rem 0.9rem; }
+details.fold > summary { cursor: pointer; font-weight: 600; }
+details.fold > fieldset { border: 0; padding: 0; margin: 0.4rem 0 0.2rem; }
+#progress-remaining { margin: 0.2rem 0 0.5rem; font-weight: 600; }
+.struck { text-decoration: line-through; }
+#built-row { margin-top: 0; }
+#flags li { margin: 0.2rem 0; }
+.flag-at { font-variant-numeric: tabular-nums; }
+button.small-button { padding: 0.1rem 0.5rem; margin-top: 0; font-size: 0.85rem; }
+#overview-link, .pages a { cursor: zoom-in; }
+#lightbox {
+  width: min(96vw, 110rem);
+  max-height: 96vh;
+  padding: 0.5rem 0.75rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  overflow: auto;
+}
+#lightbox::backdrop { background: rgb(0 0 0 / 0.7); }
+.lightbox-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0 0 0.5rem; }
+.lightbox-bar button { margin-top: 0; }
+#lightbox-title { flex: 1 1 10rem; font-weight: 600; }
+#lightbox-img { display: block; width: 100%; height: auto; background: #fff; border-radius: 4px; }
 footer { max-width: 52rem; margin: 0 auto; padding: 0.5rem 1.25rem 2rem; }
 [hidden] { display: none !important; }
