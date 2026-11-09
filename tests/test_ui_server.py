@@ -3162,7 +3162,8 @@ def test_a_finished_songs_routes_by_its_job_id_after_the_next_has_started(finish
     snap = json.loads(get(ctx, f"/api/jobs/{first.id}")[2])
     assert snap["state"] == "done" and snap["events"][-1]["event"] == "result" and snap["kept"] is True
     for path in ("/api/jobs/20000101-000000/results", "/api/jobs/x/results", "/api/jobs/../current/results",
-                 "/api/jobs/20000101-000000/events", f"/api/jobs/{first.id}/nope", f"/api/jobs/{first.id}/preview/x.png",
+                 "/api/jobs/20000101-000000/events", f"/api/jobs/{first.id}/nope",
+                 f"/api/jobs/{first.id}/preview/x.png",
                  f"/api/jobs/{first.id}/art/album.jpg", f"/api/jobs/{first.id}/listen/guitar-expert.ogg"):
         assert get(ctx, path)[0] == 404, path
     # its album art by its own job id too, as the preview and Listen (the v0.5.0 review's tests-3; break: the art's URL
