@@ -32,22 +32,24 @@
   </section>
 
   <section id="drop-screen">
-    <h2>1. Your song</h2>
+    <h2>1. Your songs</h2>
     <div id="drop" class="drop" tabindex="0">
-      <p>Drop a song file here</p>
+      <p>Drop a song file here, or several: they are charted one after the other</p>
       <p class="small">MP3, WAV, FLAC, OGG, Opus, M4A, AAC, WMA or AIFF</p>
-      <label class="button">Choose a file<input id="file" type="file" accept=".mp3,.wav,.flac,.ogg,.opus,.m4a,.aac,.wma,.aiff,.aif" hidden></label>
+      <label class="button">Choose files<input id="file" type="file" accept=".mp3,.wav,.flac,.ogg,.opus,.m4a,.aac,.wma,.aiff,.aif" multiple hidden></label>
     </div>
     <div id="upload" hidden>
       <p id="upload-name"></p>
       <progress id="upload-bar" max="1" value="0"></progress>
     </div>
     <p id="drop-error" class="error" hidden></p>
+    <p id="back-row" class="actions" hidden><button type="button" id="back" class="plain">Back to the chart</button></p>
   </section>
 
   <section id="options-screen" hidden>
     <h2>2. Options</h2>
     <p id="song-name" class="small"></p>
+    <ul id="song-names" class="small" hidden></ul>
     <form id="options" novalidate>
       <div id="choice-box">
         <fieldset id="choice" hidden>
@@ -58,7 +60,7 @@
         <p id="choice-cpu" class="small" hidden></p>
         <p class="actions"><button type="submit" id="chart-top">Chart it</button></p>
       </div>
-      <fieldset>
+      <fieldset id="song-box">
         <legend>Song</legend>
         <label>Title <input name="title" autocomplete="off"></label>
         <label>Artist <input name="artist" autocomplete="off"></label>
@@ -109,6 +111,7 @@
       <details id="lyrics-box" class="fold">
         <summary>Lyrics (optional)</summary>
         <fieldset>
+        <p id="lyrics-wait" class="warn-text" hidden>Lyrics only for a song that starts at once: songcharter keeps pasted lyrics only while it uses them, and this song will wait for the one charting now.</p>
         <label>Paste lyrics <textarea name="lyrics" rows="8" autocomplete="off" spellcheck="false"></textarea></label>
         <p class="small">A line per phrase, a blank line between sections. songcharter times them to the singing; it never looks lyrics up.</p>
         </fieldset>
@@ -148,7 +151,22 @@
       <ol id="stages"></ol>
     </details>
     <ul id="warnings" class="warnings"></ul>
-    <p class="actions"><button type="button" id="cancel" class="danger">Cancel</button></p>
+    <p class="actions"><button type="button" id="cancel" class="danger">Cancel</button> <button type="button" id="pause" class="plain" hidden>Pause after this song</button></p>
+    <div id="add-drop" class="drop strip" tabindex="0">
+      <p>Add songs: drop them here <label class="button plain">Choose files<input id="add-file" type="file" accept=".mp3,.wav,.flac,.ogg,.opus,.m4a,.aac,.wma,.aiff,.aif" multiple hidden></label></p>
+    </div>
+  </section>
+
+  <section id="queue-box" hidden>
+    <h3>Your songs</h3>
+    <div id="queue-paused" class="banner" hidden>
+      <p id="queue-paused-text"></p>
+      <p class="actions"><button type="button" id="carry-on">Carry on</button> <button type="button" id="queue-clear" class="plain">Clear the list</button></p>
+    </div>
+    <p id="queue-left" class="small" hidden></p>
+    <ol id="queue-list" class="queue-list"></ol>
+    <p id="queue-actions" class="actions" hidden><button type="button" id="queue-clear-all" class="plain">Clear the list</button></p>
+    <p id="queue-keep" class="small" hidden>For an evening's queue, leave this tab open in front, or set your PC's sleep to Never: a PC that sleeps stops charting until it wakes. Closing the songcharter window stops the queue; started again, it waits for Carry on.</p>
   </section>
 
   <section id="done-screen" hidden>
@@ -226,7 +244,7 @@
       <summary>What the build reported</summary>
       <pre id="summary"></pre>
     </details>
-    <p class="actions"><button type="button" id="again">Chart another song</button></p>
+    <p class="actions"><button type="button" id="again">Add a song</button></p>
   </section>
 </main>
 <dialog id="lightbox" aria-labelledby="lightbox-title">

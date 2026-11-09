@@ -2587,7 +2587,8 @@ const ctx = { document, window: { addEventListener() {}, confirm: () => true }, 
     if (init && init.method === "POST") posted.push([path, body]);
     if (path === "/api/jobs/current") return { status: 200, json: async () => JSON.parse(JSON.stringify(job)) };
     if (path === "/api/jobs/current/results") return { status: 200, json: async () => RESULTS };
-    if (path === "/api/jobs/current/listen") return { status: 200, json: async () => ({ url: "/l/guitar-expert.ogg" }) };
+    // M8-10: the Done screen names its song by the job id the results gave
+    if (path === "/api/jobs/j1/listen") return { status: 200, json: async () => ({ url: "/l/guitar-expert.ogg" }) };
     if (path === "/api/open") return { status: openAnswer[0], json: async () => openAnswer[1] };
     if (path === "/api/jobs/current/events") return { status: 200, body: { getReader: () => ({
       read: () => new Promise(() => {}) }) } };
@@ -2703,7 +2704,7 @@ const out = {};
   els["listen-level"].value = "hard";   // chosen in the Listen box earlier: Listen here is on Expert
   listenOf(items[0]).on.click({});
   await settle();
-  out.listen = { posted: posted.filter((p) => p[0] === "/api/jobs/current/listen"), at: els["listen-audio"].currentTime,
+  out.listen = { posted: posted.filter((p) => p[0].endsWith("/listen")), at: els["listen-audio"].currentTime,
                  part: els["listen-part"].value, level: els["listen-level"].value, box: els.lightbox.open };
   els["listen-audio"].currentTime = 0;
   els["listen-audio"].on.loadedmetadata();
@@ -2793,10 +2794,10 @@ def test_the_ui_pass_page(tmp_path):
     assert out["closed"] is False
     assert out["overview"] == {"src": "/p/overview.png?job=j1", "prev": True, "open": True, "title": "Overview"}
     assert out["pastEnd"] == [["guitar: gap 9:00.0-9:10.0 (2 measures)"]]
-    assert out["listen"] == {"posted": [["/api/jobs/current/listen", {"part": "guitar", "level": "expert"}]],
+    assert out["listen"] == {"posted": [["/api/jobs/j1/listen", {"part": "guitar", "level": "expert"}]],
                              "at": 59, "part": "guitar", "level": "expert", "box": False}
     assert out["seekAgain"] == 59
-    assert out["opened"] == [["/api/open", {"what": "built"}]] * 2
+    assert out["opened"] == [["/api/open", {"what": "built", "job": "j1"}]] * 2
     assert out["refused"] == {"hidden": False, "text": "A Song's folder is not there any more: it was moved or deleted"}
     assert out["openedLater"] is True   # a later open that works clears the refusal
     assert out["guess"]["form"] is False and out["guess"]["value"] == "C:\\Users\\Made Up\\Documents\\Clone Hero\\Songs"
@@ -3029,3 +3030,208 @@ def test_the_queues_endpoints_are_behind_the_guards(finished, monkeypatch):
     (ctx.home / "doctor.json").write_text(json.dumps({**DOCTOR, "disk": {"home_free_mb": 90000,
                                                                          "windows_c_free_mb": None}}))
     assert ctx.app.disk_low() is None
+
+
+QUEUE_PAGE = r"""
+const vm = require("vm"), fs = require("fs");
+const els = {};
+const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [], value: "",
+  open: false, on: {}, replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); },
+  addEventListener(kind, f) { this.on[kind] = f; }, classList: { add() {}, remove() {}, toggle() {} },
+  removeAttribute() {}, pause() {}, scrollIntoView() {}, click() {} });
+const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node, title: "songcharter",
+  visibilityState: "visible", addEventListener() {} };
+const field = (value) => ({ value, placeholder: "", checked: true, disabled: false, addEventListener() {} });
+const META = ["title", "artist", "album", "year", "genre"];
+els.options = Object.assign(node("form"), { querySelectorAll: () => [],
+  reset() { for (const k of META) this.elements[k].value = ""; this.elements.lyrics.value = ""; },
+  elements: { title: field(""), artist: field(""), album: field(""), year: field(""), genre: field(""),
+    solos: field("labels"), takes: field(""), device: field("auto"), preview: field(""), lyrics: field(""),
+    solo_names: field("") } });
+const locks = [];
+const navigator = { wakeLock: { request: async (type) => { const l = { type, released: false, addEventListener() {},
+  release() { this.released = true; return Promise.resolve(); } }; locks.push(l); return l; } } };
+let xhr = null;
+class XMLHttpRequest {
+  constructor() { this.on = {}; this.upload = { addEventListener() {} }; xhr = this; }
+  open(method, path) { this.path = path; } setRequestHeader() {} send(f) { this.sent = f; }
+  addEventListener(kind, f) { this.on[kind] = f; }
+}
+const EST = { seconds: 200, takes: 1, device: "cpu", low_s: 120, high_s: 300, low_min: 2, high_min: 5 };
+const entry = (id, state, job, extra) => ({ id, run: 1, name: `${id}.mp3`, chart: null, state, job, estimate: EST,
+  error: null, ...extra });
+let queue = { paused: null, run: 1, entries: [], left: null };
+let job = null;
+const posted = [];
+let started = 0;
+const ok = (value) => ({ status: 200, json: async () => JSON.parse(JSON.stringify(value)) });
+const ctx = { document, window: { addEventListener() {}, confirm: () => true }, XMLHttpRequest, encodeURIComponent,
+  console, navigator, setInterval() {}, clearInterval() {}, setTimeout(f) { setImmediate(f); }, TextDecoder,
+  sessionStorage: { setItem() {}, getItem() { return null; } },
+  fetch: async (path, init) => {
+    const body = init && init.body ? JSON.parse(init.body) : null;
+    if (init && init.method === "POST") posted.push([path, body]);
+    if (path === "/api/jobs" && init.method === "POST") {
+      started += 1;
+      return { status: 202, json: async () => (started === 1 ? { job: "j1", state: "charting" } :
+                                                                  { job: null, state: "waiting" }) };
+    }
+    if (path === "/api/queue") return ok(queue);
+    if (path.startsWith("/api/queue/")) return ok(queue);
+    if (path === "/api/jobs/current") return ok(job);
+    if (path === "/api/jobs/j1") return ok({ job: "j1", state: "done", events: [{ event: "result", ok: true,
+      folder: "/h/library/x/Made-Up Band - First", summary: "gate: OK", at: 1100 }] });
+    if (path.endsWith("/results")) return ok({ job: path.split("/")[3], installable: false, preview: { why: "off" },
+      art: null, lyrics: null, listen: null, folder: "/x/y" });
+    if (path.endsWith("/install")) return ok({ installed: "/s", windows_path: null, replaced: null, note: null });
+    if (path === "/api/jobs/current/events") return { status: 200, body: { getReader: () => ({
+      read: () => new Promise(() => {}) }) } };
+    return { status: 404, json: async () => ({}) };
+  } };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(process.argv[2], "utf8"), ctx);
+const settle = async () => { for (let i = 0; i < 60; i++) await new Promise((r) => setImmediate(r)); };
+const rows = () => els["queue-list"].children.map((li) => ({ cls: li.className, name: li.children[0].textContent,
+  state: li.children[2].textContent, buttons: li.children[3].children.map((b) => b.textContent) }));
+const out = {};
+(async () => {
+  // a drop of two songs: uploaded in turn, one shared form
+  ctx.uploadFiles([{ name: "First.mp3" }, { name: "Second.mp3" }]);
+  out.first = els["upload-name"].textContent;
+  xhr.status = 200;
+  xhr.responseText = JSON.stringify({ id: "a".repeat(16), name: "First.mp3", bytes: 2e6, tags: {}, origin: {},
+                                      choices: { gpu: true, best: { ...EST, takes: 4 }, quick: EST } });
+  xhr.on.load();
+  out.second = els["upload-name"].textContent;
+  xhr.status = 200;
+  xhr.responseText = JSON.stringify({ id: "b".repeat(16), name: "Second.mp3", bytes: 3e6, tags: {}, origin: {} });
+  xhr.on.load();
+  out.form = { shown: !els["options-screen"].hidden, names: els["song-names"].children.map((c) => c.textContent),
+    namesHidden: els["song-names"].hidden, song: els["song-box"].hidden, lyrics: els["lyrics-box"].hidden,
+    pictures: els["pictures-box"].hidden, button: els.chart.textContent, best: els["best-label"].textContent,
+    head: els["song-name"].textContent };
+  els.options.elements.title.value = "Not Sent";
+  els.options.elements.lyrics.value = "zorp";
+  out.options = ctx.readOptions();
+  // Chart them: both sent, the first starts, and the page follows it with the list's place in the title
+  queue = { paused: null, run: 1, entries: [entry("a", "charting", "j1"), entry("b", "waiting", null)],
+            left: { low_s: 4200, high_s: 12000, songs: 2 } };
+  job = { job: "j1", state: "running", upload: { name: "First.mp3" }, started: 1000, now: 1000, estimate: EST };
+  await ctx.chartIt({ preventDefault() {} });
+  await settle();
+  out.sent = posted.filter((p) => p[0] === "/api/jobs").map((p) => p[1].upload.slice(0, 1));
+  out.running = { title: document.title, locks: locks.length, rows: rows(), left: els["queue-left"].textContent,
+    keep: els["queue-keep"].hidden, pause: els.pause.hidden, box: els["queue-box"].hidden };
+  ctx.handle({ event: "take", index: 3, count: 4, seed: 3 });
+  out.take = document.title;
+  // the update notice is held while a song waits, as while one charts
+  vm.runInContext("state.later = false", ctx);
+  ctx.renderUpdate({ version: "9.9.9", line: "x", url: "https://example.invalid" }, "0.1.0");
+  out.update = els.update.hidden;
+  // the first ends: the server starts the second; the page follows it, the screen kept awake
+  queue = { ...queue, entries: [entry("a", "ready", "j1", { chart: "Made-Up Band - First" }),
+                                 entry("b", "charting", "j2")] };
+  job = { ...job, job: "j2", upload: { name: "Second.mp3" }, started: 1200 };
+  ctx.handle({ event: "result", ok: true, folder: "/h/library/x/Made-Up Band - First", summary: "gate: OK",
+               at: 1100 });
+  await settle();
+  out.next = { title: document.title, followed: vm.runInContext("state.job.job", ctx), released: locks[0].released,
+    locks: locks.length, done: els["done-screen"].hidden, rows: rows() };
+  // Look at the first while the second charts: its own Done screen, by its job id; Install from it, and from the list
+  await ctx.look("j1");
+  await settle();
+  out.look = { title: els["done-title"].textContent, done: els["done-screen"].hidden, shown:
+    vm.runInContext("state.shown", ctx), again: els.again.textContent, running: vm.runInContext("state.running", ctx) };
+  await ctx.install(false);
+  const msg = node("span");
+  await ctx.installFrom({ job: "j1", name: "a.mp3" }, msg);
+  out.installs = posted.filter((p) => p[0].endsWith("/install")).map((p) => p[0]);
+  out.installMsg = msg.textContent;
+  ctx.again();   // back to the chart
+  out.back = { done: els["done-screen"].hidden, progress: els["progress-screen"].hidden };
+  // the second ends, nothing waits: the Done screen, the lock let go, the title counts the evening
+  queue = { ...queue, entries: [queue.entries[0], entry("b", "not_finished", "j2", { error: "it broke" })],
+            left: null };
+  ctx.handle({ event: "error", kind: "tool", message: "it broke\nmore", at: 1300 });
+  await settle();
+  out.end = { title: document.title, released: locks[0].released, done: els["done-screen"].hidden,
+              rows: rows(), keep: els["queue-keep"].hidden, actions: els["queue-actions"].hidden };
+  // a restart with three songs waiting: paused, with Carry on and Clear the list
+  ctx.setQueue({ paused: "restart", restarted: 3, run: 2, left: { low_s: 600, high_s: 1500, songs: 3 },
+                 entries: ["c", "d", "e"].map((x) => ({ ...entry(x, "waiting", null), run: 2 })) });
+  out.restart = { text: els["queue-paused-text"].textContent, banner: els["queue-paused"].hidden,
+    clear: els["queue-clear"].hidden, left: els["queue-left"].textContent, actions: els["queue-actions"].hidden };
+  await ctx.carryOn();
+  await ctx.clearList();
+  out.queuePosts = posted.filter((p) => p[0].startsWith("/api/queue/")).map((p) => p[0]);
+  ctx.setQueue({ ...queue, paused: "failures", entries: [entry("f", "waiting", null)] });
+  out.failures = els["queue-paused-text"].textContent;
+  ctx.setQueue({ ...queue, paused: "disk", why: "C: is nearly full (under 6 GB free), so the queue is paused: free some space, then Carry on", entries: [entry("f", "waiting", null)] });
+  out.disk = els["queue-paused-text"].textContent;
+  // a song that waits for the one charting gets no lyrics: said beside the box
+  ctx.setQueue({ ...queue, paused: null, entries: [entry("g", "charting", "j9")] });
+  ctx.fillOptions({ name: "One.mp3", bytes: 1e6, tags: {}, origin: {} });
+  out.lyrics = { wait: els["lyrics-wait"].hidden, disabled: els.options.elements.lyrics.disabled,
+                 song: els["song-box"].hidden, button: els.chart.textContent };
+  out.hours = [5, 59, 60, 70, 200].map(ctx.hoursMinutes);
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_page_queues_several_songs_and_follows_them_one_after_the_other(tmp_path):
+    """M8-10 (app.js in node with a stand-in DOM): a drop of two songs uploads them in turn into one shared form (no
+    Song fields, lyrics or pictures, each song's own tags); Chart them sends both, follows the first with "1 of 2" in
+    the tab's title, the whole queue's estimate and the keep-awake line, and holds the update notice while a song
+    waits; when the first ends the page follows the second, the wake lock kept; Look shows the first's own Done
+    screen by its job id while the second charts, and Install works from it and from the list; at the end, the
+    title counts the evening and the lock goes. A restart's pause, the failures' and the disk's say so, with Carry
+    on and Clear the list; a song that would wait gets no lyrics, said beside the box."""
+    script = tmp_path / "queue.cjs"
+    script.write_text(QUEUE_PAGE, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(S.static_files()["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["first"] == "Uploading First.mp3 (1 of 2)…" and out["second"] == "Uploading Second.mp3 (2 of 2)…"
+    assert out["form"] == {"shown": True, "names": ["First.mp3 (2.0 MB)", "Second.mp3 (3.0 MB)"],
+                           "namesHidden": False, "song": True, "lyrics": True, "pictures": True,
+                           "button": "Chart them", "best": "Best charts (4 guitar takes)",
+                           "head": "2 songs, charted one after the other with these options:"}
+    assert "title" not in out["options"] and "lyrics" not in out["options"] and out["options"]["device"] == "auto"
+    assert out["sent"] == ["a", "b"]
+    assert out["running"] == {"title": "1 of 2: Charting - songcharter", "locks": 1, "left":
+                              "All 2 songs: about 1 h 10 min to 3 h 20 min more", "keep": False, "pause": False,
+                              "box": False, "rows": [
+                                  {"cls": "charting", "name": "a.mp3", "state": "Charting now", "buttons": []},
+                                  {"cls": "waiting", "name": "b.mp3", "buttons": ["Remove"],
+                                   "state": "Waiting (usually about 2 to 5 minutes)"}]}
+    assert out["take"] == "1 of 2: Guitar: take 3 of 4 - songcharter" and out["update"] is True
+    assert out["next"] == {"title": "2 of 2: Charting - songcharter", "followed": "j2", "released": False,
+                           "locks": 1, "done": True, "rows": [
+                               {"cls": "ready", "name": "Made-Up Band - First", "state": "Ready",
+                                "buttons": ["Install", "Look"]},
+                               {"cls": "charting", "name": "b.mp3", "state": "Charting now", "buttons": []}]}
+    assert out["look"] == {"title": "Ready", "done": False, "shown": "j1", "again": "Back to the chart",
+                           "running": True}
+    assert out["installs"] == ["/api/jobs/j1/install", "/api/jobs/j1/install"]
+    assert out["installMsg"] == "Installed. In Clone Hero, open Settings > General and press Scan Songs."
+    assert out["back"] == {"done": True, "progress": False}
+    assert out["end"]["title"] == "1 ready, 1 did not finish - songcharter" and out["end"]["released"] is True
+    assert out["end"]["done"] is False and out["end"]["keep"] is True and out["end"]["actions"] is False
+    assert out["end"]["rows"][1]["state"] == "Did not finish: it broke" and out["end"]["rows"][1]["buttons"] == ["Look"]
+    assert out["restart"] == {"text": "3 songs were waiting when songcharter closed. Carry on charts them; Clear the "
+                              "list lets them go.", "banner": False, "clear": False, "actions": True,
+                              "left": "All 3 songs: about 10 min to 25 min more"}
+    assert out["queuePosts"] == ["/api/queue/carry-on", "/api/queue/clear"]
+    assert out["failures"] == ("Two songs in a row did not finish, so the queue is paused: see why with Look. Carry "
+                               "on tries the rest.")
+    assert out["disk"].startswith("C: is nearly full")
+    assert out["lyrics"] == {"wait": False, "disabled": True, "song": False, "button": "Chart it"}
+    assert out["hours"] == ["5 min", "59 min", "1 h", "1 h 10 min", "3 h 20 min"]
+    html = S.static_files()["index.html"].decode()
+    assert 'multiple hidden></label>' in html and html.count(' multiple hidden>') == 2   # the drop zone and Add songs
+    assert html.index('id="progress-screen"') < html.index('id="queue-box"') < html.index('id="done-screen"')
+    assert '<button type="button" id="again">Add a song</button>' in html
