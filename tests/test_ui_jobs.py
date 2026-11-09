@@ -586,19 +586,21 @@ def test_two_songs_in_a_row_that_do_not_finish_pause_the_queue(queued):
     """A failed check is a finished chart; two songs in a row that do not finish (exit 2, or one that cannot start)
     pause the queue with the rest waiting; Carry on goes on."""
     queued.add("hang")
-    for mode in ("dies", "check", "dies", "dies", "ok"):
+    for mode in ("dies", "check", "dies"):
         queued.add(mode)
-    queued.add("ok", uid="gone000000000000")
+    queued.add("ok", uid="gone000000000000")   # cannot start: its file is gone
+    queued.add("ok")
+    queued.add("dies")
     assert queued.queue.snapshot()["entries"][0]["state"] == "charting"
     queued.queue.jobs.cancel()
     snap = settled(queued.queue)
     assert [e["state"] for e in snap["entries"]] == ["cancelled", "not_finished", "check_failed", "not_finished",
                                                      "not_finished", "waiting", "waiting"]
     assert snap["paused"] == "failures" and snap["entries"][1]["error"] == "out of memory, say"
+    assert snap["entries"][4]["error"] == "Gone.mp3 is not there any more: drop it again"
     queued.queue.carry_on()
     snap = settled(queued.queue)
     assert [e["state"] for e in snap["entries"][5:]] == ["ready", "not_finished"]
-    assert snap["entries"][6]["error"] == "Gone.mp3 is not there any more: drop it again"
     assert snap["paused"] is None   # nothing waits: nothing to pause
 
 
@@ -684,6 +686,19 @@ def test_a_broken_queue_json_starts_an_empty_list(queued):
         assert q.entries == [] and q.paused is None
 
 
+def test_a_crash_leaves_the_charting_song_waiting(queued):
+    """A server killed outright (no shutdown) leaves "charting" in queue.json: read back, the song waits at the top,
+    and the queue is paused."""
+    path = J.queue_path(queued.home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"run": 4, "entries": [
+        {"id": "e1", "run": 4, "state": "charting", "job": "20000101-000000", "upload": {"id": "a" * 16},
+         "options": {}}, {"id": "e2", "run": 4, "state": "waiting", "upload": {"id": "b" * 16}, "options": {}}]}))
+    q = queued.make()
+    assert [(e["state"], e.get("job")) for e in q.entries] == [("waiting", None), ("waiting", None)]
+    assert q.paused == "restart" and q.restarted == 2 and q.run == 4
+
+
 def test_the_whole_queues_time_left(queued):
     """The waiting songs' ranges summed, with the charting song's range less the time it has run (at least 0);
     None with a song that has no estimate."""
@@ -691,9 +706,10 @@ def test_the_whole_queues_time_left(queued):
     queued.add("hang", est)
     queued.add("ok", est)
     queued.add("ok", {**est, "low_s": 50.0, "high_s": 60.0})
+    time.sleep(3)
     left = queued.queue.snapshot()["left"]
     ran = time.time() - queued.queue.jobs.current.started
-    assert left["songs"] == 3 and abs(left["high_s"] - (360 + 300 - ran)) <= 2 and abs(left["low_s"] - (250 - ran)) <= 2
+    assert left["songs"] == 3 and abs(left["high_s"] - (360 + 300 - ran)) <= 1 and abs(left["low_s"] - (250 - ran)) <= 1
     queued.add("ok")
     assert queued.queue.snapshot()["left"] is None
 

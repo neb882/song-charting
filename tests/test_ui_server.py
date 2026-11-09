@@ -3159,8 +3159,10 @@ const out = {};
   // a restart with three songs waiting: paused, with Carry on and Clear the list
   ctx.setQueue({ paused: "restart", restarted: 3, run: 2, left: { low_s: 600, high_s: 1500, songs: 3 },
                  entries: ["c", "d", "e"].map((x) => ({ ...entry(x, "waiting", null), run: 2 })) });
+  ctx.renderUpdate({ version: "9.9.9", line: "x", url: "https://example.invalid" }, "0.1.0");   // songs wait
   out.restart = { text: els["queue-paused-text"].textContent, banner: els["queue-paused"].hidden,
-    clear: els["queue-clear"].hidden, left: els["queue-left"].textContent, actions: els["queue-actions"].hidden };
+    clear: els["queue-clear"].hidden, left: els["queue-left"].textContent, actions: els["queue-actions"].hidden,
+    update: els.update.hidden, running: vm.runInContext("state.running", ctx) };
   await ctx.carryOn();
   await ctx.clearList();
   out.queuePosts = posted.filter((p) => p[0].startsWith("/api/queue/")).map((p) => p[0]);
@@ -3224,7 +3226,7 @@ def test_the_page_queues_several_songs_and_follows_them_one_after_the_other(tmp_
     assert out["end"]["rows"][1]["state"] == "Did not finish: it broke" and out["end"]["rows"][1]["buttons"] == ["Look"]
     assert out["restart"] == {"text": "3 songs were waiting when songcharter closed. Carry on charts them; Clear the "
                               "list lets them go.", "banner": False, "clear": False, "actions": True,
-                              "left": "All 3 songs: about 10 min to 25 min more"}
+                              "left": "All 3 songs: about 10 min to 25 min more", "update": True, "running": False}
     assert out["queuePosts"] == ["/api/queue/carry-on", "/api/queue/clear"]
     assert out["failures"] == ("Two songs in a row did not finish, so the queue is paused: see why with Look. Carry "
                                "on tries the rest.")
