@@ -3122,6 +3122,60 @@ def test_a_finished_songs_routes_by_its_job_id_after_the_next_has_started(finish
     assert [e["state"] for e in again.queue.snapshot()["entries"]] == ["ready", "ready"]
 
 
+def test_a_look_open_on_a_song_the_list_has_dropped_keeps_working(finished, tmp_path, monkeypatch):
+    """The v0.5.0 review's correct-1: song A's Done screen (Look) is open by A's job id; Clear the list (or the trim)
+    takes A out of the list. Its results, preview, album art, snapshot, Install, the zip, Open folder and Listen by
+    A's id still answer, through its chart in the library (the server's own record of A's folder, never a path from
+    the page), named by A's id; an id that was never a job's stays 404, and a chart deleted since is said gone by its
+    name (break: Handler._job without Queue.dropped_chart: 404 and "no finished chart yet")."""
+    from songcharter import cache, wsl
+    ctx = finished
+    root = tmp_path / "cache"
+    monkeypatch.setattr(ctx.app, "_cache_root", root)
+    songs = tmp_path / "Songs"
+    songs.mkdir()
+    assert post(ctx, "/api/clonehero", {"folder": str(songs)})[0] == 200
+    first = ctx.run()
+    work = root / "work" / f"song-{first.upload['id']}"   # its work folder in the cache, as a real chart's is
+    work.mkdir(parents=True)
+    cache.mark(work, Path("s.wav"), first.upload["id"], None)
+    (work / "preview").mkdir()
+    (work / "preview" / "overview.png").write_bytes(b"\x89PNG\r\n\x1a\nmade-up")
+    (work / "pipeline.json").write_text(json.dumps({"assemble": {"folder": str(first.out), "ok": True},
+                                                    "preview": {"ok": True, "flags": [], "remarks": []}}))
+    (first.out / "album.jpg").write_bytes(b"\xff\xd8\xffmade-up")
+    listen_chart(first.out)
+    status, ctx.upload = upload(ctx, song(tmp_path / "t.wav", 2.0), "Other Song.wav")
+    second = ctx.run()
+    assert post(ctx, "/api/queue/clear")[0] == 200 and ctx.app.queue.snapshot()["entries"] == []
+    assert ctx.app.queue.job(first.id) is None   # out of the list
+    status, _, body = get(ctx, f"/api/jobs/{first.id}/results")
+    res = json.loads(body)
+    assert status == 200 and res["job"] == first.id and res["folder"] == str(first.out) and res["installable"]
+    assert res["preview"]["overview"] == f"/api/jobs/{first.id}/preview/overview.png"
+    assert get(ctx, res["preview"]["overview"])[2] == b"\x89PNG\r\n\x1a\nmade-up"
+    assert res["art"]["album_art"] == f"/api/jobs/{first.id}/art/album.jpg"
+    assert get(ctx, res["art"]["album_art"])[2] == b"\xff\xd8\xffmade-up"
+    snap = json.loads(get(ctx, f"/api/jobs/{first.id}")[2])
+    assert snap["job"] == first.id and snap["events"][-1]["folder"] == str(first.out)
+    status, answer = post(ctx, f"/api/jobs/{first.id}/install", {"replace": False})
+    assert status == 200 and answer["installed"] == str(songs / first.out.name)
+    assert post(ctx, f"/api/jobs/{first.id}/export/zip")[0] == 200
+    monkeypatch.setattr(wsl, "open_url", lambda url: True)
+    status, answer = post(ctx, "/api/open", {"what": "built", "job": first.id})
+    assert status == 200 and answer["path"] == str(first.out)
+    status, answer = post(ctx, f"/api/jobs/{first.id}/listen", {"part": "guitar", "level": "expert"})
+    assert status == 200 and answer["url"] == f"/api/jobs/{first.id}/listen/guitar-expert.ogg", answer
+    assert get(ctx, answer["url"])[2][:4] == b"OggS"
+    assert json.loads(get(ctx, "/api/jobs/current/results")[2])["folder"] == str(second.out)   # current unchanged
+    assert get(ctx, "/api/jobs/20000101-000000/results")[0] == 404   # never a job's: as before
+    shutil.rmtree(first.out)   # deleted in Windows since: said by its name, as for a library chart
+    status, answer = post(ctx, f"/api/jobs/{first.id}/install", {"replace": True})
+    assert status == 400 and answer["error"] == (f"{first.out.name}'s folder is not there any more: it was moved or "
+                                                 "deleted")
+    assert get(ctx, f"/api/jobs/{first.id}/results")[0] == 404
+
+
 def test_the_queues_endpoints_are_behind_the_guards(finished, monkeypatch):
     """Every new endpoint answers only as 127.0.0.1 or localhost, and every POST needs X-Songcharter: 1 and this
     page's Origin: refused, nothing changes; with them, each answers."""

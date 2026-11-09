@@ -88,8 +88,11 @@ Nothing is downloaded or installed; charting never waits for it.
     charting song only, and the next starts.
   * **By job id** (M8-10): every route below on "current" also takes a job's id (/api/jobs/<yyyyMMdd-HHmmss[-n]>/...,
     JOB_PATH), for a finished song's Done screen once the next has started: the current job, or the queue's record
-    of a finished one (jobs.Kept, from queue.json after a restart too); GET /api/jobs/<id> is its snapshot, with
-    its closing event. The results' URLs name the job as the request did. The events are the current job's only;
+    of a finished one (jobs.Kept, from queue.json after a restart too), or, once the list has dropped it (Clear the
+    list, Remove, the trim), its chart in the library (jobs.Queue.dropped_chart: the server's own record of its
+    result's folder, for the server's life; never a path from the page), named by its job id, so a Look still open
+    on it keeps working; GET /api/jobs/<id> is its snapshot, with its closing event. The results' URLs name the job
+    as the request did. The events are the current job's only;
     POST /api/jobs/<id>/cancel cancels only while that job is the running one (409 "that chart has ended"
     otherwise: a Cancel confirmed after its song ended never reaches the next, M8-10's review S-S1). POST
     /api/open {"what": "built", "job"} opens that job's folder.
@@ -463,10 +466,11 @@ class App:
         """GET /api/library (the module docstring)."""
         return {"charts": library(self.home, self.work_root())}
 
-    def chart(self, chart_id: str) -> Charted | None:
-        """The library's chart of that id, or None."""
+    def chart(self, chart_id: str, job_id: str | None = None) -> Charted | None:
+        """The library's chart of that id, or None; named by `job_id` when it was found through that job (a finished
+        song the queue's list has dropped)."""
         folder = find_chart(self.home, chart_id)
-        return None if folder is None else Charted(folder, self.work_root())
+        return None if folder is None else Charted(folder, self.work_root(), job_id)
 
 
 # ------------------------------------------------------------------------------------------------ uploads
@@ -777,14 +781,23 @@ class Handler(BaseHTTPRequestHandler):
     # --- the queue (M8-10)
     def _job(self, ref: str, gone: bool = False):
         """The job a route names: the current one, a finished song's by its id (Queue.job), or a library chart's
-        (M8-13: App.chart); None for none. `gone`: a library id whose folder is not among the library's any more (the
-        list read before it was deleted in Windows) is Refused(400) in M8-04's words, by its folder's name."""
+        (M8-13: App.chart); None for none. A finished song the list has dropped (Clear the list, the trim) is found
+        by its job id through its chart in the library (Queue.dropped_chart: the server's own record of its result's
+        folder, never a path from the page), as that job id, so a Look still open on it keeps working (the v0.5.0
+        review's correct-1). `gone`: a library id whose folder is not among the library's any more (the list read
+        before it was deleted in Windows) is Refused(400) in M8-04's words, by its folder's name."""
         if ref == "current":
             return self.app.jobs.current
-        m = LIBRARY_ID.match(ref)
+        m, as_job = LIBRARY_ID.match(ref), None
         if m is None:
-            return self.app.queue.job(ref)
-        chart = self.app.chart(ref)
+            job = self.app.queue.job(ref)
+            dropped = self.app.queue.dropped_chart(ref) if job is None else None
+            if dropped is None:
+                return job
+            ref, m, as_job = dropped, LIBRARY_ID.match(dropped), ref
+            if m is None:
+                return None
+        chart = self.app.chart(ref, as_job)
         if chart is None and gone:
             name = m[2][:-len(".failed")] if m[2].endswith(".failed") else m[2]
             raise Refused(400, f"{name}'s folder is not there any more: it was moved or deleted")
