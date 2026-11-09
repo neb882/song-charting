@@ -48,12 +48,23 @@
     process group at a time. `Jobs.on_end` (on a thread of its own) tells it a job has ended, and it starts the next
     waiting song; <home>/state/queue.json keeps the list (no lyrics), and after a restart the queue waits for Carry
     on.
+  * **The library** (M8-13, "Your charts", DESIGN.md 4.5): every chart the page has made stays in
+    <home>/library/<16 hex>/<name>/ with its report.json, and `library` reads them all, newest first (report.json's
+    time), for the page's list: the song.ini's name and artist, the gate's verdict, the audio (one file or split,
+    M8-12), whether the stems were saved beside it, and whether Look can show it (`look`: the song's work folder is
+    still in the cache, cache.by_key by the upload's 16 hex, the song file's key, and its pipeline.json says its last
+    chart is this folder). A folder whose report.json cannot be read is listed by its name (`readable` false), never
+    hidden; one without a report.json is not a chart. A chart's id is `<16 hex>:<its folder's name>` (`LIBRARY_ID`),
+    looked up among the folders the library holds (`find_chart`), never made into a path; `Charted` is a chart as the
+    routes by id take it (a `result` made from its folder), so Install, Open, the stems' zip and Look are the queue's
+    own routes. Nothing here deletes a chart.
 """
 from __future__ import annotations
 
 import glob
 import json
 import os
+import re
 import secrets
 import shutil
 import signal
@@ -931,3 +942,156 @@ class Queue:
         finished = [e for e in self.entries if e["state"] in FINISHED]
         for e in finished[:max(0, len(finished) - KEEP_FINISHED)]:
             self.entries.remove(e)
+
+
+# ------------------------------------------------------------------------------------------------ the library (M8-13)
+
+LIBRARY = "library"                # <home>/library: every chart the page has made (output_folder)
+UPLOAD_HEX = re.compile(r"^[0-9a-f]{16}$")   # a library folder's upload: cache.KEY_HEX hex characters
+LIBRARY_ID = re.compile(r"^([0-9a-f]{16}):([^/\\\x00]+)$")   # a chart's id: its upload's 16 hex and its folder's name
+FAILED = ".failed"                 # pipeline.failed_folder's suffix: a build the gate failed, kept for a look
+STEMS_SUFFIX = " (stems)"          # pipeline.STEMS_SUFFIX (not imported: the pipeline is the child's)
+SPLIT_FILES = ("guitar.ogg", "bass.ogg", "drums.ogg")   # package.SPLIT_PARTS' own files (M8-12)
+
+
+def chart_folders(home: Path) -> list[Path]:
+    """The library's charts: <home>/library/<16 hex>/<name>/ folders that hold a report.json (readable or not); not
+    a hidden one (assemble's .partial staging), not a link."""
+    found = []
+    try:
+        uploads = sorted((home / LIBRARY).iterdir()) if (home / LIBRARY).is_dir() else []
+    except OSError:
+        return []
+    for up in uploads:
+        if not UPLOAD_HEX.match(up.name) or up.is_symlink() or not up.is_dir():
+            continue
+        try:
+            folders = sorted(up.iterdir())
+        except OSError:
+            continue
+        found += [f for f in folders if not f.name.startswith(".") and not f.is_symlink() and f.is_dir()
+                  and (f / "report.json").is_file()]
+    return found
+
+
+def chart_id(folder: Path) -> str:
+    """A library chart's id: `<its upload's 16 hex>:<its folder's name>` (a name has no ":", cache.safe_name)."""
+    return f"{folder.parent.name}:{folder.name}"
+
+
+def find_chart(home: Path, chart: Any) -> Path | None:
+    """The library folder of that id, found among the folders the library holds (no path is made from the id); None
+    for anything else."""
+    if not isinstance(chart, str) or not LIBRARY_ID.match(chart):
+        return None
+    return next((f for f in chart_folders(home) if chart_id(f) == chart), None)
+
+
+def _song_ini(folder: Path) -> dict[str, str]:
+    """song.ini's [song] values by their lower-case keys; {} when it cannot be read."""
+    try:
+        lines = (folder / "song.ini").read_text(encoding="utf-8-sig", errors="replace").splitlines()
+    except OSError:
+        return {}
+    out, section = {}, None
+    for line in (x.strip() for x in lines):
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip().lower()
+        elif "=" in line and section == "song":
+            key, _, value = line.partition("=")
+            out[key.strip().lower()] = value.strip()
+    return out
+
+
+def _stems(folder: Path) -> Path | None:
+    """The stems saved beside the song folder (pipeline.stems_folder: "<its name, without .failed> (stems)"), when
+    that folder holds .flac files; else None."""
+    base = folder.name[:-len(FAILED)] if folder.name.endswith(FAILED) else folder.name
+    stems = folder.with_name(base + STEMS_SUFFIX)
+    try:
+        return stems if stems.is_dir() and not stems.is_symlink() and any(stems.glob("*.flac")) else None
+    except OSError:
+        return None
+
+
+def _work(folder: Path, root: Path | None) -> tuple[Path | None, dict]:
+    """The song's work folder in the cache (cache.by_key, by the upload's 16 hex: the song file's key) and its
+    pipeline.json, when that record's last chart is this folder (a chart of the same song with other options, made
+    later, has the work folder now); else (None, {})."""
+    if root is None:
+        return None, {}
+    try:
+        work = cache.by_key(root, folder.parent.name)
+        if work is None:
+            return None, {}
+        record = json.loads((work / "pipeline.json").read_text(encoding="utf-8"))
+        made = Path(str(record["assemble"]["folder"]))
+        same = made.resolve() == folder.resolve()
+    except (OSError, ValueError, KeyError, TypeError):
+        return None, {}
+    return (work, record) if same else (None, {})
+
+
+def read_chart(folder: Path, root: Path | None) -> dict:
+    """One chart of the library as GET /api/library lists it: {"id", "folder" (its folder's name), "name", "artist"
+    (song.ini's; the folder's name when it has none), "time" (report.json's, seconds), "readable" (report.json read,
+    with its gate), "ok" (the gate passed: Install), "audio" ("one", "split" or null), "stems" (saved beside it),
+    "look" (the work folder is still in the cache: the preview and Listen)}."""
+    base = folder.name[:-len(FAILED)] if folder.name.endswith(FAILED) else folder.name
+    try:
+        when = (folder / "report.json").stat().st_mtime
+    except OSError:
+        when = None
+    try:
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        report = None
+    gate = report.get("gate") if isinstance(report, dict) else None
+    readable = isinstance(gate, dict) and isinstance(gate.get("ok"), bool)
+    ini = _song_ini(folder)
+    files = report.get("audio_files") if isinstance(report, dict) else None
+    if isinstance(files, list) and files:   # M8-12's record of the files it wrote
+        audio = "split" if len(files) > 1 else "one"
+    else:   # an earlier build's, or no report: the files there
+        audio = ("split" if any((folder / f).is_file() for f in SPLIT_FILES) else
+                 "one" if (folder / "song.ogg").is_file() else None)
+    return {"id": chart_id(folder), "folder": folder.name, "name": ini.get("name") or base,
+            "artist": ini.get("artist") or None, "time": when, "readable": readable,
+            "ok": readable and gate["ok"] is True and not folder.name.endswith(FAILED), "audio": audio,
+            "stems": _stems(folder) is not None, "look": _work(folder, root)[0] is not None}
+
+
+def library(home: Path, root: Path | None) -> list[dict]:
+    """Every chart of the library (read_chart), newest first; one without a time last."""
+    charts = [read_chart(f, root) for f in chart_folders(home)]
+    return sorted(charts, key=lambda c: (c["time"] is None, -(c["time"] or 0), c["id"]))
+
+
+class Charted:
+    """A chart of the library as the routes by id take it (M8-13): its id, and a `result` made from its folder (the
+    gate's verdict, the stems beside it, and the work folder and its preview while the cache keeps them), so Install,
+    Open, the zips, the results and Listen are the queue's own routes."""
+
+    def __init__(self, folder: Path, root: Path | None):
+        self.folder = folder
+        self.id = chart_id(folder)
+        self.state = "done"
+        self.info = read_chart(folder, root)
+        self.work, self.record = _work(folder, root)
+
+    def result(self) -> dict:
+        ok = self.info["ok"]
+        preview = self.record.get("preview") if isinstance(self.record.get("preview"), dict) else {}
+        stems = _stems(self.folder)
+        return {"event": "result", "ok": ok, "exit": 0 if ok else 1, "folder": str(self.folder),
+                "work": str(self.work) if self.work is not None else None,
+                "preview": str(self.work / "preview") if self.work is not None and preview.get("ok") else None,
+                "stems": str(stems) if stems is not None else None, "summary": None}
+
+    def snapshot(self, events: bool = True) -> dict:
+        out = {"job": self.id, "state": self.state, "upload": {"id": self.folder.parent.name, "name": None},
+               "options": {}, "started": None, "ended": self.info["time"], "exit": 0 if self.info["ok"] else 1,
+               "now": time.time(), "estimate": None, "remaining": None, "kept": True, "library": True}
+        if events:
+            out["events"] = [self.result()]
+        return out

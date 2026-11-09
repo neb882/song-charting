@@ -93,6 +93,14 @@ Nothing is downloaded or installed; charting never waits for it.
     POST /api/jobs/<id>/cancel cancels only while that job is the running one (409 "that chart has ended"
     otherwise: a Cancel confirmed after its song ended never reaches the next, M8-10's review S-S1). POST
     /api/open {"what": "built", "job"} opens that job's folder.
+  * **Your charts** (M8-13, DESIGN.md 4.5): GET /api/library: {"charts"}, every chart in <home>/library newest first
+    (jobs.library: {"id", "folder", "name", "artist", "time", "readable", "ok", "audio", "stems", "look"}). A chart's
+    id (`<16 hex>:<its folder's name>`, jobs.LIBRARY_ID, percent-encoded in a URL) is a job id too: the routes by id
+    take it (jobs.Charted, looked up among the library's folders, never made into a path), so the list's Install
+    (/install, its 409 as for a job), Open (/api/open {"what": "built", "job": <its id>}), Download the stems
+    (/export/stems) and Look (GET /api/jobs/<id> and its /results, the preview and Listen, while its work folder is
+    in the cache) are the queue's own routes behind the same guards. POST /api/open's `job`, when given, must be
+    one of these ids (400 otherwise: never a path). Nothing deletes a chart.
 
 **After the build** (M4-06). The routes on "the chart" use the job's `result` event (the current one's, or by id); those that export or
 install need one that passed its gate (else 400): a .failed folder is for a look, not for Clone Hero. A job whose
@@ -182,8 +190,8 @@ from ..errors import InputError, ToolError
 from ..timed import DIFFICULTIES, INSTRUMENTS
 from . import estimate
 from . import home as default_home
-from .jobs import (CLOSING, ChartOptions, Jobs, JobRunning, NotInQueue, NotRunning, Queue, QueueFull, parse_options,
-                   queued_uploads)
+from .jobs import (CLOSING, LIBRARY_ID, ChartOptions, Charted, Jobs, JobRunning, NotInQueue, NotRunning, Queue,
+                   QueueFull, find_chart, library, parse_options, queued_uploads)
 
 APP = "songcharter"
 PORTS = range(8765, 8785)          # 8765-8784
@@ -215,8 +223,11 @@ FLAG_AT = re.compile(r"^(?P<part>[a-z]+): [^0-9]+? (?P<m>\d+):(?P<s>\d{2}(?:\.\d
 IMAGE_OPTIONS = {"album_art": "album art", "background": "background image"}   # the options that name an image upload
 ART_FILES = (ART.ALBUM,)           # GET /api/jobs/current/art/<name>: only these
 RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")   # one byte range (the audio player's); anything else: the whole file
-# /api/jobs/<current or a job's id, jobs._log_path's yyyyMMdd-HHmmss[-n]>[/<the rest>] (M8-10)
-JOB_PATH = re.compile(r"^/api/jobs/(current|\d{8}-\d{6}(?:-\d{1,4})?)(/.*)?$")
+# /api/jobs/<current or a job's id, jobs._log_path's yyyyMMdd-HHmmss[-n], or a library chart's (M8-13: <16 hex>:<name>,
+# percent-encoded)>[/<the rest>] (M8-10)
+JOB_PATH = re.compile(r"^/api/jobs/(current|\d{8}-\d{6}(?:-\d{1,4})?|[0-9a-f]{16}(?::|%3[Aa])[^/]+)(/.*)?$")
+# a job's id as a request's body names it: the current one, a job's, or a library chart's (M8-13)
+JOB_REF = re.compile(r"^(?:current|\d{8}-\d{6}(?:-\d{1,4})?)$")
 
 
 def console_line(text: str) -> None:
@@ -262,8 +273,10 @@ class App:
 
     def __init__(self, home: Path, jobs: Jobs | None = None, log: Log | None = None,
                  report: Callable[[], dict] = lambda: device.report(full=False),
-                 updates: Callable[[Callable[[str], None]], dict | None] | None = None):
+                 updates: Callable[[Callable[[str], None]], dict | None] | None = None,
+                 cache_root: Path | None = None):
         self.home = Path(home)
+        self._cache_root = cache_root          # the charts' work folders: cache.cache_root() when None (M8-13)
         self.log = log or Log()
         self.jobs = jobs or Jobs(self.home, log=self.log)
         self.token = secrets.token_hex(8)
@@ -439,6 +452,21 @@ class App:
 
     def auto_device(self) -> str | None:
         return (self.doctor().get("device") or {}).get("chosen")
+
+    # --- your charts (M8-13)
+    def work_root(self) -> Path:
+        """Where the charts' work folders are: the charts this server starts use cache.cache_root() too (its
+        environment is theirs)."""
+        return Path(self._cache_root if self._cache_root is not None else cache.cache_root()).expanduser()
+
+    def library(self) -> dict:
+        """GET /api/library (the module docstring)."""
+        return {"charts": library(self.home, self.work_root())}
+
+    def chart(self, chart_id: str) -> Charted | None:
+        """The library's chart of that id, or None."""
+        folder = find_chart(self.home, chart_id)
+        return None if folder is None else Charted(folder, self.work_root())
 
 
 # ------------------------------------------------------------------------------------------------ uploads
@@ -626,9 +654,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, app.status())
         if path == "/api/queue":
             return self._json(200, app.queue.snapshot())
+        if path == "/api/library":
+            return self._json(200, app.library())
         m = JOB_PATH.match(path)
         if m:
-            ref, rest = m[1], m[2] or ""
+            ref, rest = unquote(m[1]), m[2] or ""
             if ref == "current" and rest == "/events":
                 return self._events()
             job = self._job(ref)
@@ -637,7 +667,7 @@ class Handler(BaseHTTPRequestHandler):
             if rest == "":
                 return self._json(200, job.snapshot())
             if rest == "/results":
-                return self._json(200, results(job, ref))
+                return self._json(200, results(job, quote(ref, safe="")))
             if rest.startswith("/preview/"):
                 return self._preview(job, unquote(rest[len("/preview/"):]))
             if rest.startswith("/art/"):
@@ -712,8 +742,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise Refused(409, "no chart is running" if m[1] == "current" else "that chart has ended") from None
             return self._json(200, {"job": job.id, "state": job.state})
         if m and m[2] in ("/export/zip", "/export/stems", "/install", "/listen"):
-            ref, rest = m[1], m[2]
-            job = self._job(ref)
+            ref, rest = unquote(m[1]), m[2]
+            job = self._job(ref, gone=True)
             if rest.startswith("/export/"):
                 self._drain()
                 if rest == "/export/stems":   # one stems zip at a time: an earlier one never fetched goes
@@ -727,7 +757,7 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_json()
             if rest == "/install":
                 return self._install(job, body.get("replace") is True)
-            return self._listen(job, ref, body.get("part"), body.get("level"))
+            return self._listen(job, quote(ref, safe=""), body.get("part"), body.get("level"))
         if path == "/api/clonehero":
             folder = self._read_json().get("folder")
             if not isinstance(folder, str):
@@ -745,9 +775,20 @@ class Handler(BaseHTTPRequestHandler):
         raise Refused(404, "not found")
 
     # --- the queue (M8-10)
-    def _job(self, ref: str):
-        """The job a route names: the current one, or a finished song's by its id (Queue.job); None for none."""
-        return self.app.jobs.current if ref == "current" else self.app.queue.job(ref)
+    def _job(self, ref: str, gone: bool = False):
+        """The job a route names: the current one, a finished song's by its id (Queue.job), or a library chart's
+        (M8-13: App.chart); None for none. `gone`: a library id whose folder is not among the library's any more (the
+        list read before it was deleted in Windows) is Refused(400) in M8-04's words, by its folder's name."""
+        if ref == "current":
+            return self.app.jobs.current
+        m = LIBRARY_ID.match(ref)
+        if m is None:
+            return self.app.queue.job(ref)
+        chart = self.app.chart(ref)
+        if chart is None and gone:
+            name = m[2][:-len(".failed")] if m[2].endswith(".failed") else m[2]
+            raise Refused(400, f"{name}'s folder is not there any more: it was moved or deleted")
+        return chart
 
     def _queue(self, path: str) -> None:
         queue = self.app.queue
@@ -935,8 +976,11 @@ class Handler(BaseHTTPRequestHandler):
         if what not in OPEN:
             raise Refused(400, f"what is one of {', '.join(OPEN)}")
         if what == "built":   # the job's result folder, a .failed one too (it is for a look): no path from the page
-            ref = ref if isinstance(ref, str) and JOB_PATH.match(f"/api/jobs/{ref}") else "current"
-            job = self._job(ref)
+            if ref is None:
+                ref = "current"
+            elif not isinstance(ref, str) or not (JOB_REF.match(ref) or LIBRARY_ID.match(ref)):
+                raise Refused(400, "job is a chart's id: no such chart")   # never a path (M8-13)
+            job = self._job(ref, gone=True)
             result = job.result() if job is not None else None
             if result is None:
                 raise Refused(400, "no finished chart yet")
@@ -1158,8 +1202,9 @@ def results(job, ref: str = "current") -> dict:
     out.update(ok=bool(result.get("ok")), folder=str(folder), name=folder.name,
                windows_path=clonehero.windows_path(folder),   # Open folder's hover text
                installable=bool(result.get("ok")) and folder.is_dir())   # its state may still be running: exiting
-    try:
-        pipeline = json.loads((Path(str(result.get("work"))) / "pipeline.json").read_text(encoding="utf-8"))
+    try:   # a library chart whose work folder has left the cache has none (M8-13)
+        pipeline = (json.loads((Path(str(result["work"])) / "pipeline.json").read_text(encoding="utf-8"))
+                    if result.get("work") else {})
     except (OSError, ValueError):
         pipeline = {}
     pipeline = pipeline if isinstance(pipeline, dict) else {}

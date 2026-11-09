@@ -3253,8 +3253,8 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     songcharter closed" with Carry on and Clear the list, and Carry on charts it. On this machine (under 6 GB free)
     the real disk check paused the list at once, "WSL's disk is nearly full", until the stand-in was given a made-up
     disk. No console errors but the one connection the server's restart reset.
-  - **Left for later:** "Your charts" (the library's list, its own order), lyrics held in memory for a waiting song,
-    "Chart next", and Windows' own keep-awake call (a check under Smart App Control first).
+  - **Left for later:** "Your charts" (the library's list, its own order: M8-13, below), lyrics held in memory for a
+    waiting song, "Chart next", and Windows' own keep-awake call (a check under Smart App Control first).
 - **The stems and the audio** (M8-12) [code]: the options' **Audio** box, unfolded under Guitar: "One audio file: the
   music does not drop out on a miss" (off: the split audio of §2.13, with a line on why a part's sound stops) and
   "Also save the separated instruments (stems)" (off), whose line says what they are, how much disk they take for
@@ -3265,6 +3265,44 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
   stems", a zip of "<song> (stems)" stored without compression (`POST /api/jobs/<ref>/export/stems`), deleted from
   exports/ once it is sent (a ~190 MB copy otherwise stayed in WSL each time; M8-12's review). The stems
   stage shows as "Save the stems" in the progress. Listen and the preview read a split folder's files summed.
+- **Your charts** (M8-13, from M8-10's design note, part D, `docs/work-orders/M8-13-your-charts.md`) [code]: the queue
+  lists one evening's songs; every chart the page has made stays in `<home>/library/<16 hex>/<name>/`, so a chart
+  from last week comes back onto the page as a read of it, for an Install into a new Clone Hero folder (or after a
+  song was deleted there), an Open, or its stems.
+  - **The read** (`jobs.library`, `GET /api/library`): the folders that hold a report.json, newest first by
+    report.json's time (it records none of its own: the file's modification time, which assemble writes last), each
+    with the song.ini's name and artist (the folder's name without them), the gate's verdict, the audio (report.json's
+    `audio_files`: one file or split; an earlier build's by the files there), whether its " (stems)" folder is beside
+    it with .flac files, and **Look**: the song's work folder is still in the cache (`cache.by_key` by the upload's
+    16 hex, which is the song file's key) and its pipeline.json names this folder as its last chart. A chart of the
+    same song made later with other options takes that work folder, and its preview, lyrics counts and pictures with
+    it, so the earlier chart is then listed without Look rather than shown another chart's record [decision]. A
+    folder whose report.json cannot be read is listed by its name as "Can't be read", never hidden; a folder without
+    one (the stems folder, assemble's staging, anything else) is not a chart.
+  - **Ids, not paths:** a chart's id is `<16 hex>:<its folder's name>` (a safe name has no ":"), percent-encoded in a
+    URL, and the server finds it among the folders the read lists (`jobs.find_chart`), never joining it into a path.
+    The id is a job id to the routes by id (`jobs.Charted`: a `result` made from the folder), so Install with its 409
+    asking to replace, Open (`/api/open {"what": "built", "job"}`), Download the stems, the zip, the results, the
+    preview and Listen are M8-10's and M8-12's routes behind the same guards (Host; Origin and `X-Songcharter` on
+    every POST). `/api/open`'s `job`, when given, must be such an id: a path or anything else is refused (400), no
+    longer read as the current chart.
+  - **The page:** "Your charts (n)" under the drop zone and the queue, with the start, progress and Done screens (not
+    over the options being filled); open with up to 6 charts, folded beyond, on every read (so an empty library at
+    load does not leave his first chart folded) until he opens or folds it himself, which is then kept, and a "Your
+    charts" button on the Done screen and under the queue's list that opens it and scrolls to it. Each chart: its
+    name and artist, "Passed its check", "Did not pass its check: kept for a look,
+    not for Clone Hero" or "Can't be read", the date, "one audio file" or "a sound file per instrument", "stems
+    saved"; Install (a chart that passed), Open, Download the stems (when saved) and Look (its own Done screen, while
+    its work folder is kept), with a line that without Look nothing is lost and one that nothing is deleted from
+    the page (Open shows the folder, where he can delete a chart in Windows). The list is read at the start and when
+    the queue's list changes (a song that ended is a new chart), and when the tab is back in front. A chart
+    deleted in Windows after the list was read answers Install, Open and the zips in M8-04's words ("<name>'s folder
+    is not there any more: it was moved or deleted"), said above the list, which is read again (M8-13's review).
+  - In Chromium at 1280x860 and 700 px, light and dark [here, the real App on a made-up library of 3, then 8, charts
+    with a made-up preview]: 3 charts open, 8 folded as "Your charts (8)"; a second Install asked "First Song is in
+    Clone Hero already, from an earlier chart. Replace the older chart?" and replaced it; Look showed the chart's
+    Done screen with its preview, flags, Listen and stems; no horizontal scroll at 700 px. The one console line was
+    Chromium's own for the 409 the replace question rests on; no script error.
 - **Status** [code]: screens 1 to 3 built in M4-04; in M4-06 the Done screen (the preview's overview and pages, "Worth a look" from its flags, the zip, Install into Clone Hero, Another folder, Open folder), the "Paste lyrics" box (the text handed to the chart through a memory file, never written to disk or logged), and the diagnostics bundle (`diagnostics.py`, `songcharter diagnostics --out PATH`, `/api/diagnostics`: logs, `doctor.json`, settings and a MANIFEST.txt, every file checked by name, size and first bytes; no audio, chart, image or pasted text). In M4-11 the "Album art" and "Background image" pickers and the album art on the Done screen (§2.16). In M6-09 the Done screen's "Listen" (§2.17). In M7-10 the estimate, the folded stages, the install first, the tab's title, the wake lock, the drop zone's keys and the update notice put away while a chart runs (above). Quick fixes, Preview in Clone Hero and the polish workspace are not built.
 
 ### 4.6 CI (with the Windows build)

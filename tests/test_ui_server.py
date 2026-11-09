@@ -1295,7 +1295,12 @@ def test_the_stems_download(finished):
         assert sorted(z.namelist()) == [f"{folder.name}/{f}" for f in STEM_NAMES]
         assert {i.compress_type for i in z.infolist()} == {zipfile.ZIP_STORED}
         assert z.read(f"{folder.name}/piano.flac") == (folder / "piano.flac").read_bytes()
-    # sent, it is gone: no second copy of the stems in exports/ (M8-12's review); one never fetched goes with the next
+    # sent, it is gone: no second copy of the stems in exports/ (M8-12's review); one never fetched goes with the next.
+    # The server deletes it once the response is sent, which the client can finish reading first: waited for (the
+    # race was the test's, under the full suite's load, M8-13)
+    deadline = time.monotonic() + 5
+    while list((ctx.home / "exports").glob("*.zip")) and time.monotonic() < deadline:
+        time.sleep(0.02)
     assert not list((ctx.home / "exports").glob("*.zip")) and get(ctx, answer["url"])[0] == 404
     post(ctx, f"/api/jobs/{job.id}/export/stems")
     post(ctx, "/api/jobs/current/export/zip")   # the song's own zip stays: it is small
@@ -2076,15 +2081,15 @@ def test_the_page_shows_the_update_notice_copies_the_line_and_later_hides_it(tmp
                           timeout=60)
     assert done.returncode == 0, done.stderr
     out = json.loads(done.stdout)
-    assert out["none"] == {"box": True, "asked": ["/api/status"], "timers": [2000, 6000, 15000]}
+    assert out["none"] == {"box": True, "asked": ["/api/status", "/api/library"], "timers": [2000, 6000, 15000]}
     text = ("songcharter 9.9.9 is out (you have 0.1.0). To update: close the songcharter window, open Ubuntu from "
             "the Start menu, paste this line and press Enter:")   # the guide's words: not this page's window
     assert out["shown"] == {"hidden": False, "text": text, "line": up["line"], "row": False, "href": up["url"],
                             "link": False, "button": "Copy", "said": None, "selected": False,
-                            "asked": ["/api/status", "/api/status", "/api/hello"]}
+                            "asked": ["/api/status", "/api/library", "/api/status", "/api/hello"]}
     assert out["copied"]["copied"] == [up["line"]] and out["copied"]["button"] == "Copied"
     assert out["copied"]["said"] == "Copied. In the Ubuntu window, a right-click or Ctrl+V pastes it."
-    assert out["asked"] == ["/api/status", "/api/status", "/api/hello"]   # the later asks asked nothing
+    assert out["asked"] == ["/api/status", "/api/library", "/api/status", "/api/hello"]   # the later asks asked nothing
     select = "This browser does not let the page copy here: the line is selected, so press Ctrl+C to copy it."
     for case in ("fallback", "refused"):
         assert out[case]["selected"] is True and out[case]["button"] == "Select and copy", case
@@ -3100,8 +3105,9 @@ def test_a_finished_songs_routes_by_its_job_id_after_the_next_has_started(finish
     monkeypatch.setattr(wsl, "open_url", lambda url: True)
     status, answer = post(ctx, "/api/open", {"what": "built", "job": first.id})
     assert status == 200 and answer["path"] == str(first.out)
-    status, answer = post(ctx, "/api/open", {"what": "built", "job": "../x"})   # not an id: the current one
-    assert status == 200 and answer["path"] == str(second.out)
+    status, answer = post(ctx, "/api/open", {"what": "built", "job": "../x"})   # not an id: refused (M8-13)
+    assert status == 400 and answer["error"] == "job is a chart's id: no such chart"
+    assert post(ctx, "/api/open", {"what": "built"})[1]["path"] == str(second.out)   # none: the current one
     listen_chart(first.out)
     status, answer = post(ctx, f"/api/jobs/{first.id}/listen", {"part": "guitar", "level": "expert"})
     assert status == 200 and answer["url"] == f"/api/jobs/{first.id}/listen/guitar-expert.ogg", answer
