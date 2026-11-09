@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -41,6 +42,7 @@ RATINGS = range(1, 6)
 NOTE_MAX = 300                    # a note's characters at most
 SPOTS_MAX = 50                    # spots a chart at most [judgement: far more than a song has bad spots]
 TIME = re.compile(r"^\s*(\d{1,3}):([0-5][0-9])\s*$")   # m:ss
+MAX_AT = 999 * 60 + 59            # the latest time m:ss can write: a number past it is no time either
 _lock = threading.Lock()          # one change at a time (the server's request threads)
 
 
@@ -62,13 +64,28 @@ def _valid(record: Any, chart: str | None = None) -> bool:
             and (chart is None or record["chart"] == chart) and isinstance(record.get("spots"), list))
 
 
+def _spot_ok(x: Any) -> bool:
+    """A saved spot that reads as one: an object with its id, a time that is a finite number from 0, its reasons as
+    text and its note as text or None (a damaged one is left out where it is read: the review's F5)."""
+    at = x.get("at") if isinstance(x, dict) else None
+    return (isinstance(x, dict) and isinstance(x.get("id"), str) and isinstance(at, (int, float))
+            and not isinstance(at, bool) and math.isfinite(at) and at >= 0 and isinstance(x.get("reasons"), list)
+            and all(isinstance(r, str) for r in x["reasons"]) and (x.get("note") is None or isinstance(x["note"], str)))
+
+
+def _whole(record: dict, chart: str) -> dict:
+    """A record as read: the empty record's keys, then its own, its damaged spots left out."""
+    return {**empty(chart), **record, "spots": [x for x in record["spots"] if _spot_ok(x)]}
+
+
 def read(home: Path, chart: str) -> dict:
-    """The chart's record, or an empty one (none yet, or a file that does not read as one: never an error)."""
+    """The chart's record, or an empty one (none yet, or a file that does not read as one: never an error); a spot
+    that does not read as one is left out, the others kept (F5)."""
     try:
         record = json.loads(path_for(home, chart).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return empty(chart)
-    return {**empty(chart), **record} if _valid(record, chart) else empty(chart)
+    return _whole(record, chart) if _valid(record, chart) else empty(chart)
 
 
 def _write(home: Path, record: dict) -> None:
@@ -96,9 +113,10 @@ def parse_time(value: Any, length: float | None) -> int:
             shown = value.strip()[:20] or "nothing"
             raise InputError(f"{shown} is not a time: write minutes and seconds, such as 2:28")
         at = int(m[1]) * 60 + int(m[2])
-    elif isinstance(value, (int, float)) and not isinstance(value, bool) and value == value and value >= 0:
+    elif (isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+          and 0 <= value <= MAX_AT):
         at = int(value)
-    else:
+    else:   # not a number, a bool, NaN, infinite (JSON's 1e400), negative or past m:ss (F5)
         raise InputError("the time is minutes and seconds, such as 2:28")
     if length is not None and at > length:
         raise InputError(f"{mmss(at)} is after the song's end ({mmss(length)})")
@@ -190,7 +208,7 @@ def all_records(home: Path) -> list[dict]:
         except (OSError, ValueError):
             continue
         if _valid(record) and f == path_for(home, record["chart"]):
-            out.append({**empty(record["chart"]), **record})
+            out.append(_whole(record, record["chart"]))
     return sorted(out, key=lambda r: r["chart"])
 
 
