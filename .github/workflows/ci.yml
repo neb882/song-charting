@@ -1,11 +1,12 @@
 # CI: the CI tools' own tests (packaging/ci/test_ci.py), the suite on Linux, then each work order's hooks
 # (packaging/ci/linux.d/, windows.d/; the contract is in their README.txt). Only M4-05a edits this file: a later order
-# adds hook files, never a step here.
+# adds hook files, never a step here. The orchestrator changed the trigger to every branch on 2026-11-09, at the
+# owner's approval.
 name: ci
 
 on:
   push:
-    branches: [main, "m4-*"]
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
 

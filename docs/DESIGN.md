@@ -3353,7 +3353,9 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     24 hours whatever its 5 GB budget, so an evening of 10 songs keeps about 7-12 GB (the rule for a queue's own
     finished songs is `cache.py`'s, a follow-up).
   - **Lyrics only for a song that starts at once** (refused beside the box, and by the server, for a song that would
-    wait): they stay a memory file for the seconds before the child reads them, never hours.
+    wait): they stay a memory file for the seconds before the child reads them, never hours. The lyrics rule
+    (`docs/work-orders/M4-10-lyrics.md`) would let the app keep a waiting song's pasted text in `<home>/state/` until
+    that song is charted, then delete it, never in the diagnostics, a log or a report; the queue does not use that yet.
   - **Routes by job id:** results, preview, art, Listen, install and the zip take `/api/jobs/<id>/...` beside
     `current`, from the current job or the queue's record of a finished one (after a restart too), so a finished
     song's Install and Look work while the next charts. A finished song that leaves the list (Clear the list,
@@ -3515,7 +3517,7 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     Install asked "Version 1 of this song is in Clone Hero now (...). Replace it with version 2?"; with the song file
     gone, the drop screen asked for it again. No horizontal scroll at 700 px; the console lines were Chromium's own
     for the 400 and 409 answers; no script error.
-- **Status** [code]: screens 1 to 3 built in M4-04; in M4-06 the Done screen (the preview's overview and pages, "Worth a look" from its flags, the zip, Install into Clone Hero, Another folder, Open folder), the "Paste lyrics" box (the text handed to the chart through a memory file, never written to disk or logged), and the diagnostics bundle (`diagnostics.py`, `songcharter diagnostics --out PATH`, `/api/diagnostics`: logs, `doctor.json`, settings and a MANIFEST.txt, every file checked by name, size and first bytes; no audio, chart, image or pasted text). In M4-11 the "Album art" and "Background image" pickers and the album art on the Done screen (§2.16). In M6-09 the Done screen's "Listen" (§2.17). In M7-10 the estimate, the folded stages, the install first, the tab's title, the wake lock, the drop zone's keys and the update notice put away while a chart runs (above). Quick fixes, Preview in Clone Hero and the polish workspace are not built.
+- **Status** [code]: screens 1 to 3 built in M4-04; in M4-06 the Done screen (the preview's overview and pages, "Worth a look" from its flags, the zip, Install into Clone Hero, Another folder, Open folder), the "Paste lyrics" box (the text handed to the chart through a memory file, never written to disk or logged; the lyrics rule allows the app's state folder until the song is charted, never the diagnostics, a log or a report), and the diagnostics bundle (`diagnostics.py`, `songcharter diagnostics --out PATH`, `/api/diagnostics`: logs, `doctor.json`, settings and a MANIFEST.txt, every file checked by name, size and first bytes; no audio, chart, image or pasted text). In M4-11 the "Album art" and "Background image" pickers and the album art on the Done screen (§2.16). In M6-09 the Done screen's "Listen" (§2.17). In M7-10 the estimate, the folded stages, the install first, the tab's title, the wake lock, the drop zone's keys and the update notice put away while a chart runs (above). Quick fixes, Preview in Clone Hero and the polish workspace are not built.
 
 ### 4.6 CI (with the Windows build)
 **As built for v0.1 (WSL2) [code]:** `.github/workflows/ci.yml` (M4-05a) runs the suite and each order's hooks in

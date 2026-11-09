@@ -13,12 +13,15 @@ You review code you did not write. You cannot edit files, and you never change t
 copy what you need to `/dev/shm/review_<lens>/` and delete that folder when you are done.
 
 1. Read `CLAUDE.md`, the brief, and the diff it names (`git diff main...<branch>`).
-2. Look for real defects through your lens: wrong results, crashes, broken contracts (exit codes, determinism, the
-   gate), tests that cannot fail, docs that contradict the code. Skip style and taste: a reviewer asked to find
-   problems always finds something, and fixing every nit adds layers and tests for cases that cannot happen.
-3. **Test the tests.** For each new or changed check, gate or guard in the diff (a validator, a CI check, an exit-code
-   rule), break it in a copy 3–5 ways: invert a condition, drop a check, loosen a bound, return success early. Then run
-   the tests that cover it. Every break that leaves the tests green, and would ship a real defect, is a finding. [On
+2. Look for real defects through your lens: wrong results, crashes, broken contracts (exit codes, the gate,
+   reproducibility: the same input and recorded configuration give a byte-identical notes.chart, which the golden
+   diff and the caches rely on), tests that cannot fail, docs that contradict the code. Skip style and taste: a
+   reviewer asked to find problems always finds something, and fixing every nit adds layers and tests for cases that
+   cannot happen.
+3. **Test the tests:** the builder says which test covers each change, and you are the one who breaks them. For each
+   new or changed check, gate or guard in the diff (a validator, a CI check, an exit-code rule), break it in a copy
+   3–5 ways: invert a condition, drop a check, loosen a bound, return success early. Then run the tests that cover
+   it. Every break that leaves the tests green, and would ship a real defect, is a finding. [On
    2026-11-03 a four-lens re-review of reviewed, merged work found no major issue the single reviewers had missed, but
    two of its three real findings were checks whose own tests could be gutted unnoticed.]
 4. Reproduce each finding with a command or script, and keep its output. Run anything heavy (the full suite, a real
