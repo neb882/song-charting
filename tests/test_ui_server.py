@@ -496,7 +496,7 @@ def test_uploads(served, monkeypatch):
     status, body = upload(ctx, data, "C:\\Music\\Jörg's Söng: 1/2.WAV")
     key = hashlib.sha256(data).hexdigest()
     assert status == 200, body
-    assert set(body) == {"id", "name", "bytes", "tags", "origin", "seconds"} and body["id"] == key[:16]
+    assert set(body) == {"id", "name", "bytes", "tags", "origin", "seconds", "choices"} and body["id"] == key[:16]
     assert body["bytes"] == len(data) and body["name"] == "2.WAV"   # a path in the name: only its last part
     folder = ctx.home / "uploads" / key[:16]
     assert sorted(p.name for p in folder.iterdir()) == ["2.wav", "upload.json"]
@@ -1182,7 +1182,8 @@ def test_the_results_and_the_preview_by_exact_name_only(finished):
     assert res["name"] == job.out.name and res["folder"] == str(job.out)
     base = "/api/jobs/current/preview/"
     assert res["preview"] == {"overview": base + "overview.png", "pages": [base + "page_01.png", base + "page_02.png"],
-                              "flags": ["guitar: gap 0:12.0-0:16.0 (2 measures)"], "remarks": ["no Hard level"]}
+                              "flags": ["guitar: gap 0:12.0-0:16.0 (2 measures)"], "remarks": ["no Hard level"],
+                              "page_s": 60.0, "at": [{"part": "guitar", "start": 12.0, "page": 1}]}
     for name in ("overview.png", "page_01.png", "page_02.png"):
         status, headers, body = get(ctx, base + name + "?job=1")
         assert status == 200 and headers["Content-Type"] == "image/png" and secure(headers)
@@ -1858,7 +1859,8 @@ const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", dis
   focus() { this.focused = true; }, select() { this.selected = true; } });
 const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node,
   addEventListener() {} };
-els.options = Object.assign(node("form"), { elements: { solos: node("select") } });
+els.options = Object.assign(node("form"), { querySelectorAll: () => [],
+  elements: { solos: node("select"), takes: node("input") } });
 const asked = [];
 const status = { device: { chosen: "cpu", reason: "r" }, problems: [], notes: [], job: null, update: null };
 const fetch = async (path) => { asked.push(path);
@@ -1968,7 +1970,8 @@ const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", dis
 const docOn = {};
 const document = { getElementById: (id) => els[id] || (els[id] = node(id)), createElement: node, title: "songcharter",
   visibilityState: "visible", addEventListener(kind, f) { docOn[kind] = f; } };
-els.options = Object.assign(node("form"), { elements: { solos: node("select") } });
+els.options = Object.assign(node("form"), { querySelectorAll: () => [],
+  elements: { solos: node("select"), takes: node("input") } });
 const locks = [];
 const lock = (type) => ({ type, released: false, on: {}, addEventListener(k, f) { this.on[k] = f; },
   release() { this.released = true; return Promise.resolve(); } });

@@ -1,8 +1,10 @@
-// songcharter's page (M4-04, M4-06, M4-11, M5-07, M6-09, M7-10): drop a song, choose the options (the lyrics and the
-// pictures too), follow the chart (how long it usually takes, the tab's title saying where it is, the screen kept
-// awake), cancel it; then "Ready" scrolled into view with the install into Clone Hero first, the zip, the album art,
-// the preview and the chart to listen to, and the diagnostics in the footer; above it all, the update notice when a
-// newer version is out, put away while a chart runs. No framework, no build step. Every request sends
+// songcharter's page (M4-04, M4-06, M4-11, M5-07, M6-09, M7-10, M8-04): drop a song, choose Best or Quick (on a GPU)
+// and the options (the rest folded: the takes, device and preview, the lyrics, the pictures), follow the chart (how
+// long it usually takes, and how long is left once the first take is timed; the tab's title saying where it is, the
+// screen kept awake), cancel it; then "Ready" scrolled into view with the song's name and Open folder, the install
+// into Clone Hero first, the zip, the album art, the preview (its pages in a lightbox, each flag linked to its page
+// and to Listen at its time) and the chart to listen to, and the diagnostics in the footer; above it all, the update
+// notice when a newer version is out, put away while a chart runs. No framework, no build step. Every request sends
 // X-Songcharter: 1 (the server's guard for anything but a GET). The job's events come over a streamed fetch of
 // /api/jobs/current/events (Server-Sent Events), which can send that header too, and which resumes after the last
 // event it saw when the connection drops; a reload reattaches to the current job.
@@ -26,7 +28,8 @@ const APP = "songcharter";   // the tab's title, after what the page is doing
 const $ = (id) => document.getElementById(id);
 const state = { status: null, upload: null, job: null, stages: {}, offset: 0, ticker: null, follow: 0, ch: null,
   images: { album_art: null, background: null }, sending: 0, version: null, update: null, later: false,
-  listen: { parts: {}, job: null }, running: false, wake: null };
+  listen: { parts: {}, job: null }, running: false, wake: null, remaining: null, asking: false,
+  box: { items: [], at: 0 } };
 // the Listen control's names for the parts and levels the chart has (the results' `listen`)
 const PART_NAMES = { guitar: "Guitar", bass: "Bass", drums: "Drums" };
 const LEVEL_NAMES = { expert: "Expert", hard: "Hard", medium: "Medium", easy: "Easy" };
@@ -233,9 +236,54 @@ function setupDrop() {
 
 const META = { title: "name", artist: "artist", album: "album", year: "year", genre: "genre" };
 
+// the two "Chart it" buttons, at the top of the options and at their end
+function chartButtons(disabled) {
+  for (const id of ["chart", "chart-top"]) $(id).disabled = disabled;
+}
+
+// Best or Quick (M8-04): on a PC that charts the guitar on the GPU, a choice between the defaults (4 takes) and 1
+// take, each with its minutes for this song (the upload's `choices`); elsewhere one take, said in a line. The choice
+// only fills the "Guitar takes" box under More options (Best: empty, the default; Quick: 1), so what is sent is what
+// that box says, as before; a number typed there checks the matching choice, or neither.
+function minutes(est) {
+  return est && est.low_min > 0 && est.high_min > 0 ? `about ${est.low_min} to ${est.high_min} minutes` : "";
+}
+
+function fillChoice(choices) {
+  const c = choices || {};
+  const best = minutes(c.best), quick = minutes(c.quick);
+  $("choice").hidden = !c.gpu;
+  $("choice-cpu").hidden = !!c.gpu;
+  if (c.gpu) {
+    const takes = (c.best && c.best.takes) || 4;
+    text($("best-label"), `Best chart (${takes} guitar takes${best ? `, ${best}` : ""})`);
+    text($("quick-label"), `Quick chart (1 take${quick ? `, ${quick}` : ""})`);
+  } else {
+    text($("choice-cpu"), "This PC charts the guitar on the CPU, so it makes 1 guitar take" +
+      (best ? `: ${best} for this song.` : "."));
+  }
+}
+
+function chosen() {
+  const on = [...$("options").querySelectorAll("input[name=how]")].find((r) => r.checked);
+  return on ? on.value : null;
+}
+
+function choose() {
+  $("options").elements.takes.value = chosen() === "quick" ? "1" : "";
+}
+
+function typedTakes() {
+  const v = $("options").elements.takes.value.trim();
+  const want = v === "" ? "best" : v === "1" ? "quick" : null;
+  for (const r of $("options").querySelectorAll("input[name=how]")) r.checked = r.value === want;
+}
+
 function fillOptions(up) {
   const form = $("options");
   form.reset();
+  for (const id of ["more", "lyrics-box", "pictures-box"]) $(id).open = false;
+  fillChoice(up.choices);
   text($("song-name"), `${up.name} (${(up.bytes / 1e6).toFixed(1)} MB)`);
   const tags = up.tags || {}, origin = up.origin || {};
   for (const [field, key] of Object.entries(META)) {
@@ -268,8 +316,8 @@ function uploadPicture(key, file) {
   clearPicture(key);
   text($(`${key}-name`), `Uploading ${file.name}…`);
   state.sending += 1;
-  $("chart").disabled = true;
-  const done = () => { state.sending -= 1; $("chart").disabled = state.sending > 0; };
+  chartButtons(true);
+  const done = () => { state.sending -= 1; chartButtons(state.sending > 0); };
   const xhr = new XMLHttpRequest();
   xhr.open("POST", "/api/upload/image");
   xhr.setRequestHeader("X-Songcharter", "1");
@@ -343,7 +391,7 @@ async function chartIt(e) {
     text(err, "Guitar takes is a whole number: 1, or 3 or more.").hidden = false;
     return;
   }
-  $("chart").disabled = true;
+  chartButtons(true);
   try {
     const r = await api("POST", "/api/jobs", { upload: state.upload.id, options });
     if (r.status === 202) {
@@ -357,7 +405,7 @@ async function chartIt(e) {
   } catch (x) {
     text(err, "songcharter does not answer: is it still running?").hidden = false;
   } finally {
-    $("chart").disabled = false;
+    chartButtons(false);
   }
 }
 
@@ -463,14 +511,16 @@ function handle(ev) {
       $("fallbacks").append(make("p", "banner", `${stageLabel(ev.stage)} runs on ${where}: ${ev.reason}`));
       break;
     }
-    case "result":
+    case "result": {
       stopRunningRows("stopped");
+      const name = songName(ev.folder);
       finish(ev.ok ? "Ready" : "The check failed",
-             ev.ok ? `The song folder is in ${ev.folder}` :
-               `The build did not pass the check. It is in ${ev.folder} for a look.`, ev.summary,
-             { at: ev.at, line: "Charted in", report: !ev.ok });
+             ev.ok ? `${name} is charted and passed its check.` :
+               `${name} did not pass the check, so it is kept for a look (Open folder), not for Clone Hero.`,
+             ev.summary, { at: ev.at, line: "Charted in", report: !ev.ok });
       loadResults();
       return true;
+    }
     case "error":
       stopRunningRows("stopped");
       finish("It did not finish", ev.message, null, { at: ev.at, line: "Stopped after", open: true });
@@ -504,7 +554,11 @@ function finish(title, message, summary, how) {
   text($("stages-line"), line).hidden = false;
   $("stages-box").open = !!how.open;
   $("progress-estimate").hidden = true;
+  $("progress-remaining").hidden = true;
+  state.remaining = null;
   $("progress-keep").hidden = true;
+  $("built-row").hidden = true;   // shown with the results, for a chart that has a folder
+  text($("built-msg"), "").hidden = true;
   text($("done-title"), title);
   text($("done-text"), message);
   setTitle(how.tab || title);
@@ -516,6 +570,13 @@ function finish(title, message, summary, how) {
   renderUpdate(state.update, state.version);
   $("done-screen").hidden = false;
   toDone();
+}
+
+// the song's name, as its folder has it (the Linux path is not one he can open: M8-04), without a failed build's
+// ".failed"
+function songName(folder) {
+  const name = String(folder || "").split("/").filter(Boolean).pop() || "The song";
+  return name.endsWith(".failed") ? name.slice(0, -".failed".length) : name;
 }
 
 // the Done screen at the top of the window (as far as the page's height allows: again once the results are in)
@@ -660,6 +721,7 @@ function again() {
   state.running = false;
   letSleep();
   stopListening();
+  closeBox();
   dropError("");
   show("drop-screen");
   setTitle(null);
@@ -685,16 +747,24 @@ async function loadResults() {
   try { r = await api("GET", "/api/jobs/current/results"); } catch (e) { return; }
   if (r.status !== 200) return;
   const res = r.data;
+  renderBuilt(res);
   renderArt(res.art, res.name, res.job);
   renderLyrics(res.lyrics);
+  renderListen(res.listen, res.job);   // before the preview, whose flags offer Listen for the parts it has
   renderPreview(res.preview, res.job);
-  renderListen(res.listen, res.job);
   $("export-box").hidden = !res.installable;
   text($("export-msg"), "").hidden = true;
   $("open-exports").hidden = true;
   $("results").hidden = false;
   toDone();
   if (res.installable) loadCloneHero();
+}
+
+// Open folder under "Ready" (M8-04): the result's folder, before an install too, by name only (POST /api/open
+// "built": the server opens its own result's folder); the Windows form of its path only as the button's hover text
+function renderBuilt(res) {
+  $("built-row").hidden = !res.folder;
+  $("open-built").title = res.windows_path || "";
 }
 
 // the album art beside the song's name, and a line when there is a background
@@ -718,16 +788,47 @@ function renderLyrics(ly) {
   text(line, ly.added ? `Lyrics: ${ly.words} words in ${ly.phrases} phrases` : `Lyrics not added: ${ly.why || "no reason given"}`);
 }
 
-function thumb(url, label, cls) {
-  const a = make("a");
-  a.href = url;
-  a.target = "_blank";
-  a.rel = "noopener";
-  const img = make("img", cls);
-  img.src = url;
-  img.alt = label;
-  a.append(img, make("span", "small", label));
+// a link that opens the lightbox at `at` (its href stays the picture, for a middle click or a new tab)
+function boxLink(a, at) {
+  a.href = state.box.items[at].url;
+  a.addEventListener("click", (e) => {
+    if (e.button || e.ctrlKey || e.metaKey || e.shiftKey) return;   // a new tab, as the browser does it
+    e.preventDefault();
+    openBox(at);
+  });
   return a;
+}
+
+function thumb(at, cls) {
+  const item = state.box.items[at];
+  const a = boxLink(make("a"), at);
+  const img = make("img", cls);
+  img.src = item.url;
+  img.alt = item.label;
+  a.append(img, make("span", "small", item.label));
+  return a;
+}
+
+// A flag's line: its start (m:ss.s) a link to its page in the lightbox, and "Listen here" when the Listen box has its
+// part (`at`: the server's {"part", "start", "page"} for the flag, null when its text is not a flag's)
+function flagItem(textOf, at) {
+  const li = make("li");
+  const m = at ? /\d+:\d{2}(?:\.\d+)?/.exec(textOf) : null;
+  if (!m || !at.page) {
+    li.append(textOf);
+    return li;
+  }
+  const link = boxLink(make("a", "flag-at", m[0]), at.page);   // items[0] is the overview: page n is items[n]
+  link.title = `Page ${at.page}`;
+  li.append(textOf.slice(0, m.index), link, textOf.slice(m.index + m[0].length));
+  const levels = state.listen.parts[at.part] || [];
+  if (levels.length) {
+    const b = make("button", "plain small-button", "Listen here");
+    b.type = "button";
+    b.addEventListener("click", () => listenHere(at.part, at.start));
+    li.append(" ", b);
+  }
+  return li;
 }
 
 function renderPreview(pv, job) {
@@ -736,15 +837,63 @@ function renderPreview(pv, job) {
   $("no-preview").hidden = has;
   if (!has) {
     text($("no-preview"), `No preview: ${(pv && pv.why) || "no reason given"}`);
+    state.box.items = [];
     return;
   }
   const v = `?job=${encodeURIComponent(job)}`;   // a new chart's pictures, not the browser's copy of the last one's
+  state.box.items = [{ url: pv.overview + v, label: "Overview" },
+                     ...pv.pages.map((u, i) => ({ url: u + v, label: `Page ${i + 1}` }))];
   $("overview").src = pv.overview + v;
-  $("overview-link").href = pv.overview + v;
-  $("pages").replaceChildren(...pv.pages.map((u, i) => thumb(u + v, `Page ${i + 1}`, "thumb")));
-  const flags = pv.flags.length ? pv.flags : ["Nothing flagged."];
-  $("flags").replaceChildren(...flags.map((f) => make("li", null, f)));
+  boxLink($("overview-link"), 0);
+  $("pages").replaceChildren(...pv.pages.map((u, i) => thumb(i + 1, "thumb")));
+  const at = pv.at || [];
+  $("flags").replaceChildren(...(pv.flags.length ? pv.flags.map((f, i) => flagItem(f, at[i] || null)) :
+                                 [make("li", null, "Nothing flagged.")]));
   $("remarks").replaceChildren(...pv.remarks.map((f) => make("li", null, f)));
+}
+
+// ------------------------------------------------------------------------------------------------ the lightbox
+
+// One <dialog> for the overview and the pages (M8-04): opened modal, so Escape closes it (the browser's own), the
+// arrow keys go to the page before or after, and a click beside the picture closes it
+function openBox(at) {
+  const box = $("lightbox");
+  showBox(at);
+  if (!box.open && typeof box.showModal === "function") box.showModal();
+}
+
+function showBox(at) {
+  const items = state.box.items;
+  if (!items.length) return;
+  state.box.at = Math.max(0, Math.min(items.length - 1, at));
+  const item = items[state.box.at];
+  $("lightbox-img").src = item.url;
+  $("lightbox-img").alt = item.label;
+  text($("lightbox-title"), `${item.label} (${state.box.at + 1} of ${items.length})`);
+  $("lightbox-full").href = item.url;
+  $("lightbox-prev").disabled = state.box.at === 0;
+  $("lightbox-next").disabled = state.box.at === items.length - 1;
+}
+
+function closeBox() {
+  const box = $("lightbox");
+  if (box.open && typeof box.close === "function") box.close();
+}
+
+function boxKey(e) {
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+    e.preventDefault();
+    showBox(state.box.at + (e.key === "ArrowLeft" ? -1 : 1));
+  }
+}
+
+function setupBox() {
+  const box = $("lightbox");
+  box.addEventListener("keydown", boxKey);
+  box.addEventListener("click", (e) => { if (e.target === box) closeBox(); });   // the backdrop
+  $("lightbox-close").addEventListener("click", closeBox);
+  $("lightbox-prev").addEventListener("click", () => showBox(state.box.at - 1));
+  $("lightbox-next").addEventListener("click", () => showBox(state.box.at + 1));
 }
 
 // Listen: the part and the level (those the chart has), a button that has the server make them into sound over
@@ -782,7 +931,21 @@ function listenLevels() {
   $("listen-level").value = levels.includes(keep) ? keep : levels[0];
 }
 
-async function listenTo() {
+// "Listen here" on a flag (M8-04): the Listen box set to the flag's part on Expert, and the render played from a
+// second before the flag's start
+function listenHere(part, start) {
+  closeBox();
+  $("listen-part").value = part;
+  listenLevels();
+  const levels = state.listen.parts[part] || [];
+  if (levels.includes("expert")) $("listen-level").value = "expert";
+  const box = $("listen-box");
+  if (typeof box.scrollIntoView === "function") box.scrollIntoView({ block: "nearest" });
+  return listenTo(Math.max(0, start - 1));
+}
+
+async function listenTo(from) {
+  const at = typeof from === "number" && from > 0 ? from : 0;
   const part = $("listen-part").value;
   const level = $("listen-level").value;
   const what = `${PART_NAMES[part] || part} on ${LEVEL_NAMES[level] || level}`;
@@ -797,7 +960,12 @@ async function listenTo() {
       text(msg, `${what}, over the song. Listen for a tone that comes late or not at all, ` +
                 "or tones where the song is quiet.");
       player.src = `${r.data.url}?job=${encodeURIComponent(state.listen.job)}`;   // this chart's, not a cached one
+      if (at > 0) {   // the start position before the file is read, and again once its length is known
+        player.currentTime = at;
+        player.addEventListener("loadedmetadata", () => { player.currentTime = at; }, { once: true });
+      }
       player.hidden = false;
+      if (at > 0 && typeof player.scrollIntoView === "function") player.scrollIntoView({ block: "nearest" });
       const playing = player.play();
       if (playing && playing.catch) playing.catch(() => { /* the browser wants a click on the player first */ });
     } else {
@@ -843,6 +1011,9 @@ function renderCloneHero(editing) {
   if (known) {
     const where = ch.windows_path || ch.folder;
     text($("ch-where"), `Into ${where}` + (ch.source === "documents" ? " (found in your Documents)" : ""));
+  } else if (ch.guess) {   // the field holds the guess: said so, as nothing is there (M8-04)
+    text($("ch-where"), "songcharter did not find your Clone Hero Songs folder. The box holds a guess, where Clone " +
+      "Hero usually keeps it, but no folder is there: change it to your Songs folder, then press Use this folder.");
   } else {
     text($("ch-where"), "songcharter did not find your Clone Hero Songs folder: give it below.");
   }
@@ -948,7 +1119,11 @@ async function openFolder(what, where) {
 async function start() {
   setupDrop();
   setupPictures();
+  setupBox();
   $("options").addEventListener("submit", chartIt);
+  for (const r of $("options").querySelectorAll("input[name=how]")) r.addEventListener("change", choose);
+  $("options").elements.takes.addEventListener("input", typedTakes);
+  $("open-built").addEventListener("click", () => openFolder("built", $("built-msg")));
   $("options").elements.solos.addEventListener("change", soloNames);
   $("other-song").addEventListener("click", again);
   $("cancel").addEventListener("click", cancel);
@@ -959,7 +1134,7 @@ async function start() {
   $("replace").addEventListener("click", () => install(true));
   $("zip").addEventListener("click", exportZip);
   $("listen-part").addEventListener("change", listenLevels);
-  $("listen").addEventListener("click", listenTo);
+  $("listen").addEventListener("click", () => listenTo(0));
   $("open-song").addEventListener("click", () => openFolder("song", $("open-msg")));
   $("open-exports").addEventListener("click", () => openFolder("exports", $("export-msg")));
   $("update-copy").addEventListener("click", copyLine);
