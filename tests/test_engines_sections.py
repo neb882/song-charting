@@ -206,6 +206,38 @@ def test_cuda_out_of_memory_is_run_again_on_the_cpu_for_auto_and_for_cuda_asked_
         assert r.info["allin1"]["fallback"] == words and r.info["why"].endswith(f"; {words}")
 
 
+def test_a_cached_analysis_says_what_this_call_did_not_what_the_run_that_made_it_did(tmp_path, weights, monkeypatch):
+    """The CPU's analysis is cached, never a run's fallback story (v0.5.0's review, F1), so the pipeline's record of
+    the sections does not depend on what the cache held: (a) the CPU result of an auto run whose CUDA run ran out of
+    memory (or whose probe found CUDA broken) answers a later CPU-asked call with no fallback; (b) a CPU-asked result
+    answers an auto run's CPU retry after CUDA ran out of memory with that run's fallback, not none (which the
+    pipeline would name as "its Python has no working CUDA"). engine.json says the same as the result."""
+    monkeypatch.setattr(S, "MEMINFO", tmp_path / "none")
+    on_disk = lambda folder: json.loads((folder / "engine.json").read_text(encoding="utf-8"))  # noqa: E731
+    mix, stems = song()
+    words = ("CUDA ran out of memory (CUDA out of memory. Tried to allocate 2.00 GiB. GPU 0 has a total capacity of "
+             "11.99 GiB of which 1.07 GiB is free.); analysed on the CPU")
+    broken = FakeAllin1(cuda=False, cuda_error="AcceleratorError: CUDA error: no kernel image is available")
+    for name, first_run in (("oom", FakeAllin1(cuda=True, fail="oom")), ("broken", broken)):   # (a)
+        out = tmp_path / f"a-{name}"
+        first = find_sections(mix, stems, out, Settings(python="py"), run=first_run, download=weights)
+        assert first.info["allin1"]["device"] == "cpu" and first.info["allin1"]["fallback"], name
+        cpu = FakeAllin1(cuda=True)
+        hit = find_sections(mix, stems, out, Settings(python="py", device="cpu"), run=cpu, download=weights)
+        assert hit.cached and cpu.jobs == [] and hit.info["key"] == first.info["key"], name
+        assert hit.info["allin1"]["fallback"] is None and hit.info["allin1"]["cuda_error"] is None, name
+        assert on_disk(out) == hit.info, name
+    out = tmp_path / "b"   # (b)
+    made = find_sections(mix, stems, out, Settings(python="py", device="cpu"), run=FakeAllin1(cuda=True),
+                         download=weights)
+    assert made.info["allin1"]["fallback"] is None
+    oom = FakeAllin1(cuda=True, fail="oom")
+    hit = find_sections(mix, stems, out, Settings(python="py"), run=oom, download=weights)
+    assert [j["device"] for j in oom.jobs] == ["cuda"] and hit.cached   # the CPU's analysis, from the cache
+    assert hit.info["allin1"]["fallback"] == words and hit.info["why"].endswith(f"; {words}")
+    assert hit.info["allin1"]["device"] == "cpu" and on_disk(out) == hit.info
+
+
 def test_a_probe_whose_cuda_kernel_failed_means_the_cpu(tmp_path, weights):
     mix, stems = song()
     fake = FakeAllin1(cuda=False, cuda_error="AcceleratorError: CUDA error: no kernel image is available")
