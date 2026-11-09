@@ -1,7 +1,7 @@
 export const meta = {
   name: 'full-review',
   description: 'Review an integrated songcharter change through several lenses, test the tests, and have a skeptic try to refute each major finding',
-  whenToUse: 'Once over an integrated release (docs/PIPELINE.md, the release gate), or another big or risky integration. Pass args: {base, head, worktree, brief?, lenses?, perLens?}.',
+  whenToUse: 'Over a friend release whose diff touches packaging/, the install or update path, the library or the state files (docs/PIPELINE.md, the release gate), or another big or risky integration. Pass args: {base, head, worktree, brief?, lenses?, perLens?}.',
   phases: [
     { title: 'Review', detail: 'one reviewer per lens over the diff base...head' },
     { title: 'Verify', detail: 'one skeptic per major finding' },
