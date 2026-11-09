@@ -3287,14 +3287,17 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     every POST). `/api/open`'s `job`, when given, must be such an id: a path or anything else is refused (400), no
     longer read as the current chart.
   - **The page:** "Your charts (n)" under the drop zone and the queue, with the start, progress and Done screens (not
-    over the options being filled); open with up to 6 charts, folded beyond (his own opening or folding is kept when
-    the list is read again), and a "Your charts" button on the Done screen and under the queue's list that opens it
-    and scrolls to it. Each chart: its name and artist, "Passed its check", "Did not pass its check: kept for a look,
+    over the options being filled); open with up to 6 charts, folded beyond, on every read (so an empty library at
+    load does not leave his first chart folded) until he opens or folds it himself, which is then kept, and a "Your
+    charts" button on the Done screen and under the queue's list that opens it and scrolls to it. Each chart: its
+    name and artist, "Passed its check", "Did not pass its check: kept for a look,
     not for Clone Hero" or "Can't be read", the date, "one audio file" or "a sound file per instrument", "stems
     saved"; Install (a chart that passed), Open, Download the stems (when saved) and Look (its own Done screen, while
     its work folder is kept), with a line that without Look nothing is lost and one that nothing is deleted from
     the page (Open shows the folder, where he can delete a chart in Windows). The list is read at the start and when
-    the queue's list changes (a song that ended is a new chart).
+    the queue's list changes (a song that ended is a new chart), and when the tab is back in front. A chart
+    deleted in Windows after the list was read answers Install, Open and the zips in M8-04's words ("<name>'s folder
+    is not there any more: it was moved or deleted"), said above the list, which is read again (M8-13's review).
   - In Chromium at 1280x860 and 700 px, light and dark [here, the real App on a made-up library of 3, then 8, charts
     with a made-up preview]: 3 charts open, 8 folded as "Your charts (8)"; a second Install asked "First Song is in
     Clone Hero already, from an earlier chart. Replace the older chart?" and replaced it; Look showed the chart's
