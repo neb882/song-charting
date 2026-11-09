@@ -646,7 +646,8 @@ def test_the_fallback_uses_the_given_beats_inside_the_audio(tmp_path, monkeypatc
 # ------------------------------------------------------------------------------------------------ memory (M8-05)
 
 def meminfo(tmp_path, monkeypatch, mem_mib, swap_mib=0.0):
-    """/proc/meminfo saying MemTotal and SwapTotal (MemAvailable 0, never read) in place of this machine's."""
+    """/proc/meminfo saying MemTotal and SwapTotal (MemAvailable 0; neither it nor the swap counts) in place of this
+    machine's."""
     path = tmp_path / "meminfo"
     path.write_text(f"MemTotal:       {round(mem_mib * 1024)} kB\nMemFree:        0 kB\nMemAvailable:   0 kB\n"
                     f"SwapTotal:      {round(swap_mib * 1024)} kB\nSwapFree:       0 kB\n")
@@ -681,21 +682,21 @@ def test_a_runner_ended_by_sigkill_is_named_as_most_likely_memory(tmp_path, weig
 
 
 def test_allin1_is_left_out_before_its_run_when_the_song_cannot_fit(tmp_path, weights, fallback, monkeypatch):
-    """On the CPU the predicted tree with the margin is compared with MemTotal + SwapTotal: just over, allin1 is left
-    out before any run, just under it runs; swap counts and MemAvailable is never read; with a loader (the arrays let
+    """On the CPU the predicted tree with the margin is compared with MemTotal: just over, allin1 is left out before
+    any run, just under it runs; neither the swap nor MemAvailable counts; with a loader (the arrays let
     go) the tree is smaller; a cached result and a run on CUDA are not checked."""
     mix, stems = song(10.0)
     edge = S.tree_mib(10.0, False) + S.MARGIN_MIB
-    meminfo(tmp_path, monkeypatch, edge - 1000, 1000.01)
+    meminfo(tmp_path, monkeypatch, edge + 0.01)
     fake = FakeAllin1()
     r = find_sections(mix, stems, tmp_path / "fits", Settings(python="py"), run=fake, download=weights)
     assert r.backend == "allin1" and len(fake.jobs) == 1
-    meminfo(tmp_path, monkeypatch, edge - 1000, 999.5)
+    meminfo(tmp_path, monkeypatch, edge - 0.5, 8192)
     fake = FakeAllin1()
     r = find_sections(mix, stems, tmp_path / "over", Settings(python="py"), run=fake, download=weights)
     assert r.backend == "librosa" and fake.jobs == []
     assert re.fullmatch(r"allin1 was left out for memory \(a song of 0:10 needs about 0\.5 GiB for it on the CPU, "
-                        r"2\.2 GiB with the rest of the chart and a margin; this PC has 2\.2 GiB of memory and swap\)",
+                        r"2\.2 GiB with the rest of the chart and a margin; this PC has 2\.2 GiB of memory\)",
                         fallback[-1][0]), fallback[-1]
     held = S.SongArrays(mix, stems, lambda: (mix, stems))   # the arrays let go: under the edge
     assert find_sections(held, None, tmp_path / "freed", Settings(python="py"), run=fake,

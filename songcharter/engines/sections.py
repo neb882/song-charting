@@ -28,8 +28,8 @@ after the music. songcharter.sections snaps them to measures, merges, splits and
     process tree with it (M8-03 part A's lines, CHILD_MIB and PARENT_MIB). Given a SongArrays with a loader (the
     pipeline's), the mix and stems are let go while the runner runs, once its input bytes and the key are made, and
     read again only when they are needed (the librosa fallback, or the caller after). Before a run on the CPU the
-    predicted tree, with MARGIN_MIB, is compared with this machine's MemTotal plus SwapTotal (fixed per PC, never
-    MemAvailable): when it does not fit, allin1 is left out at once (memory_skip), instead of being killed minutes
+    predicted tree, with MARGIN_MIB, is compared with this machine's MemTotal (fixed per PC, never MemAvailable;
+    swap is not counted: allin1 deep in swap was never measured and could run for hours, worse than the librosa fallback): when it does not fit, allin1 is left out at once (memory_skip), instead of being killed minutes
     later; a runner ended by SIGKILL is named as most likely stopped for memory (stopped_line). On CUDA there is no
     such check (the host side was measured once, not as a line): a failed or killed CUDA run goes to the CPU, which
     is checked.
@@ -240,18 +240,18 @@ def tree_mib(seconds: float, freed: bool) -> float:
 
 
 def capacity_mib(path: Path | None = None) -> float | None:
-    """This machine's memory and swap, MemTotal + SwapTotal (in WSL: .wslconfig's memory and swap), in MiB; None
-    where /proc/meminfo does not say. Never MemAvailable, which changes from run to run."""
+    """This machine's memory, MemTotal (in WSL: .wslconfig's memory), in MiB; None where /proc/meminfo does not say.
+    Never MemAvailable, which changes from run to run; nor SwapTotal: allin1 deep in swap was never measured and could run for hours, worse than the librosa fallback."""
     try:
         text = (path or MEMINFO).read_text(encoding="ascii", errors="replace")
     except OSError:
         return None
     kb = {}
     for line in text.splitlines():
-        m = re.match(r"(MemTotal|SwapTotal):\s+(\d+)\s*kB", line)
+        m = re.match(r"(MemTotal):\s+(\d+)\s*kB", line)
         if m:
             kb[m.group(1)] = int(m.group(2))
-    return (kb["MemTotal"] + kb.get("SwapTotal", 0)) / 1024 if "MemTotal" in kb else None
+    return kb["MemTotal"] / 1024 if "MemTotal" in kb else None
 
 
 def longest_s(capacity: float, freed: bool = True) -> float:
@@ -266,7 +266,7 @@ def memory_skip(seconds: float, freed: bool, capacity: float | None) -> str | No
         return None
     return (f"allin1 was left out for memory (a song of {_mmss(seconds)} needs about {child_mib(seconds) / 1024:.1f} "
             f"GiB for it on the CPU, {(tree_mib(seconds, freed) + MARGIN_MIB) / 1024:.1f} GiB with the rest of the "
-            f"chart and a margin; this PC has {capacity / 1024:.1f} GiB of memory and swap)")
+            f"chart and a margin; this PC has {capacity / 1024:.1f} GiB of memory)")
 
 
 def stopped_line(seconds: float) -> str:

@@ -977,18 +977,16 @@ start has been tried, the bar phase failed on 2 of 4 references, and Lucretia ha
       bytes and the key are made, and reads them again from decode.wav and the stem WAVs after (the separation cache's
       own read: the same float32 samples; 1.1–1.3 s with a warm page cache, only after a run that was not cached): 0.16
       GiB a minute less, a tree of 853 + 17.7 MiB a second [code; M8-03 A-b]. Before a run on the CPU that tree plus
-      a margin (the child line's largest residual and 1 GiB) is compared with MemTotal + SwapTotal (fixed per PC;
-      never MemAvailable, which changes from run to run): when it does not fit, allin1 is left out at once, instead
+      a margin (the child line's largest residual and 1 GiB) is compared with MemTotal (fixed per PC; never
+      MemAvailable, which changes from run to run). Swap is not counted: allin1 deep in swap was never measured and could run for hours, worse than the librosa fallback. When it does not fit, allin1 is left out at once, instead
       of being killed minutes later. A runner ended by SIGKILL is reported as stopped, most likely for memory, with
       the song's need. For these and every other failure the pipeline records a `fallback` from allin1 to librosa,
       which the page shows as a banner saying what the simpler analysis costs (the bar lines and the tempo's halving
       test; plainer section names) [code]. On CUDA nothing is checked before the run: the host side was measured
       once (11.09 GiB on 6:52, M8-00 section 6), not as a line; a failed or killed CUDA run goes to the CPU, which is
       checked [code; untested on a GPU].
-      - The longest song that fits, with the arrays let go and the margin: 7:52 for a MemTotal of 10.2 GiB with no
-        swap, 8:50 for 11.2 GiB, 9:36 for 12 GiB; with the install's 8 GiB of swap counted, 12 GiB of memory gives
-        17:19 (doctor names the figure for its PC). Whether allin1 finishes in reasonable time while swapping that
-        much was not measured.
+      - The longest song that fits, with the arrays let go and the margin: 7:52 for a MemTotal of 10.2 GiB, 8:50 for
+        11.2 GiB, 9:36 for 12 GiB (a 16 GB PC's WSL 12 GB); doctor names the figure for its PC.
       - Chunking the network (windows of 120, 180 or 240 s, 30 s overlap, a linear crossfade of the frame logits)
         was measured and not built: no window met the chunk bar, and the child's peak does not fall, since madmom's
         DBN beat decoder still runs on the whole song (M8-03 A-c). Decoding the DBN in windows is an untried lead.
@@ -3121,9 +3119,9 @@ is the plan for the native route, kept for M4-99.
 - The comparison ran here: `eval/gpu.sh check|start|status|results` (see `eval/README.md`).
 - v0.1's install sets WSL's memory in `%UserProfile%\.wslconfig` (`wslsetup`, M4-03): Windows' RAM rounded up to a whole GB, less 4, with swap=8GB, so memory=12GB on a 16 GB PC, one that reports 15.4 GiB included (rounded up, not to the nearest: the owner, 2026-11-04, as reported RAM is always a little under what is installed). Under 11 GB of WSL memory (a PC of 14 GiB or less) allin1 is left out; 11 GiB of RAM or less is refused.
 - Give WSL enough memory in `%UserProfile%\.wslconfig`. WSL defaults to half of Windows' RAM. Two STRUM runs died in a VM reported at about 15.5 GB, and one finished at a reported 24 GB [reported in the practicality brief; not logged]. STRUM's peak RSS is unmeasured.
-- A long song on a 16 GB PC (M8-05, 2.5's Memory): the install's memory=12GB and swap=8GB leave allin1 room for
-  songs up to about 17 minutes by the skip's rule, which counts the swap; without the swap about 9:36, and a song over
-  that would chart with the librosa sections (the bar lines and the tempo's halving test from a simpler analysis).
+- A long song on a 16 GB PC (M8-05, 2.5's Memory): the install's memory=12GB leaves allin1 room for songs up to
+  about 9:36 by the skip's rule (its swap=8GB is not counted); a longer song charts with the librosa sections (the bar
+  lines and the tempo's halving test from a simpler analysis), and the page says so.
 - CUDA in WSL2 needs only the Windows driver [doc].
 - Test the native installer on the Windows side before giving it to the friend.
 

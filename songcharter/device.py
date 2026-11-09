@@ -552,11 +552,10 @@ def findings(r: dict, allin1_python: str | None = None) -> tuple[list[str], list
     elif a is None and allin1_python is None:
         notes.append("no allin1 Python is configured: the sections use the librosa fallback")
     elif total is not None and dev.get("chosen") != "cuda" and not (w and total * MB < ALLIN1_MEMORY):
-        from .engines import sections   # the skip's own rule (M8-05): memory and swap, never what is free now
-        both = total + ((r.get("ram") or {}).get("swap_total_mb") or 0)
-        longest = sections.longest_s(both)
+        from .engines import sections   # the skip's own rule (M8-05): MemTotal, not swap nor what is free now
+        longest = sections.longest_s(total)
         notes.append(f"allin1 analyses songs up to about {int(longest // 60)}:{int(longest % 60):02d} on the CPU "
-                     f"with this PC's {both / 1024:.1f} GiB of memory and swap; a longer song gets the librosa "
+                     f"with this PC's {total / 1024:.1f} GiB of memory; a longer song gets the librosa "
                      "sections (the bar lines and the tempo's halving test from a simpler analysis)")
     if w:
         if total is not None and total * MB < ALLIN1_MEMORY:

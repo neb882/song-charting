@@ -27,7 +27,9 @@ them from the work folder costs 1.1–1.3 s, so **part 3 (b) is built** (tree 85
 of 120, 180 or 240 s met the chunk bar, and chunking does not lower the child's peak (madmom's DBN decoder on the whole
 song holds it), so **parts 3 (a) and 3 (c) are not built** and **part 4 is**. A-d: with a reserve of 1 GiB a 10.2 GiB
 tree (WSL's 11 GB) fits about 8.1 minutes with the arrays freed, 11.2 GiB (a 16 GB PC's 12 GB) about 9.0; the skip's
-reserve is the line's largest residual plus 1 GiB. Golden, stress and 20-song compares expect no change (`--expect
+reserve is the line's largest residual plus 1 GiB. The skip compares with `MemTotal` only (the orchestrator's
+decision at the build: swap is not counted, as allin1 deep in swap was never measured and could run for hours, worse than the librosa fallback), so a 16 GB PC's WSL 12 GB fits about 9:36 with the
+arrays freed. Golden, stress and 20-song compares expect no change (`--expect
 none`): freeing arrays must not change a chart, and the skip does not fire on the dev machine's 15.7 GiB for the sets'
 longest song (9:43).
 
