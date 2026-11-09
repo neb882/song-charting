@@ -15,6 +15,9 @@ names. Never edit or commit in the repository.
 2. Run the measurement as the brief defines it. Where the brief leaves a choice, take the simplest faithful one
    and say which you took. Run anything heavy (a separation, a real chart, many engine runs) as
    `tools/heavy.sh <command>`: other agents share the machine.
-3. Write the full results (tables, per-song numbers, the scripts' paths) to a file in the scratch folder, and
+3. For a bar (`docs/PIPELINE.md`, Measurements and bars), give the primary measure's difference with its 95 %
+   confidence interval, the lower end of F1@50's, the worst song by its label, and the smallest effect the songs can
+   detect, with how you computed it. Score the held-out songs only when the brief is a friend release's gate.
+4. Write the full results (tables, per-song numbers, the scripts' paths) to a file in the scratch folder, and
    return a summary of at most about 1,000 words: the numbers asked for, how they were computed, and the caveats
    (sample size, what was not checked).
