@@ -58,3 +58,44 @@ Its bass is clearly better than ours: every human bass note found (recall 1.000)
 engine writes 24 % too many and misses a fifth. Drums and beats are a tie. One song, so a direction, not a verdict:
 the bass is where a better engine pays (M8: the bass engine against a learned transcriber, e.g. on the stress and
 20-song sets' human bass charts).
+
+## The owner's video review of the two kimochi_warui charts, checked against the human chart (2026-11-09)
+
+The review judged ours by the guitar stem's level and its own viewing; the human chart says otherwise on most claims
+(the scorer, 18-s windows, the reference's timeline less its 2.33-s lag):
+
+- **"Chord spam over a silent guitar stem":** the human chart's guitar is 68 % chords (ours 77 %, AutoChart.eu's 5 %),
+  and in the sections the review names, our onsets match the human's: 18-36 s F1 0.98, 72-90 s 0.93, 198-216 s 0.95,
+  216-252 s 0.99-1.00 (AutoChart.eu 0.49-0.90 there). The human charter put the synth parts on the guitar track, as our
+  engine did; removing notes over the "silent" guitar stem would cut our best sections (as M7-01 measured: the humans
+  chart them). Ours over-charts 36-72 s and 108-126 s (F1 0.43-0.52, theirs 0.64-0.85), and our lanes are weaker (lane
+  direction 0.55 against 0.66).
+- **"The take scorer's bug" (scores equal in pairs):** the arithmetic is right. A take's score is its mean F1 against the
+  other three; when the takes split into two pairs that agree within and not across, each pair's members score alike
+  (the intro: 36 and 1 onsets, F1 2/37 shared, 0.054 / 3 = 0.018, both). Ties go to the lower index. It is the known
+  limit (the score does not track the humans: M7-01 part C, docs/reports/M8-spike-takescore.md), M8-02 B's and M8-06's.
+- **"No green crash":** the human chart has 4 green notes in the song; AutoChart.eu's 29 (F1 0.12) and our 42 (F1 0.04)
+  both miss it; cymbal or tom on yellow, blue and green agree 0.994 and 0.979. Its snare is better than ours (red F1 0.98
+  against 0.88); both write far more hi-hats than the human (yellow 513 and 634 against 216).
+- **Lyrics:** a backing line inside a lead line's phrase is one phrase on our side; noted for the lyrics, not measured.
+
+## Chord shapes held: the owner's follow-up on kimochi_warui, checked (2026-11-09)
+
+The follow-up named our chart's long runs of one chord shape where the song's chords move. Measured on his v0.4.0 GPU
+chart against the human chart (the scorer's readers and alignment: lag MAD 0 over 9 windows, guitar F1@50 0.789 as
+above; `eval/m8/compare/held_shapes.py`; times on his MP3):
+
+| Expert guitar | ours: onsets, shapes, shape changes | the human's: onsets, shapes, shape changes (longest run) |
+|---|---|---|
+| 17.9-35.6 s (a verse) | 61, 1 (G+R), 0 | 63, 3, 7 (13 onsets) |
+| 196.3-215.0 s (the break) | 65, 1 (Y+B), 0 | 67, 6, 7 (45 onsets, 12.3 s, mostly G+Y) |
+| 223.2-264.4 s (the last choruses) | 148, 1 (G+R), 0 | 147, 9, 72 (16 onsets; 57 % chords) |
+| the whole song | 764, 109 changes (one in 7.0 onsets) | 767, 291 changes (one in 2.6 onsets) |
+
+The claim holds: ours keeps one shape for 18, 19 and 41 seconds where the human moves every few seconds. A held shape
+is not wrong by itself (the human holds G+Y for 92 onsets at 95.4-120.9 s, and for 45 in the break); ours holds through
+the sections where the human moves. No code of ours picks a chord's lanes (the quantizer only caps a chord's size and
+moves lanes above the top lane down): the shapes are the transcriber's, on the take the selector picked, and whether
+the other takes move is not known (the chart keeps one take). So the GPU takes fix it only if a take that moves exists
+and the selector picks it. A direction for M8 or M9, measured before built: shape changes per onset and lane direction
+on the sets' human charts, then a pass that moves a held shape where the stem's harmony changes.
