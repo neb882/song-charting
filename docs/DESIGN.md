@@ -987,10 +987,13 @@ start has been tried, the bar phase failed on 2 of 4 references, and Lucretia ha
     decision below; before M6-10 the `harmonix-all` ensemble on CUDA), a model asked for in its place. Otherwise the
     librosa fallback, with the reason recorded in `engine.json`.
     - CUDA: the probe runs a CUDA kernel (`is_available()` is also true on a GPU the torch build has no kernels for).
-      Out of memory is retried on the CPU. With device auto, any other failed CUDA run is redone on the CPU with the
-      same model, and engine.json records the fallback [code; untested on a GPU]. The pipeline asks for auto also
-      when the user asks for CUDA, since allin1's own Python may have none, and warns when allin1 then ran on the CPU
-      [code].
+      A failed CUDA run is redone on the CPU with the same model, in a fresh process, so the CPU's memory check
+      (Memory, below) applies to it: with device auto after any failure, a kill included; with device cuda only
+      after CUDA ran out of memory. engine.json records the fallback ("CUDA ran out of memory (...); analysed on the
+      CPU", or "the CUDA run failed (...); ..."). A run that times out is not redone [code; untested on a GPU]. Until
+      v0.5.0's gate review the runner redid an out-of-memory on the CPU in its own process, which nothing checked
+      against MemTotal and which kept the CUDA run's host memory. The pipeline asks for auto also when the user asks
+      for CUDA, since allin1's own Python may have none, and warns when allin1 then ran on the CPU [code].
     - **Memory** (M8-05, from M8-03 part A's numbers [here, 24 kept songs on the CPU]). allin1's own peak is
       354 MiB + 17.4 MiB a second of audio (about 1 GiB a minute; residuals −233 / +202 MiB), and the process tree
       while it runs was 853 + 20.4 MiB a second, as the pipeline held the mix and six stems. Since M8-05 the pipeline
@@ -1006,12 +1009,19 @@ start has been tried, the bar phase failed on 2 of 4 references, and Lucretia ha
       is left out on this PC to save memory" (WSL under 11 GB) or "allin1 is not installed", else "allin1 failed (the
       diagnostics zip has the details)", then what the simpler analysis costs (the bar lines and the tempo's halving
       test; plainer section names). Paths, commands and exception text stay in the warning, pipeline.json and
-      engine.json [code]. On CUDA nothing is checked before the run: the host side was measured
-      once (11.09 GiB on 6:52, M8-00 section 6), not as a line; a failed or killed CUDA run goes to the CPU, which is
-      checked [code; untested on a GPU].
+      engine.json [code]. **On CUDA nothing is checked before the run**, whatever the song's length: allin1's host
+      memory there was measured once (the whole tree at 11.09 GiB on the 6:52 test song, before M8-05 let the arrays
+      go; M8-00 section 6), not as a line, and the owner's GPU check at v0.5.0's gate reads it. So a long song's CUDA
+      run may be killed, or swap and run slowly, for up to the run's hour (then librosa: "allin1 did not finish in
+      time"). A CUDA run that runs out of memory, fails or is killed goes to the CPU (CUDA, above), and that run is
+      checked like any other: a song past the line then charts with the librosa sections and the memory sentence on
+      the page, at once [code; the real runner on a stand-in package whose model runs out of CUDA memory (v0.5.0's
+      gate review); untested on a GPU].
       - The longest song that fits, with the arrays let go and the margin, by MemTotal: 7:52 for 10.2 GiB (WSL's
         11 GB); about 9 minutes for a 16 GB PC's WSL 12 GB (8:50 for 11.2 GiB, 9:19 for the 11.7 GiB such a WSL
-        reports). doctor names its PC's own figure.
+        reports). doctor names its PC's own figure, on the CPU lane only: on CUDA the figure bounds only the CPU run
+        after a failed CUDA run, and a longer song still gets allin1 when the CUDA run succeeds, so there it would
+        read as a limit the PC does not have.
       - Chunking the network (windows of 120, 180 or 240 s, 30 s overlap, a linear crossfade of the frame logits)
         was measured and not built: no window met the chunk bar, and the child's peak does not fall, since madmom's
         DBN beat decoder still runs on the whole song (M8-03 A-c). Decoding the DBN in windows is an untried lead.
@@ -3328,9 +3338,14 @@ is the plan for the native route, kept for M4-99.
 - The comparison ran here: `eval/gpu.sh check|start|status|results` (see `eval/README.md`).
 - v0.1's install sets WSL's memory in `%UserProfile%\.wslconfig` (`wslsetup`, M4-03): Windows' RAM rounded up to a whole GB, less 4, with swap=8GB, so memory=12GB on a 16 GB PC, one that reports 15.4 GiB included (rounded up, not to the nearest: the owner, 2026-11-04, as reported RAM is always a little under what is installed). Under 11 GB of WSL memory (a PC of 14 GiB or less) allin1 is left out; 11 GiB of RAM or less is refused.
 - Give WSL enough memory in `%UserProfile%\.wslconfig`. WSL defaults to half of Windows' RAM. Two STRUM runs died in a VM reported at about 15.5 GB, and one finished at a reported 24 GB [reported in the practicality brief; not logged]. STRUM's peak RSS is unmeasured.
-- A long song on a 16 GB PC (M8-05, 2.5's Memory): the install's memory=12GB leaves allin1 room for songs up to
-  about 9 minutes by the skip's rule (8:50–9:19 by its MemTotal, doctor says which; its swap=8GB is not counted); a longer song charts with the librosa sections (the bar
-  lines and the tempo's halving test from a simpler analysis), and the page says so.
+- A long song on a 16 GB PC (M8-05, 2.5's Memory). On the CPU lane the install's memory=12GB leaves allin1 room for
+  songs up to about 9 minutes by the skip's rule (8:50–9:19 by its MemTotal, doctor names its own; its swap=8GB is
+  not counted); a longer song charts with the librosa sections (the bar lines and the tempo's halving test from a
+  simpler analysis), and the page says so. On the CUDA lane, the friend's, nothing is checked before allin1's run,
+  whatever the length, and doctor names no figure: allin1's host memory on CUDA was measured once, not as a line
+  (2.5), so a long song's CUDA run may swap or be killed. A CUDA run that runs out of memory, fails or is killed is
+  run again on the CPU, and that run is checked: past the line, the librosa sections and the page's words [code;
+  untested on a GPU]. The owner's GPU check at v0.5.0's gate reads allin1's host memory on CUDA.
 - CUDA in WSL2 needs only the Windows driver [doc].
 - Test the native installer on the Windows side before giving it to the friend.
 
