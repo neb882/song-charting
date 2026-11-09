@@ -136,7 +136,8 @@ def test_a_full_disk_while_saving_the_stems(runs, tmp_path, monkeypatch, capsys,
     why in plain words), no stems folder or staging folder left, the chart in place (break: the staging folder kept;
     the error raised, which hid a good chart from the page: M8-12's review). Any other error writing them too: in
     WSL a full C:, where WSL's disk grows, is an I/O error, not ENOSPC (the v0.5.0 review's install-02; break: only
-    ENOSPC caught, so the finished chart is reported as failed). Too little room at the export: NoRoom naming the
+    ENOSPC caught, so the finished chart is reported as failed), and the Done screen says so in the error's own
+    words, not that the disk is full (the v0.5.0 review fixes). Too little room at the export: NoRoom naming the
     folder and the space needed."""
     root, _, out = runs
     monkeypatch.setenv("SONGCHARTER_CACHE", str(root / "cache"))
@@ -159,7 +160,11 @@ def test_a_full_disk_while_saving_the_stems(runs, tmp_path, monkeypatch, capsys,
     assert [w for w in done.warnings if w.startswith(f"stems: not saved ({said}")]
     assert "they need about 51 MB" in done.warnings[-1]
     record = json.loads((done.work / "pipeline.json").read_text(encoding="utf-8"))["stems"]
-    assert record["saved"] is False and record["why"] == P.STEMS_NO_ROOM.format(mb="51 MB")
+    # the page's words: a full disk, or the error's own (break: "the disk ran out of room" for an I/O error)
+    assert record["saved"] is False and record["why"] == (P.STEMS_NO_ROOM.format(mb="51 MB") if code == errno.ENOSPC
+                                                          else P.STEMS_NOT_SAVED.format(why="input/output error"))
+    assert record["why"].startswith("The disk ran out of room" if code == errno.ENOSPC else
+                                    "The stems could not be saved (input/output error); your chart is fine.")
     assert [e["stage"] for e in events if e["event"] == "stage_end"][-2:] == ["stems", "preview"]
     source = next((root / "cache" / "work").glob("song-*")) / "stems" / standin_key(A.decode(root / "song.flac"))
     with pytest.raises(InputError, match=r"no room for the stems in .*: they need about 51 MB, and 1 MB are free"):

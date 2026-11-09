@@ -35,7 +35,7 @@
      grows). A disk that has filled by the time they are written, or any other error writing them (in WSL a full C:
      is an I/O error), is a warning (M8-12's review; the v0.5.0 review's install-02): the half-written folder is
      removed, the run ends as the gate says, the result's `stems` is null and pipeline.json's `stems` says why in
-     plain words for the page (`STEMS_NO_ROOM`).
+     plain words for the page (`STEMS_NO_ROOM` for a full disk, `STEMS_NOT_SAVED` with the error's own words else).
   5. **Preview** (preview.py) of the folder assemble wrote, the song folder or its .failed, into work/preview/
      (overview.png, page_NN.png), judged against the work folder's stems, when matplotlib and librosa import. It
      only informs: absent libraries or a preview that fails give one warning, never another exit code, and so does
@@ -185,6 +185,9 @@ STEMS_FLAC_SHARE = 0.5      # a stem's 24-bit FLAC against its 24-bit PCM, about
 STEMS_NO_ROOM = ("The disk ran out of room while the separated instruments were being saved (they need about {mb}), "
                  "so they were not saved. The chart is not affected. Free some space, then chart the song again with "
                  "the stems ticked to save them.")
+# any other error writing them (`why`: its few words, such as "input/output error"; the v0.5.0 review fixes)
+STEMS_NOT_SAVED = ("The stems could not be saved ({why}); your chart is fine. Chart the song again with the stems "
+                   "ticked to try again; if C: is nearly full, free some space first.")
 SOLO_MODES = ("stems", "labels", "off")  # assemble's solos modes; a list of section names is the other kind
 # the placeholders for what no tag or caller gives ({name}: the song's name, as resolved); the album's is Encore's
 # song.ini rule for a single (docs/reports/charting-conventions.md, section 8), instead of "Unknown"
@@ -904,12 +907,21 @@ def check_stems_folder(folder: Path) -> None:
                          "out, or chart into another folder")
 
 
-class NoRoom(InputError):
-    """No room for the stems (export_stems): `need` bytes."""
+class StemsNotSaved(InputError):
+    """The stems could not be written (export_stems): `need` bytes, and `reason` in a few plain words (an OSError's
+    own, such as "input/output error")."""
 
-    def __init__(self, message: str, need: int):
+    def __init__(self, message: str, need: int, reason: str):
         super().__init__(message)
         self.need = need
+        self.reason = reason
+
+
+class NoRoom(StemsNotSaved):
+    """No room for the stems (export_stems): the disk, or in WSL C:, has less free than `need` bytes, or filled."""
+
+    def __init__(self, message: str, need: int):
+        super().__init__(message, need, "the disk is full")
 
 
 def disk_free(path: Path) -> int:
@@ -966,10 +978,10 @@ def export_stems(source: Path, folder: Path, free: Callable[[Path], int] | None 
     """The separation's stems (`source`: <stem>.wav each, float32 at 44.1 kHz on the input's timeline) as 24-bit FLAC
     (audio.write_flac) into `folder`, through a hidden staging folder beside it that replaces it at the end. NoRoom
     (an InputError) naming the folder and the space needed when the disk, or in WSL C: (`_no_room`), has less free
-    than `stems_bytes`, or when writing them fails: the disk filled (ENOSPC), or any other OSError, as in WSL a full C:
-    shows as one (an I/O error: WSL's disk cannot grow), and the finished chart stands either way (the v0.5.0 review's
-    install-02). The staging folder is removed then, and `folder` keeps what it held. Returns the record: {"folder",
-    "files", "bytes", "seconds"}."""
+    than `stems_bytes`, or the disk filled while they were written (ENOSPC); StemsNotSaved, NoRoom's base, with the
+    error's own words for any other OSError, as in WSL a full C: shows as one (an I/O error: WSL's disk cannot grow).
+    The finished chart stands either way (the v0.5.0 review's install-02). The staging folder is removed then, and
+    `folder` keeps what it held. Returns the record: {"folder", "files", "bytes", "seconds"}."""
     import shutil
     import tempfile
     wavs = [(s, source / f"{s}.wav") for s in STEM_FILES if (source / f"{s}.wav").is_file()]
@@ -1000,8 +1012,9 @@ def export_stems(source: Path, folder: Path, free: Callable[[Path], int] | None 
         if e.errno in (errno.ENOSPC, errno.EDQUOT):
             raise NoRoom(f"the disk filled while the stems were written into {folder}: they need about "
                          f"{_mb(need)}", need) from None
-        raise NoRoom(f"the stems could not be written into {folder} ({e.strerror or e}; in WSL a full C: shows as "
-                     f"this): they need about {_mb(need)}", need) from None
+        reason = str(e.strerror or type(e).__name__)
+        raise StemsNotSaved(f"the stems could not be written into {folder} ({reason}; in WSL a full C: shows as "
+                            f"this): they need about {_mb(need)}", need, reason[:1].lower() + reason[1:]) from None
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
@@ -1158,11 +1171,13 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
             t0 = begin("stems", f"the six stems as FLAC into {saved.name}")
             try:
                 report["stems"] = export_stems(stem_folder, saved)
-            except NoRoom as e:   # the chart stands: a warning, and the page says why (M8-12's review)
+            except StemsNotSaved as e:   # the chart stands: a warning, and the page says why (M8-12's review)
+                full = isinstance(e, NoRoom)   # else another error, in its own words (the v0.5.0 review fixes)
                 warn(f"stems: not saved ({e})")
-                report["stems"] = {"saved": False, "why": STEMS_NO_ROOM.format(mb=_mb(e.need)), "error": str(e)}
+                report["stems"] = {"saved": False, "why": STEMS_NO_ROOM.format(mb=_mb(e.need)) if full else
+                                   STEMS_NOT_SAVED.format(why=e.reason), "error": str(e)}
                 saved = None
-                end("stems", t0, False, "not saved: no room on the disk")
+                end("stems", t0, False, "not saved: no room on the disk" if full else f"not saved: {e.reason}")
             else:
                 end("stems", t0, False, f"{len(report['stems']['files'])} stems, {_mb(report['stems']['bytes'])}, "
                     f"in {saved}", {"bytes": report["stems"]["bytes"]})
