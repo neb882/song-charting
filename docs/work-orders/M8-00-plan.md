@@ -52,6 +52,7 @@ week's meter, from the sizes of M7's orders, not measured.
 | M8-10 | [queue](M8-10-queue.md) | a queue of songs and a list of his charts, from M8-04's design note | the note, accepted by the orchestrator | 1.5-2 days | 5-7 % |
 | M8-11 | [thin-runs](M8-11-thin-runs.md) | M7-08's engine-thinning spike on the owner's GPU, scored here; adoption only with the references' arm | M8-02 D and his GPU time [owner] | his GPU 2.5 h (+1 h); 2 h here | 1 % |
 | M8-12 | [stems-out](M8-12-stems-out.md) | the separated instruments saved as files of their own (an option, off by default), and Clone Hero's multitrack audio (on by default: a miss mutes the part); added 2026-11-09 at the owner's ask | — | 1-1.5 days | 3-5 % |
+| M8-13 | [your-charts](M8-13-your-charts.md) | "Your charts": every chart in the library with Install, Open, Download the stems and Look (M8-10's note, part D; added 2026-11-09) | M8-10 merged | half a day | 1-2 % |
 
 **Weighed and left out, with the reason** (the brief's candidates from `deferred`):
 - **The halved grid's outro, the ratio warning made a correction** (M7-09; M5-99 "A halved grid back at the first
@@ -88,6 +89,7 @@ release.
 | 3 (after M8-02 reports) | **M8-06** ∥ **M8-07**, taking the first free slots ahead of M8-10 (the queue yields) | `takes.py` ∥ `quantize.py`, `assemble.py` (the guitar part's rules), `pipeline.py` (the guitar part), a new module if (d) clears |
 | M8-11 | if the owner runs the spike (after M8-02 D) | scratch only; a setting's adoption is a wave-3-sized build only if the references' arm also came back |
 | M8-12 | after M8-04's merge, not beside M8-10 (both change the page's files) | `songcharter/ui/*`, `cli.py`, `pipeline.py` (the export), `assemble.py` and `preview.py` (the audio files) |
+| M8-13 | after M8-12's merge (the page's files) | `songcharter/ui/*` |
 | then | the release gate (section 9) | |
 
 - At most two builders at once (PIPELINE). A dropped order frees its slot; the next in the table moves up where its

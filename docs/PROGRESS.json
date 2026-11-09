@@ -132,6 +132,11 @@
       "order": "M8-01's GPU takes on the owner's PC",
       "stage": "v0.4.0's GPU check passed (docs/reports/v0.4.0-gate.md, the owner's section); the takes of the 23 measured songs and the test song (96 takes) started on his PC 2026-11-09 about 02:20 UTC, unattended overnight",
       "then": "he sends gpu_results.zip; M8-02's two measurers at the v0.4.0 tag's code (part A now with the shape changes per onset)"
+    },
+    {
+      "order": "M8-13: \"Your charts\"",
+      "stage": "started 2026-11-09 after M8-12's merge (df71e82), branch m8-13-your-charts; the builder returns at 96 % of the week's meter and is resumed after the reset",
+      "then": "review (screens too), merge"
     }
   ],
   "next": [
@@ -251,8 +256,8 @@
     "[A second tester, 2026-11-09] A drummer charted a song with quiet drums (his chart to come): notes where there are none and none where there are; ride and crash confused; the pattern not regular measure to measure. Measured on 19 songs' human drum charts (docs/reports/M8-lanes-drums.md): the pads are the defect, the crash kept 0.273 (0.49 charted as ride, 0.25 as hi-hat), the toms put on green (G-tom 1313 against 486), the ride lost on take_me_out; a pad-aware score first (F1@50 counts no pads), then a crash and ride rule or model (M9 unless M8 has a slot). We repeat a measure exactly half as often as the humans (0.100 against 0.197), but a rule making runs of near-alike measures alike fails its bar (pooled F1 never up): no regularity rule.",
     "[M8-04 review, 2026-11-09] The time left's high end counts take 1's separation in (the events do not say whether autochart's cache held it, as on a song charted again after a cancel), so the range widened: the test song 8-15 minutes after take 1, the 9:05 song 23-35. A take event that says whether its separation came from the cache (pipeline.py) narrows it back.",
     "[M8-10 CI, 2026-11-09] packaging/release/build.sh fetches uv's checksum from GitHub's release downloads with 3 retries within a few seconds: four CI attempts in a row failed on HTTP 504 there (the install-building hooks 30-install, 50-e2e, 75-update), the suite passing each time. A longer backoff (or the checksum pinned in the repository) would stop the reruns.",
-    "[M8-10, 2026-11-09] \"Your charts\" (the library read, Install and Open by id: the design note's part D) is its own small order after M8-10; the cache rule for a queue's finished songs, lyrics held in memory for a waiting song, \"Chart next\" and the Windows keep-awake call are later options (docs/work-orders/M8-10-queue.md, Decision).",
-    "[M8-12, 2026-11-09] The release gate's play test listens to the drop-out on a missed note (the guitar stem's bleed stays audible in song.ogg) and to a clean run against the one-file audio; the stems' quality for sampling (piano and \"other\" the least clean) is said on the page."
+    "[M8-12, 2026-11-09] The release gate's play test listens to the drop-out on a missed note (the guitar stem's bleed stays audible in song.ogg) and to a clean run against the one-file audio; the stems' quality for sampling (piano and \"other\" the least clean) is said on the page.",
+    "[M8-10, 2026-11-09] The cache rule for a queue's finished songs, lyrics held in memory for a waiting song, \"Chart next\" and the Windows keep-awake call are later options (docs/work-orders/M8-10-queue.md, Decision); \"Your charts\" is M8-13."
   ],
   "open_questions": "DESIGN 9. Answered: Q1 (Guitar, Expert), Q18 and Q19 (applied), Q30 (the work folder goes to the per-user cache). Check the others' status there before relying on them.",
   "how_work_is_run": "docs/PIPELINE.md. Sources: anthropic.com/engineering/multi-agent-research-system, /building-effective-agents, /effective-context-engineering-for-ai-agents, /effective-harnesses-for-long-running-agents, /harness-design-long-running-apps, /demystifying-evals-for-ai-agents; claude.com/blog/multi-agent-coordination-patterns; code.claude.com/docs/en/best-practices, /prompt-caching, /sub-agents, /settings",
