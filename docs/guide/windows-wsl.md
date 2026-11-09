@@ -18,11 +18,16 @@ Ubuntu), so you set that up first, once.
 
 1. Right-click the Start button and choose "Terminal (Admin)" (on Windows 10: "Windows PowerShell (Admin)"), and
    answer Yes when Windows asks.
-2. Type `wsl --update` and press Enter. When it finishes, type `wsl --install` and press Enter. (The update comes
-   first because an older WSL installs an older Ubuntu.)
+2. Type `wsl --update` and press Enter. When it finishes, type `wsl --install -d Ubuntu` and press Enter. (The
+   update comes first because an older WSL installs an older Ubuntu. Naming Ubuntu matters: without it, a PC where
+   WSL is already there gets no Linux at all, and the Start menu shows only "WSL Settings".)
 3. Restart the PC when it finishes.
 4. After the restart, an Ubuntu window opens (if not, open "Ubuntu" from the Start menu). Choose a user name, in
    lower-case letters with no spaces, and a password. Nothing shows while you type the password: that is normal.
+
+- **No "Ubuntu" in the Start menu, only "WSL Settings"?** Then no Linux was installed. In Terminal (Admin), type
+  `wsl --install -d Ubuntu` and press Enter, and restart if it asks. `wsl -l -v` lists what is installed: Ubuntu
+  should be there.
 
 - An error 0x80370102 or 0x80070003 means virtualization is off (see section 1).
 - **Never install an NVIDIA driver inside Ubuntu.** The Windows driver already works there.
