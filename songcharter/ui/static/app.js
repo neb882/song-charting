@@ -730,7 +730,9 @@ function closed(c) {
 function closedNow(c) {
   const was = state.job && state.job.job;
   finish(c.title, c.message, c.summary, { ...c.how, tab: endTitle(c.outcome) || c.how.tab });
-  if (c.results) loadResults();
+  // the results of the chart that ended, by its id: after a gap that spanned the whole next song, "current" is that
+  // song's (the v0.5.0 review fixes, F2)
+  if (c.results) loadResults(was);
   settleQueue(was);
 }
 

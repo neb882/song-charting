@@ -186,8 +186,8 @@ STEMS_NO_ROOM = ("The disk ran out of room while the separated instruments were 
                  "so they were not saved. The chart is not affected. Free some space, then chart the song again with "
                  "the stems ticked to save them.")
 # any other error writing them (`why`: its few words, such as "input/output error"; the v0.5.0 review fixes)
-STEMS_NOT_SAVED = ("The stems could not be saved ({why}); your chart is fine. Chart the song again with the stems "
-                   "ticked to try again; if C: is nearly full, free some space first.")
+STEMS_NOT_SAVED = ("The stems could not be saved ({why}). The chart is not affected. Chart the song again with the "
+                   "stems ticked to try again; if C: is nearly full, free some space first.")
 SOLO_MODES = ("stems", "labels", "off")  # assemble's solos modes; a list of section names is the other kind
 # the placeholders for what no tag or caller gives ({name}: the song's name, as resolved); the album's is Encore's
 # song.ini rule for a single (docs/reports/charting-conventions.md, section 8), instead of "Unknown"

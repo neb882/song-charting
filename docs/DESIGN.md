@@ -330,7 +330,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
     fills while they are written is a warning (M8-12's review), and so is any other error writing them, as in WSL a
     full C: is an I/O error rather than ENOSPC [inference: not run on Windows]: the staging folder is removed, the
     chart stands with its Install, and the Done screen says in plain words why there are no stems: the disk ran out
-    of room, or, for any other error, "The stems could not be saved (input/output error); your chart is fine. ..."
+    of room, or, for any other error, "The stems could not be saved (input/output error). The chart is not affected. ..."
     in the error's own words (`STEMS_NOT_SAVED`), never a full disk it was not.
   - Piano and "other" are htdemucs_6s's least clean stems (piano at −31 dB on the test song, above), which the page
     says.
@@ -3254,7 +3254,13 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
   - **A restart waits for a click:** closing the window kills the chart's tree as before, and its song goes back to
     waiting at the top (its stages and takes stay in the work cache); started again, songcharter pauses the list
     ("3 songs were waiting when songcharter closed") with Carry on and Clear the list, so opening it later to
-    install one song never starts a 10 GB chart under a game.
+    install one song never starts a 10 GB chart under a game. A server killed outright (SIGKILL, a crash) cannot
+    clean up, and its chart, in a session of its own, ran on under init, so Carry on started a second chart on the
+    same work folder (a second advisor's finding 7). `<home>/state/chart.pid` names the running chart (its pid,
+    which is its process group's, and its start time from /proc) from its start to its end, and the next start
+    stops that group before it reads the queue, only while its leader is the process named (a pid used again is
+    never touched). A parent-death signal (PR_SET_PDEATHSIG) was not used: it follows the thread that started the
+    child, and charts start from request and queue threads that end at once.
   - **Cancel** ends the charting song only, and the next starts; **Pause after this song** lets it finish and starts
     none; a waiting song has **Remove**; no reordering. **Two songs in a row that do not finish** (exit 2 or 3,
     killed, or one whose file is gone) pause the list, as exit 2 is often the machine; a failed check is a finished

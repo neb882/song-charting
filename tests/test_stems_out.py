@@ -164,7 +164,7 @@ def test_a_full_disk_while_saving_the_stems(runs, tmp_path, monkeypatch, capsys,
     assert record["saved"] is False and record["why"] == (P.STEMS_NO_ROOM.format(mb="51 MB") if code == errno.ENOSPC
                                                           else P.STEMS_NOT_SAVED.format(why="input/output error"))
     assert record["why"].startswith("The disk ran out of room" if code == errno.ENOSPC else
-                                    "The stems could not be saved (input/output error); your chart is fine.")
+                                    "The stems could not be saved (input/output error). The chart is not affected.")
     assert [e["stage"] for e in events if e["event"] == "stage_end"][-2:] == ["stems", "preview"]
     source = next((root / "cache" / "work").glob("song-*")) / "stems" / standin_key(A.decode(root / "song.flac"))
     with pytest.raises(InputError, match=r"no room for the stems in .*: they need about 51 MB, and 1 MB are free"):

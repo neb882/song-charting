@@ -4,6 +4,8 @@ program (STANDIN) that writes what `chart --events` writes; the real command lin
 test_pipeline.py."""
 import json
 import os
+import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -935,3 +937,57 @@ def test_a_new_evening_and_a_cancel_reset_the_failures_and_the_list_keeps_the_la
     assert [e["id"] for e in kept] == [e["id"] for e in snap["entries"]]
     assert queued.queue.job(first["job"]) is None
     assert queued.queue.dropped_chart(first["job"]) == J.chart_id(Path(first["closing"]["folder"]))
+
+
+def test_stop_orphan_stops_only_the_chart_its_file_names(tmp_path):
+    """A second advisor's finding 7, the pid file's own rules: a process group whose leader is the process chart.pid
+    names (the same start time) is stopped, its members too; a pid whose start time differs (used again since: here
+    another process in a session of its own) is never touched; a damaged or missing file stops nothing; the file goes
+    either way (break: the start time not compared: the other process is stopped)."""
+    if not Path("/proc/self/stat").exists():
+        pytest.skip("needs /proc (Linux)")
+    leader = subprocess.Popen(["sh", "-c", "sleep 60 & sleep 60"], start_new_session=True)
+    other = subprocess.Popen(["sleep", "60"], start_new_session=True)
+    try:
+        deadline = time.monotonic() + 10
+        while J.proc_start(leader.pid) is None:
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        path = J.pid_path(tmp_path)
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"pid": other.pid, "start": "1", "job": "x"}), encoding="utf-8")
+        assert J.stop_orphan(tmp_path, timeout=1) is None and not path.exists()   # another process: untouched
+        assert other.poll() is None and proc.alive(other.pid)
+        for text in ("{not json", "[]", json.dumps({"pid": True, "start": "1"}), json.dumps({"pid": 1, "start": "1"})):
+            path.write_text(text, encoding="utf-8")
+            assert J.stop_orphan(tmp_path) is None and not path.exists(), text
+        assert J.stop_orphan(tmp_path) is None   # no file
+        said = []
+        path.write_text(json.dumps({"pid": leader.pid, "start": J.proc_start(leader.pid), "job": "20000101-000000"}),
+                        encoding="utf-8")
+        assert J.stop_orphan(tmp_path, said.append, timeout=2) == leader.pid
+        leader.wait(5)
+        assert not proc.group_alive(leader.pid) and not path.exists()
+        assert said and "job 20000101-000000" in said[0]
+    finally:
+        for p in (leader, other):
+            if p.poll() is None:
+                os.killpg(p.pid, signal.SIGKILL)
+                p.wait(5)
+
+
+def test_a_jobs_pid_file_lives_while_its_chart_runs(queued):
+    """chart.pid names the running chart (its pid and start time) from its start to its end, cancelled or not."""
+    queued.add("hang")
+    take_started(queued.queue)
+    job = queued.queue.jobs.current
+    record = json.loads(J.pid_path(queued.home).read_text(encoding="utf-8"))
+    assert record == {"pid": job.tree.pid, "start": J.proc_start(job.tree.pid), "job": job.id}
+    queued.queue.jobs.cancel()
+    assert not J.pid_path(queued.home).exists()
+    queued.add("ok")
+    settled(queued.queue)
+    deadline = time.monotonic() + 10
+    while J.pid_path(queued.home).exists():   # the reader thread removes it as the chart exits
+        assert time.monotonic() < deadline
+        time.sleep(0.02)

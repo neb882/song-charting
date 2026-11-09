@@ -29,6 +29,14 @@
   * **Cancel:** proc.Tree.kill() (SIGTERM to the group, SIGKILL after 5 s), then the state `cancelled`, then the
     `.<name>.*.partial` folders beside the output (assemble's staging) are deleted. The work folder's caches stay, so
     the same song charts faster next time.
+  * **An orphan** (a second advisor's finding 7): the chart runs in a session of its own, so a server killed outright
+    (SIGKILL, a crash: no SIGTERM, SIGHUP or Ctrl+C to clean up) leaves it running under init, and Carry on after the
+    restart would start a second chart on the same work folder. <home>/state/chart.pid names the running chart (its
+    pid, which is its process group's, and its start time from /proc), written when it starts and removed when it
+    ends; `stop_orphan`, at the server's start, kills that group while its leader is still the process it names (a
+    pid used again since is never touched). Chosen over a parent-death signal (prctl PR_SET_PDEATHSIG): that signal
+    follows the thread that started the child, and the server starts charts from request and queue threads that end
+    at once, so it would kill every chart within moments.
   * **Lyrics** (M4-06, from M4-10): the page's pasted text (`lyrics`, None when the box is empty or blank) goes only
     into the chart. The job writes it into a memory file (memfd, Linux), which the child gets as an open file and
     reads as `--lyrics=/dev/fd/<n>`: nothing on disk, and the command line, the log, the job's options (`lyrics`:
@@ -267,6 +275,60 @@ def _stamp() -> str:
     return time.strftime("%Y%m%d-%H%M%S")
 
 
+def pid_path(home: Path) -> Path:
+    return Path(home) / "state" / "chart.pid"
+
+
+def proc_start(pid: int) -> str | None:
+    """The process's start time (/proc/<pid>/stat's 22nd field, clock ticks since boot), which a pid used again
+    later does not share; None when there is no such process, or no /proc."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="ascii", errors="replace")
+    except OSError:
+        return None
+    fields = stat.rpartition(")")[2].split()   # from the 3rd field, the state
+    return fields[19] if len(fields) > 19 else None
+
+
+def stop_orphan(home: Path, log: Callable[[str], None] | None = None,
+                timeout: float = proc.KILL_TIMEOUT_S) -> int | None:
+    """At the server's start (server._main, before the queue is read): a chart that chart.pid names and that still
+    runs, its leader the very process that was started (its start time the same), was left by a server killed
+    outright; its whole process group gets SIGTERM, then SIGKILL after `timeout` s (the module docstring: an orphan).
+    chart.pid goes either way. Returns the pid stopped, else None."""
+    path = pid_path(home)
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        record = None
+    pid = record.get("pid") if isinstance(record, dict) else None
+    stopped = None
+    if (isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(record.get("start"), str)
+            and proc.alive(pid) and proc_start(pid) == record["start"]):
+        try:
+            os.killpg(pid, signal.SIGTERM)   # its pid is its group's: a session of its own (proc.start)
+            deadline = time.monotonic() + timeout
+            while proc.group_alive(pid) and time.monotonic() < deadline:
+                time.sleep(proc.POLL_S)
+            if proc.group_alive(pid):
+                os.killpg(pid, signal.SIGKILL)
+            stopped = pid
+        except ProcessLookupError:
+            stopped = pid
+        except OSError as e:
+            (log or (lambda text: None))(f"a chart left running (pid {pid}) could not be stopped: {e}")
+        if stopped is not None:
+            (log or (lambda text: None))(f"a chart left running by a songcharter that was stopped outright (job "
+                                         f"{record.get('job')}, pid {pid}) was stopped; its song waits for Carry on")
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return stopped
+
+
 @dataclass
 class Job:
     id: str
@@ -406,6 +468,7 @@ class Jobs:
             finally:
                 if fd is not None:
                     os.close(fd)   # the child holds its own copy
+            self._mark(job)
             job.reader = threading.Thread(target=self._read, args=(job,), name=f"songcharter-job-{job_id}",
                                           daemon=True)
             self.current = job
@@ -444,9 +507,31 @@ class Jobs:
                     pass
             self._finish(job, job.tree.wait())
 
+    def _mark(self, job: Job) -> None:
+        """<home>/state/chart.pid for the chart that has just started (the module docstring: an orphan); a disk that
+        cannot take it is logged, and the chart goes on."""
+        assert job.tree is not None
+        path = pid_path(self.home)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"pid": job.tree.pid, "start": proc_start(job.tree.pid), "job": job.id}) + "\n",
+                            encoding="utf-8")
+        except OSError as e:
+            self.log(f"job {job.id}: {path} could not be written ({e})")
+
+    def _unmark(self, job: Job) -> None:
+        """chart.pid away once the job's chart has ended, when it names that chart."""
+        path = pid_path(self.home)
+        try:
+            if job.tree is not None and json.loads(path.read_text(encoding="utf-8")).get("pid") == job.tree.pid:
+                path.unlink()
+        except (OSError, ValueError, AttributeError):
+            pass
+
     def _finish(self, job: Job, code: int) -> None:
         """The end state from the exit code (a cancel's is set by cancel()). A chart that has sent its result is done,
         whatever its exit: the result comes after the build is in place."""
+        self._unmark(job)
         with job.cond:
             job.returncode = code
             if job.cancelling or job.state != "running":
@@ -494,6 +579,7 @@ class Jobs:
                 job.reader.join(timeout=10)   # the pipe closes with the last process of the group
             for folder in partial_folders(job.out):
                 shutil.rmtree(folder, ignore_errors=True)
+            self._unmark(job)
             with job.cond:
                 job.returncode = code
                 if job._has("result"):

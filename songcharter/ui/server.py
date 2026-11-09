@@ -28,7 +28,9 @@ one chart runs at a time as a child process group (jobs.py). In WSL the Windows 
   5. **Logs** to $SONGCHARTER_HOME/logs/ui-<yyyyMMdd>.log (every request too) and to the console window. Uploads older
      than 7 days go, but those the queue's waiting songs name (jobs.queued_uploads).
   6. **Stops** on SIGHUP or SIGTERM (the window closes) and Ctrl+C: a running job's tree is killed first, and its
-     song goes back to waiting at the top of the queue (Queue.shutdown). A page that closes does not stop it.
+     song goes back to waiting at the top of the queue (Queue.shutdown). A page that closes does not stop it. A
+     server killed outright (SIGKILL, a crash) cannot: its chart runs on, and the next start stops it before it
+     reads the queue (jobs.stop_orphan, by <home>/state/chart.pid; a second advisor's finding 7).
 
 **The update notice** (M5-07): once the first page (index.html) has been served, never before (nothing on the
 startup path waits on the network, or asks it), a daemon thread runs updates.check once per server process: at most
@@ -199,7 +201,7 @@ from ..timed import DIFFICULTIES, INSTRUMENTS
 from . import estimate
 from . import home as default_home
 from .jobs import (CLOSING, LIBRARY_ID, ChartOptions, Charted, Job, Jobs, JobRunning, NotInQueue, NotRunning, Queue,
-                   QueueFull, find_chart, library, parse_options, queued_uploads)
+                   QueueFull, find_chart, library, parse_options, queued_uploads, stop_orphan)
 
 APP = "songcharter"
 PORTS = range(8765, 8785)          # 8765-8784
@@ -1502,6 +1504,7 @@ def _main(port: int | None, browser: bool, from_shortcut: bool, home: Path | Non
     gone = prune_uploads(root, keep=queued_uploads(root))
     if gone:
         log(f"uploads older than {UPLOAD_DAYS} days deleted: {len(gone)}")
+    stop_orphan(root, log)   # a chart a songcharter killed outright left running, before the queue is read (jobs.py)
     app = App(root, log=log, updates=lambda say: updates.check(root, __version__, say=say))
     threading.Thread(target=app.doctor, name="songcharter-doctor", daemon=True).start()   # the header, in advance
     check = windows_check(app) if in_wsl and wsl.interop_ok() else None
