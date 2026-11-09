@@ -1182,8 +1182,10 @@ def test_a_chart_left_by_a_server_killed_outright_is_stopped_at_the_next_start(t
         time.sleep(0.5)
         assert all(proc.alive(p) for p in pids)   # the orphan, as the finding found it
         servers.append(serve())   # started again
-        assert not any(proc.alive(p) for p in pids)   # stopped before the queue was read
-        assert not J.pid_path(home).exists()
+        deadline = time.monotonic() + 15
+        while any(proc.alive(p) for p in pids) or J.pid_path(home).exists():   # stopped once its port was bound
+            assert time.monotonic() < deadline, [proc.alive(p) for p in pids]
+            time.sleep(0.05)
         q = json.loads(call(port, "GET", "/api/queue")[2])
         assert [e["state"] for e in q["entries"]] == ["waiting"] and q["paused"] == "restart"
         log = "".join(f.read_text(encoding="utf-8") for f in (home / "logs").glob("ui-*.log"))
@@ -1196,6 +1198,58 @@ def test_a_chart_left_by_a_server_killed_outright_is_stopped_at_the_next_start(t
                     server.wait(15)
                 except subprocess.TimeoutExpired:
                     server.kill()
+        for p in pids:
+            if proc.alive(p):
+                os.kill(p, signal.SIGKILL)
+
+
+@pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="needs /proc (Linux)")
+def test_a_second_start_that_cannot_bind_never_stops_a_live_songcharters_chart(tmp_path, monkeypatch):
+    """The v0.5.0 re-review's R1: a second start that did not find the running songcharter (its hello slower than
+    0.5 s on a PC deep in swap, or another --port) and cannot bind its ports exits 2 and leaves that songcharter's
+    chart running: the orphan check runs only once the port is bound, and spares a chart whose server is alive
+    (breaks: jobs.stop_orphan before bind; the server not checked)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "doctor.json").write_text(json.dumps(DOCTOR), encoding="utf-8")
+    (tmp_path / "standin.py").write_text(STANDIN, encoding="utf-8")
+    (tmp_path / "driver.py").write_text(DRIVER, encoding="utf-8")
+    port = free_ports(1)[0]
+    env = {**os.environ, "PYTHONPATH": str(Path(songcharter.__file__).resolve().parents[1])}
+    env.pop("WSL_DISTRO_NAME", None)
+    server = subprocess.Popen([sys.executable, str(tmp_path / "driver.py"), str(tmp_path / "standin.py"), str(home),
+                               str(port)], env=env, cwd=tmp_path, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              start_new_session=True)
+    pids = []
+    try:
+        deadline = time.monotonic() + 30
+        while S.hello(port) is None:
+            assert server.poll() is None and time.monotonic() < deadline
+            time.sleep(0.1)
+        ctx = SimpleNamespace(port=port)
+        _, up = upload(ctx, song(tmp_path / "s.wav"), "Song.wav")
+        assert call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))[0] == 202
+        while not pids:
+            assert time.monotonic() < deadline + 30
+            events = json.loads(call(port, "GET", "/api/jobs/current")[2])["events"]
+            pids = next((e["pids"] for e in events if e["event"] == "take"), [])
+            time.sleep(0.05)
+        monkeypatch.setattr(S, "find_running", lambda ports: None)   # its hello missed the timeout
+        monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+        from songcharter import wsl
+        monkeypatch.setattr(wsl, "is_wsl", lambda: False)
+        asked = []
+        real = S.stop_orphan
+        monkeypatch.setattr(S, "stop_orphan", lambda *a, **k: asked.append(a) or real(*a, **k))
+        assert S.main(port=port, browser=False, home=home) == 2   # its port is taken
+        assert asked == [] and all(proc.alive(p) for p in pids) and J.pid_path(home).exists()
+        assert J.stop_orphan(home, timeout=1) is None and all(proc.alive(p) for p in pids)   # its server is alive
+    finally:
+        server.send_signal(signal.SIGTERM)
+        try:
+            server.wait(15)
+        except subprocess.TimeoutExpired:
+            server.kill()
         for p in pids:
             if proc.alive(p):
                 os.kill(p, signal.SIGKILL)

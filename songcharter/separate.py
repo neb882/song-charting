@@ -242,6 +242,9 @@ def separate(mix: np.ndarray, sample_rate: int = SAMPLE_RATE, *, model: Any = DE
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "info.json").unlink(missing_ok=True)  # written last: a folder without it is never a hit
         for s, y in stems.items():
+            # a new file, never the old one rewritten: eval/golden.py hard-links a separation cache's stems here, and
+            # writing through such a link would change the other cache's file (the v0.5.0 re-review's R2)
+            (folder / f"{s}.wav").unlink(missing_ok=True)
             A.write_wav(y, folder / f"{s}.wav")
         (folder / "info.json").write_text(json.dumps({"stems": list(stems), "info": asdict(info)}, indent=1),
                                           encoding="utf-8")

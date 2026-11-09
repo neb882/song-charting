@@ -962,9 +962,14 @@ def test_stop_orphan_stops_only_the_chart_its_file_names(tmp_path):
             path.write_text(text, encoding="utf-8")
             assert J.stop_orphan(tmp_path) is None and not path.exists(), text
         assert J.stop_orphan(tmp_path) is None   # no file
+        # its server alive (this process, with its start time): not an orphan, and its file kept (the v0.5.0
+        # re-review's R1; break: the server not checked, so a live songcharter's chart is stopped)
+        alive = {"pid": leader.pid, "start": J.proc_start(leader.pid), "job": "20000101-000000",
+                 "server": os.getpid(), "server_start": J.proc_start(os.getpid())}
+        path.write_text(json.dumps(alive), encoding="utf-8")
+        assert J.stop_orphan(tmp_path, timeout=1) is None and path.exists() and proc.group_alive(leader.pid)
         said = []
-        path.write_text(json.dumps({"pid": leader.pid, "start": J.proc_start(leader.pid), "job": "20000101-000000"}),
-                        encoding="utf-8")
+        path.write_text(json.dumps({**alive, "server_start": "1"}), encoding="utf-8")   # its server gone
         assert J.stop_orphan(tmp_path, said.append, timeout=2) == leader.pid
         leader.wait(5)
         assert not proc.group_alive(leader.pid) and not path.exists()
@@ -982,7 +987,8 @@ def test_a_jobs_pid_file_lives_while_its_chart_runs(queued):
     take_started(queued.queue)
     job = queued.queue.jobs.current
     record = json.loads(J.pid_path(queued.home).read_text(encoding="utf-8"))
-    assert record == {"pid": job.tree.pid, "start": J.proc_start(job.tree.pid), "job": job.id}
+    assert record == {"pid": job.tree.pid, "start": J.proc_start(job.tree.pid), "job": job.id, "server": os.getpid(),
+                      "server_start": J.proc_start(os.getpid())}
     queued.queue.jobs.cancel()
     assert not J.pid_path(queued.home).exists()
     queued.add("ok")

@@ -63,6 +63,28 @@ def test_the_cache_returns_the_same_stems_without_separating(tiny, tmp_path, mon
     assert not fresh.cached
 
 
+def test_stems_written_again_never_write_through_a_hard_link(tiny, tmp_path):
+    """The v0.5.0 re-review's R2: eval/golden.py hard-links another cache's stems into a build's cache folder. When
+    that folder is separated again in place (its info.json says another device), each WAV is a new file: the linked
+    source keeps its bytes (break: write_wav over the link truncates and rewrites the source's own file)."""
+    m = mix()
+    stems, made = separate(m, model=tiny, device="cpu", cache_dir=tmp_path / "a")
+    source, linked = tmp_path / "source" / made.key, tmp_path / "b" / made.key
+    source.mkdir(parents=True)
+    linked.mkdir(parents=True)
+    for s in stems:   # "another device's" stems in the source, linked into the build's cache folder
+        S.A.write_wav(-stems[s], source / f"{s}.wav")
+        (linked / f"{s}.wav").hardlink_to(source / f"{s}.wav")
+    meta = json.loads((tmp_path / "a" / made.key / "info.json").read_text(encoding="utf-8"))
+    (source / "info.json").write_text(json.dumps({**meta, "info": {**meta["info"], "device": "cuda"}}))
+    (linked / "info.json").write_text((source / "info.json").read_text())
+    before = {s: (source / f"{s}.wav").read_bytes() for s in stems}
+    again, info = separate(m, model=tiny, device="cpu", cache_dir=tmp_path / "b")
+    assert not info.cached and all(np.array_equal(again[s], stems[s]) for s in stems)
+    assert {s: (source / f"{s}.wav").read_bytes() for s in stems} == before
+    assert not any((linked / f"{s}.wav").samefile(source / f"{s}.wav") for s in stems)
+
+
 def test_a_cache_folder_missing_a_stem_is_separated_again(tiny, tmp_path):
     """info.json beside stems that are gone or do not read (a folder deleted in name order up to a file in use, a
     file cut short) is a miss, separated and written again, not an error."""

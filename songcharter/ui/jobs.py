@@ -32,9 +32,10 @@
   * **An orphan** (a second advisor's finding 7): the chart runs in a session of its own, so a server killed outright
     (SIGKILL, a crash: no SIGTERM, SIGHUP or Ctrl+C to clean up) leaves it running under init, and Carry on after the
     restart would start a second chart on the same work folder. <home>/state/chart.pid names the running chart (its
-    pid, which is its process group's, and its start time from /proc), written when it starts and removed when it
-    ends; `stop_orphan`, at the server's start, kills that group while its leader is still the process it names (a
-    pid used again since is never touched). Chosen over a parent-death signal (prctl PR_SET_PDEATHSIG): that signal
+    pid, which is its process group's, and its start time from /proc) and its server (pid and start time), written
+    when it starts and removed when it ends; `stop_orphan`, at the server's start once its port is bound, kills that
+    group while its leader is still the process it names (a pid used again since is never touched) and its server
+    is gone (one this start did not find keeps its chart: the v0.5.0 re-review's R1). Chosen over a parent-death signal (prctl PR_SET_PDEATHSIG): that signal
     follows the thread that started the child, and the server starts charts from request and queue threads that end
     at once, so it would kill every chart within moments.
   * **Lyrics** (M4-06, from M4-10): the page's pasted text (`lyrics`, None when the box is empty or blank) goes only
@@ -292,10 +293,12 @@ def proc_start(pid: int) -> str | None:
 
 def stop_orphan(home: Path, log: Callable[[str], None] | None = None,
                 timeout: float = proc.KILL_TIMEOUT_S) -> int | None:
-    """At the server's start (server._main, before the queue is read): a chart that chart.pid names and that still
-    runs, its leader the very process that was started (its start time the same), was left by a server killed
-    outright; its whole process group gets SIGTERM, then SIGKILL after `timeout` s (the module docstring: an orphan).
-    chart.pid goes either way. Returns the pid stopped, else None."""
+    """At the server's start (server._main, once its port is bound): a chart that chart.pid names and that still
+    runs, its leader the very process that was started (its start time the same), whose server (chart.pid's
+    `server`, with its start time) is gone, was left by a server killed outright; its whole process group gets
+    SIGTERM, then SIGKILL after `timeout` s (the module docstring: an orphan). A server still running (one this start
+    did not find: slow to answer, or on another --port) keeps its chart and chart.pid (the v0.5.0 re-review's R1).
+    Otherwise chart.pid goes. Returns the pid stopped, else None."""
     path = pid_path(home)
     try:
         record = json.loads(path.read_text(encoding="utf-8"))
@@ -304,6 +307,10 @@ def stop_orphan(home: Path, log: Callable[[str], None] | None = None,
     except (OSError, ValueError):
         record = None
     pid = record.get("pid") if isinstance(record, dict) else None
+    server = record.get("server") if isinstance(record, dict) else None
+    if (isinstance(server, int) and not isinstance(server, bool) and server > 1 and proc.alive(server)
+            and proc_start(server) is not None and proc_start(server) == record.get("server_start")):
+        return None   # its server is alive: not an orphan
     stopped = None
     if (isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(record.get("start"), str)
             and proc.alive(pid) and proc_start(pid) == record["start"]):
@@ -514,7 +521,8 @@ class Jobs:
         path = pid_path(self.home)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({"pid": job.tree.pid, "start": proc_start(job.tree.pid), "job": job.id}) + "\n",
+            path.write_text(json.dumps({"pid": job.tree.pid, "start": proc_start(job.tree.pid), "job": job.id,
+                                        "server": os.getpid(), "server_start": proc_start(os.getpid())}) + "\n",
                             encoding="utf-8")
         except OSError as e:
             self.log(f"job {job.id}: {path} could not be written ({e})")

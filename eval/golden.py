@@ -252,7 +252,9 @@ def read_json(path: Path) -> dict | None:
 def seed_stems(song: Song, kept: Path, stems: Path) -> dict:
     """Hard-link the stems of this song's decode from the separation cache `stems` into kept/stems/<key>/, the folder
     the build's separation looks in, when `stems` has them under the key the build will compute (separate.py's
-    cache_key of the decode with separate()'s defaults) and every stem there is whole. What was done, and why not."""
+    cache_key of the decode with separate()'s defaults), its info.json says they were made on the CPU (the build's
+    device: stems made on CUDA would be separated again, over the links) and every stem there is whole. What was done,
+    and why not."""
     import soundfile as sf
 
     from songcharter import audio as A
@@ -267,6 +269,10 @@ def seed_stems(song: Song, kept: Path, stems: Path) -> dict:
     info = read_json(src / "info.json")
     if not info or not info.get("stems"):
         return {"key": key, "linked": [], "why": f"no stems for key {key} in {stems}"}
+    made = (info.get("info") or {}).get("device") if isinstance(info.get("info"), dict) else None
+    if made != "cpu":   # the CPU build would not take them, and would separate again over the links (re-review R2)
+        return {"key": key, "linked": [], "why": f"the stems in {src} were made on {made or 'an unknown device'}, "
+                                                 "not the CPU the build runs on"}
     names = list(info["stems"])
     for n in names:
         f = src / f"{n}.wav"

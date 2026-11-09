@@ -29,8 +29,9 @@ one chart runs at a time as a child process group (jobs.py). In WSL the Windows 
      than 7 days go, but those the queue's waiting songs name (jobs.queued_uploads).
   6. **Stops** on SIGHUP or SIGTERM (the window closes) and Ctrl+C: a running job's tree is killed first, and its
      song goes back to waiting at the top of the queue (Queue.shutdown). A page that closes does not stop it. A
-     server killed outright (SIGKILL, a crash) cannot: its chart runs on, and the next start stops it before it
-     reads the queue (jobs.stop_orphan, by <home>/state/chart.pid; a second advisor's finding 7).
+     server killed outright (SIGKILL, a crash) cannot: its chart runs on, and the next start stops it once its own
+     port is bound, when chart.pid's server is gone (jobs.stop_orphan, by <home>/state/chart.pid; a second advisor's
+     finding 7, the re-review's R1).
 
 **The update notice** (M5-07): once the first page (index.html) has been served, never before (nothing on the
 startup path waits on the network, or asks it), a daemon thread runs updates.check once per server process: at most
@@ -1505,7 +1506,6 @@ def _main(port: int | None, browser: bool, from_shortcut: bool, home: Path | Non
     gone = prune_uploads(root, keep=queued_uploads(root))
     if gone:
         log(f"uploads older than {UPLOAD_DAYS} days deleted: {len(gone)}")
-    stop_orphan(root, log)   # a chart a songcharter killed outright left running, before the queue is read (jobs.py)
     app = App(root, log=log, updates=lambda say: updates.check(root, __version__, say=say))
     threading.Thread(target=app.doctor, name="songcharter-doctor", daemon=True).start()   # the header, in advance
     check = windows_check(app) if in_wsl and wsl.interop_ok() else None
@@ -1521,6 +1521,10 @@ def _main(port: int | None, browser: bool, from_shortcut: bool, home: Path | Non
     except Unreachable as e:
         log(unreachable(ports, str(e), log.path))
         return 2
+    # a chart a songcharter killed outright left running (jobs.py), only now: a start that cannot bind (another
+    # songcharter it did not find holds the ports) never touches that one's chart (the v0.5.0 re-review's R1); before
+    # any page can ask for Carry on
+    stop_orphan(root, log)
     stop = threading.Event()
 
     def on_signal(signum, frame) -> None:
