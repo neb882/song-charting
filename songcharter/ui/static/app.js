@@ -718,16 +718,17 @@ async function follow(token) {
 // the chart), or nothing answers any more (`down`): the window may have been closed, or the page may only have lost
 // it for a while (after the PC sleeps, say) while the chart runs on, so a reload, which reattaches, comes first (the
 // v0.4.0 gate's advisor). The page ends the chart as a cancel does: the screen let go, the title, the update notice
-// back, and what to do.
+// back, and what to do. The heading and the tab say which (the gate's note): "songcharter is not answering" and "Not
+// answering" when nothing answers, "songcharter stopped" and "Stopped" when one started since has no job.
 function gone(down) {
   stopRunningRows("stopped");
   const kept = "what it had worked out is kept, so it goes faster.";
-  finish("songcharter stopped", down ?
+  finish(down ? "songcharter is not answering" : "songcharter stopped", down ?
     "songcharter is not answering. If the songcharter window is still open, reload this page (press F5) to " +
     "follow the chart. If the window was closed, which stops the chart, start songcharter again from the Start " +
     `menu, then chart the song again: ${kept}` :
     "songcharter was closed while it charted (closing its window stops the chart) and has been started " +
-    `again. Chart the song again: ${kept}`, null, { open: true, tab: "Stopped" });
+    `again. Chart the song again: ${kept}`, null, { open: true, tab: down ? "Not answering" : "Stopped" });
 }
 
 async function attach() {

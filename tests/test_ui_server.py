@@ -2250,7 +2250,9 @@ def test_the_page_lets_go_when_songcharter_is_gone(tmp_path):
     kept = "what it had worked out is kept, so it goes faster."
     assert out["gone"] == {**ended, "asked": 1, "text": "songcharter was closed while it charted (closing its "
                            f"window stops the chart) and has been started again. Chart the song again: {kept}"}
-    assert out["down"] == {**ended, "asked": tries, "text": "songcharter is not answering. If the songcharter window "
+    # M8-04 (the v0.4.0 gate's note): with nothing answering, the heading and the tab say so, not "stopped"
+    assert out["down"] == {**ended, "title": "Not answering - songcharter", "heading": "songcharter is not answering",
+                           "asked": tries, "text": "songcharter is not answering. If the songcharter window "
                            "is still open, reload this page (press F5) to follow the chart. If the window was "
                            "closed, which stops the chart, start songcharter again from the Start menu, then chart the "
                            f"song again: {kept}"}
