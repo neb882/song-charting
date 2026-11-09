@@ -1,4 +1,4 @@
-# Handoff (updated 2026-11-08)
+# Handoff (updated 2026-11-09)
 
 The session that ran M3 and M4 ended on 2026-11-05; a new session took over that morning and ran M5 (v0.2.0); M6
 (v0.3.0) was published on 2026-11-07. Read CLAUDE.md, docs/PROGRESS.json (`in_flight` says what is waiting, `deferred`

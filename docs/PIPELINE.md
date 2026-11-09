@@ -55,6 +55,7 @@ reviewed, merged work then found 3 real issues, none of them major.]
 - **Usage.** Read the usage meter (`mcp__usage-meter__usage`) before each wave, before starting any builder and before
   a big run, and give a workflow a token budget. Never draw on usage credits: they are the owner's money. Each order
   names the friend-visible change or the decision it buys; a measurement names the smallest effect it can detect.
+  [Work that changes nothing he sees and decides nothing spends the usage for nothing.]
   The meter is a mod whose source is `.claude/mods/usage-meter/`: a new session installs it as that folder's README
   says (a mod is not loaded from the repository). [On 2026-11-05 a new session had no way to read the usage until the
   owner relayed the mod from the old one.]
@@ -78,7 +79,8 @@ reviewed, merged work then found 3 real issues, none of them major.]
 2. **`sc-builder`** builds in its own worktree.
    - It reads CLAUDE.md and its brief, plus the files the brief names. This file is the orchestrator's; PROGRESS is
      read only when the brief says so.
-   - It runs the affected test files; the full suite runs on CI, which must be green before a merge.
+   - It runs the affected test files; the full suite runs on CI, which must be green before a merge. [CI runs the
+     whole suite on every push, in about 15 minutes, on a machine no other agent shares.]
    - It says which test covers each change; the reviewer breaks them (step 3).
    - It runs the golden charts when the change touches the charting path.
    - It pushes its branch, which runs CI, and writes its full report to a file.
@@ -121,15 +123,21 @@ reviewed, merged work then found 3 real issues, none of them major.]
 
 A plan fixes each question's bar before any number is seen, and each order restates its own.
 - **One primary measure** per question, one that sees its aim (chords: chord precision; repeats: consistency; fast
-  runs: recall in the fast windows), named before the numbers.
+  runs: recall in the fast windows), named before the numbers. [F1 against the human charts cannot see chords,
+  fretting or repeats, so a question about those needs a measure that can.]
 - **Adopt** when the 95 % confidence interval of that measure's difference is above 0, and the lower end of F1@50's
-  difference is above -0.005 (non-inferiority).
-- **The worst song** is looked at or listened to, and said in the report; it is not a veto by itself.
-- **Each bar states its smallest detectable effect** at the songs it has.
+  difference is above -0.005 (non-inferiority). [So a change aimed at chords or repeats cannot buy its gain with
+  timing agreement.]
+- **The worst song** is looked at or listened to, and said in the report; it is not a veto by itself. [One song's drop
+  is often its alignment or its human chart; looking finds breakage a number hides.]
+- **Each bar states its smallest detectable effect** at the songs it has. [So a null result reads as "could not see
+  it", not "no effect".]
 - **Neither adopted nor refuted:** the result is recorded as `inconclusive`, with the condition that reopens it, or
-  ships as an option for the friend to compare. PROGRESS's `dead_ends` holds refuted ideas only.
+  ships as an option for the friend to compare. PROGRESS's `dead_ends` holds refuted ideas only. [`dead_ends` stops
+  an idea being tried again, which an underpowered null must not do.]
 - **The held-out songs,** six to eight of the owner's picks, are scored only at a friend release, never used to tune
-  a rule.
+  a rule. This holds from when the owner has picked them; until then the release gate skips their step, and its
+  report says so. [The bars' songs have been used to tune rules, so their scores flatter us.]
 
 ## Gates
 
@@ -142,11 +150,11 @@ A plan fixes each question's bar before any number is seen, and each order resta
     [Both of M4's plans needed a full round of the advisor's corrections (11, then 12, all accepted). Planning is the
     cheap phase, and a fresh agent also tests that the repository holds everything a new session needs.]
 - **A measurement report, before anything in it is closed** (adopted, refuted or `inconclusive`): the advisor
-  reviews it.
+  reviews it. [A different model does not share the orchestrator's blind spots.]
 - **Between friend releases,** main carries internal candidates, gated by CI, the golden charts when the charting
   path changes, and one reviewer per order.
 - **A friend release** is cut when the friend has played the last one and sent his feedback, or for a fix he is
-  waiting on. The owner approves each. Before the friend gets it:
+  waiting on. The owner approves each. [A release he has not played teaches nothing.] Before the friend gets it:
   0. The version is the release's: `songcharter/__init__.py`, `pyproject.toml` and `uv.lock` say it before the
      gate's runs, so the commit the gate measures is the one that is tagged (`build.sh` refuses another version,
      M5-12). [v0.2.0's candidate still said 0.1.0: its page would have told the friend, after the update, that
@@ -155,10 +163,12 @@ A plan fixes each question's bar before any number is seen, and each order resta
   2. The golden charts show no UNEXPECTED change on the whole reference set: `eval/README.md`'s commands (Golden
      charts), run from the release's checkout with the last friend release checked out at `/dev/shm/golden-old` and
      every variable it names set. Read `report.md`: the pooled F1 per part, and the engines that ran.
-  3. The held-out songs are scored (Measurements and bars), and their numbers go in the gate's report.
+  3. The held-out songs are scored (Measurements and bars), and their numbers go in the gate's report. Until the
+     owner has picked them, the gate skips this step and its report says so.
   4. The full review workflow runs over the integrated release only when its diff from the last friend release
      touches `packaging/`, the install or update path, the library or the state files (`<home>/library/`,
-     `<home>/state/`); its confirmed findings are fixed.
+     `<home>/state/`); its confirmed findings are fixed. [Those are the parts whose failure breaks his install or
+     loses his charts.]
   5. The test song runs end to end with the gate ok, and someone has looked at its preview.
   6. The advisor reviews the release candidate, only when the full review ran.
   7. The owner approves the release.
