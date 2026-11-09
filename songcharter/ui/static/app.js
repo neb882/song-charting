@@ -287,10 +287,13 @@ function chartButtons(disabled) {
   for (const id of ["chart", "chart-top"]) $(id).disabled = disabled;
 }
 
-// Best or Quick (M8-04): on a PC that charts the guitar on the GPU, a choice between the defaults (4 takes) and 1
-// take, each with its minutes for this song (the upload's `choices`); elsewhere one take, said in a line. The choice
-// only fills the "Guitar takes" box under More options (Best: empty, the default; Quick: 1), so what is sent is what
-// that box says, as before; a number typed there checks the matching choice, or neither.
+// Quick or Best (M8-04): on a PC that charts the guitar on the GPU, a choice between the default (1 take, since the
+// owner's decision of 2026-11-09) and 4 takes spliced, each with its minutes for this song (the upload's `choices`);
+// elsewhere one take, said in a line. Best is said to be slower and only sometimes better: 4 takes gained +0.005 F1
+// for about 4x the guitar's time, and their splice makes repeated sections less alike (DESIGN.md 2.7). The choice
+// only fills the "Guitar takes" box under More options (Quick: empty, the default; Best: 4), so what is sent is what
+// that box says; a number typed there checks the matching choice, or neither.
+const BEST_TAKES = 4;   // estimate.BEST_TAKES
 function minutes(est) {
   return est && est.low_min > 0 && est.high_min > 0 ? `about ${est.low_min} to ${est.high_min} minutes` : "";
 }
@@ -301,14 +304,15 @@ function fillChoice(choices, many) {
   $("choice").hidden = !c.gpu;
   $("choice-cpu").hidden = !!c.gpu;
   if (c.gpu) {
-    const takes = (c.best && c.best.takes) || 4;
+    const takes = (c.best && c.best.takes) || BEST_TAKES;
     // several songs: no minutes here (each song's own are in the list, and the whole queue's under it)
-    text($("best-label"), many ? `Best charts (${takes} guitar takes)` :
-      `Best chart (${takes} guitar takes${best ? `, ${best}` : ""})`);
-    text($("quick-label"), many ? "Quick charts (1 take)" : `Quick chart (1 take${quick ? `, ${quick}` : ""})`);
+    text($("quick-label"), many ? "Quick charts (1 guitar take)" :
+      `Quick chart (1 guitar take${quick ? `, ${quick}` : ""})`);
+    text($("best-label"), many ? `Best charts (${takes} guitar takes): slower, and only sometimes better` :
+      `Best chart (${takes} guitar takes${best ? `, ${best}` : ""}): slower, and only sometimes better`);
   } else {
     text($("choice-cpu"), "This PC charts the guitar on the CPU, so it makes 1 guitar take" +
-      (best && !many ? `: ${best} for this song.` : "."));
+      (quick && !many ? `: ${quick} for this song.` : "."));
   }
 }
 
@@ -318,12 +322,12 @@ function chosen() {
 }
 
 function choose() {
-  $("options").elements.takes.value = chosen() === "quick" ? "1" : "";
+  $("options").elements.takes.value = chosen() === "best" ? String(BEST_TAKES) : "";
 }
 
 function typedTakes() {
   const v = $("options").elements.takes.value.trim();
-  const want = v === "" ? "best" : v === "1" ? "quick" : null;
+  const want = v === "" || v === "1" ? "quick" : v === String(BEST_TAKES) ? "best" : null;
   for (const r of $("options").querySelectorAll("input[name=how]")) r.checked = r.value === want;
 }
 

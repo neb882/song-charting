@@ -2,7 +2,7 @@
 
     seconds = duration(path)                                       # the song's length from ffmpeg's header, or None
     est = for_job(seconds, options, auto_device, guitar_device)    # {"low_min", "high_min", ...}, or None
-    low_s, high_s = chart_seconds(seconds, takes=4, device="cuda")
+    low_s, high_s = chart_seconds(seconds, takes=1, device="cuda")
     left = remaining(est, job_events)   # M8-04: the time left once the first take is timed, or None
 
 **The model** (`chart_seconds`): every stage but the guitar costs a fixed part and a rate per second of the song
@@ -56,8 +56,9 @@ with the notes it writes, and on the 4070 **a song much longer than 9 minutes** 
   * **The preview**: 11 s for the test song on the 5070's PC, 12 s for a 4-minute song here (the range: 9.1-25.6 s
     and 7.4-17 s).
 Against whole charts: the test song with 1 take on the 5070 took 5.05 min (the range: 4.0-13.3), on this CPU 12.7
-min (11.5-20.9, no preview then); Take Me Out with 1 take on this CPU 6.8 min (6.0-10.1). A 4-minute song: 4 to 14
-minutes with the GPU's 4 takes, 2 to 7 with 1, 6 to 11 on the CPU; a 9-minute song 16 to 60, 5 to 21, 16 to 35.
+min (11.5-20.9, no preview then); Take Me Out with 1 take on this CPU 6.8 min (6.0-10.1). A 4-minute song: 2 to 7
+minutes with the GPU's default of 1 take, 4 to 14 with "Best chart"'s 4, 6 to 11 on the CPU; a 9-minute song 5 to 21,
+16 to 60, 16 to 35.
 
 **The time left** (`remaining`, M8-04, the v0.4.0 gate's note: a dense song's guitar can pass the high end, so the
 page says how long is left once the guitar's first take is timed). The pipeline's `take` event comes as each take
@@ -109,7 +110,8 @@ from pathlib import Path
 from typing import Any
 
 DEVICES = ("cpu", "cuda")
-CUDA_TAKES = 4   # pipeline.CUDA_TAKES (not imported: pipeline loads numpy)
+CUDA_TAKES = 1   # pipeline.CUDA_TAKES (not imported: pipeline loads numpy): 1 take by default on every device
+BEST_TAKES = 4   # the page's "Best chart" (--takes 4): slower, and only sometimes better (pipeline.guitar_takes)
 
 # The friend's RTX 4070 against the owner's RTX 5070, which the GPU's rates were measured on: the high rates times
 # this until M4-08 part B times his PC (the 4070 has about 25 % less memory bandwidth, 504 against 672 GB/s, and the
@@ -194,9 +196,9 @@ def for_job(seconds: Any, options: Any, auto_device: str | None, guitar_device: 
     seconds) or the device is not known: {"seconds", "takes", "device", "low_s", "high_s", "low_min", "high_min",
     "audio"}, `device` the guitar's and `audio` the build's ("split", or "one" for one song.ogg: `remaining`'s build
     rate). The stages' device is the options' (the doctor summary's for "auto": `auto_device`); the guitar's takes are
-    the options', else, as pipeline.guitar_takes, 4 on CUDA and 1 on the CPU. On CUDA, a guitar the doctor summary found
-    on the CPU (`guitar_device`: autochart's CUDA provider did not load) runs there, and by default one take only,
-    as the pipeline decides once its first take shows it."""
+    the options', else, as pipeline.guitar_takes, 1 on every device (CUDA_TAKES; the page's "Best chart" asks for
+    BEST_TAKES). On CUDA, a guitar the doctor summary found on the CPU (`guitar_device`: autochart's CUDA provider did
+    not load) is timed there."""
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 0 < seconds < math.inf:
         return None
     device = options.device if options.device in DEVICES else auto_device
@@ -208,7 +210,7 @@ def for_job(seconds: Any, options: Any, auto_device: str | None, guitar_device: 
     elif options.takes is not None:
         takes = int(options.takes)
     else:
-        takes = CUDA_TAKES if guitar == "cuda" else 1
+        takes = CUDA_TAKES if guitar == "cuda" else 1   # 1 either way since 2026-11-09
     low_s, high_s = chart_seconds(seconds, takes, device, guitar, lyrics=options.lyrics is not None,
                                   preview=bool(options.preview))
     low_min, high_min = round_minutes(low_s, high_s)

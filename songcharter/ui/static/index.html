@@ -54,8 +54,8 @@
       <div id="choice-box">
         <fieldset id="choice" hidden>
           <legend>Chart</legend>
-          <label class="check"><input type="radio" name="how" value="best" checked> <span id="best-label">Best chart (4 guitar takes)</span></label>
-          <label class="check"><input type="radio" name="how" value="quick"> <span id="quick-label">Quick chart (1 take)</span></label>
+          <label class="check"><input type="radio" name="how" value="quick" checked> <span id="quick-label">Quick chart (1 guitar take)</span></label>
+          <label class="check"><input type="radio" name="how" value="best"> <span id="best-label">Best chart (4 guitar takes): slower, and only sometimes better</span></label>
         </fieldset>
         <p id="choice-cpu" class="small" hidden></p>
         <p class="actions"><button type="submit" id="chart-top">Chart it</button></p>
@@ -104,7 +104,7 @@
       <details id="more" class="fold">
         <summary>More options</summary>
         <fieldset>
-          <label>Guitar takes <input name="takes" type="number" min="1" step="1" placeholder="default: 4 on a GPU, 1 on the CPU"></label>
+          <label>Guitar takes <input name="takes" type="number" min="1" step="1" placeholder="default: 1 (Best chart: 4)"></label>
           <label>Device
             <select name="device">
               <option value="auto" selected>Auto: the GPU when it works (default)</option>

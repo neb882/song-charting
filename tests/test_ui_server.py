@@ -712,8 +712,9 @@ def test_the_upload_gives_the_songs_length_and_the_job_its_estimate(served, monk
     doctor = {**DOCTOR, "device": {"chosen": "cuda"}, "guitar_device": "cuda"}
     monkeypatch.setattr(ctx.app, "doctor", lambda: doctor)
     est = start({})
-    assert (est["takes"], est["device"]) == (4, "cuda")
+    assert (est["takes"], est["device"]) == (1, "cuda")   # 1 take on the GPU too (the owner, 2026-11-09)
     assert est == E.for_job(up["seconds"], J.parse_options({}), "cuda", "cuda")
+    assert start({"takes": 4})["takes"] == 4   # Best
     doctor["guitar_device"] = "cpu"   # autochart's CUDA provider did not load: one take, on the CPU
     assert (start({})["takes"], start({})["device"]) == (1, "cpu")
     doctor["device"] = {"chosen": None}   # the machine check failed: "auto" is unknown, so is the time
@@ -2816,7 +2817,7 @@ const document = { getElementById: (id) => els[id] || (els[id] = node(id)), crea
 // the options form: the boxes and radios its selectors ask for, by name and value
 const box = (name, value, checked) => Object.assign(node("input"), { name, value, checked, defaultChecked: checked });
 const inputs = [box("instruments", "guitar", true), box("instruments", "bass", true), box("instruments", "drums", true),
-  box("levels", "expert", true), box("levels", "hard", false), box("how", "best", true), box("how", "quick", false)];
+  box("levels", "expert", true), box("levels", "hard", false), box("how", "quick", true), box("how", "best", false)];
 const field = (value) => Object.assign(node("input"), { value });
 const elements = { title: field(""), artist: field(""), album: field(""), year: field(""), genre: field(""),
   solos: field("labels"), solo_names: field(""), takes: field(""), device: field("auto"),
@@ -2866,7 +2867,7 @@ const out = {};
                                       quick: { takes: 1, low_min: 4, high_min: 10 } } });
   out.gpu = { choice: els.choice.hidden, cpu: els["choice-cpu"].hidden, best: els["best-label"].textContent,
               quick: els["quick-label"].textContent, folded: ["more", "lyrics-box", "pictures-box"].map((i) => els[i].open) };
-  out.best = ctx.readOptions();
+  out.filled = ctx.readOptions();
   inputs.find((i) => i.value === "quick").checked = true;
   inputs.find((i) => i.value === "best").checked = false;
   vm.runInContext("choose()", ctx);
@@ -2884,8 +2885,11 @@ const out = {};
   elements.takes.value = "";
   vm.runInContext("typedTakes()", ctx);
   out.typedNone = how();
+  elements.takes.value = "4";
+  vm.runInContext("typedTakes()", ctx);
+  out.typed4 = how();
   // the CPU: no choice, a line with its minutes; what it sends is the defaults
-  ctx.fillOptions({ ...up, choices: { gpu: false, best: { takes: 1, low_min: 12, high_min: 21 }, quick: null } });
+  ctx.fillOptions({ ...up, choices: { gpu: false, best: null, quick: { takes: 1, low_min: 12, high_min: 21 } } });
   out.cpu = { choice: els.choice.hidden, cpu: els["choice-cpu"].hidden, line: els["choice-cpu"].textContent,
               sent: ctx.readOptions() };
   ctx.fillOptions({ ...up, choices: { gpu: false, best: null, quick: null } });
@@ -3017,11 +3021,17 @@ def test_the_ui_pass_page(tmp_path):
     assert out["big"] == "About 30 to 40 more minutes, from how long the first guitar take took."
     defaults = {"instruments": ["guitar", "bass", "drums"], "levels": ["expert"], "solos": "labels", "device": "auto",
                 "preview": True, "stems": False, "one_audio": False}   # M8-12: the stems off, the split audio on
-    assert out["gpu"] == {"choice": False, "cpu": True, "best": "Best chart (4 guitar takes, about 9 to 23 minutes)",
-                          "quick": "Quick chart (1 take, about 4 to 10 minutes)", "folded": [False, False, False]}
-    assert out["best"] == defaults and out["bestAgain"] == defaults   # Best: what the form sent before M8-04
-    assert out["quick"] == {**defaults, "takes": 1}
-    assert out["typed3"] == {"how": [], "takes": 3} and out["typed1"] == ["quick"] and out["typedNone"] == ["best"]
+    # the owner's decision of 2026-11-09: Quick (1 take) is the default, Best (4 takes) slower and only sometimes
+    # better (break: Best checked first, or Quick sending --takes 1 and Best nothing, as before)
+    assert out["gpu"] == {"choice": False, "cpu": True,
+                          "best": ("Best chart (4 guitar takes, about 9 to 23 minutes): slower, and only sometimes "
+                                   "better"),
+                          "quick": "Quick chart (1 guitar take, about 4 to 10 minutes)",
+                          "folded": [False, False, False]}
+    assert out["filled"] == defaults and out["quick"] == defaults   # as filled, and Quick chosen: the defaults
+    assert out["bestAgain"] == {**defaults, "takes": 4}
+    assert out["typed3"] == {"how": [], "takes": 3} and out["typed1"] == ["quick"] and out["typedNone"] == ["quick"]
+    assert out["typed4"] == ["best"]
     assert out["cpu"] == {"choice": True, "cpu": False, "sent": defaults,
                           "line": "This PC charts the guitar on the CPU, so it makes 1 guitar take: about 12 to 21 "
                                   "minutes for this song."}
@@ -3184,23 +3194,31 @@ def test_the_songs_folders_guess_is_always_given(finished, tmp_path, monkeypatch
     ({"device": {"chosen": "cpu"}, "guitar_device": "cpu"}, False),
     ({"device": {"chosen": None}}, False)])
 def test_best_or_quick_offered_on_the_gpu_with_each_ones_estimate(tmp_path, doctor, gpu):
-    """M8-04 item 8: the upload's `choices`: on a PC that charts the guitar on the GPU, Best (every option at its
-    default: 4 takes) and Quick (1 take), each estimate.for_job's range for this song; elsewhere no choice, and Best's
-    range (1 take) for the line; and what each choice sends is the command line's own: Best no --takes (the
-    pipeline's 4 on CUDA), Quick --takes=1."""
+    """M8-04 item 8, with the owner's decision of 2026-11-09 (1 take is the default on the GPU too): the upload's
+    `choices`: on a PC that charts the guitar on the GPU, Quick (every option at its default: 1 take) and Best (4
+    takes), each estimate.for_job's range for this song; elsewhere no choice, and Quick's range (1 take) for the line;
+    and what each choice sends is the command line's own: Quick no --takes (the pipeline's 1), Best --takes=4
+    (break: the default back to 4 takes: Quick's range is 4 takes')."""
     from songcharter.ui import estimate as E
     app = S.App(tmp_path, report=lambda: {**DOCTOR, **doctor})
     c = app.choices(241.0)
     auto, guitar = doctor["device"]["chosen"], doctor.get("guitar_device")
     assert c["gpu"] is gpu
-    assert c["best"] == E.for_job(241.0, J.parse_options({}), auto, guitar)
-    assert c["quick"] == (E.for_job(241.0, J.parse_options({"takes": 1}), auto, guitar) if gpu else None)
+    assert c["quick"] == E.for_job(241.0, J.parse_options({}), auto, guitar)
+    assert c["best"] == (E.for_job(241.0, J.parse_options({"takes": 4}), auto, guitar) if gpu else None)
+    if auto is not None:
+        assert c["quick"]["takes"] == 1
     if gpu:
-        assert (c["best"]["takes"], c["quick"]["takes"]) == (4, 1) and c["quick"]["high_s"] < c["best"]["low_s"] * 2
+        assert c["best"]["takes"] == 4 and c["quick"]["high_s"] < c["best"]["low_s"] * 2
+        assert (c["quick"]["low_min"], c["quick"]["high_min"]) == (2, 7)   # a 4-minute song: the guide's minutes
     assert app.choices(None) == {"gpu": gpu, "best": None, "quick": None}
-    best = J.chart_command(Path("s.wav"), Path("out"), J.parse_options({}), None)
-    quick = J.chart_command(Path("s.wav"), Path("out"), J.parse_options({"takes": 1}), None)
-    assert not any(a.startswith("--takes") for a in best) and quick == best + ["--takes=1"]
+    quick = J.chart_command(Path("s.wav"), Path("out"), J.parse_options({}), None)
+    best = J.chart_command(Path("s.wav"), Path("out"), J.parse_options({"takes": 4}), None)
+    assert not any(a.startswith("--takes") for a in quick) and best == quick + ["--takes=4"]
+    html = S.static_files()["index.html"].decode()   # Quick checked, first; Best said to be slower
+    assert html.index('value="quick" checked>') < html.index('value="best">') and 'value="best" checked' not in html
+    assert ">Best chart (4 guitar takes): slower, and only sometimes better</span>" in html
+    assert 'placeholder="default: 1 (Best chart: 4)"' in html
 
 
 # ------------------------------------------------------------------------------------------------ the queue (M8-10)
@@ -3588,7 +3606,8 @@ def test_the_page_queues_several_songs_and_follows_them_one_after_the_other(tmp_
     assert out["first"] == "Uploading First.mp3 (1 of 2)…" and out["second"] == "Uploading Second.mp3 (2 of 2)…"
     assert out["form"] == {"shown": True, "names": ["First.mp3 (2.0 MB)", "Second.mp3 (3.0 MB)"],
                            "namesHidden": False, "song": True, "lyrics": True, "pictures": True,
-                           "button": "Chart them", "best": "Best charts (4 guitar takes)",
+                           "button": "Chart them",
+                           "best": "Best charts (4 guitar takes): slower, and only sometimes better",
                            "head": "2 songs, charted one after the other with these options:"}
     assert "title" not in out["options"] and "lyrics" not in out["options"] and out["options"]["device"] == "auto"
     assert out["sent"] == ["a", "b"]
