@@ -141,6 +141,17 @@ evening. Still one child process group at a time: a chart's tree peaked at 10.1 
    E) in M8-10, and "Your charts" (D) as a small order of its own after it, since the queue's list already gives
    Install for the evening's songs. The figures are for lyrics refused and no reordering.
 
+### Decision (the orchestrator, 2026-11-09)
+
+The note is accepted with its suggested narrowing:
+- M8-10 builds A, B, C and E as the note has them: one shared form for a drop of several; lyrics refused in a waiting
+  song; the queue paused after a restart, with Carry on and Clear the list; Pause and Remove; no reordering; two
+  failures in a row pause the queue; the disk pause under `device.MIN_FREE`; the update notice held.
+- "Your charts" (D) becomes a small order of its own after M8-10.
+- The cache rule for a queue's finished songs (`cache.py`) is a follow-up, decided on evidence.
+- Lyrics held in memory, "Chart next" and the Windows keep-awake call are later options; the last waits for a check
+  on the owner's PC.
+
 ## What to do
 
 What the accepted note says, in small commits: the server's queue (jobs.py's one child at a time unchanged), its API
