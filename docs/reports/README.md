@@ -73,6 +73,7 @@ ones then, but the CI runs they link still name the old ones.
 | `M8-10-queue.md` | The queue: several songs charted one after another with one form, the list kept across a restart, paused after two failures or on a full disk, the routes by job id ("Your charts" its own order) |
 | `M8-12-stems-out.md` | The stems saved as FLAC beside the song folder (an option) and Clone Hero's multitrack audio (guitar, bass and drums in their own files, on by default; one file as an option); the Ogg serial fixed |
 | `M8-13-your-charts.md` | "Your charts": every chart in the library with Install, Open, Download the stems and Look while its work folder is cached; nothing deleted from the page |
+| `M8-02-measure-gpu.md` | The owner's 96 GPU takes measured against the human charts: the GPU changes none of the CPU's answers; M8-06 and M8-07 closed, the 4-take default kept, M8-11's thinning spike opened (the fast runs' recall 0.659) |
 | `M8-video-review2.md` | The owner's second video review (pm2's v0.4.0 GPU chart): its claims checked; solos' remainder, HOPO chords and the GPU intro's taps measured |
 | `M8-video-review3.md` | The owner's third video review (his full v0.4.0 GPU chart of sooth): solos merged, the tail's tempo and the outro trim measured (none clears) |
 | `M8-compare-autochart-eu.md` | AutoChart.eu against songcharter on take_me_out (the owner's MP3), and a half-beat grid slip on that master |
