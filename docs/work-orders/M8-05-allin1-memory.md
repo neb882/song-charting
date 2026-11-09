@@ -18,6 +18,21 @@ it, and `python -m eval.golden run` takes the lock but not the disk check.
 a 9-minute song, the sections fell back to librosa with only a warning) and the planner's reading of the records
 (M8-00 section 6).*
 
+## M8-03's numbers (part A, docs/reports/M8-03-measure-cpu.md)
+
+allin1's child peak on the CPU = 354 MB + 17.44 MB a second (residuals −233 / +202 MB, 24 songs; MB as MiB here);
+the tree while allin1 runs, today = 853 MB + 20.4 MB a second (two points: creep and the test song, A-b). A-b: freeing
+the mix, the six stems and the int16 payload while allin1 runs saves 0.158 GiB a minute (1.42 GiB at 9:00); reloading
+them from the work folder costs 1.1–1.3 s, so **part 3 (b) is built** (tree 853 + 17.7 MB a second). A-c: no window W
+of 120, 180 or 240 s met the chunk bar, and chunking does not lower the child's peak (madmom's DBN decoder on the whole
+song holds it), so **parts 3 (a) and 3 (c) are not built** and **part 4 is**. A-d: with a reserve of 1 GiB a 10.2 GiB
+tree (WSL's 11 GB) fits about 8.1 minutes with the arrays freed, 11.2 GiB (a 16 GB PC's 12 GB) about 9.0 (M8-03's figures, with the reserve alone); the skip's
+reserve is the line's largest residual plus 1 GiB (so 7:52 and 8:50). The skip compares with `MemTotal` only (the orchestrator's
+decision at the build: swap is not counted, as allin1 deep in swap was never measured and could run for hours, worse than the librosa fallback), so a 16 GB PC's WSL 12 GB fits about 9 minutes with
+the arrays freed (8:50 for 11.2 GiB, 9:19 for the 11.7 GiB such a WSL reports; doctor names its PC's figure). Golden, stress and 20-song compares expect no change (`--expect
+none`): freeing arrays must not change a chart, and the skip does not fire on the dev machine's 15.7 GiB for the sets'
+longest song (9:43).
+
 ## Why
 
 allin1's peak on the CPU grows by about 1.0 GiB a minute of audio (0.35 GiB + 17.4 MB a second, 24 songs), and while

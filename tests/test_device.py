@@ -536,3 +536,17 @@ def test_doctor_says_the_cuda_provider_is_not_needed_when_the_guitar_runs_on_the
     r["device"], r["guitar_device"] = {"chosen": "cuda", "reason": "a GPU"}, "cpu"
     assert ("autochart's CUDA provider: does not load: libcurand.so.10: cannot open shared object file"
             in D.summary(r))
+
+
+def test_doctor_names_the_longest_song_allin1_analyses_on_the_cpu():
+    """M8-05: from MemTotal (not the swap), by the sections' own rule; not on CUDA, nor where allin1 is out."""
+    r = {"ram": {"total_mb": 12 * 1024, "available_mb": 1, "swap_total_mb": 0},
+         "device": {"chosen": "cpu", "reason": "no NVIDIA GPU found"}, "components": {"allin1": {"ok": True}}}
+    note = ("allin1 analyses songs up to about 9:36 on the CPU with this PC's 12.0 GiB of memory; a longer song "
+            "gets the librosa sections (the bar lines and the tempo's halving test from a simpler analysis)")
+    assert note in D.findings(r)[1]
+    swap = {**r, "ram": {**r["ram"], "swap_total_mb": 8 * 1024}}
+    assert note in D.findings(swap)[1]   # the swap does not count
+    for other in ({**r, "device": {"chosen": "cuda", "reason": None}}, {**r, "components": {"allin1": {"ok": False}}},
+                  {**r, "wsl": {"interop": True}, "ram": {"total_mb": 9 * 1024, "swap_total_mb": 0}}):
+        assert not any(n.startswith("allin1 analyses") for n in D.findings(other)[1])

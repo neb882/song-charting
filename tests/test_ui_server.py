@@ -248,7 +248,8 @@ def test_the_header_measures_wsls_memory_again(tmp_path, monkeypatch):
     """The install writes doctor.json in step 8, before step 9 sets WSL's memory (12 GB on a 16 GB PC with no
     .wslconfig, where WSL had 7.8 GB), which applies once WSL restarts. The header measures the memory and .wslconfig
     again (the release gate's finding: it showed the install's "allin1 is left out" note for good): before the
-    restart that note and the restart's; after it, neither, and the rest of doctor.json's notes as they were."""
+    restart that note and the restart's; after it, neither, the rest of doctor.json's notes as they were, and doctor's
+    note on the longest song allin1 analyses on the CPU (M8-05: allin1 is in now)."""
     from songcharter import wsl
     home = tmp_path / "home"
     home.mkdir()
@@ -272,8 +273,11 @@ def test_the_header_measures_wsls_memory_again(tmp_path, monkeypatch):
                           "wsl --shutdown, then open Ubuntu again") for n in before["notes"]), before["notes"]
     total["total_mb"] = 11980   # WSL restarted with memory=12GB
     after = S.App(home, report=lambda: pytest.fail("doctor.json is there")).status()
-    assert after["notes"] == [n for n in at_install["notes"] if n != left_out] and after["ok"] is True
-    assert after["notes"] == ["CPU mode: no NVIDIA GPU found", "the guitar runs on the CPU: no GPU"]
+    longest = ("allin1 analyses songs up to about 9:19 on the CPU with this PC's 11.7 GiB of memory; a longer song "
+               "gets the librosa sections (the bar lines and the tempo's halving test from a simpler analysis)")
+    assert [n for n in after["notes"] if n != longest] == [n for n in at_install["notes"] if n != left_out]
+    assert after["notes"] == ["CPU mode: no NVIDIA GPU found", "the guitar runs on the CPU: no GPU", longest]
+    assert after["ok"] is True
 
 
 def test_a_running_page_reads_a_rewritten_doctor_json_and_survives_a_failing_refresh(served, monkeypatch):

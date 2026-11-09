@@ -53,7 +53,13 @@
     pipeline.json's `fallbacks` and ChartResult.fallbacks, and warned about, but for device "auto" on a machine with
     no NVIDIA GPU at all (recorded only): "auto" choosing the CPU, separation's fallback, allin1 on the CPU while
     torch here runs on CUDA, a guitar take whose transcriber autochart ran on the CPU, and a guitar take run again
-    on the CPU after its CUDA run failed.
+    on the CPU after its CUDA run failed. So is the sections' move from allin1 to librosa (from "allin1", to
+    "librosa"; M8-05) when allin1 failed, was stopped (most likely for memory) or was left out for memory: its
+    reason, the page's banner, says in plain words (the engine's `plain`: no path, command or exception text, which
+    stay in the warning, pipeline.json's stage and engine.json) why, and what that costs (SIMPLER).
+  * **The sections stage holds no audio while allin1 runs** (M8-05, DESIGN.md 2.5): the mix and stems go to the
+    engine in a SongArrays alone, which lets them go once allin1's input is made and reads them again from
+    decode.wav and the stem WAVs after (`_reload`, the separation cache's own read: the same float32 samples).
   * **A guitar take that fails on CUDA** (each take is a call of its own) is run again on the CPU, once a chart
     (`CPU_RETRIES`, `cpu_retry`, M5-05): when the engine failed inside (the driver's FAILED line "engine failed
     (exit <int>)", as a GPU short of memory gives: `failure`'s "engine"), that seed runs again with device "cpu"
@@ -115,6 +121,7 @@ The heavy stages are the methods of `Engines`, so tests stand in for them; impor
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import importlib.util
 import json
@@ -152,6 +159,9 @@ REASON_CHARS = 120       # at most this much of the engine's error line goes int
 GUITAR_END_GAP_S = 10.0  # a continued guitar take whose last note is this long before its stem stops playing, and
                          # whose continuation stopped short, ends early (stitch_lines' "ends at" warning)
 PLAYING_DB = -15.0       # a stem's frame within this of its P95 level is playing (preview.GAP_DB)
+# what the librosa sections cost, in the sections' fallback (the page's banner)
+SIMPLER = ("The bar lines and the tempo's halving test come from a simpler analysis: on a slow or fast song the chart "
+           "may sit at double or half the tempo, and the sections have plainer names.")
 SOLO_MODES = ("stems", "labels", "off")  # assemble's solos modes; a list of section names is the other kind
 # the placeholders for what no tag or caller gives ({name}: the song's name, as resolved); the album's is Encore's
 # song.ini rule for a single (docs/reports/charting-conventions.md, section 8), instead of "Unknown"
@@ -704,10 +714,10 @@ class Engines:
         r = engine.generate(mix, bass, out)
         return Run(r.chart, r.cached, r.info)
 
-    def sections(self, mix: np.ndarray, stems: Mapping[str, np.ndarray], out: Path, device: str,
-                 threads: int | None) -> Run:
+    def sections(self, song, out: Path, device: str, threads: int | None) -> Run:
+        """song: engines.sections.SongArrays, the mix and stems, which allin1's run lets go (DESIGN.md 2.5)."""
         from .engines.sections import Settings, find_sections
-        r = find_sections(mix, stems, out, Settings(device=device, threads=threads))
+        r = find_sections(song, None, out, Settings(device=device, threads=threads))
         return Run(r.path, r.cached, r.info)
 
     def lyrics_missing(self) -> str | None:
@@ -790,6 +800,11 @@ def check_song(name: str, mix: np.ndarray) -> None:
         level = "every sample is 0" if peak == 0 else (f"its peak is {20 * np.log10(peak):.1f} dBFS, under "
                                                       f"{MIN_PEAK_DBFS:g} dBFS")
         raise InputError(f"{name} is silent ({level}): there is nothing to chart")
+
+
+def _reload(wav: Path, folder: Path, names: Sequence[str]) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    """The decode and the stems again from the work folder, as the separation's cache reads them."""
+    return A.read_wav(wav)[0], {s: A.read_wav(folder / f"{s}.wav")[0] for s in names}
 
 
 def _decode(audio: Path, work: Path) -> tuple[np.ndarray, Path, bool]:
@@ -1078,10 +1093,21 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
         end("bass", t0, run.cached, f"{n} Expert onsets", {"onsets": n})
 
     t0 = begin("sections", "allin1 when it is installed, else the librosa fallback")
+    # the song's arrays go to the sections engine alone, which lets them go while allin1's child runs and reads them
+    # again from decode.wav and the stem WAVs after, the same float32 samples (DESIGN.md 2.5: 0.16 GiB a minute of
+    # audio less in the tree, M8-03 A-b); a file missing (not written): they are kept
+    from .engines.sections import FAILED_PLAIN, SongArrays
+    names = tuple(stems)
+    files = [wav] + [folder / f"{s}.wav" for s in names]
+    song = SongArrays(mix, stems, functools.partial(_reload, wav, folder, names) if all(f.is_file() for f in files)
+                      else None)
+    del mix, stems
     # allin1 runs in a Python of its own, whose CUDA missing() did not check: for "cuda" it is asked for "auto"
     # (CUDA when that Python has it, else the CPU), as the guitar stage leaves the CPU fallback to autochart
-    run = engines.sections(mix, stems, work / "sections", "auto" if options.device == "cuda" else options.device,
+    run = engines.sections(song, work / "sections", "auto" if options.device == "cuda" else options.device,
                            options.threads)
+    mix, stems = song.take()   # read again if they were let go
+    del song
     backend = run.info.get("backend", "?")
     how, child = backend, None
     if backend == "allin1":
@@ -1093,8 +1119,11 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
         elif device == "cuda" and a.get("device") != "cuda":   # asked for, or "auto" found CUDA here
             fallback("sections", "cuda", a.get("device") or "cpu", "allin1 ran on the CPU (its Python has no working "
                      "CUDA)")
-    elif run.info.get("why"):
+    elif run.info.get("why") == "backend librosa asked for":
         warn(f"sections: the librosa fallback ({run.info['why']})")
+    elif run.info.get("why"):   # allin1 failed, was stopped or was left out: a banner on the page, in plain words
+        fallback("sections", "allin1", "librosa", f"{run.info.get('plain') or FAILED_PLAIN}. {SIMPLER}",
+                 warning=f"sections: the librosa fallback ({run.info['why']})")
     n_seg = run.info.get("segments")
     end("sections", t0, run.cached, f"{how}, {n_seg} segments", {"backend": backend, "segments": n_seg,
                                                                   "child_peak_rss_mb": child})
