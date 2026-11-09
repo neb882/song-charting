@@ -14,7 +14,9 @@ from .ini import write_ini
 
 
 SPLIT_PARTS = ("guitar", "bass", "drums")   # the parts whose stem gets a file of its own (<part>.ogg) when split
-CONFIDENT = 0.9   # a split file's window that correlates this well with its own samples must lag under a sample
+CONFIDENT = 0.9   # a split file's window that correlates this well with its own samples at a lag of a sample or more
+BETTER = 0.05     # ... and this much better there than at no lag is out of sync (`_shifted`); a tone's period away
+                  # correlates as well as no lag (a stand-in's sine was "4410 samples off"), a real shift far worse
 
 
 @dataclass
@@ -22,7 +24,7 @@ class PackageResult:
     folder: Path
     sync: A.SyncReport                   # the folder's audio summed (song.ogg alone, or the split files) vs the mix
     files: tuple[str, ...] = ("song.ogg",)          # the audio files written, song.ogg first
-    tracks: dict = field(default_factory=dict)      # per split file: its worst lag in confident windows, length
+    tracks: dict = field(default_factory=dict)      # per split file: its shifted windows, windows and length
 
 
 def safe_folder_name(artist: str, name: str) -> str:
@@ -30,6 +32,23 @@ def safe_folder_name(artist: str, name: str) -> str:
     bad = '<>:"/\\|?*'
     cleaned = "".join("_" if c in bad or ord(c) < 32 else c for c in raw).strip(" .")
     return cleaned or "song"
+
+
+def _shifted(own: np.ndarray, decoded: np.ndarray, offsets: list, sample_rate: int, window_s: float = 1.0) -> list:
+    """The windows of `offsets` (audio.measure_offset's, of `decoded` against `own`) where the file is shifted: a lag of
+    a sample or more that correlates CONFIDENT or better, and BETTER than the same window at no lag."""
+    a, b, w = own.mean(axis=0), decoded.mean(axis=0), int(window_s * sample_rate)
+    out = []
+    for centre, lag, corr in offsets:
+        if abs(lag) < 1.0 or corr < CONFIDENT:
+            continue
+        s = max(0, int(round(centre * sample_rate - w / 2)))
+        x, y = a[s:s + w].astype(np.float64), b[s:s + w].astype(np.float64)
+        n = min(len(x), len(y))
+        at_zero = float(np.dot(x[:n], y[:n]) / (np.linalg.norm(x[:n]) * np.linalg.norm(y[:n]) + 1e-12))
+        if corr - at_zero > BETTER:
+            out.append((centre, lag, corr))
+    return out
 
 
 def build_song_folder(out_dir, chart: Chart, song_audio: np.ndarray, pad_samples: int,
@@ -47,8 +66,8 @@ def build_song_folder(out_dir, chart: Chart, song_audio: np.ndarray, pad_samples
     Hero mutes a part's own file on a missed note.
 
     Raises if the audio does not line up with the samples the chart was made against: the files summed against the
-    padded decode (`sync`, the same rule as one song.ogg's), and each split file against its own samples (a window
-    that correlates CONFIDENT or better lagging a sample or more).
+    padded decode (`sync`, the same rule as one song.ogg's), and each split file against its own samples: its length,
+    and no window shifted by a sample or more (`_shifted`).
     """
     folder = A.ensure_dir(out_dir)
     (folder / "notes.chart").write_text(write_chart(chart), encoding="utf-8", newline="")
@@ -75,12 +94,14 @@ def build_song_folder(out_dir, chart: Chart, song_audio: np.ndarray, pad_samples
                 total = np.pad(total, ((0, 0), (0, decoded.shape[1] - total.shape[1])))
             total[:, :decoded.shape[1]] += decoded
         if name != "song.ogg":
-            sure = [o for o in A.measure_offset(own, decoded, sample_rate) if o[2] >= CONFIDENT]
-            worst = max((abs(o[1]) for o in sure), default=None)
-            tracks[name] = {"max_abs_lag_samples": worst, "windows": len(sure),
+            offsets = A.measure_offset(own, decoded, sample_rate)
+            shifted = _shifted(own, decoded, offsets, sample_rate)
+            tracks[name] = {"windows": len(offsets), "shifted": len(shifted),
                             "length_difference": int(decoded.shape[1] - own.shape[1])}
-            if worst is not None and worst >= 1.0:
-                raise ToolError(f"{name} is out of sync with the chart: {worst:.2f} samples off")
+            if shifted or decoded.shape[1] != own.shape[1]:
+                why = (f"{max(abs(o[1]) for o in shifted):.2f} samples off" if shifted else
+                       f"{decoded.shape[1] - own.shape[1]:+d} samples long")
+                raise ToolError(f"{name} is out of sync with the chart: {why}")
         del decoded, own
     if split:
         sync = A.SyncReport(A.measure_offset(padded, total, sample_rate), total.shape[1] - padded.shape[1])

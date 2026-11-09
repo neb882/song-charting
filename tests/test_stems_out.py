@@ -239,8 +239,9 @@ def test_listen_and_the_folders_audio_read_the_files_summed(runs, tmp_path):
 
 
 def test_package_refuses_a_split_file_out_of_sync(tmp_path, monkeypatch):
-    """A split file whose decode lags its own samples fails the build (break: only the sum checked, which a quiet
-    stem's lag barely moves)."""
+    """A split file whose decode lags its own samples fails the build, and a steady tone, which correlates as well a
+    period away, does not (break: only the sum checked, which a quiet stem's lag barely moves; or any confident lag
+    taken for a shift, which failed a stand-in's sine as "4410 samples off")."""
     from songcharter.chart import Chart, SongInfo
     from songcharter.tempo import Tempo, TempoMap
     from songcharter.errors import ToolError
@@ -250,7 +251,10 @@ def test_package_refuses_a_split_file_out_of_sync(tmp_path, monkeypatch):
     chart = Chart(SongInfo("x", "songcharter"), TempoMap(480, [Tempo(0, 120000)]), [], [])
     done = PK.build_song_folder(tmp_path / "ok", chart, mix, 100, split={"guitar": guitar})
     assert done.files == ("song.ogg", "guitar.ogg") and done.sync.ok
-    assert done.tracks["guitar.ogg"]["max_abs_lag_samples"] < 1.0
+    assert done.tracks["guitar.ogg"] == {"windows": 9, "shifted": 0, "length_difference": 0}
+    t = np.arange(12 * SR) / SR   # a steady tone: a period away correlates as well as no lag, which is no shift
+    tone = np.stack([0.1 * np.sin(2 * np.pi * 330 * t)] * 2).astype(np.float32)
+    assert PK.build_song_folder(tmp_path / "tone", chart, mix + tone, 100, split={"guitar": tone}).sync.ok
     real = A.decode
 
     def late(path, *args, **kwargs):
