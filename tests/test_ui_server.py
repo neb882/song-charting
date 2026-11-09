@@ -1295,7 +1295,12 @@ def test_the_stems_download(finished):
         assert sorted(z.namelist()) == [f"{folder.name}/{f}" for f in STEM_NAMES]
         assert {i.compress_type for i in z.infolist()} == {zipfile.ZIP_STORED}
         assert z.read(f"{folder.name}/piano.flac") == (folder / "piano.flac").read_bytes()
-    # sent, it is gone: no second copy of the stems in exports/ (M8-12's review); one never fetched goes with the next
+    # sent, it is gone: no second copy of the stems in exports/ (M8-12's review); one never fetched goes with the next.
+    # The server deletes it once the response is sent, which the client can finish reading first: waited for (the
+    # race was the test's, under the full suite's load, M8-13)
+    deadline = time.monotonic() + 5
+    while list((ctx.home / "exports").glob("*.zip")) and time.monotonic() < deadline:
+        time.sleep(0.02)
     assert not list((ctx.home / "exports").glob("*.zip")) and get(ctx, answer["url"])[0] == 404
     post(ctx, f"/api/jobs/{job.id}/export/stems")
     post(ctx, "/api/jobs/current/export/zip")   # the song's own zip stays: it is small
