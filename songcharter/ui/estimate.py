@@ -69,17 +69,31 @@ cache already held take 1's separation and timing (a song charted again after a 
 suggests, runs take 1 about as fast as a later take), and taking them off a take that did not run them put the range
 too low (M8-04's review, F3: on the 9:05 song 1182-1543 s against about 1636 s left). Nothing is taken off when the
 first take that ran was not take 1 (the cache answered take 1, and the beat map with it). Plus the stages after the
-guitar (`ASSEMBLE`, and
-`PREVIEW` when the plan has it). After the guitar's `stage_end` (a 1-take chart has only that) the stages after it
-alone. It is worked out once, at that event (`from`), and the page counts it down. **The evidence:** the takes
+guitar the plan has: the build (`ASSEMBLE`, or `ASSEMBLE_ONE` for one song.ogg: the estimate's `audio`), "Save the
+stems" (`STEMS`) and the preview (`PREVIEW`). After the guitar's `stage_end` (a 1-take chart has only that) the stages
+after it alone. It is worked out once, at that event (`from`), and the page counts it down. **The evidence:** the takes
 experiment's later takes against the first on the 5070 (above: the five ordinary songs' first takes 13-72 s longer
 than the mean of their later three, inside the rate's range; Kimochi Warui's later takes slower than its first, which
 the high end does not cover), so the test song's 4 takes (264, 224, 164 and 187 s) give, at take 2's start, 158-264 s
-a take for the three left, 495-856 s with the build and the preview, against the 602 s they took [here,
-tests/test_ui_estimate.py]; the owner's 9:05 song's 4 takes (2173 s; its single takes were not kept) split with the
-mean first-take part (0.13 s a second) give 1394-1870 s against its 1577 s of later takes and its build. **The build**
-(assemble and its checks, either device): 16 s and 17.2 s for the test song (the 5070's PC; the release gate's run),
-19.3 s for Take Me Out on this CPU, about 1 s for CI's 20-s clip: 0.5-5 s and 0.025-0.08 s a second. None when a take
+a take for the three left, 505-889 s with the split build and the preview, against the 602 s they took with a
+one-file build (about 618 s with a split one, twice the build [est.]) [here, tests/test_ui_estimate.py]; the owner's
+9:05 song's 4 takes (2173 s; its single takes were not kept) split with the mean first-take part (0.13 s a second)
+give 1408-1914 s against its 1577 s of later takes and its build. **The build** (assemble and its checks, either
+device: the CPU's work, encodes and decodes):
+  * **split audio** (the default since M8-12: three more Vorbis encodes, and the four files decoded back for the
+    gate's sync check), `ASSEMBLE`: on this CPU, the golden runs at v0.5.0's candidate (every level) 25.8 s for All the
+    Small Things (2:55) to 59.8 s for the test song (6:52), 0.135-0.150 s a second over the seven songs, and creep
+    (4:00) 35.1 s in M8-12 (Expert only) [here, each run's pipeline.json]: 0.5-5 s and 0.05-0.16 s a second, the low
+    end for a desktop CPU up to about 2.7 times as fast (the 5070's PC built the test song's one file in 16 s, this
+    CPU in 29.6 s).
+  * **one song.ogg** ("One audio file"), `ASSEMBLE_ONE`: 16 s and 17.2 s for the test song (the 5070's PC; the
+    release gate's run), 19.3 s for Take Me Out on this CPU, the golden set's kept builds before M8-12 10.5-29.6 s
+    (0.060-0.072 s a second), creep 17.1 s in M8-12, about 1 s for CI's 20-s clip: 0.5-5 s and 0.025-0.08 s a second.
+  * **"Save the stems"** (`STEMS`): creep's 4.3 s for 188 MB of FLAC in M8-12, on this CPU; 0.5-2 s and 0.01-0.04 s a
+    second around it [est.].
+The whole chart's `OTHER` already holds the split build: on this CPU the seven songs' decode, drums, bass, sections
+and split build came to 0.52-0.57 s a second, inside the 0.46-0.68 above, and the test song's build on the 5070
+doubled from 16 s keeps its 1-take chart inside the range (5.3 against 4.0-13.3 minutes) [here]. None when a take
 was run again on the CPU after its GPU run failed (the event's `device`): that take's time is no longer the model's.
 
 `duration` reads the length ffmpeg's header gives (the container's, or one estimated from the bit rate), without a
@@ -112,8 +126,11 @@ GUITAR_ONCE = {"cpu": (0.35, 0.50), "cuda": (0.07, 0.19 * FRIEND_GPU)}
 GUITAR_TAKE = {"cpu": (0.0012, 0.0033), "cuda": (0.0007, 0.0018 * FRIEND_GPU)}
 TAKE_FIXED = (0.0, 10.0)
 # the build and its checks (assemble), after the guitar: (fixed s, rate s a second), each as (low, high), on either
-# device (the time left, `remaining`)
-ASSEMBLE = ((0.5, 5.0), (0.025, 0.08))
+# device (the time left, `remaining`): Clone Hero's split audio, the default since M8-12 (three more encodes and the
+# four files decoded back for the gate), and one song.ogg ("One audio file", `one_audio`); the module docstring
+ASSEMBLE = ((0.5, 5.0), (0.05, 0.16))
+ASSEMBLE_ONE = ((0.5, 5.0), (0.025, 0.08))
+STEMS = ((0.5, 2.0), (0.01, 0.04))   # "Save the stems" (M8-12), after the build when the plan has it [est.]
 
 # the container's own line, which ffmpeg prints indented by two spaces after the input's Metadata block; a tag's line
 # (its key, a value's later lines) is indented by four or more, so a tag holding "Duration: 1:00:00" is not read
@@ -174,9 +191,10 @@ def round_minutes(low_s: float, high_s: float) -> tuple[int, int]:
 
 def for_job(seconds: Any, options: Any, auto_device: str | None, guitar_device: str | None = None) -> dict | None:
     """The estimate for a job (`options`: jobs.ChartOptions), or None when the song's length (a finite number of
-    seconds) or the device is not known: {"seconds", "takes", "device", "low_s", "high_s", "low_min", "high_min"}, `device` the guitar's. The
-    stages' device is the options' (the doctor summary's for "auto": `auto_device`); the guitar's takes are the
-    options', else, as pipeline.guitar_takes, 4 on CUDA and 1 on the CPU. On CUDA, a guitar the doctor summary found
+    seconds) or the device is not known: {"seconds", "takes", "device", "low_s", "high_s", "low_min", "high_min",
+    "audio"}, `device` the guitar's and `audio` the build's ("split", or "one" for one song.ogg: `remaining`'s build
+    rate). The stages' device is the options' (the doctor summary's for "auto": `auto_device`); the guitar's takes are
+    the options', else, as pipeline.guitar_takes, 4 on CUDA and 1 on the CPU. On CUDA, a guitar the doctor summary found
     on the CPU (`guitar_device`: autochart's CUDA provider did not load) runs there, and by default one take only,
     as the pipeline decides once its first take shows it."""
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 0 < seconds < math.inf:
@@ -195,7 +213,8 @@ def for_job(seconds: Any, options: Any, auto_device: str | None, guitar_device: 
                                   preview=bool(options.preview))
     low_min, high_min = round_minutes(low_s, high_s)
     return {"seconds": float(seconds), "takes": takes, "device": guitar, "low_s": round(low_s, 1),
-            "high_s": round(high_s, 1), "low_min": low_min, "high_min": high_min}
+            "high_s": round(high_s, 1), "low_min": low_min, "high_min": high_min,
+            "audio": "one" if getattr(options, "one_audio", False) else "split"}
 
 
 def remaining(est: Any, events: Any) -> dict | None:
@@ -226,7 +245,8 @@ def remaining(est: Any, events: Any) -> dict | None:
         elif kind == "stage_end" and e.get("stage") == "guitar":
             ended = e
     after = plan[plan.index("guitar") + 1:] if "guitar" in plan else ["assemble", "preview"]
-    parts = [ASSEMBLE] * ("assemble" in after) + [PREVIEW] * ("preview" in after)
+    build = ASSEMBLE_ONE if est.get("audio") == "one" else ASSEMBLE   # split by default, as an older estimate's
+    parts = [build] * ("assemble" in after) + [STEMS] * ("stems" in after) + [PREVIEW] * ("preview" in after)
     rest = [sum(fixed[i] + rate[i] * d for fixed, rate in parts) for i in (0, 1)]
     if ended is not None:
         start, left, first, each = ended.get("at"), 0, None, None

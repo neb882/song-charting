@@ -72,7 +72,7 @@ page.
 
 - **Chart first, play after.** While a song charts, songcharter uses most of the PC's memory: on a 16 GB PC, Windows
   has about 4 GB left until the chart is done. Don't run games then.
-- **How long it takes:** about 5 to 15 minutes for a 4-minute song with the default options (a busy or long song
+- **How long it takes:** about 4 to 14 minutes for a 4-minute song with the default options (a busy or long song
   takes longer: a 9-minute song can take over half an hour). The page says how long when the chart starts, and the
   browser tab's title says what it is doing. Most of that is the guitar: songcharter charts it 4 times over (4
   "takes") and combines them into a better chart, and the page shows which take it is on ("take 2 of 4"). At the
@@ -96,8 +96,9 @@ page.
 - **Several songs for an evening:** drop several song files at once (or choose several), pick Best or Quick once for
   all of them, and press "Chart them": songcharter charts them one after the other, by itself, while you are away. The
   list under the chart shows each song: "Install" and "Look" (its own Done screen) once it is done, "Remove" while it
-  waits; more songs can be added while one charts ("Add songs"). Leave the page in front, or set the PC's sleep to
-  Never, so it charts all evening. Cancel stops only the song charting; "Pause after this song" stops the list after
+  waits; more songs can be added while one charts ("Add songs"). Keep your PC awake while these chart: in Windows
+  Settings, set Sleep to Never for now (the page says so under the list); a PC that sleeps stops charting until it
+  wakes. Leaving the page in front helps too. Cancel stops only the song charting; "Pause after this song" stops the list after
   it. If the songcharter window closes, the list waits: start songcharter again and press "Carry on". Lyrics and
   pictures are for one song at a time.
 - **Your charts:** every song you have charted stays listed under "Your charts" on the first screen (folded once the

@@ -47,7 +47,8 @@
   * **The queue** (M8-10, `Queue`, DESIGN.md 4.5): the server's waiting list over these jobs, still one child
     process group at a time. `Jobs.on_end` (on a thread of its own) tells it a job has ended, and it starts the next
     waiting song; <home>/state/queue.json keeps the list (no lyrics), and after a restart the queue waits for Carry
-    on.
+    on. A finished song that leaves the list (Clear the list, Remove, the trim) stays known by its job id through its
+    chart in the library (`Queue.dropped_chart`, for the server's life), so a Look still open on it keeps working.
   * **The library** (M8-13, "Your charts", DESIGN.md 4.5): every chart the page has made stays in
     <home>/library/<16 hex>/<name>/ with its report.json, and `library` reads them all, newest first (report.json's
     time), for the page's list: the song.ini's name and artist, the gate's verdict, the audio (one file or split,
@@ -525,6 +526,11 @@ STATES = ("waiting", "charting", "ready", "check_failed", "not_finished", "cance
 FINISHED = STATES[2:]
 LYRICS_WAIT = ("Lyrics only for a song that starts at once: songcharter keeps pasted lyrics only while it uses them. "
                "Chart this song without them, or add it once nothing is charting.")
+# a song added again while it waits or charts (the same upload; the v0.5.0 review's install-01): it would chart twice,
+# into the same library folder. By where it is: charting, waiting (the list paused: after a restart, say), waiting
+ALREADY = {"charting": "This song is already in the list: it is charting now.",
+           "paused": "This song is already in the list: press Carry on to chart it.",
+           "waiting": "This song is already in the list: it is charted in its turn."}
 
 
 class QueueFull(Exception):
@@ -623,6 +629,7 @@ class Queue:
         self.failures = 0                # songs in a row that did not finish
         self.run = 0                     # the current evening's number: a song added to an idle queue starts one
         self.stopping = False
+        self.dropped: dict[str, str] = {}   # a finished song's job id -> its chart's library id, once out of the list
         jobs.on_end = self._on_end
         self._load()
 
@@ -680,6 +687,22 @@ class Queue:
         with self._lock:
             entry = next((e for e in self.entries if e.get("job") == job_id and e["state"] in FINISHED), None)
             return Kept(entry) if entry is not None else None
+
+    def dropped_chart(self, job_id: str) -> str | None:
+        """The library id of the chart a finished song made, once Clear the list, Remove or the trim has taken the
+        song out of the list (`_drop`), for this server's life; None for any other id. A Done screen still open on
+        that song (a Look) names it by its job id: its chart is a library chart, so the server finds it there
+        (server.py's Handler._job; the v0.5.0 review's correct-1)."""
+        with self._lock:
+            return self.dropped.get(job_id)
+
+    def _drop(self, gone: Sequence[dict]) -> None:
+        """Songs leaving the list: each finished one's chart (its result's folder) recorded by its job id."""
+        for e in gone:
+            closing = e.get("closing") if isinstance(e.get("closing"), dict) else {}
+            folder = closing.get("folder") if closing.get("event") == "result" else None
+            if isinstance(e.get("job"), str) and folder:
+                self.dropped[e["job"]] = chart_id(Path(str(folder)))
 
     def snapshot(self) -> dict:
         """GET /api/queue: {"paused", "why", "restarted", "run", "max", "entries", "left"} (DESIGN.md 4.5)."""
@@ -739,8 +762,9 @@ class Queue:
         """A song at the end of the list, with the page's `options` as checked (the pictures as upload ids, no
         lyrics) and its estimate: (its entry, its job when it starts at once: nothing charting and none waiting).
         `lyrics` only for a song that starts at once, else an InputError (LYRICS_WAIT); QueueFull at QUEUE_MAX waiting;
-        prepare's InputError, or JobRunning, for a song that cannot start at once (it is not kept). A chart whose
-        result is out and whose process is still exiting is waited for first, as Jobs.start does."""
+        an InputError (ALREADY) for a song whose upload is already waiting or charting (a finished one may be charted
+        again); prepare's InputError, or JobRunning, for a song that cannot start at once (it is not kept). A chart
+        whose result is out and whose process is still exiting is waited for first, as Jobs.start does."""
         cur = self.jobs.current
         if cur is not None and cur.state == "running":
             with cur.cond:
@@ -749,6 +773,11 @@ class Queue:
                 cur.wait_end(END_WAIT_S)
         with self._lock:
             self._settle()
+            same = next((e for e in self.entries if e["state"] in ("waiting", "charting")
+                         and e["upload"].get("id") == upload.get("id")), None)
+            if same is not None:
+                raise InputError(ALREADY["charting" if same["state"] == "charting" else
+                                         "paused" if self.paused is not None else "waiting"])
             waiting = self._waiting()
             now = self._charting() is None and not waiting
             if not now and lyrics is not None:
@@ -814,6 +843,7 @@ class Queue:
             if entry["state"] == "charting":
                 raise NotInQueue("that song is charting: cancel it instead")
             self.entries.remove(entry)
+            self._drop([entry])
             if not self._waiting():
                 self.paused, self.why, self.restarted = None, None, 0
             self._save()
@@ -822,6 +852,7 @@ class Queue:
         """Clear the list: every song but the charting one (their charts stay in the library)."""
         with self._lock:
             self._settle()
+            self._drop([e for e in self.entries if e["state"] != "charting"])
             self.entries = [e for e in self.entries if e["state"] == "charting"]
             self.paused, self.why, self.restarted = None, None, 0
             self._save()
@@ -940,8 +971,10 @@ class Queue:
 
     def _trim(self) -> None:
         finished = [e for e in self.entries if e["state"] in FINISHED]
-        for e in finished[:max(0, len(finished) - KEEP_FINISHED)]:
+        gone = finished[:max(0, len(finished) - KEEP_FINISHED)]
+        for e in gone:
             self.entries.remove(e)
+        self._drop(gone)
 
 
 # ------------------------------------------------------------------------------------------------ the library (M8-13)
@@ -1072,9 +1105,9 @@ class Charted:
     gate's verdict, the stems beside it, and the work folder and its preview while the cache keeps them), so Install,
     Open, the zips, the results and Listen are the queue's own routes."""
 
-    def __init__(self, folder: Path, root: Path | None):
+    def __init__(self, folder: Path, root: Path | None, job_id: str | None = None):
         self.folder = folder
-        self.id = chart_id(folder)
+        self.id = job_id or chart_id(folder)   # a finished song's job id when found through it (Queue.dropped_chart)
         self.state = "done"
         self.info = read_chart(folder, root)
         self.work, self.record = _work(folder, root)

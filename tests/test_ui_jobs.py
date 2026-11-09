@@ -859,3 +859,79 @@ def test_the_full_lists_words(queued, monkeypatch):
     queued.add("ok")
     with pytest.raises(J.QueueFull, match="^1 song is waiting already: add more once some are charted$"):
         queued.add("ok")
+
+
+# ------------------------------------------------------------------------------------------------ the v0.5.0 review
+
+def take_started(queue, timeout=20.0):
+    deadline = time.monotonic() + timeout
+    while not any(e["event"] == "take" for e in queue.jobs.current.events):
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+
+
+def test_a_song_already_waiting_or_charting_is_refused_and_a_finished_one_may_be_charted_again(queued):
+    """install-01: the same upload added again while it charts, while it waits, or while it waits after a restart (the
+    window closed mid-chart, its song back at the top of the list, paused) is refused in plain words, and nothing is
+    added; once it has finished it may be charted again, as before (break: no check in Queue.add: the song is charted
+    twice, into the same library folder)."""
+    up = {"id": "00000000000000aa", "name": "hang.mp3", "seconds": 60}
+    other = {"id": "00000000000000bb", "name": "ok.mp3", "seconds": 60}
+    assert queued.queue.add(up, {"title": "hang"})[1] is not None
+    with pytest.raises(InputError, match=r"^This song is already in the list: it is charting now\.$"):
+        queued.queue.add(up, {"title": "ok"})
+    queued.queue.add(other, {"title": "ok"})
+    with pytest.raises(InputError, match=r"^This song is already in the list: it is charted in its turn\.$"):
+        queued.queue.add(other, {"title": "ok"})
+    assert [e["state"] for e in queued.queue.entries] == ["charting", "waiting"]
+    take_started(queued.queue)
+    queued.queue.shutdown()   # the window closes mid-chart
+    queued.queue = queued.make()   # started again: the song waits at the top, the list paused
+    assert queued.queue.snapshot()["paused"] == "restart"
+    with pytest.raises(InputError, match=r"^This song is already in the list: press Carry on to chart it\.$"):
+        queued.queue.add(up, {"title": "ok"})
+    assert len(queued.queue.entries) == 2
+    queued.queue.entries[0]["options"] = {"title": "ok"}   # charted this time
+    queued.queue.carry_on()
+    assert [e["state"] for e in settled(queued.queue)["entries"]] == ["ready", "ready"]
+    entry, job = queued.queue.add(up, {"title": "ok"})   # finished: it may be charted again
+    assert job is not None and entry["state"] == "charting"
+    assert [e["state"] for e in settled(queued.queue)["entries"]] == ["ready", "ready", "ready"]
+
+
+def test_a_new_evening_and_a_cancel_reset_the_failures_and_the_list_keeps_the_last_finished(queued, monkeypatch):
+    """tests-4: a song added to an idle list starts a new evening, whose failures count from 0 (break: Queue.add not
+    resetting them: the next evening pauses after its first failure); a cancel ends a run of failures too (break: the
+    cancelled branch not resetting them: dies, a cancel, dies pauses); the list keeps the last KEEP_FINISHED finished
+    songs (break: _trim emptied: queue.json grows for ever), and a trimmed song's job id still finds its chart
+    (correct-1: Queue.dropped_chart)."""
+    queued.add("dies")
+    assert settled(queued.queue)["entries"][0]["state"] == "not_finished" and queued.queue.failures == 1
+    queued.add("dies")   # a new evening: its first failure, not its second
+    queued.add("ok")
+    snap = settled(queued.queue)
+    assert [(e["run"], e["state"]) for e in snap["entries"]] == [(1, "not_finished"), (2, "not_finished"),
+                                                                 (2, "ready")]
+    assert snap["paused"] is None
+    queued.add("dies")
+    queued.add("hang")
+    queued.add("dies")
+    queued.add("ok")
+    deadline = time.monotonic() + 20
+    while queued.queue.snapshot()["entries"][4]["state"] != "charting":
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+    take_started(queued.queue)
+    queued.queue.jobs.cancel()   # dies, cancelled, dies: not two in a row
+    snap = settled(queued.queue)
+    assert [e["state"] for e in snap["entries"][3:]] == ["not_finished", "cancelled", "not_finished", "ready"]
+    assert snap["paused"] is None
+    monkeypatch.setattr(J, "KEEP_FINISHED", 3)
+    first = next(e for e in queued.queue.entries if e["id"] == snap["entries"][2]["id"])   # ready: it made a chart
+    queued.add("ok")   # 7 finished: the 4 oldest go
+    snap = settled(queued.queue)
+    assert len(snap["entries"]) == 4 and first["id"] not in {e["id"] for e in snap["entries"]}
+    kept = json.loads(J.queue_path(queued.home).read_text(encoding="utf-8"))["entries"]
+    assert [e["id"] for e in kept] == [e["id"] for e in snap["entries"]]
+    assert queued.queue.job(first["job"]) is None
+    assert queued.queue.dropped_chart(first["job"]) == J.chart_id(Path(first["closing"]["folder"]))
