@@ -10,8 +10,9 @@
      (engines/adtof.py), bass from the rule engine (engines/bass.py), sections from allin1 or its librosa fallback
      (engines/sections.py), and guitar from autochart's engine (engines/autochart.py), one take per seed: the
      engine's default seed and, for `takes` > 1, seeds 101, 202, ... for the others, which assemble splices
-     section by section (takes.py). By default 4 takes when the guitar stage runs on CUDA and 1 on the CPU
-     (`guitar_takes`). An engine that charts no note leaves its part out (DESIGN.md 2, absent parts).
+     section by section (takes.py). By default 1 take on every device (`guitar_takes`; the owner, 2026-11-09); 4
+     spliced takes when asked for (`--takes 4`, the page's "Best chart"). An engine that charts no note leaves its
+     part out (DESIGN.md 2, absent parts).
   3b. **Lyrics** (`lyrics`: the text a person gives, else none): aligned to the vocal stem (engines/lyrics.py,
      DESIGN.md 2.15), its own folder work/lyrics/ the cache. Torch or torchaudio missing, the weights out of reach
      or an alignment that fails leaves the lyrics out with a warning: lyrics never fail a chart. The text goes to
@@ -31,9 +32,11 @@
      cache before its prune, so a run that finds the separation cached separates nothing. An existing stems folder
      holding anything else is refused before any audio work (`check_stems_folder`), and a disk without room for them
      (STEMS_FLAC_SHARE of 24-bit PCM, `stems_bytes`) right after the decode, where their size is known
-     (`stems_room`: an InputError naming the folder and the space needed). A disk that has filled by the time they are
-     written is a warning (M8-12's review): the half-written folder is removed, the run ends as the gate says, the
-     result's `stems` is null and pipeline.json's `stems` says why in plain words for the page (`STEMS_NO_ROOM`).
+     (`stems_room`: an InputError naming the folder and the space needed; in WSL C: is measured too, where WSL's disk
+     grows). A disk that has filled by the time they are written, or any other error writing them (in WSL a full C:
+     is an I/O error), is a warning (M8-12's review; the v0.5.0 review's install-02): the half-written folder is
+     removed, the run ends as the gate says, the result's `stems` is null and pipeline.json's `stems` says why in
+     plain words for the page (`STEMS_NO_ROOM` for a full disk, `STEMS_NOT_SAVED` with the error's own words else).
   5. **Preview** (preview.py) of the folder assemble wrote, the song folder or its .failed, into work/preview/
      (overview.png, page_NN.png), judged against the work folder's stems, when matplotlib and librosa import. It
      only informs: absent libraries or a preview that fails give one warning, never another exit code, and so does
@@ -85,7 +88,7 @@
     `cpu_retry` off: those end the chart with a ToolError that says first what to try or what failed
     (`take_failed`), and so does a retry that fails, on the CPU; the takes that finished stay in the cache for the
     next run. When the first take
-    of the CUDA default is the one retried, it is used alone, as when autochart moved it to the CPU by itself.
+    of several on CUDA is the one retried, it is used alone, as when autochart moved it to the CPU by itself.
   * **GPU memory.** On CUDA, torch's cache is emptied after the separation and after the drums, and each stage
     that runs in this process records torch's own peak (`torch_peak_vram_mb`: reset as it begins).
   * **Solos** ("labels" by default): every section the sections engine names "Solo" (allin1's solo label), within
@@ -125,7 +128,7 @@
   * **Events** (`events`, for the UI: `songcharter chart --events`, M4-04): a dict per step, its kind in "event":
     `plan` {"stages"} once the stages are known; `stage_start` {"stage", "index", "count", "detail"} (index from 1,
     as the log's [k/n]); `take` {"index", "count", "seed"} before each guitar take that runs (not one its cache
-    answers; index from 1 among the stage's takes, so the CUDA default's four takes count 1 to 4 of 4), and again
+    answers; index from 1 among the stage's takes, so 4 takes count 1 to 4 of 4), and again
     with "device": "cpu" and the same index before a take's run again on the CPU; `fallback` {"stage", "from", "to", "reason"} for every record in `fallbacks`, also those only
     recorded; `warning` {"text"} for every warning; `stage_end` {"stage", "seconds", "cached", "detail"}. A stage
     that stops (an error, or the preview failing) sends no `stage_end`.
@@ -167,7 +170,7 @@ from .timed import DIFFICULTIES, INSTRUMENTS
 SAMPLE_RATE = A.SAMPLE_RATE
 STEMS = ("drums", "bass", "guitar", "other", "vocals")   # the stems assemble reads (piano only reaches allin1)
 EXTRA_SEED_STEP = 101    # takes after the first use seeds 101, 202, 303, ... (the v1 chart's seeds)
-CUDA_TAKES = 4           # guitar takes by default when the guitar stage runs on CUDA (guitar_takes); 1 on the CPU
+CUDA_TAKES = 1           # guitar takes by default on CUDA too (guitar_takes; the owner, 2026-11-09), as on the CPU
 CPU_RETRIES = 1          # guitar takes a chart runs again on the CPU after their CUDA run failed (cpu_retry)
 REASON_CHARS = 120       # at most this much of the engine's error line goes into a retry's reason (engine_line)
 GUITAR_END_GAP_S = 10.0  # a continued guitar take whose last note is this long before its stem stops playing, and
@@ -183,6 +186,9 @@ STEMS_FLAC_SHARE = 0.5      # a stem's 24-bit FLAC against its 24-bit PCM, about
 STEMS_NO_ROOM = ("The disk ran out of room while the separated instruments were being saved (they need about {mb}), "
                  "so they were not saved. The chart is not affected. Free some space, then chart the song again with "
                  "the stems ticked to save them.")
+# any other error writing them (`why`: its few words, such as "input/output error"; the v0.5.0 review fixes)
+STEMS_NOT_SAVED = ("The stems could not be saved ({why}). The chart is not affected. Chart the song again with the "
+                   "stems ticked to try again; if C: is nearly full, free some space first.")
 SOLO_MODES = ("stems", "labels", "off")  # assemble's solos modes; a list of section names is the other kind
 # the placeholders for what no tag or caller gives ({name}: the song's name, as resolved); the album's is Encore's
 # song.ini rule for a single (docs/reports/charting-conventions.md, section 8), instead of "Unknown"
@@ -206,7 +212,7 @@ OVERRIDES = ("name", "artist", "album", "genre", "year")
 class Options:
     instruments: tuple[str, ...] = INSTRUMENTS   # which parts to chart: guitar, bass, drums
     takes: int | None = None                     # guitar takes: 1, or 3 and more (a splice needs three runs); None:
-                                                 # 4 when the guitar stage runs on CUDA, else 1 (guitar_takes)
+                                                 # 1 on every device (guitar_takes)
     device: str = "auto"                         # "auto" (CUDA when a CUDA kernel runs here), "cpu" or "cuda"
     threads: int | None = None                   # torch's threads here and in allin1 (None: their defaults)
     work: Path | None = None                     # the work folder (None: one per song in the cache, cache.py)
@@ -320,24 +326,40 @@ class ChartResult:
 
 
 def guitar_takes(asked: int | None, device: str) -> tuple[int, str]:
-    """How many guitar takes to run, and why: the number asked for, on any device; by default CUDA_TAKES (4) when
-    the guitar stage runs on CUDA (`device`: "cuda" or "cpu", the device resolved for it) and 1 otherwise.
+    """How many guitar takes to run, and why: the number asked for, on any device; by default 1 (CUDA_TAKES on CUDA,
+    `device`: "cuda" or "cpu", the device resolved for it; 1 on the CPU).
 
-    The evidence behind the default (the takes experiment, DESIGN.md 2.7): 4 takes spliced by agreement gave +0.013
-    Expert F1@50 over 1 take on 5 reference songs (Lucretia apart: our grid misses its beats), mostly precision, and
-    4 beat 3. Their cost on the owner's RTX 5070: 3.41x the guitar stage over the takes experiment's seven songs
-    (+5.75 min a song), and 3.9x for the 6:52 test song in the GPU smoke test through the real install (854 s for 4
-    takes against about 219 s for one, +10.6 min); kept as the default at the release gate (M4-08 times the friend's
-    4070). On a CPU each take after the first is one more transcription, 217 s for the test song on the dev container
-    (DESIGN.md 5, M3), so 3 more would add about 11 min for that small gain. 2 takes are never the default (two
-    cannot outvote each other), nor 3 (+0.006 to +0.0105 over 1, below 4)."""
+    The evidence behind the default (the owner's decision, 2026-11-09; DESIGN.md 2.7): 4 takes spliced by agreement
+    were the CUDA default from the takes experiment (+0.013 Expert F1@50 over 1 on 5 reference songs). M8-02 measured
+    them again on the owner's GPU over the reference and 20-song sets: +0.005 [-0.005, +0.014] F1@50 and +0.000 at
+    F1@100, for about 4x the guitar stage's time (3.9x for the 6:52 test song: 854 s against about 219 s). And the
+    splice makes a song's repeated sections less alike: pairs of same-label sections whose windows came from
+    different takes lost -0.045 [-0.087, -0.011] repeat-consistency F1 against 1 take, pairs from one take did not
+    (+0.008 [+0.000, +0.018]) (the repeat-consistency measurement, 2026-11-09). So 1 take everywhere, and 4 when asked
+    for (the page's "Best chart": slower, and only sometimes better). On a CPU each take after the first is one more
+    transcription, 217 s for the test song on the dev container (DESIGN.md 5, M3). 2 takes cannot outvote each
+    other."""
     if asked is not None:
         return asked, f"{asked} asked for"
     if device == "cuda":
-        return CUDA_TAKES, (f"the default on cuda: {CUDA_TAKES} takes spliced gave +0.013 Expert F1@50 over 1, for "
-                            "3.9x the guitar stage's time (the GPU smoke test on an RTX 5070: 854 s for the 6:52 "
-                            "test song, about 219 s for 1 take)")
+        return CUDA_TAKES, (f"the default on cuda: {CUDA_TAKES} take (4 spliced gave +0.005 Expert F1@50 over 1 for "
+                            "about 4x the guitar's time, and less alike repeated sections; --takes 4 asks for them)")
     return 1, "the default on the cpu: 1 take (each one more is another transcription there, about 3.6 min for a 7-min song)"
+
+
+def folder_record(record: Mapping) -> dict:
+    """report.json's `pipeline` (assemble's `pipeline=`): what the song folder keeps of pipeline.json's `record`, so
+    that a chart made with less than was meant can be told from a good one once the work folder is pruned ("Your
+    charts", a diagnostics zip; v0.5.0's advisor, finding 2): the device asked for and chosen; the guitar's takes
+    (None without a guitar): asked for (None: the default), planned, made (1 when the first of several takes on
+    CUDA was run again on the CPU or moved there), each take's transcriber device and the seeds run again on the
+    CPU; and each fallback's stage, from and to. Numbers and short words only: no reason, as an engine's line can hold a path."""
+    dev, takes = record.get("device") or {}, record.get("takes")
+    return {"device": {"asked": dev.get("asked"), "chosen": dev.get("chosen")},
+            "takes": None if takes is None else {
+                "asked": takes.get("asked"), "planned": takes.get("planned"), "made": takes.get("takes"),
+                "devices": takes.get("devices"), "cpu_retries": takes.get("cpu_retries")},
+            "fallbacks": [{k: f.get(k) for k in ("stage", "from", "to")} for f in record.get("fallbacks") or []]}
 
 
 AUTOCHART_EXIT = re.compile(r"autochart seed \d+ failed \(exit (-?\d+)\)")   # engines/autochart.py's ToolError
@@ -902,12 +924,21 @@ def check_stems_folder(folder: Path) -> None:
                          "out, or chart into another folder")
 
 
-class NoRoom(InputError):
-    """No room for the stems (export_stems): `need` bytes."""
+class StemsNotSaved(InputError):
+    """The stems could not be written (export_stems): `need` bytes, and `reason` in a few plain words (an OSError's
+    own, such as "input/output error")."""
 
-    def __init__(self, message: str, need: int):
+    def __init__(self, message: str, need: int, reason: str):
         super().__init__(message)
         self.need = need
+        self.reason = reason
+
+
+class NoRoom(StemsNotSaved):
+    """No room for the stems (export_stems): the disk, or in WSL C:, has less free than `need` bytes, or filled."""
+
+    def __init__(self, message: str, need: int):
+        super().__init__(message, need, "the disk is full")
 
 
 def disk_free(path: Path) -> int:
@@ -918,13 +949,37 @@ def disk_free(path: Path) -> int:
     return shutil.disk_usage(path).free
 
 
-def stems_room(folder: Path, frames: int, channels: int = 2) -> None:
-    """An InputError when the disk holding the stems folder has less free than `stems_bytes`: run right after the
-    decode, before the long work."""
-    need, have = stems_bytes(frames, channels), disk_free(folder.parent)
+def _c_free() -> int | None:
+    """Free bytes on C: in WSL, where WSL's own disk grows (wsl.MNT_C, the measure of device.report's
+    `windows_c_free_mb`, the queue's disk pause and doctor's findings); None elsewhere or when it cannot be read."""
+    import shutil
+    from . import wsl
+    try:
+        return shutil.disk_usage(wsl.MNT_C).free if wsl.is_wsl() and wsl.MNT_C.is_dir() else None
+    except OSError:
+        return None
+
+
+def _no_room(path: Path, need: int, free: Callable[[Path], int] | None = None) -> str | None:
+    """Why `need` bytes of stems have no room under `path`, or None: the disk that holds it (`free`, default
+    disk_free), and in WSL C: too. WSL's own disk reports the free space of its virtual disk, which grows on C:, so a
+    nearly full C: leaves the stems no room while WSL's disk still looks empty (the v0.5.0 review's install-02)."""
+    have = (free or disk_free)(path)
     if have < need:
-        raise InputError(f"no room for the stems in {folder.parent}: they need about {_mb(need)}, and {_mb(have)} "
-                         "are free. Free some space, or chart again without the stems")
+        return f"no room for the stems in {path}: they need about {_mb(need)}, and {_mb(have)} are free"
+    c = _c_free()
+    if c is not None and c < need:
+        return (f"no room for the stems on C:, where WSL's disk grows: they need about {_mb(need)}, and {_mb(c)} are "
+                "free there")
+    return None
+
+
+def stems_room(folder: Path, frames: int, channels: int = 2) -> None:
+    """An InputError when the disk holding the stems folder, or in WSL C: where that disk grows (`_no_room`), has
+    less free than `stems_bytes`: run right after the decode, before the long work."""
+    why = _no_room(folder.parent, stems_bytes(frames, channels))
+    if why is not None:
+        raise InputError(f"{why}. Free some space, or chart again without the stems")
 
 
 def stems_bytes(frames: int, channels: int = 2, files: int = len(STEM_FILES)) -> int:
@@ -939,9 +994,11 @@ def _mb(n: int) -> str:
 def export_stems(source: Path, folder: Path, free: Callable[[Path], int] | None = None) -> dict:
     """The separation's stems (`source`: <stem>.wav each, float32 at 44.1 kHz on the input's timeline) as 24-bit FLAC
     (audio.write_flac) into `folder`, through a hidden staging folder beside it that replaces it at the end. NoRoom
-    (an InputError) naming the folder and the space needed when the disk has less free than `stems_bytes` or fills
-    while they are written; the staging folder is removed then, and `folder` keeps what it held. Returns the record:
-    {"folder", "files", "bytes", "seconds"}."""
+    (an InputError) naming the folder and the space needed when the disk, or in WSL C: (`_no_room`), has less free
+    than `stems_bytes`, or the disk filled while they were written (ENOSPC); StemsNotSaved, NoRoom's base, with the
+    error's own words for any other OSError, as in WSL a full C: shows as one (an I/O error: WSL's disk cannot grow).
+    The finished chart stands either way (the v0.5.0 review's install-02). The staging folder is removed then, and
+    `folder` keeps what it held. Returns the record: {"folder", "files", "bytes", "seconds"}."""
     import shutil
     import tempfile
     wavs = [(s, source / f"{s}.wav") for s in STEM_FILES if (source / f"{s}.wav").is_file()]
@@ -952,10 +1009,9 @@ def export_stems(source: Path, folder: Path, free: Callable[[Path], int] | None 
     frames = max(i.frames for i in infos.values())
     need = stems_bytes(frames, max(i.channels for i in infos.values()), len(wavs))
     folder.parent.mkdir(parents=True, exist_ok=True)
-    have = (free or disk_free)(folder.parent)
-    if have < need:
-        raise NoRoom(f"no room for the stems in {folder.parent}: they need about {_mb(need)}, and {_mb(have)} are "
-                     "free", need)
+    why = _no_room(folder.parent, need, free)
+    if why is not None:
+        raise NoRoom(why, need)
     staging = Path(tempfile.mkdtemp(prefix=f".{folder.name}.", suffix=".partial", dir=folder.parent))
     written = 0
     try:
@@ -973,7 +1029,9 @@ def export_stems(source: Path, folder: Path, free: Callable[[Path], int] | None 
         if e.errno in (errno.ENOSPC, errno.EDQUOT):
             raise NoRoom(f"the disk filled while the stems were written into {folder}: they need about "
                          f"{_mb(need)}", need) from None
-        raise
+        reason = str(e.strerror or type(e).__name__)
+        raise StemsNotSaved(f"the stems could not be written into {folder} ({reason}; in WSL a full C: shows as "
+                            f"this): they need about {_mb(need)}", need, reason[:1].lower() + reason[1:]) from None
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
@@ -1117,7 +1175,7 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         config = work / "assemble.json"
         config.write_text(json.dumps(cfg, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
         t0 = begin("assemble", "grid, parts, tiers, phrases, sections, gate")
-        result = assemble(load_config(config, out), lyrics=timed, art=pictures.record)
+        result = assemble(load_config(config, out), lyrics=timed, art=pictures.record, pipeline=folder_record(report))
         g = result.report["gate"]
         if timed is not None:
             report["lyrics"]["chart"] = result.report.get("lyrics")
@@ -1130,11 +1188,13 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
             t0 = begin("stems", f"the six stems as FLAC into {saved.name}")
             try:
                 report["stems"] = export_stems(stem_folder, saved)
-            except NoRoom as e:   # the chart stands: a warning, and the page says why (M8-12's review)
+            except StemsNotSaved as e:   # the chart stands: a warning, and the page says why (M8-12's review)
+                full = isinstance(e, NoRoom)   # else another error, in its own words (the v0.5.0 review fixes)
                 warn(f"stems: not saved ({e})")
-                report["stems"] = {"saved": False, "why": STEMS_NO_ROOM.format(mb=_mb(e.need)), "error": str(e)}
+                report["stems"] = {"saved": False, "why": STEMS_NO_ROOM.format(mb=_mb(e.need)) if full else
+                                   STEMS_NOT_SAVED.format(why=e.reason), "error": str(e)}
                 saved = None
-                end("stems", t0, False, "not saved: no room on the disk")
+                end("stems", t0, False, "not saved: no room on the disk" if full else f"not saved: {e.reason}")
             else:
                 end("stems", t0, False, f"{len(report['stems']['files'])} stems, {_mb(report['stems']['bytes'])}, "
                     f"in {saved}", {"bytes": report["stems"]["bytes"]})
@@ -1284,12 +1344,13 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
     if "guitar" in options.instruments:
         gdev = "cuda" if device == "cuda" else "cpu"
         n_takes, why = guitar_takes(options.takes, gdev)
-        seeds = take_seeds(n_takes)
-        # the CUDA default first runs one take alone: when autochart moved its transcriber off CUDA by itself (a
-        # provider that failed to load), the other three would cost CPU minutes each; when its CUDA run failed and
-        # it was run again on the CPU, the others could fail there too, with the one retry spent. Every take is a
-        # call of its own (run_take), so that a take that fails on CUDA can be run again alone.
-        probe = options.takes is None and n_takes > 1
+        planned, seeds = n_takes, take_seeds(n_takes)
+        # several takes on CUDA (the page's "Best chart", --takes 4; the default until 2026-11-09) first run one take
+        # alone: when autochart moved its transcriber off CUDA by itself (a provider that failed to load), the other
+        # three would cost CPU minutes each; when its CUDA run failed and it was run again on the CPU, the others could
+        # fail there too, with the one retry spent. Every take is a call of its own (run_take), so that a take that
+        # fails on CUDA can be run again alone.
+        probe = gdev == "cuda" and n_takes > 1
         t0 = begin("guitar", f"autochart, {len(seeds)} take{'s' * (len(seeds) > 1)} (seed{'s' * (len(seeds) > 1)} "
                              f"{', '.join(map(str, seeds))}) on {gdev}" + (", the first alone first" if probe else ""))
         song_s = mix.shape[1] / SAMPLE_RATE
@@ -1340,8 +1401,9 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
         if probe and (retried or _transcriber(runs[0]) not in (None, gdev)):   # none reported: taken as on CUDA
             moved = "cpu" if retried else _transcriber(runs[0])
             if retried:   # its CUDA run failed: more takes there could fail too, with the retry spent
-                warn(f"guitar: the first take was run again on the CPU (its GPU run failed): that take is used alone, "
-                     f"not {n_takes - 1} more on the GPU")
+                warn(f"The GPU failed on the guitar's first take (most likely out of memory: a game, Clone Hero or "
+                     f"a video can take it), so this chart has 1 take, made on the CPU, instead of {n_takes}. Chart "
+                     "the song again later, with those closed, for the best result.")
                 why = f"{why}; but the first take was run again on the CPU (its GPU run failed), so that take alone"
             else:
                 fallback("guitar", gdev, moved, f"autochart's transcriber ran on {moved}, not {gdev}, for the first "
@@ -1375,7 +1437,8 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
                 log(line)
             for text in told:
                 warn(text)
-        record["takes"] = {"asked": options.takes, "takes": n_takes, "auto": options.takes is None, "why": why,
+        record["takes"] = {"asked": options.takes, "planned": planned, "takes": n_takes, "auto": options.takes is None,
+                           "why": why,
                            "seeds": list(seeds), "transcriber_moved_to": moved,
                            "devices": [_transcriber(r) for r in runs], "cpu_retries": list(retried),
                            "cut_short": [st.get("cut_short") for st in stitches],

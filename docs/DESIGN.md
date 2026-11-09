@@ -83,8 +83,8 @@ songcharter is a free, local tool. A song file goes in (MP3 or anything ffmpeg r
 
 **As built** (`songcharter chart <file> --out <dir>`: `pipeline.py` [code]): steps 1, 2, 4 and 5, with step 3 as
 Goal 1 builds it (`beatgrid` on the drum stem with the guitar stem second, no Beat This start; assemble). The engines
-are ADTOF with drummap2's lanes (drums), our rules (bass), autochart's engine (guitar: by default 4 takes when it
-runs on CUDA, 1 on the CPU) and allin1 or librosa (sections), each cached in the song's work folder in the per-user
+are ADTOF with drummap2's lanes (drums), our rules (bass), autochart's engine (guitar: by default 1 take on every
+device, 4 spliced takes for the page's "Best chart", §2.7) and allin1 or librosa (sections), each cached in the song's work folder in the per-user
 cache (`%LOCALAPPDATA%\songcharter\work`, pruned to 5 GB; §2); then assemble builds and gates the folder (Expert only
 by default, solos on the sections named Solo), and a preview of it (an overview and a page a minute, PNG) goes into
 the work folder (§2.0). It ran end to end on the test song's MP3 in 12.7 min on the dev container's CPU and passed
@@ -229,7 +229,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | `art.py` | Album art and a background image (§2.16, M4-11): `prepare(song, album_art, background)` makes album.jpg (the given image, else the song file's embedded cover picture; centre-cropped to 512x512) and background.jpg (the given image, scaled down to fit 1920x1080), re-encoded with no metadata; a bad given image is an `InputError` before any audio work, an embedded picture that fails a warning. The pipeline writes them into the work folder's `art/`; assemble's config keys `album_art` and `background` copy them into the song folder. |
 | `listen.py` | A chart you can hear (§2.17, M6-09): `render(folder, part, difficulty, tones_only)` makes one part and level of a built song folder into sound over the song (12 dB down) or alone, at the times `importers.read_song` gives; `write` makes an OGG Vorbis (bitexact) or a WAV beside a temporary file; `cached` is the Done screen's, one render per part and level in the work folder's `listen/`, by a hash of the folder's files. `songcharter listen` (cli.py) writes where `--out` says, never inside the song folder. Nothing that charts reads it. |
 | `cache.py` | The per-user cache (§2, work folder; §9 Q30): `%LOCALAPPDATA%\songcharter` on Windows, `$XDG_CACHE_HOME/songcharter` or `~/.cache/songcharter` elsewhere (`user_cache`, shared with ADTOF's `models_dir()`, whose paths and `$SONGCHARTER_MODELS` are unchanged); `$SONGCHARTER_CACHE` moves the work folders only. A song's work folder is `<cache>/work/<name>-<key>`: the key is the first 16 hex characters of the song file's SHA-256, the name its stem made safe for Windows (ASCII-folded where it can be, no reserved characters or device names, no trailing dots or spaces, at most 40 UTF-16 units, cut at a word within 12 of them: §2.13, Names); with no folder of that name, the work folder whose marker holds the key is the song's (`by_key`, M5-12: a v0.1 folder of a long stem, a renamed copy). autochart's scratch folder is `<cache>/ac/<8 hex>`: the files its own layout leaves reach 188 characters below it on Windows, so inside the work folder its deepest file would be 319 characters with `C:\Users\<20 characters>\AppData\Local` and a 40-character name, and here it is 256 (the work folder's deepest, a take's report, 182); autochart's staging files beside them go past 259 on every profile (`DEEPEST["staging"]`: 309 with that profile), which only Node writes, and pruning deletes in Windows' `\\?\` form (`long_path`). After each run that finishes, the least recently used work folders (with our marker, `songcharter-work.json`, written when a run starts) go, with their scratch folders, until the rest fit 5 GB (`$SONGCHARTER_CACHE_GB`); never the run's own, one used in the last 24 hours or one a `--work` run used (pinned in its marker, which later default runs keep, with its scratch folder). Each goes whole into `<cache>/trash` in one rename, scratch folder first, its marker read again before and after the move (a run that marked it in between gets it back), and is deleted there; a folder that cannot be moved stays whole, and what cannot be deleted in the trash waits for the next prune, each with a warning; a `trash` folder without our `songcharter-trash.json` is left alone. |
-| `pipeline.py` | M3's pipeline (§1, `songcharter chart`): one decode, written as a float32 WAV into the work folder (the song's folder in the per-user cache, pruned after each run, §2; or `--work`) (autochart's input and assemble's audio, rewritten only when the samples change); one seeded separation cached there; the drums, bass, sections and guitar engines, each in a folder of the work folder that is its cache; then an assemble config (`work/assemble.json`) and assemble's build and gate, writing Expert only unless `levels` asks for more (the friend's v1 feedback: only Expert is needed unless he asks), with solos by assemble's rule (`solos`: "labels" by default, every section named Solo, chosen on the solo evaluation of §2.10; "stems", "off" or a list of section names; only when the guitar is charted, and "stems" or names without the guitar are refused, as more than one take is). Guitar: autochart's default seed, and for `takes` N ≥ 3 seeds 101, 202, … spliced by takes.py (a take that repeats another's notes is left out); `takes` None (the default) is 4 when the guitar stage runs on CUDA and 1 otherwise (`guitar_takes`, §2.7), the first CUDA take run alone first so that a transcriber autochart moved off CUDA by itself leaves that take alone (warned); `pipeline.json`'s `takes` says how many, whether by default, and why. A part whose engine finds no note is left out (§2, absent parts). After assemble, the preview (`preview.py`) of the folder it wrote, the song folder or its `.failed`, goes into `work/preview/` (overview.png, page_NN.png), judged against the work folder's six stems, when matplotlib and librosa import; their absence or a preview that fails is one warning and never changes the exit code (`--no-preview` turns it off), and so is a Ctrl+C during the preview or the pruning after it (the build is in place by then); `pipeline.json`'s `preview` holds its flags, and the CLI summary prints the overview's path, the work folder's size and autochart's scratch folder when the run made one. Metadata: the file's tags (ffmpeg's ffmetadata output, the container's, then the first audio stream's), the caller's values on top, with no artist tag "Artist - Title" from the file's name, and placeholders: "<name> - (Single)" for the album, "Unknown" for the rest (scan-chart counts its own "Unknown Artist" defaults as missing; §2.13, Names). A song under 10 s or silent is refused after the decode (§2.13). A missing component (ffmpeg, torch and demucs, librosa for bass, librosa for sections, allin1 or not, since it is allin1's fallback, autochart's install, CUDA asked for but absent or running no kernel in songcharter's torch) is named with its fix before any audio work, and so is an output folder (or its `.failed`) holding foreign files. Device auto is CUDA only when a CUDA kernel runs (`separate.cuda_works`), else the CPU for every model, with a warning. The sections engine is asked for auto when CUDA is asked for: allin1 runs in a Python of its own whose CUDA nothing checks up front, so it takes CUDA when that Python has it and the CPU (warned) when not. `work/pipeline.json` records each stage's wall time, cache use, device, fallback and the process's own peak RSS (not its children's: a child's `ru_maxrss` starts from its parent's peak when it was spawned), allin1's runner's own peak, and for a run that raised, the error and its traceback. The heavy stages are the methods of `Engines`, so tests stand in for them. |
+| `pipeline.py` | M3's pipeline (§1, `songcharter chart`): one decode, written as a float32 WAV into the work folder (the song's folder in the per-user cache, pruned after each run, §2; or `--work`) (autochart's input and assemble's audio, rewritten only when the samples change); one seeded separation cached there; the drums, bass, sections and guitar engines, each in a folder of the work folder that is its cache; then an assemble config (`work/assemble.json`) and assemble's build and gate, writing Expert only unless `levels` asks for more (the friend's v1 feedback: only Expert is needed unless he asks), with solos by assemble's rule (`solos`: "labels" by default, every section named Solo, chosen on the solo evaluation of §2.10; "stems", "off" or a list of section names; only when the guitar is charted, and "stems" or names without the guitar are refused, as more than one take is). Guitar: autochart's default seed, and for `takes` N ≥ 3 seeds 101, 202, … spliced by takes.py (a take that repeats another's notes is left out); `takes` None (the default) is 1 on every device since 2026-11-09 (4 on CUDA before; `guitar_takes`, §2.7), and 4 for the page's "Best chart" (`--takes 4`); several takes on CUDA run the first take alone first so that a transcriber autochart moved off CUDA by itself leaves that take alone (warned); `pipeline.json`'s `takes` says how many, whether by default, and why. A part whose engine finds no note is left out (§2, absent parts). After assemble, the preview (`preview.py`) of the folder it wrote, the song folder or its `.failed`, goes into `work/preview/` (overview.png, page_NN.png), judged against the work folder's six stems, when matplotlib and librosa import; their absence or a preview that fails is one warning and never changes the exit code (`--no-preview` turns it off), and so is a Ctrl+C during the preview or the pruning after it (the build is in place by then); `pipeline.json`'s `preview` holds its flags, and the CLI summary prints the overview's path, the work folder's size and autochart's scratch folder when the run made one. Metadata: the file's tags (ffmpeg's ffmetadata output, the container's, then the first audio stream's), the caller's values on top, with no artist tag "Artist - Title" from the file's name, and placeholders: "<name> - (Single)" for the album, "Unknown" for the rest (scan-chart counts its own "Unknown Artist" defaults as missing; §2.13, Names). A song under 10 s or silent is refused after the decode (§2.13). A missing component (ffmpeg, torch and demucs, librosa for bass, librosa for sections, allin1 or not, since it is allin1's fallback, autochart's install, CUDA asked for but absent or running no kernel in songcharter's torch) is named with its fix before any audio work, and so is an output folder (or its `.failed`) holding foreign files. Device auto is CUDA only when a CUDA kernel runs (`separate.cuda_works`), else the CPU for every model, with a warning. The sections engine is asked for auto when CUDA is asked for: allin1 runs in a Python of its own whose CUDA nothing checks up front, so it takes CUDA when that Python has it and the CPU (warned) when not. `work/pipeline.json` records each stage's wall time, cache use, device, fallback and the process's own peak RSS (not its children's: a child's `ru_maxrss` starts from its parent's peak when it was spawned), allin1's runner's own peak, and for a run that raised, the error and its traceback. The heavy stages are the methods of `Engines`, so tests stand in for them. |
 | `takes.py` | `splice`: a part's Expert from several runs of its source, chosen per section by the takes' agreement (§2.7, Several takes); assemble's part key `takes`. |
 | `assemble.py` | One JSON config to a gated song folder: decode, stem-lag check, grid with a second stem (§2.3), parts imported, offset-corrected and quantized, edges trimmed (§2.8), every taken level clipped 1 ms inside song.ogg's end (`clip_to_audio`, §2.13), sections, phrases, reductions, ratings (§2.12), `build_song_folder` into a staging folder, then the gate with scan-chart 8.0.1 itself (§2.13) and `report.json`. A build the gate fails goes to `<output>.failed`. `check_output` (the output folder and its `.failed` hold only what a build writes) also runs in the pipeline before any audio work. |
 | `cli.py` | `songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums] [--levels expert\|all\|LIST] [--solos labels\|stems\|off\|"NAME,NAME"] [--takes N] [--device auto\|cpu\|cuda] [--threads N] [--no-preview] [--lyrics FILE] [--album-art FILE] [--background FILE] [--title\|--artist\|--album\|--year\|--genre TEXT]` (pipeline.py; the work folder defaults to the song's folder in the per-user cache, `cache.py`, and `--work DIR` puts it anywhere, with autochart's scratch inside it as before) and `songcharter assemble <config.json> [--out DIR]`. Both: exit 0: the gate passed; 1: it failed (the build is in `<output>.failed`); 2: a bad config, input, option or tool (a missing component named with its fix), a failing component, or song.ogg out of sync (nothing written): an `errors.SongcharterError` or an `OSError`, one line; 3: any other exception, a bug (traceback printed, and kept in `pipeline.json` for `chart`); 130: interrupted before the build was in place (for `chart`, a Ctrl+C during the preview or the pruning after the build stops only that stage, with a warning, and the exit status is the gate's). `chart` prints a line on stderr when each stage starts and ends, with its wall time, and the build summary and stage times on stdout. |
@@ -266,7 +266,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
 | 4 | Meter (§2.4) | 4/4, beat 1 from allin1's downbeats (the test song: margin 1.000), else the kick (0.616) | Viterbi x/4 decides; the kick phase and `beatgrid`'s uncertainty flag drive review; 6/8 later | high / low | a listening check; downbeat F on songs with time-signature changes |
 | 5 | Sections (§2.5) | allin1's segments (v1's fold-0 result), merged and split per run: 26 sections | allin1 by default, fold 0 on every device (the CUDA ensemble measured no gain, and M6's grid rules read allin1's beats and downbeats, measured on fold 0: M6-10), librosa as the fallback [here, M2 row 7] | low / medium-low | section scores on more references; the friend's feedback |
 | 6 | Quantizer (§2.6) | remove offsets, snap to 1/16 + 1/12 (a 1/32-grid source's odd 1/32s to the coarser slot), keep the HOPO states the source forced | same | medium | snapping moves > 2 % of onsets by > 25 ms; HOPO κ in M2 |
-| 7 | Lead guitar (§2.7) | four autochart Expert takes, imported and spliced per section by agreement between takes | autochart's engine as a separate program (B1, decided §9 Q3; built: `engines/autochart.py`); by default 4 takes spliced on CUDA, 1 on the CPU; `--takes N` (1, or N ≥ 3) on any device | medium / low | B1's seed spread over ≥ 3 seeds on the references; the friend's playtest |
+| 7 | Lead guitar (§2.7) | four autochart Expert takes, imported and spliced per section by agreement between takes | autochart's engine as a separate program (B1, decided §9 Q3; built: `engines/autochart.py`); by default 1 take on every device (since 2026-11-09), 4 spliced for "Best chart" (`--takes 4`); `--takes N` (1, or N ≥ 3) on any device | medium / low | B1's seed spread over ≥ 3 seeds on the references; the friend's playtest |
 | 8 | Bass (§2.8) | STRUM onsets, offset removed by the quantizer, re-laned by pYIN | our rules (built: `engines/bass.py`), scored on 5 references; STRUM a benchmark only | low / medium-low | more references; the friend asking for bass (§9 Q1 answered: he plays Guitar) |
 | 9 | Drums (§2.9) | STRUM lanes, re-timed; ADTOF kicks only after a de-duplicated fusion re-test | ADTOF onsets and kicks with drummap2's lanes (built: `engines/adtof.py`), a better lane mapper still to come (provisional [decision]); STRUM is the lane benchmark, never shipped | medium / medium-low | a mapper that misses the drum-lane rule of §3.2; the owner choosing a shipped-STRUM route (§9 Q14) |
 | 10 | Star power, solos, activation lanes (§2.10) | v1's rules with the critique's fixes; lanes first; v1.1: solos by name on the two sections the friend confirmed ("Solo 1", "Solo 2") | same; solos on every section allin1 labels Solo (the solo evaluation) | low-medium | M2 counts; the playtest; the owner's choice on fills; more human solos to score against |
@@ -308,6 +308,20 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
   `info.json` is written last and is the hit, only when every stem it lists is there and reads: a folder half
   deleted or half written is separated again, never an error (a run used to fail as a bug, exit 3, on a stem a
   partial prune had deleted [here, defaults review]) [code; tested with the unit-test model].
+  - **The device is in the key** (v0.5.0, a second advisor's finding 8) [code; tested with the unit-test model]:
+    - **The defect:** until then the key had no device, so stems made on the CPU answered a later CUDA request.
+      After one CPU fallback (CUDA out of memory), every later GPU chart of that song used CPU stems, cached and
+      with no fallback recorded. The takes and allin1 already keyed by device.
+    - **The CPU's key is exactly the old device-less key**, so CPU stems cached before (the golden runs' kept
+      folders, 24 of 24 made on the CPU) still answer. Stems made on CUDA get a key of their own.
+    - **A hit also needs info.json to name the device asked for.** CUDA stems cached by an earlier version sit
+      under the CPU's key and answer neither device: a CPU request separates again in place.
+    - **CUDA running out of memory gives CPU stems, under the CPU's key**, taken from there when a CPU folder
+      answers. A later CUDA request separates on CUDA again.
+    - **A hit reports this call's fallback**, not that of the run that made it.
+    - **The friend's cache after the update:** each song he charted on CUDA before is separated once more on CUDA,
+      the first time he charts it again (about 10–20 s on a 4070 [est., untested]). Until the cache's prune
+      removes the old folder, the song holds both (about 0.13 GB a minute of audio each, as float32).
 - **The stems as files** (M8-12, the friend's ask: "a useful tool in and of itself for sampling") [code]: with
   `--stems` (the page's "Also save the separated instruments", off by default) the six stems go, after assemble and
   before the cache's prune, from the cache's float32 WAVs into "<song folder> (stems)" beside the song folder, never
@@ -324,9 +338,14 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
     vendor string and the samples' MD5) [code; tested, two runs].
   - A run whose separation is cached separates nothing for it; a stems folder holding anything else (a person's own
     .flac, a folder) is refused before any audio work; too little free space for the estimate is an `InputError`
-    naming the folder and the space right after the decode, before the long work. A disk that fills while they are
-    written is a warning (M8-12's review): the staging folder is removed, the chart stands with its Install, and the
-    Done screen says in plain words why there are no stems.
+    naming the folder and the space right after the decode, before the long work. In WSL C: is measured too, where
+    WSL's own disk grows (the measure of doctor's `windows_c_free_mb` and the queue's disk pause): WSL's disk reports
+    its virtual disk's free space, so a nearly full C: passed the check (the v0.5.0 review's install-02). A disk that
+    fills while they are written is a warning (M8-12's review), and so is any other error writing them, as in WSL a
+    full C: is an I/O error rather than ENOSPC [inference: not run on Windows]: the staging folder is removed, the
+    chart stands with its Install, and the Done screen says in plain words why there are no stems: the disk ran out
+    of room, or, for any other error, "The stems could not be saved (input/output error). The chart is not affected. ..."
+    in the error's own words (`STEMS_NOT_SAVED`), never a full disk it was not.
   - Piano and "other" are htdemucs_6s's least clean stems (piano at −31 dB on the test song, above), which the page
     says.
 - **Goal 1:** no new separation. Reuse the `ft` stems (lag 0) and the ADTOF test's 6s drum stems (lag 0).
@@ -987,10 +1006,13 @@ start has been tried, the bar phase failed on 2 of 4 references, and Lucretia ha
     decision below; before M6-10 the `harmonix-all` ensemble on CUDA), a model asked for in its place. Otherwise the
     librosa fallback, with the reason recorded in `engine.json`.
     - CUDA: the probe runs a CUDA kernel (`is_available()` is also true on a GPU the torch build has no kernels for).
-      Out of memory is retried on the CPU. With device auto, any other failed CUDA run is redone on the CPU with the
-      same model, and engine.json records the fallback [code; untested on a GPU]. The pipeline asks for auto also
-      when the user asks for CUDA, since allin1's own Python may have none, and warns when allin1 then ran on the CPU
-      [code].
+      A failed CUDA run is redone on the CPU with the same model, in a fresh process, so the CPU's memory check
+      (Memory, below) applies to it: with device auto after any failure, a kill included; with device cuda only
+      after CUDA ran out of memory. engine.json records the fallback ("CUDA ran out of memory (...); analysed on the
+      CPU", or "the CUDA run failed (...); ..."). A run that times out is not redone [code; untested on a GPU]. Until
+      v0.5.0's gate review the runner redid an out-of-memory on the CPU in its own process, which nothing checked
+      against MemTotal and which kept the CUDA run's host memory. The pipeline asks for auto also when the user asks
+      for CUDA, since allin1's own Python may have none, and warns when allin1 then ran on the CPU [code].
     - **Memory** (M8-05, from M8-03 part A's numbers [here, 24 kept songs on the CPU]). allin1's own peak is
       354 MiB + 17.4 MiB a second of audio (about 1 GiB a minute; residuals −233 / +202 MiB), and the process tree
       while it runs was 853 + 20.4 MiB a second, as the pipeline held the mix and six stems. Since M8-05 the pipeline
@@ -1006,12 +1028,19 @@ start has been tried, the bar phase failed on 2 of 4 references, and Lucretia ha
       is left out on this PC to save memory" (WSL under 11 GB) or "allin1 is not installed", else "allin1 failed (the
       diagnostics zip has the details)", then what the simpler analysis costs (the bar lines and the tempo's halving
       test; plainer section names). Paths, commands and exception text stay in the warning, pipeline.json and
-      engine.json [code]. On CUDA nothing is checked before the run: the host side was measured
-      once (11.09 GiB on 6:52, M8-00 section 6), not as a line; a failed or killed CUDA run goes to the CPU, which is
-      checked [code; untested on a GPU].
+      engine.json [code]. **On CUDA nothing is checked before the run**, whatever the song's length: allin1's host
+      memory there was measured once (the whole tree at 11.09 GiB on the 6:52 test song, before M8-05 let the arrays
+      go; M8-00 section 6), not as a line, and the owner's GPU check at v0.5.0's gate reads it. So a long song's CUDA
+      run may be killed, or swap and run slowly, for up to the run's hour (then librosa: "allin1 did not finish in
+      time"). A CUDA run that runs out of memory, fails or is killed goes to the CPU (CUDA, above), and that run is
+      checked like any other: a song past the line then charts with the librosa sections and the memory sentence on
+      the page, at once [code; the real runner on a stand-in package whose model runs out of CUDA memory (v0.5.0's
+      gate review); untested on a GPU].
       - The longest song that fits, with the arrays let go and the margin, by MemTotal: 7:52 for 10.2 GiB (WSL's
         11 GB); about 9 minutes for a 16 GB PC's WSL 12 GB (8:50 for 11.2 GiB, 9:19 for the 11.7 GiB such a WSL
-        reports). doctor names its PC's own figure.
+        reports). doctor names its PC's own figure, on the CPU lane only: on CUDA the figure bounds only the CPU run
+        after a failed CUDA run, and a longer song still gets allin1 when the CUDA run succeeds, so there it would
+        read as a limit the PC does not have.
       - Chunking the network (windows of 120, 180 or 240 s, 30 s overlap, a linear crossfade of the frame logits)
         was measured and not built: no window met the chunk bar, and the child's peak does not fall, since madmom's
         DBN beat decoder still runs on the whole song (M8-03 A-c). Decoding the DBN in windows is an untried lead.
@@ -1458,6 +1487,17 @@ sections, scored with `score.py` against the six human charts [here, takes exper
   runs alone first: when its summary shows the transcriber off CUDA (autochart fell back by itself), the run warns
   and uses that take alone, rather than three more CPU transcriptions. `pipeline.json`'s `takes` records how many,
   whether by default, and why.
+- **Superseded: 1 take by default on every device** (the owner's decision, 2026-11-09) [decision, on this evidence].
+  M8-02 measured the CUDA default again on the owner's GPU over the reference and 20-song sets: 4 spliced takes gave
+  **+0.005 [−0.005, +0.014] F1@50** over one (+0.000 at F1@100), for about 4× the guitar stage's time. A
+  repeat-consistency measurement (2026-11-09) then found the splice makes a song's repeated sections less alike:
+  over 22 songs the primary measure was −0.014 [−0.033, +0.001], and split by where each section's windows came
+  from, pairs whose two instances came from **different takes lost −0.045 [−0.087, −0.011]** F1 (17 songs) while
+  pairs from one take did not (+0.008 [+0.000, +0.018]). So `guitar_takes` gives 1 take by default on CUDA as on the
+  CPU (`CUDA_TAKES` 1); `--takes 4` still splices 4, and the page offers it as "Best chart (4 guitar takes): slower,
+  and only sometimes better" beside the default "Quick chart (1 guitar take)" (§4.5). Several takes on CUDA, asked
+  for, still run their first take alone first, as the default did (the protection above is Best's now). The golden
+  charts are one CPU take and do not move.
 - Three of the experiment's Creep builds failed the gate on `noteAfterAudio` (seed 303's last chord rings past the
   audio's end); assemble now clips it (§2.13).
 
@@ -1478,6 +1518,15 @@ is unmeasured) instead of a dead end.
   asked for), so that chart runs it on CUDA again. When the CUDA default's first take is the one retried, the probe
   rule above keeps it alone, with a warning that says why (more takes on a GPU that just failed one could fail too,
   with the retry spent).
+- **What the song folder keeps** (v0.5.0's advisor, finding 2) [code]: such a chart is one CPU take where four were
+  meant, and pipeline.json, which says so, goes when the work folder is pruned. So report.json's `pipeline`
+  (`pipeline.folder_record`) keeps the device asked for and chosen, the takes asked for, planned and made, each
+  take's device, the seeds run again on the CPU, and each fallback's stage, from and to: numbers and short words, no
+  reason (an engine's line can hold a path). "Your charts" and a diagnostics zip can tell such a chart from a good
+  one by it. The page's warning says it in plain words: "The GPU failed on the guitar's first take (most likely out
+  of memory: a game, Clone Hero or a video can take it), so this chart has 1 take, made on the CPU, instead of 4.
+  Chart the song again later, with those closed, for the best result." Running that first take on CUDA once more
+  before settling for one CPU take (the advisor's 2c) waits for a measurement at the gate's GPU check.
 - **What a failure is** (`pipeline.failure`, M5-05's review F1, confirmed by a skeptic with the real driver, engine
   and models): `ac_headless.cjs` exits 1 whatever failed, its engine killed by a signal, its wall-clock timeout and
   its stall kill included, so the exit code cannot tell them apart; v0.1 called all of them GPU failures. The
@@ -1629,11 +1678,11 @@ to detect, from the guitar's pick noise, where our chart is too sparse, and to f
   - on every song, F1@50 ≥ autochart's on that song − max(0.035, the measured seed spread).
 
   Otherwise use B1 or D. B1 vs B2 vs D is the owner's call (§9 Q3).
-- **Takes:** seeded, with its tokens cached for re-runs (critique G6); several when time allows. As built, 4 on CUDA
-  and 1 on the CPU by default (the takes experiment, above).
+- **Takes:** seeded, with its tokens cached for re-runs (critique G6); several when time allows. As built, 1 by default on every
+  device since 2026-11-09 (4 on CUDA before; above), 4 for "Best chart".
 - **As built** (B1, decided in §9 Q3; `engines/autochart.py` [code]): `songcharter chart` runs the engine's default
-  seed (20260609), and for 4 takes on CUDA by default, or `--takes N` (N ≥ 3: a splice needs three runs) on any
-  device, seeds 101, 202, …, spliced per section by takes.py; a take that repeats another's notes is left out. The engine's tokens are not cached,
+  seed (20260609), and for `--takes N` (N ≥ 3: a splice needs three runs; 4 on CUDA was the default until
+  2026-11-09) on any device, seeds 101, 202, …, spliced per section by takes.py; a take that repeats another's notes is left out. The engine's tokens are not cached,
   but each finished take is (its folder, keyed by the input's SHA-256, the seed and the sampling settings). On the
   dev container's CPU the test song's take took 403.5 s, its own htdemucs_6s pass included, inside a 12.7-min run
   [here, pipeline run]; it is not the GPU take of the same seed (Expert F1@50 0.799 between them, exact lanes
@@ -2624,10 +2673,15 @@ charts changes. What each sound means:
   file may risk that. The check follows links and `..` (resolve()) and also compares each existing parent of the
   output with the song folder by identity (device and inode), which sees what resolve() cannot: the folder spelled in
   another case on a case-insensitive drive such as WSL's /mnt/c, or reached through a bind mount [the review's R1]. The page renders into the job's work folder, `listen/<part>-<level>-<hash>.ogg`, the hash of the
-  song folder's notes.chart (or notes.mid), song.ini and song.ogg, so a new chart of the same song (the same work
-  folder) renders again and the older render goes. The server serves only what it rendered for the current job, by
-  name (no path from the request reaches the file system), with byte ranges so the player can seek. A chart that
-  failed its gate can be listened to as well: it is for a look.
+  song folder's notes.chart (or notes.mid), song.ini and every audio file Clone Hero reads there
+  (`audio.song_audio_files`: song.ogg, and guitar.ogg, bass.ogg and drums.ogg in a split folder, M8-12; the render
+  plays them summed), so a new chart of the same song (the same work folder) renders again and the older render
+  goes. The server records each render under the job it was made for (`App.listened`, by job id) and serves it by
+  that job and its name only (no path from the request reaches the file system), with byte ranges so the player can
+  seek: the current job's, a finished song's while the next charts (M8-10's routes by job id), one the queue's list
+  has dropped since (by its chart in the library; the v0.5.0 review's correct-1), and a library chart's (Your charts,
+  M8-13, by its id), while its work folder is still in the cache. A chart that failed its gate can be listened to
+  as well: it is for a look.
 - **Not done:** a level for the song other than -12 dB (a parameter of `render`, no option), a tones-only switch on the
   page, a sound for star power or solos, and a check by ear on the friend's or the owner's PC (the builder could only
   measure: onsets, pitches, lengths, levels).
@@ -2864,7 +2918,7 @@ v1's absolute targets, kept as information only:
     its chord share 0.33 against the humans' 0.03–0.05, its 1-s density peak 7 against their 27. On this CPU take
     the shred instrumental's guitar runs to 532 s of its 546 (its last two 30-s windows F1@100 0.78 and 0.65), and
     its chart marks 0.80 of its span as solos (the humans 0 and 0.36).
-- **Limits:** Linux or WSL only (`fcntl` locks, hard links). One CPU take: the CUDA default of 4 spliced takes is not
+- **Limits:** Linux or WSL only (`fcntl` locks, hard links). One CPU take: "Best chart"'s 4 spliced takes are not
   covered. The kept engine outputs are the code of whichever commit made them; a change to an engine's code without
   `--rerun` compares that old output on both sides, which `report.md` shows as "kept folders made by".
 - **Confidence:** high for what it compares. **Would change it:** a change the hashes miss that a playtest finds
@@ -3029,7 +3083,7 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
      - instruments;
      - difficulties (Expert by default, §2.11);
      - solos (the sections named Solo by default, or the sections the player picks; §2.10);
-     - guitar takes (by default 4 on CUDA, 1 on the CPU);
+     - guitar takes (by default 1 on every device; 4 for "Best chart");
      - tempo (auto / constant / follow the band);
      - chord-density slider.
   3. **Progress:** one bar per stage with time estimates and a cancel button. Any CPU fallback is shown here. As
@@ -3116,8 +3170,8 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     song much longer than 9 minutes** may pass the high end on the 4070: the owner's 9:05 song's 4 takes are 95 % of
     the 5070's own high end, and along d to the 2.4th a 4070 1.35x as slow passes the page's high end from about 10
     minutes (on the 5070 it holds to 20) [inference, the v0.4.0 gate]; M4-08 part B or the friend's first long song
-    will tell. For a 4-minute song the page says 4 to 14 minutes with the GPU's 4 takes, 2 to 7 with 1, 6 to 11 on the
-    CPU; the guide keeps the rounder "about 5 to 15" and "2 to 7". Not counted: the caches (a song charted before goes
+    will tell. For a 4-minute song the page says 2 to 7 minutes with the GPU's default of 1 take, 4 to 14 with "Best
+    chart"'s 4, 6 to 11 on the CPU, and the guide the same. Not counted: the caches (a song charted before goes
     faster) and the lyrics' first download. Its evidence is in the module's docstring, and tests/test_ui_estimate.py
     checks the rates against those runs and the 4070's margin. The estimate is for a look: a bug in it is logged, and
     the chart starts without one.
@@ -3145,8 +3199,16 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     for 20 s while the chart runs on (localhost after the PC sleeps or wakes), and a song dropped again would get
     "a chart is running already". So that text says to reload first, which reattaches: "songcharter is not
     answering. If the songcharter window is still open, reload this page (press F5) to follow the chart. If the window was
-    closed, which stops the chart, start songcharter again from the Start menu, then chart the song again: ..." (the
-    v0.4.0 gate's advisor).
+    closed, which stops the chart, start songcharter again from the Start menu, then ..." (the v0.4.0 gate's
+    advisor). Since M8-10 a closed window puts the charting song back to waiting at the top of the list, paused for
+    Carry on, and a song dropped again was queued behind it, so following the old "chart the song again" charted it
+    twice (the v0.5.0 review's install-01). Now both texts say "reload this page (press F5) and press Carry on: the
+    song waits at the top of the list, and what it had worked out is kept, so it goes faster"; "songcharter stopped"
+    says it only when the list the songcharter started since answers has that song waiting (by its name), and
+    "Chart the song again" otherwise. The queue also refuses a song whose upload is already waiting or charting:
+    "This song is already in the list: it is charting now." (or "it is charted in its turn.", or, paused, "press
+    Carry on to chart it."); a finished song may be charted again. The form's errors sit under it, a screen below
+    the top "Chart it" at 700 px, so they are scrolled into view (centred) when shown.
   - **The drop zone** opens the file chooser on Enter or Space (it had a tab stop and no key handler), and **the
     update notice** is hidden while a chart runs (its line says to close the songcharter window, which would stop
     the chart) and shown again at its end.
@@ -3183,6 +3245,11 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     PC charts the guitar on the CPU, so it makes 1 guitar take: about N to M minutes for this song." The choice only
     fills the Guitar takes box (Best: empty, the default; Quick: 1), so the options sent are what they were for each
     (Best the defaults, Quick `--takes=1`), and a number typed in the box checks the matching choice, or neither.
+    Since the owner's decision of 2026-11-09 (1 take by default on every device, §2.7) Quick comes first and is the
+    default: "Quick chart (1 guitar take, about N to M minutes)" checked, its box empty (the defaults), and "Best
+    chart (4 guitar takes, about N to M minutes): slower, and only sometimes better", which fills the box with 4
+    (`--takes=4`); the upload's `quick` is the defaults' range and `best` 4 takes' (null off the GPU), and the CPU's
+    line gives `quick`'s minutes.
     The takes box, the device and "Make a preview" are under a folded "More options"; Lyrics and Pictures are folded
     each in a `<details>` of their own.
   - **The time left after the first take** (the gate's note; `estimate.remaining`, no change to `pipeline.py`): the
@@ -3192,16 +3259,29 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     timing at the low end (`GUITAR_ONCE`'s high rate times the song's length) and at the first take's time itself at
     the high end, as the events do not say whether autochart's cache held take 1's separation (a song charted again
     after a cancel; taking it off put the 9:05 song's range at 1182-1543 s against about 1636 s left, the review's
-    F3); nothing off when the cache answered take 1 itself; plus the build (`ASSEMBLE`: 0.5-5 s and 0.025-0.08 s a second,
-    from the test song's 16 and 17.2 s, Take Me Out's 19.3 s and CI's clip) and the preview at their rates. A 1-take
+    F3); nothing off when the cache answered take 1 itself; plus the stages after the guitar at their rates: the
+    build, the stems when saved, and the preview. The build was 0.5-5 s and 0.025-0.08 s a second (`ASSEMBLE_ONE`
+    now), from the test song's 16 and 17.2 s, Take Me Out's 19.3 s and CI's clip, all one-file builds; M8-12's split
+    audio, the default, about doubled it (three more encodes, and the four files decoded back for the gate), so
+    creep's 35.1 s was over the high end's 24.2 s and the time left ran out before the build ended (the v0.5.0
+    review). `ASSEMBLE` is now the split build's, 0.5-5 s and 0.05-0.16 s a second: the golden runs at v0.5.0's
+    candidate built the seven songs split in 25.8 s (2:55) to 59.8 s (6:52) on this CPU, 0.135-0.150 s a second,
+    every level [here, each run's pipeline.json], and creep in 35.1 s (M8-12, Expert only); the one-file rate stays
+    for "One audio file" (the estimate's `audio`), which the golden set's kept one-file builds (10.5-29.6 s, 0.060-0.072
+    s a second) and M8-12's creep (17.1 s) fall inside. "Save the stems" adds 0.5-2 s and 0.01-0.04 s a second when the
+    plan has it (creep's 4.3 s) [est.]. The whole chart's estimate is unchanged: its other stages' range already held
+    the split build (0.52-0.57 s a second for the decode, drums, bass, sections and build on this CPU). A 1-take
     chart has only the guitar's `stage_end`, after which the stages after it alone. None after a take was run again
     on the CPU. The job's snapshot carries it (`remaining`); the page asks for it at a take and at the guitar's end,
     and counts it down on the server's clock: "About 8 to 13 more minutes, from how long the first guitar take
     took.", the first estimate struck through above it, "Nearly done, or taking longer than estimated." past its high
     end; a later take or the guitar's end asks again, so after the guitar the stages after it alone. On the test
-    song's takes on the 5070 (264, 224, 164, 187 s) it gives 495-856 s at take 2's start against the 602 s they and
-    the build and preview took [here, tests/test_ui_estimate.py]; on the owner's 9:05 song (2173 s for its 4 takes,
-    split with the ordinary songs' mean first-take part) 1394-1870 s against 1577 s of later takes and a build.
+    song's takes on the 5070 (264, 224, 164, 187 s) it gives 505-889 s at take 2's start (495-856 s with the
+    one-file rates) against the 602 s they and a one-file build and the preview took, about 618 s with a split
+    build [est.] [here, tests/test_ui_estimate.py]; on the owner's 9:05 song (2173 s for its 4 takes, split with the
+    ordinary songs' mean first-take part) 1408-1914 s against 1577 s of later takes and a build. After the guitar on
+    creep (4:00, this CPU) it gives 19.9-60.4 s against M8-12's 35.1 s build and about 12 s of preview (13.9-41.2 s
+    before).
   - **The not-answering heading** (the gate's note): when nothing answers, the heading is "songcharter is not
     answering" and the tab "Not answering"; a 404 from a songcharter started since keeps "songcharter stopped".
   - In Chromium at 1280x860 and 700 px, light and dark [here, a stand-in server on a golden folder, M7-10's route]:
@@ -3223,7 +3303,14 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
   - **A restart waits for a click:** closing the window kills the chart's tree as before, and its song goes back to
     waiting at the top (its stages and takes stay in the work cache); started again, songcharter pauses the list
     ("3 songs were waiting when songcharter closed") with Carry on and Clear the list, so opening it later to
-    install one song never starts a 10 GB chart under a game.
+    install one song never starts a 10 GB chart under a game. A server killed outright (SIGKILL, a crash) cannot
+    clean up, and its chart, in a session of its own, ran on under init, so Carry on started a second chart on the
+    same work folder (a second advisor's finding 7). `<home>/state/chart.pid` names the running chart (its pid,
+    which is its process group's, and its start time from /proc) and its server (pid and start time) from its start
+    to its end, and the next start, once its port is bound, stops that group only while its leader is the process
+    named (a pid used again is never touched) and its server is gone: a start that missed a live songcharter (slow
+    to answer its hello, or on another --port) and cannot bind never touches that one's chart (the re-review's R1). A parent-death signal (PR_SET_PDEATHSIG) was not used: it follows the thread that started the
+    child, and charts start from request and queue threads that end at once.
   - **Cancel** ends the charting song only, and the next starts; **Pause after this song** lets it finish and starts
     none; a waiting song has **Remove**; no reordering. **Two songs in a row that do not finish** (exit 2 or 3,
     killed, or one whose file is gone) pause the list, as exit 2 is often the machine; a failed check is a finished
@@ -3235,14 +3322,31 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     wait): they stay a memory file for the seconds before the child reads them, never hours.
   - **Routes by job id:** results, preview, art, Listen, install and the zip take `/api/jobs/<id>/...` beside
     `current`, from the current job or the queue's record of a finished one (after a restart too), so a finished
-    song's Install and Look work while the next charts.
+    song's Install and Look work while the next charts. A finished song that leaves the list (Clear the list,
+    Remove, the trim past the last 50) is found by its job id through its chart in the library (the server keeps
+    its result folder's library id for its life, `Queue.dropped_chart`; never a path from the page), so a Look still
+    open on it keeps its preview, Install, Open folder and Listen (the v0.5.0 review's correct-1: they answered 404
+    and "no finished chart yet").
+  - **The events by job id** (the v0.5.0 review's correct-2): the page follows `/api/jobs/<id>/events` for the job
+    it attached to, not `current`. The stream's ids are bare indexes, and the server now starts the next song by
+    itself: a page whose connection dropped while one song ended and the next started resumed the next song's
+    events from the old song's index, as the old song's (its plan and early stages skipped, its result shown as the
+    old song's, and Cancel naming the old song, 409). By id, a reconnect resumes within that job only, and once it
+    has ended and is no longer current its closing event alone comes, so the page ends it as usual and follows the
+    next song from its first event. Chosen over an id that names the job in each event, which needs a format both
+    sides parse and the page to compare: the per-job stream changes one URL on the page and gives it the end it
+    missed.
   - **The page:** a drop (or a choice) of several songs uploads them in turn into one shared form (Best or Quick and
     More options; a song's own fields, lyrics and pictures only for a drop of one). The list sits under the progress
     screen: each song's state, Install and Look (its own Done screen) when finished, Remove while it waits, the
     pause's banner with Carry on, and "All 6 songs: about 1 h 10 min to 3 h 20 min more" (the waiting songs' ranges
     with the charting song's time left). The tab's title reads "2 of 6: Guitar: take 3 of 4" and, at the end, "6
     ready" or "5 ready, 1 did not finish"; the wake lock is held across songs, and the page says to leave the tab in
-    front or set sleep to Never; the update notice waits for the list to empty. "Chart another song" became "Add a
+    front or set sleep to Never; the update notice waits for the list to empty. The wake lock holds only while the
+    tab is in front, so nothing kept the PC awake for an evening (the v0.5.0 advisor's finding 7): with 2 or more
+    songs this evening and one still to chart, a plain line under the list says "Keep your PC awake while these
+    chart: in Windows Settings, set Sleep to Never for now.", and the guide says the same. Windows' own keep-awake
+    call stays a later option (below). "Chart another song" became "Add a
     song", and the progress screen has an "Add songs" strip.
   - In Chromium at 1280x860 and 700 px, light and dark [here, the real App, Jobs and Queue with a stand-in chart
     program and made-up songs]: two songs dropped at once share one form ("2 songs, charted one after the other",
@@ -3328,9 +3432,14 @@ is the plan for the native route, kept for M4-99.
 - The comparison ran here: `eval/gpu.sh check|start|status|results` (see `eval/README.md`).
 - v0.1's install sets WSL's memory in `%UserProfile%\.wslconfig` (`wslsetup`, M4-03): Windows' RAM rounded up to a whole GB, less 4, with swap=8GB, so memory=12GB on a 16 GB PC, one that reports 15.4 GiB included (rounded up, not to the nearest: the owner, 2026-11-04, as reported RAM is always a little under what is installed). Under 11 GB of WSL memory (a PC of 14 GiB or less) allin1 is left out; 11 GiB of RAM or less is refused.
 - Give WSL enough memory in `%UserProfile%\.wslconfig`. WSL defaults to half of Windows' RAM. Two STRUM runs died in a VM reported at about 15.5 GB, and one finished at a reported 24 GB [reported in the practicality brief; not logged]. STRUM's peak RSS is unmeasured.
-- A long song on a 16 GB PC (M8-05, 2.5's Memory): the install's memory=12GB leaves allin1 room for songs up to
-  about 9 minutes by the skip's rule (8:50–9:19 by its MemTotal, doctor says which; its swap=8GB is not counted); a longer song charts with the librosa sections (the bar
-  lines and the tempo's halving test from a simpler analysis), and the page says so.
+- A long song on a 16 GB PC (M8-05, 2.5's Memory). On the CPU lane the install's memory=12GB leaves allin1 room for
+  songs up to about 9 minutes by the skip's rule (8:50–9:19 by its MemTotal, doctor names its own; its swap=8GB is
+  not counted); a longer song charts with the librosa sections (the bar lines and the tempo's halving test from a
+  simpler analysis), and the page says so. On the CUDA lane, the friend's, nothing is checked before allin1's run,
+  whatever the length, and doctor names no figure: allin1's host memory on CUDA was measured once, not as a line
+  (2.5), so a long song's CUDA run may swap or be killed. A CUDA run that runs out of memory, fails or is killed is
+  run again on the CPU, and that run is checked: past the line, the librosa sections and the page's words [code;
+  untested on a GPU]. The owner's GPU check at v0.5.0's gate reads allin1's host memory on CUDA.
 - CUDA in WSL2 needs only the Windows driver [doc].
 - Test the native installer on the Windows side before giving it to the friend.
 
@@ -4070,8 +4179,9 @@ decides), and the p95-drift click test (critique G4).
   covers Solo 2 and half of Solo 1 with fold-0 sections and Solo 2 alone with the ensemble (CUDA's until M6-10); on the
   six references both find 1 of 2 human solos, "labels" with 2 false solos to 1 on fold 0 and 4 to 1 on the
   ensemble. No new mode: the union of the two only adds false solos (§2.10).
-- **Guitar takes:** 4 by default when the guitar stage runs on CUDA, 1 on the CPU; the first CUDA take alone first,
-  that take alone when autochart moved its transcriber off CUDA; `--takes N` as asked on any device. The takes
+- **Guitar takes:** 4 by default when the guitar stage runs on CUDA, 1 on the CPU (1 on every device since
+  2026-11-09, §2.7); the first CUDA take alone first, that take alone when autochart moved its transcriber off CUDA;
+  `--takes N` as asked on any device. The takes
   experiment behind it is in §2.7, with its verifier's two corrections (3 takes give +0.006 to +0.0105 over one, not
   less; 4 beat 3); `guitar_takes`'s docstring no longer says 3 takes score below 1.
 - **Strumming:** the under-charted-strumming detector failed (held-out precision 0.22, no better than an audio-free

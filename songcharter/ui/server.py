@@ -28,7 +28,10 @@ one chart runs at a time as a child process group (jobs.py). In WSL the Windows 
   5. **Logs** to $SONGCHARTER_HOME/logs/ui-<yyyyMMdd>.log (every request too) and to the console window. Uploads older
      than 7 days go, but those the queue's waiting songs name (jobs.queued_uploads).
   6. **Stops** on SIGHUP or SIGTERM (the window closes) and Ctrl+C: a running job's tree is killed first, and its
-     song goes back to waiting at the top of the queue (Queue.shutdown). A page that closes does not stop it.
+     song goes back to waiting at the top of the queue (Queue.shutdown). A page that closes does not stop it. A
+     server killed outright (SIGKILL, a crash) cannot: its chart runs on, and the next start stops it once its own
+     port is bound, when chart.pid's server is gone (jobs.stop_orphan, by <home>/state/chart.pid; a second advisor's
+     finding 7, the re-review's R1).
 
 **The update notice** (M5-07): once the first page (index.html) has been served, never before (nothing on the
 startup path waits on the network, or asks it), a daemon thread runs updates.check once per server process: at most
@@ -56,9 +59,9 @@ Nothing is downloaded or installed; charting never waits for it.
     with upload.json beside it; answers {"id", "name", "bytes", "tags", "origin", "seconds", "choices"}: the song.ini
     values the chart would take from the tags or the file's name (pipeline.read_tags and song_metadata), where each
     came from, the song's length as ffmpeg's header gives it (estimate.duration; null when it cannot say), and the
-    options screen's Best or Quick (M8-04, `App.choices`): {"gpu", "best", "quick"}, `gpu` when the doctor summary
-    charts the guitar on the GPU, `best` estimate.for_job's range with every option at its default, `quick` with 1
-    take (null off the GPU).
+    options screen's Quick or Best (M8-04, `App.choices`): {"gpu", "best", "quick"}, `gpu` when the doctor summary
+    charts the guitar on the GPU, `quick` estimate.for_job's range with every option at its default (1 take),
+    `best` with 4 takes (null off the GPU).
   * POST /api/upload/image (M4-11): a picture for the album art or the background, as the song is uploaded (the same
     guards, folder and pruning; upload.json's kind "image"). An extension not in art.EXTENSIONS: 415; over
     art.MAX_BYTES (20 MB): 413. It must decode as art.py's checks say (a JPEG, PNG or WebP within its pixel limit),
@@ -76,7 +79,12 @@ Nothing is downloaded or installed; charting never waits for it.
   * GET /api/jobs/current/events: Server-Sent Events. Every event so far, then each new one, as `id: <index>` and
     `data: <json>`; a comment every 15 s keeps the connection open; it closes after `result`, `error` or `cancelled`,
     once the job's process has exited (up to 10 s more), so the state is final then. A Last-Event-ID header resumes
-    after that index.
+    after that index. GET /api/jobs/<id>/events is the same for the job of that id, which is what the page follows
+    (the v0.5.0 review's correct-2): `current`'s index would be applied to whichever job is current, and the queue
+    starts the next song by itself, so a page whose connection dropped while one song ended and the next started
+    got the next song's events from the old index on, as the old song's. By id, a reconnect resumes within that job
+    only; once it has ended and is no longer current, its closing event alone comes (the end the page missed), and
+    the page then follows the next song from its first event.
   * POST /api/jobs/current/cancel: 200 with the job's state after the cancel; 409 when no job runs.
   * The queue (M8-10, DESIGN.md 4.5): GET /api/queue (also /api/status's `queue`): {"paused" (null, "restart",
     "you", "failures" or "disk", only while a song waits), "why" (the disk's), "restarted" (the songs that were
@@ -88,8 +96,11 @@ Nothing is downloaded or installed; charting never waits for it.
     charting song only, and the next starts.
   * **By job id** (M8-10): every route below on "current" also takes a job's id (/api/jobs/<yyyyMMdd-HHmmss[-n]>/...,
     JOB_PATH), for a finished song's Done screen once the next has started: the current job, or the queue's record
-    of a finished one (jobs.Kept, from queue.json after a restart too); GET /api/jobs/<id> is its snapshot, with
-    its closing event. The results' URLs name the job as the request did. The events are the current job's only;
+    of a finished one (jobs.Kept, from queue.json after a restart too), or, once the list has dropped it (Clear the
+    list, Remove, the trim), its chart in the library (jobs.Queue.dropped_chart: the server's own record of its
+    result's folder, for the server's life; never a path from the page), named by its job id, so a Look still open
+    on it keeps working; GET /api/jobs/<id> is its snapshot, with its closing event. The results' URLs name the job
+    as the request did. The events by id (above);
     POST /api/jobs/<id>/cancel cancels only while that job is the running one (409 "that chart has ended"
     otherwise: a Cancel confirmed after its song ended never reaches the next, M8-10's review S-S1). POST
     /api/open {"what": "built", "job"} opens that job's folder.
@@ -190,8 +201,8 @@ from ..errors import InputError, ToolError
 from ..timed import DIFFICULTIES, INSTRUMENTS
 from . import estimate
 from . import home as default_home
-from .jobs import (CLOSING, LIBRARY_ID, ChartOptions, Charted, Jobs, JobRunning, NotInQueue, NotRunning, Queue,
-                   QueueFull, find_chart, library, parse_options, queued_uploads)
+from .jobs import (CLOSING, LIBRARY_ID, ChartOptions, Charted, Job, Jobs, JobRunning, NotInQueue, NotRunning, Queue,
+                   QueueFull, find_chart, library, parse_options, queued_uploads, stop_orphan)
 
 APP = "songcharter"
 PORTS = range(8765, 8785)          # 8765-8784
@@ -366,17 +377,18 @@ class App:
 
     # --- the options screen's choice (M8-04)
     def choices(self, seconds: Any) -> dict:
-        """Best or Quick for a song of `seconds`: {"gpu", "best", "quick"}. `gpu`: the doctor summary charts the guitar
-        on the GPU (its device CUDA, the guitar not found on the CPU), where the page offers the two; `best` is
-        estimate.for_job's range with every option at its default (4 takes there, 1 on the CPU), `quick` with 1 take
-        (None off the GPU). A bug in the estimate is logged, and both are None."""
+        """Quick or Best for a song of `seconds`: {"gpu", "best", "quick"}. `gpu`: the doctor summary charts the guitar
+        on the GPU (its device CUDA, the guitar not found on the CPU), where the page offers the two; `quick` is
+        estimate.for_job's range with every option at its default (1 take, on every device since the owner's decision
+        of 2026-11-09), `best` with estimate.BEST_TAKES (4) takes (None off the GPU). A bug in the estimate is logged,
+        and both are None."""
         doctor = self.doctor()
         auto = (doctor.get("device") or {}).get("chosen")
         guitar = doctor.get("guitar_device")
         gpu = auto == "cuda" and guitar != "cpu"
         try:
-            best = estimate.for_job(seconds, ChartOptions(), auto, guitar)
-            quick = estimate.for_job(seconds, ChartOptions(takes=1), auto, guitar) if gpu else None
+            quick = estimate.for_job(seconds, ChartOptions(), auto, guitar)
+            best = estimate.for_job(seconds, ChartOptions(takes=estimate.BEST_TAKES), auto, guitar) if gpu else None
         except Exception:  # noqa: BLE001  the choice is offered without its minutes
             self.log(f"estimate: internal error:\n{traceback.format_exc()}", console=False)
             best = quick = None
@@ -463,10 +475,11 @@ class App:
         """GET /api/library (the module docstring)."""
         return {"charts": library(self.home, self.work_root())}
 
-    def chart(self, chart_id: str) -> Charted | None:
-        """The library's chart of that id, or None."""
+    def chart(self, chart_id: str, job_id: str | None = None) -> Charted | None:
+        """The library's chart of that id, or None; named by `job_id` when it was found through that job (a finished
+        song the queue's list has dropped)."""
         folder = find_chart(self.home, chart_id)
-        return None if folder is None else Charted(folder, self.work_root())
+        return None if folder is None else Charted(folder, self.work_root(), job_id)
 
 
 # ------------------------------------------------------------------------------------------------ uploads
@@ -659,8 +672,8 @@ class Handler(BaseHTTPRequestHandler):
         m = JOB_PATH.match(path)
         if m:
             ref, rest = unquote(m[1]), m[2] or ""
-            if ref == "current" and rest == "/events":
-                return self._events()
+            if rest == "/events":
+                return self._events(ref)
             job = self._job(ref)
             if job is None:
                 return self._refuse(404, "no job yet" if ref == "current" else "no such job")
@@ -777,14 +790,23 @@ class Handler(BaseHTTPRequestHandler):
     # --- the queue (M8-10)
     def _job(self, ref: str, gone: bool = False):
         """The job a route names: the current one, a finished song's by its id (Queue.job), or a library chart's
-        (M8-13: App.chart); None for none. `gone`: a library id whose folder is not among the library's any more (the
-        list read before it was deleted in Windows) is Refused(400) in M8-04's words, by its folder's name."""
+        (M8-13: App.chart); None for none. A finished song the list has dropped (Clear the list, the trim) is found
+        by its job id through its chart in the library (Queue.dropped_chart: the server's own record of its result's
+        folder, never a path from the page), as that job id, so a Look still open on it keeps working (the v0.5.0
+        review's correct-1). `gone`: a library id whose folder is not among the library's any more (the list read
+        before it was deleted in Windows) is Refused(400) in M8-04's words, by its folder's name."""
         if ref == "current":
             return self.app.jobs.current
-        m = LIBRARY_ID.match(ref)
+        m, as_job = LIBRARY_ID.match(ref), None
         if m is None:
-            return self.app.queue.job(ref)
-        chart = self.app.chart(ref)
+            job = self.app.queue.job(ref)
+            dropped = self.app.queue.dropped_chart(ref) if job is None else None
+            if dropped is None:
+                return job
+            ref, m, as_job = dropped, LIBRARY_ID.match(dropped), ref
+            if m is None:
+                return None
+        chart = self.app.chart(ref, as_job)
         if chart is None and gone:
             name = m[2][:-len(".failed")] if m[2].endswith(".failed") else m[2]
             raise Refused(400, f"{name}'s folder is not there any more: it was moved or deleted")
@@ -1109,10 +1131,12 @@ class Handler(BaseHTTPRequestHandler):
         return {"id": target.name, "name": name, "bytes": n, "format": source["format"], "width": source["width"],
                 "height": source["height"]}
 
-    def _events(self) -> None:
-        job = self.app.jobs.current
+    def _events(self, ref: str = "current") -> None:
+        """GET /api/jobs/<ref>/events (the module docstring): the job's events from Last-Event-ID on; a finished
+        song's record (once the next has started) sends its closing event alone, as the end its page missed."""
+        job = self._job(ref)
         if job is None:
-            return self._refuse(404, "no job yet")
+            return self._refuse(404, "no job yet" if ref == "current" else "no such job")
         try:
             after = int(self.headers.get("Last-Event-ID", "")) + 1
         except ValueError:
@@ -1124,6 +1148,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Connection", "close")
         self.end_headers()
         n = max(0, after)
+        if not isinstance(job, Job):   # jobs.Kept or jobs.Charted: it has ended, and its closing event is the last
+            for event in [e for e in job.snapshot()["events"] if e.get("event") in CLOSING][-1:]:
+                self.wfile.write(f"id: {n}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n".encode("utf-8"))
+            self.wfile.flush()
+            return None
         while True:
             new, ended = job.wait_events(n, KEEPALIVE_S)
             if not new and not ended:
@@ -1492,6 +1521,10 @@ def _main(port: int | None, browser: bool, from_shortcut: bool, home: Path | Non
     except Unreachable as e:
         log(unreachable(ports, str(e), log.path))
         return 2
+    # a chart a songcharter killed outright left running (jobs.py), only now: a start that cannot bind (another
+    # songcharter it did not find holds the ports) never touches that one's chart (the v0.5.0 re-review's R1); before
+    # any page can ask for Carry on
+    stop_orphan(root, log)
     stop = threading.Event()
 
     def on_signal(signum, frame) -> None:

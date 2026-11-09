@@ -445,8 +445,14 @@ def test_stems_are_hard_linked_from_a_separation_cache_when_the_key_fits(tmp_pat
     (cache / key).mkdir(parents=True)
     for s in ("drums", "bass"):
         A.write_wav(np.zeros_like(mix), cache / key / f"{s}.wav")
-    (cache / key / "info.json").write_text(json.dumps({"stems": ["drums", "bass"], "info": {}}))
+    (cache / key / "info.json").write_text(json.dumps({"stems": ["drums", "bass"], "info": {"device": "cuda"}}))
     song = G.Song("s", folder, "s", "x", False)
+    # stems made on CUDA: the CPU build would separate again, writing over the links (the v0.5.0 re-review's R2;
+    # break: the device not read, so they are linked)
+    cuda = G.seed_stems(song, tmp_path / "kept0", cache)
+    assert cuda["linked"] == [] and "made on cuda, not the CPU" in cuda["why"]
+    assert not (tmp_path / "kept0" / "stems" / key).exists()
+    (cache / key / "info.json").write_text(json.dumps({"stems": ["drums", "bass"], "info": {"device": "cpu"}}))
     got = G.seed_stems(song, tmp_path / "kept", cache)
     assert got["key"] == key and got["linked"] == ["drums", "bass"]
     for s in ("drums", "bass"):

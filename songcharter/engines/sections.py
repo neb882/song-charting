@@ -20,19 +20,22 @@ after the music. songcharter.sections snaps them to measures, merges, splits and
     come from the Hugging Face hub at a pinned revision, downloaded on first use; each is checked against its
     SHA-256 before the runner loads it (they are pickles: the check is what makes loading them safe).
   * **CUDA.** The probe runs a CUDA kernel rather than trusting `torch.cuda.is_available()`, which is also true on a
-    GPU the torch build has no kernels for; `device="auto"` takes CUDA only when the kernel ran. CUDA out of memory
-    is retried on the CPU by the runner. A CUDA run that fails any other way is run again on the CPU when the
-    device was "auto" (with the same model), and raises when it was "cuda". engine.json records either
-    fallback.
+    GPU the torch build has no kernels for; `device="auto"` takes CUDA only when the kernel ran. A CUDA run that
+    fails is run again on the CPU, with the same model, in a fresh process (the runner itself never moves to the
+    CPU), so the CPU run's memory check applies (Memory): any failure, a kill included, when the device was
+    "auto"; only CUDA running out of memory when it was "cuda", where any other failure raises. engine.json
+    records the fallback ("CUDA ran out of memory (...); analysed on the CPU", "the CUDA run failed (...); ...").
   * **Memory** (M8-05, DESIGN.md 2.5). allin1's own peak on the CPU grows by about 1 GiB a minute of audio, and the
     process tree with it (M8-03 part A's lines, CHILD_MIB and PARENT_MIB). Given a SongArrays with a loader (the
     pipeline's), the mix and stems are let go while the runner runs, once its input bytes and the key are made, and
     read again only when they are needed (the librosa fallback, or the caller after). Before a run on the CPU the
     predicted tree, with MARGIN_MIB, is compared with this machine's MemTotal (fixed per PC, never MemAvailable;
     swap is not counted: allin1 deep in swap was never measured and could run for hours, worse than the librosa fallback): when it does not fit, allin1 is left out at once (memory_skip), instead of being killed minutes
-    later; a runner ended by SIGKILL is named as most likely stopped for memory (stopped_line). On CUDA there is no
-    such check (the host side was measured once, not as a line): a failed or killed CUDA run goes to the CPU, which
-    is checked.
+    later; a runner ended by SIGKILL is named as most likely stopped for memory (stopped_line). On CUDA nothing is
+    checked before the run, whatever the song's length (allin1's host memory there was measured once, not as a
+    line). A CUDA run that runs out of memory, fails or is killed is run again on the CPU (CUDA above), and that
+    run is checked like any other: a song past the line goes to the librosa fallback with memory_skip's words.
+    doctor's figure (device.findings, longest_s) is the CPU's.
   * **librosa** (numpy, scipy and librosa only), for when allin1 is not available. Laplacian structural
     segmentation (McFee and Ellis 2014, as in librosa's gallery) on beat-synchronous CQT and MFCC; the cluster
     count is the one whose segments, after those under 16 beats merge, come closest to one per
@@ -49,7 +52,9 @@ after the music. songcharter.sections snaps them to measures, merges, splits and
     fallback's parameters and constants). A call whose key matches the folder's engine.json returns the files
     already there; for allin1 the probe still runs first (a few seconds), since its answer is part of the key.
     The hit's engine.json is rewritten with this call's "why" and "settings", so it says why this call chose
-    the backend; the rest describes the run that made the files (its timings under "seconds"/"run").
+    the backend, and for allin1 with this call's probe and fallback: the analysis is cached, never a run's fallback
+    story, so a CPU-asked hit of an auto run's CPU result names no CUDA fallback. The rest describes the run that
+    made the files (its timings under "seconds"/"run").
 
 The fallback needs librosa (`pip install songcharter[sections]`). allin1 needs a Python with all-in-one-infer and
 torchaudio (`pip install all-in-one-infer torchaudio`: wheels, nothing to compile; all-in-one-infer 3.1.0 imports
@@ -131,6 +136,9 @@ TIMEOUT_PLAIN = "allin1 did not finish in time"
 NOT_INSTALLED_PLAIN = "allin1 is not installed"
 LEFT_OUT_PLAIN = "allin1 is left out on this PC to save memory"   # doctor's and the install's memory rule
 KILLED = -9                 # subprocess's returncode for a child ended by SIGKILL (on Linux, the kernel's OOM killer)
+# the runner's error line when CUDA ran out of memory: torch.OutOfMemoryError (torch.cuda.OutOfMemoryError in an
+# older torch)
+OUT_OF_MEMORY = re.compile(r"\bOutOfMemoryError: (.*)")
 
 # the fallback
 FEATURE_RATE = 22050        # librosa's default rate; the mix is halved to it
@@ -364,9 +372,12 @@ def _write_json(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
-def _cached(out: Path, key: str, live: dict) -> SectionsResult | None:
+def _cached(out: Path, key: str, live: dict, allin1: dict | None = None) -> SectionsResult | None:
     """The result already in `out` for this key, else None. A hit's engine.json takes this call's `live` fields
-    (why, settings) and is written back, so the file and the result say why this call chose the backend."""
+    (why, settings) and is written back, so the file and the result say why this call chose the backend. `allin1`:
+    this call's probe and fallback, which replace the run's in the hit's `allin1`. The analysis is cached, never a
+    run's fallback story: the CPU result of an auto run whose CUDA run failed answers a later CPU-asked call with no
+    fallback, and a CPU-asked result answers an auto run's CPU retry with that run's fallback (v0.5.0's review)."""
     try:
         info = json.loads((out / ENGINE).read_text(encoding="utf-8"))
         if info.get("key") != key:
@@ -376,6 +387,8 @@ def _cached(out: Path, key: str, live: dict) -> SectionsResult | None:
         return None
     seconds = info.get("seconds") or {}
     info = {**info, **live, "cached": True, "seconds": {"total": 0.0, "run": seconds.get("run", seconds)}}
+    if allin1 is not None and isinstance(info.get("allin1"), dict):
+        info["allin1"] = {**info["allin1"], **allin1}
     _write_json(out / ENGINE, info)
     return SectionsResult(out / SEGMENTS, info, True)
 
@@ -527,10 +540,11 @@ def _allin1(song: SongArrays, out: Path, s: Settings, run, download) -> Sections
     try:
         return _allin1_job(song, payload, data, out, s, python, found, device, why, fallback, run, download)
     except _RunFailed as e:
-        if device == "cpu" or s.device != "auto":  # asked for cuda: no second try
+        oom = OUT_OF_MEMORY.search(e.line)
+        if device == "cpu" or (s.device != "auto" and not oom):  # asked for cuda: no second try, but out of memory
             raise
-        failed = f"the CUDA run failed ({e.line})"
-        fallback = f"{failed}; analysed on the CPU"
+        failed = f"CUDA ran out of memory ({oom.group(1)[:120]})" if oom else f"the CUDA run failed ({e.line})"
+        fallback = f"{failed}; analysed on the CPU"   # a fresh process, which _allin1_job checks for memory first
         try:
             return _allin1_job(song, payload, data, out, s, python, found, "cpu", f"{why}; {fallback}", fallback,
                                run, download)
@@ -548,10 +562,11 @@ def _allin1_job(song: SongArrays, payload: np.ndarray, data: bytes, out: Path, s
                            "version": found.get("version"), "model": model, "weights": weights, "device": device,
                            "rate": SAMPLE_RATE})
     live = {"why": why, "settings": {**asdict(s), "python": python}}
-    hit = _cached(out, key, live)
+    hit = _cached(out, key, live, {**found, "fallback": fallback})
     if hit is not None:
         return hit
     seconds = song.samples / SAMPLE_RATE
+    # on CUDA nothing is checked (module docstring, Memory): a CUDA run that fails comes back here on the CPU
     skip = memory_skip(seconds, song.can_release, capacity_mib()) if device == "cpu" else None
     if skip:
         raise Allin1Error(skip, skip)
@@ -586,7 +601,7 @@ def _allin1_job(song: SongArrays, payload: np.ndarray, data: bytes, out: Path, s
             "input": {"duration_s": round(song.samples / SAMPLE_RATE, 3), "stems": list(song.names),
                       "other": [n for n in song.names if n not in ("bass", "drums", "vocals")]},
             "allin1": {**found, "model": model, "device": res.get("device", device),
-                       "fallback": res.get("fallback") or fallback, "threads": res.get("threads"),
+                       "fallback": fallback, "threads": res.get("threads"),
                        "repo": ALLIN1_REPO, "revision": ALLIN1_REVISION, "weights": weights,
                        "attention": res.get("attention", found.get("attention")),
                        "peak_rss_mb": res.get("peak_rss_mb")},   # the runner's own peak (allin1_runner.peak_rss_mb)

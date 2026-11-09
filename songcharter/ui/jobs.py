@@ -29,6 +29,15 @@
   * **Cancel:** proc.Tree.kill() (SIGTERM to the group, SIGKILL after 5 s), then the state `cancelled`, then the
     `.<name>.*.partial` folders beside the output (assemble's staging) are deleted. The work folder's caches stay, so
     the same song charts faster next time.
+  * **An orphan** (a second advisor's finding 7): the chart runs in a session of its own, so a server killed outright
+    (SIGKILL, a crash: no SIGTERM, SIGHUP or Ctrl+C to clean up) leaves it running under init, and Carry on after the
+    restart would start a second chart on the same work folder. <home>/state/chart.pid names the running chart (its
+    pid, which is its process group's, and its start time from /proc) and its server (pid and start time), written
+    when it starts and removed when it ends; `stop_orphan`, at the server's start once its port is bound, kills that
+    group while its leader is still the process it names (a pid used again since is never touched) and its server
+    is gone (one this start did not find keeps its chart: the v0.5.0 re-review's R1). Chosen over a parent-death signal (prctl PR_SET_PDEATHSIG): that signal
+    follows the thread that started the child, and the server starts charts from request and queue threads that end
+    at once, so it would kill every chart within moments.
   * **Lyrics** (M4-06, from M4-10): the page's pasted text (`lyrics`, None when the box is empty or blank) goes only
     into the chart. The job writes it into a memory file (memfd, Linux), which the child gets as an open file and
     reads as `--lyrics=/dev/fd/<n>`: nothing on disk, and the command line, the log, the job's options (`lyrics`:
@@ -47,7 +56,8 @@
   * **The queue** (M8-10, `Queue`, DESIGN.md 4.5): the server's waiting list over these jobs, still one child
     process group at a time. `Jobs.on_end` (on a thread of its own) tells it a job has ended, and it starts the next
     waiting song; <home>/state/queue.json keeps the list (no lyrics), and after a restart the queue waits for Carry
-    on.
+    on. A finished song that leaves the list (Clear the list, Remove, the trim) stays known by its job id through its
+    chart in the library (`Queue.dropped_chart`, for the server's life), so a Look still open on it keeps working.
   * **The library** (M8-13, "Your charts", DESIGN.md 4.5): every chart the page has made stays in
     <home>/library/<16 hex>/<name>/ with its report.json, and `library` reads them all, newest first (report.json's
     time), for the page's list: the song.ini's name and artist, the gate's verdict, the audio (one file or split,
@@ -266,6 +276,66 @@ def _stamp() -> str:
     return time.strftime("%Y%m%d-%H%M%S")
 
 
+def pid_path(home: Path) -> Path:
+    return Path(home) / "state" / "chart.pid"
+
+
+def proc_start(pid: int) -> str | None:
+    """The process's start time (/proc/<pid>/stat's 22nd field, clock ticks since boot), which a pid used again
+    later does not share; None when there is no such process, or no /proc."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="ascii", errors="replace")
+    except OSError:
+        return None
+    fields = stat.rpartition(")")[2].split()   # from the 3rd field, the state
+    return fields[19] if len(fields) > 19 else None
+
+
+def stop_orphan(home: Path, log: Callable[[str], None] | None = None,
+                timeout: float = proc.KILL_TIMEOUT_S) -> int | None:
+    """At the server's start (server._main, once its port is bound): a chart that chart.pid names and that still
+    runs, its leader the very process that was started (its start time the same), whose server (chart.pid's
+    `server`, with its start time) is gone, was left by a server killed outright; its whole process group gets
+    SIGTERM, then SIGKILL after `timeout` s (the module docstring: an orphan). A server still running (one this start
+    did not find: slow to answer, or on another --port) keeps its chart and chart.pid (the v0.5.0 re-review's R1).
+    Otherwise chart.pid goes. Returns the pid stopped, else None."""
+    path = pid_path(home)
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        record = None
+    pid = record.get("pid") if isinstance(record, dict) else None
+    server = record.get("server") if isinstance(record, dict) else None
+    if (isinstance(server, int) and not isinstance(server, bool) and server > 1 and proc.alive(server)
+            and proc_start(server) is not None and proc_start(server) == record.get("server_start")):
+        return None   # its server is alive: not an orphan
+    stopped = None
+    if (isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 and isinstance(record.get("start"), str)
+            and proc.alive(pid) and proc_start(pid) == record["start"]):
+        try:
+            os.killpg(pid, signal.SIGTERM)   # its pid is its group's: a session of its own (proc.start)
+            deadline = time.monotonic() + timeout
+            while proc.group_alive(pid) and time.monotonic() < deadline:
+                time.sleep(proc.POLL_S)
+            if proc.group_alive(pid):
+                os.killpg(pid, signal.SIGKILL)
+            stopped = pid
+        except ProcessLookupError:
+            stopped = pid
+        except OSError as e:
+            (log or (lambda text: None))(f"a chart left running (pid {pid}) could not be stopped: {e}")
+        if stopped is not None:
+            (log or (lambda text: None))(f"a chart left running by a songcharter that was stopped outright (job "
+                                         f"{record.get('job')}, pid {pid}) was stopped; its song waits for Carry on")
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return stopped
+
+
 @dataclass
 class Job:
     id: str
@@ -405,6 +475,7 @@ class Jobs:
             finally:
                 if fd is not None:
                     os.close(fd)   # the child holds its own copy
+            self._mark(job)
             job.reader = threading.Thread(target=self._read, args=(job,), name=f"songcharter-job-{job_id}",
                                           daemon=True)
             self.current = job
@@ -443,9 +514,32 @@ class Jobs:
                     pass
             self._finish(job, job.tree.wait())
 
+    def _mark(self, job: Job) -> None:
+        """<home>/state/chart.pid for the chart that has just started (the module docstring: an orphan); a disk that
+        cannot take it is logged, and the chart goes on."""
+        assert job.tree is not None
+        path = pid_path(self.home)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"pid": job.tree.pid, "start": proc_start(job.tree.pid), "job": job.id,
+                                        "server": os.getpid(), "server_start": proc_start(os.getpid())}) + "\n",
+                            encoding="utf-8")
+        except OSError as e:
+            self.log(f"job {job.id}: {path} could not be written ({e})")
+
+    def _unmark(self, job: Job) -> None:
+        """chart.pid away once the job's chart has ended, when it names that chart."""
+        path = pid_path(self.home)
+        try:
+            if job.tree is not None and json.loads(path.read_text(encoding="utf-8")).get("pid") == job.tree.pid:
+                path.unlink()
+        except (OSError, ValueError, AttributeError):
+            pass
+
     def _finish(self, job: Job, code: int) -> None:
         """The end state from the exit code (a cancel's is set by cancel()). A chart that has sent its result is done,
         whatever its exit: the result comes after the build is in place."""
+        self._unmark(job)
         with job.cond:
             job.returncode = code
             if job.cancelling or job.state != "running":
@@ -493,6 +587,7 @@ class Jobs:
                 job.reader.join(timeout=10)   # the pipe closes with the last process of the group
             for folder in partial_folders(job.out):
                 shutil.rmtree(folder, ignore_errors=True)
+            self._unmark(job)
             with job.cond:
                 job.returncode = code
                 if job._has("result"):
@@ -525,6 +620,11 @@ STATES = ("waiting", "charting", "ready", "check_failed", "not_finished", "cance
 FINISHED = STATES[2:]
 LYRICS_WAIT = ("Lyrics only for a song that starts at once: songcharter keeps pasted lyrics only while it uses them. "
                "Chart this song without them, or add it once nothing is charting.")
+# a song added again while it waits or charts (the same upload; the v0.5.0 review's install-01): it would chart twice,
+# into the same library folder. By where it is: charting, waiting (the list paused: after a restart, say), waiting
+ALREADY = {"charting": "This song is already in the list: it is charting now.",
+           "paused": "This song is already in the list: press Carry on to chart it.",
+           "waiting": "This song is already in the list: it is charted in its turn."}
 
 
 class QueueFull(Exception):
@@ -623,6 +723,7 @@ class Queue:
         self.failures = 0                # songs in a row that did not finish
         self.run = 0                     # the current evening's number: a song added to an idle queue starts one
         self.stopping = False
+        self.dropped: dict[str, str] = {}   # a finished song's job id -> its chart's library id, once out of the list
         jobs.on_end = self._on_end
         self._load()
 
@@ -680,6 +781,22 @@ class Queue:
         with self._lock:
             entry = next((e for e in self.entries if e.get("job") == job_id and e["state"] in FINISHED), None)
             return Kept(entry) if entry is not None else None
+
+    def dropped_chart(self, job_id: str) -> str | None:
+        """The library id of the chart a finished song made, once Clear the list, Remove or the trim has taken the
+        song out of the list (`_drop`), for this server's life; None for any other id. A Done screen still open on
+        that song (a Look) names it by its job id: its chart is a library chart, so the server finds it there
+        (server.py's Handler._job; the v0.5.0 review's correct-1)."""
+        with self._lock:
+            return self.dropped.get(job_id)
+
+    def _drop(self, gone: Sequence[dict]) -> None:
+        """Songs leaving the list: each finished one's chart (its result's folder) recorded by its job id."""
+        for e in gone:
+            closing = e.get("closing") if isinstance(e.get("closing"), dict) else {}
+            folder = closing.get("folder") if closing.get("event") == "result" else None
+            if isinstance(e.get("job"), str) and folder:
+                self.dropped[e["job"]] = chart_id(Path(str(folder)))
 
     def snapshot(self) -> dict:
         """GET /api/queue: {"paused", "why", "restarted", "run", "max", "entries", "left"} (DESIGN.md 4.5)."""
@@ -739,8 +856,9 @@ class Queue:
         """A song at the end of the list, with the page's `options` as checked (the pictures as upload ids, no
         lyrics) and its estimate: (its entry, its job when it starts at once: nothing charting and none waiting).
         `lyrics` only for a song that starts at once, else an InputError (LYRICS_WAIT); QueueFull at QUEUE_MAX waiting;
-        prepare's InputError, or JobRunning, for a song that cannot start at once (it is not kept). A chart whose
-        result is out and whose process is still exiting is waited for first, as Jobs.start does."""
+        an InputError (ALREADY) for a song whose upload is already waiting or charting (a finished one may be charted
+        again); prepare's InputError, or JobRunning, for a song that cannot start at once (it is not kept). A chart
+        whose result is out and whose process is still exiting is waited for first, as Jobs.start does."""
         cur = self.jobs.current
         if cur is not None and cur.state == "running":
             with cur.cond:
@@ -749,6 +867,11 @@ class Queue:
                 cur.wait_end(END_WAIT_S)
         with self._lock:
             self._settle()
+            same = next((e for e in self.entries if e["state"] in ("waiting", "charting")
+                         and e["upload"].get("id") == upload.get("id")), None)
+            if same is not None:
+                raise InputError(ALREADY["charting" if same["state"] == "charting" else
+                                         "paused" if self.paused is not None else "waiting"])
             waiting = self._waiting()
             now = self._charting() is None and not waiting
             if not now and lyrics is not None:
@@ -814,6 +937,7 @@ class Queue:
             if entry["state"] == "charting":
                 raise NotInQueue("that song is charting: cancel it instead")
             self.entries.remove(entry)
+            self._drop([entry])
             if not self._waiting():
                 self.paused, self.why, self.restarted = None, None, 0
             self._save()
@@ -822,6 +946,7 @@ class Queue:
         """Clear the list: every song but the charting one (their charts stay in the library)."""
         with self._lock:
             self._settle()
+            self._drop([e for e in self.entries if e["state"] != "charting"])
             self.entries = [e for e in self.entries if e["state"] == "charting"]
             self.paused, self.why, self.restarted = None, None, 0
             self._save()
@@ -940,8 +1065,10 @@ class Queue:
 
     def _trim(self) -> None:
         finished = [e for e in self.entries if e["state"] in FINISHED]
-        for e in finished[:max(0, len(finished) - KEEP_FINISHED)]:
+        gone = finished[:max(0, len(finished) - KEEP_FINISHED)]
+        for e in gone:
             self.entries.remove(e)
+        self._drop(gone)
 
 
 # ------------------------------------------------------------------------------------------------ the library (M8-13)
@@ -1072,9 +1199,9 @@ class Charted:
     gate's verdict, the stems beside it, and the work folder and its preview while the cache keeps them), so Install,
     Open, the zips, the results and Listen are the queue's own routes."""
 
-    def __init__(self, folder: Path, root: Path | None):
+    def __init__(self, folder: Path, root: Path | None, job_id: str | None = None):
         self.folder = folder
-        self.id = chart_id(folder)
+        self.id = job_id or chart_id(folder)   # a finished song's job id when found through it (Queue.dropped_chart)
         self.state = "done"
         self.info = read_chart(folder, root)
         self.work, self.record = _work(folder, root)

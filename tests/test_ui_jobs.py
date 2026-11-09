@@ -4,6 +4,8 @@ program (STANDIN) that writes what `chart --events` writes; the real command lin
 test_pipeline.py."""
 import json
 import os
+import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -859,3 +861,139 @@ def test_the_full_lists_words(queued, monkeypatch):
     queued.add("ok")
     with pytest.raises(J.QueueFull, match="^1 song is waiting already: add more once some are charted$"):
         queued.add("ok")
+
+
+# ------------------------------------------------------------------------------------------------ the v0.5.0 review
+
+def take_started(queue, timeout=20.0):
+    deadline = time.monotonic() + timeout
+    while not any(e["event"] == "take" for e in queue.jobs.current.events):
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+
+
+def test_a_song_already_waiting_or_charting_is_refused_and_a_finished_one_may_be_charted_again(queued):
+    """install-01: the same upload added again while it charts, while it waits, or while it waits after a restart (the
+    window closed mid-chart, its song back at the top of the list, paused) is refused in plain words, and nothing is
+    added; once it has finished it may be charted again, as before (break: no check in Queue.add: the song is charted
+    twice, into the same library folder)."""
+    up = {"id": "00000000000000aa", "name": "hang.mp3", "seconds": 60}
+    other = {"id": "00000000000000bb", "name": "ok.mp3", "seconds": 60}
+    assert queued.queue.add(up, {"title": "hang"})[1] is not None
+    with pytest.raises(InputError, match=r"^This song is already in the list: it is charting now\.$"):
+        queued.queue.add(up, {"title": "ok"})
+    queued.queue.add(other, {"title": "ok"})
+    with pytest.raises(InputError, match=r"^This song is already in the list: it is charted in its turn\.$"):
+        queued.queue.add(other, {"title": "ok"})
+    assert [e["state"] for e in queued.queue.entries] == ["charting", "waiting"]
+    take_started(queued.queue)
+    queued.queue.shutdown()   # the window closes mid-chart
+    queued.queue = queued.make()   # started again: the song waits at the top, the list paused
+    assert queued.queue.snapshot()["paused"] == "restart"
+    with pytest.raises(InputError, match=r"^This song is already in the list: press Carry on to chart it\.$"):
+        queued.queue.add(up, {"title": "ok"})
+    assert len(queued.queue.entries) == 2
+    queued.queue.entries[0]["options"] = {"title": "ok"}   # charted this time
+    queued.queue.carry_on()
+    assert [e["state"] for e in settled(queued.queue)["entries"]] == ["ready", "ready"]
+    entry, job = queued.queue.add(up, {"title": "ok"})   # finished: it may be charted again
+    assert job is not None and entry["state"] == "charting"
+    assert [e["state"] for e in settled(queued.queue)["entries"]] == ["ready", "ready", "ready"]
+
+
+def test_a_new_evening_and_a_cancel_reset_the_failures_and_the_list_keeps_the_last_finished(queued, monkeypatch):
+    """tests-4: a song added to an idle list starts a new evening, whose failures count from 0 (break: Queue.add not
+    resetting them: the next evening pauses after its first failure); a cancel ends a run of failures too (break: the
+    cancelled branch not resetting them: dies, a cancel, dies pauses); the list keeps the last KEEP_FINISHED finished
+    songs (break: _trim emptied: queue.json grows for ever), and a trimmed song's job id still finds its chart
+    (correct-1: Queue.dropped_chart)."""
+    queued.add("dies")
+    assert settled(queued.queue)["entries"][0]["state"] == "not_finished" and queued.queue.failures == 1
+    queued.add("dies")   # a new evening: its first failure, not its second
+    queued.add("ok")
+    snap = settled(queued.queue)
+    assert [(e["run"], e["state"]) for e in snap["entries"]] == [(1, "not_finished"), (2, "not_finished"),
+                                                                 (2, "ready")]
+    assert snap["paused"] is None
+    queued.add("dies")
+    queued.add("hang")
+    queued.add("dies")
+    queued.add("ok")
+    deadline = time.monotonic() + 20
+    while queued.queue.snapshot()["entries"][4]["state"] != "charting":
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+    take_started(queued.queue)
+    queued.queue.jobs.cancel()   # dies, cancelled, dies: not two in a row
+    snap = settled(queued.queue)
+    assert [e["state"] for e in snap["entries"][3:]] == ["not_finished", "cancelled", "not_finished", "ready"]
+    assert snap["paused"] is None
+    monkeypatch.setattr(J, "KEEP_FINISHED", 3)
+    first = next(e for e in queued.queue.entries if e["id"] == snap["entries"][2]["id"])   # ready: it made a chart
+    queued.add("ok")   # 7 finished: the 4 oldest go
+    snap = settled(queued.queue)
+    assert len(snap["entries"]) == 4 and first["id"] not in {e["id"] for e in snap["entries"]}
+    kept = json.loads(J.queue_path(queued.home).read_text(encoding="utf-8"))["entries"]
+    assert [e["id"] for e in kept] == [e["id"] for e in snap["entries"]]
+    assert queued.queue.job(first["job"]) is None
+    assert queued.queue.dropped_chart(first["job"]) == J.chart_id(Path(first["closing"]["folder"]))
+
+
+def test_stop_orphan_stops_only_the_chart_its_file_names(tmp_path):
+    """A second advisor's finding 7, the pid file's own rules: a process group whose leader is the process chart.pid
+    names (the same start time) is stopped, its members too; a pid whose start time differs (used again since: here
+    another process in a session of its own) is never touched; a damaged or missing file stops nothing; the file goes
+    either way (break: the start time not compared: the other process is stopped)."""
+    if not Path("/proc/self/stat").exists():
+        pytest.skip("needs /proc (Linux)")
+    leader = subprocess.Popen(["sh", "-c", "sleep 60 & sleep 60"], start_new_session=True)
+    other = subprocess.Popen(["sleep", "60"], start_new_session=True)
+    try:
+        deadline = time.monotonic() + 10
+        while J.proc_start(leader.pid) is None:
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        path = J.pid_path(tmp_path)
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"pid": other.pid, "start": "1", "job": "x"}), encoding="utf-8")
+        assert J.stop_orphan(tmp_path, timeout=1) is None and not path.exists()   # another process: untouched
+        assert other.poll() is None and proc.alive(other.pid)
+        for text in ("{not json", "[]", json.dumps({"pid": True, "start": "1"}), json.dumps({"pid": 1, "start": "1"})):
+            path.write_text(text, encoding="utf-8")
+            assert J.stop_orphan(tmp_path) is None and not path.exists(), text
+        assert J.stop_orphan(tmp_path) is None   # no file
+        # its server alive (this process, with its start time): not an orphan, and its file kept (the v0.5.0
+        # re-review's R1; break: the server not checked, so a live songcharter's chart is stopped)
+        alive = {"pid": leader.pid, "start": J.proc_start(leader.pid), "job": "20000101-000000",
+                 "server": os.getpid(), "server_start": J.proc_start(os.getpid())}
+        path.write_text(json.dumps(alive), encoding="utf-8")
+        assert J.stop_orphan(tmp_path, timeout=1) is None and path.exists() and proc.group_alive(leader.pid)
+        said = []
+        path.write_text(json.dumps({**alive, "server_start": "1"}), encoding="utf-8")   # its server gone
+        assert J.stop_orphan(tmp_path, said.append, timeout=2) == leader.pid
+        leader.wait(5)
+        assert not proc.group_alive(leader.pid) and not path.exists()
+        assert said and "job 20000101-000000" in said[0]
+    finally:
+        for p in (leader, other):
+            if p.poll() is None:
+                os.killpg(p.pid, signal.SIGKILL)
+                p.wait(5)
+
+
+def test_a_jobs_pid_file_lives_while_its_chart_runs(queued):
+    """chart.pid names the running chart (its pid and start time) from its start to its end, cancelled or not."""
+    queued.add("hang")
+    take_started(queued.queue)
+    job = queued.queue.jobs.current
+    record = json.loads(J.pid_path(queued.home).read_text(encoding="utf-8"))
+    assert record == {"pid": job.tree.pid, "start": J.proc_start(job.tree.pid), "job": job.id, "server": os.getpid(),
+                      "server_start": J.proc_start(os.getpid())}
+    queued.queue.jobs.cancel()
+    assert not J.pid_path(queued.home).exists()
+    queued.add("ok")
+    settled(queued.queue)
+    deadline = time.monotonic() + 10
+    while J.pid_path(queued.home).exists():   # the reader thread removes it as the chart exits
+        assert time.monotonic() < deadline
+        time.sleep(0.02)

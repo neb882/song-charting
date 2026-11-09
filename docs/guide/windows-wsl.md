@@ -72,18 +72,19 @@ page.
 
 - **Chart first, play after.** While a song charts, songcharter uses most of the PC's memory: on a 16 GB PC, Windows
   has about 4 GB left until the chart is done. Don't run games then.
-- **How long it takes:** about 5 to 15 minutes for a 4-minute song with the default options (a busy or long song
-  takes longer: a 9-minute song can take over half an hour). The page says how long when the chart starts, and the
-  browser tab's title says what it is doing. Most of that is the guitar: songcharter charts it 4 times over (4
-  "takes") and combines them into a better chart, and the page shows which take it is on ("take 2 of 4"). At the
-  top of the options you choose "Best chart" (4 takes) or "Quick chart" (1 take), each with its minutes for your
-  song: a 4-minute song's quick chart takes about 2 to 7 minutes. Once the first take is done, the page says how
-  many more minutes it should take, from how long that take took. These times are estimates. (On a PC without a
-  graphics card songcharter makes 1 take, and the page says so.)
+- **How long it takes:** about 2 to 7 minutes for a 4-minute song with the default options (a busy or long song
+  takes longer: a 9-minute song can take 20 minutes). The page says how long when the chart starts, and the browser
+  tab's title says what it is doing. Most of that is the guitar. At the top of the options you choose "Quick chart"
+  (1 take of the guitar, the default) or "Best chart", which charts the guitar 4 times over (4 "takes") and combines
+  them: about 4 to 14 minutes for a 4-minute song. Best is slower and only sometimes better: in our tests it gained
+  very little, and it can make a song's repeated parts less alike, which is why Quick is the default. With Best the
+  page shows which take it is on ("take 2 of 4"), and once the first take is done it says how many more minutes it
+  should take. These times are estimates. (On a PC without a graphics card songcharter makes 1 take, and the page
+  says so.)
 - **If a guitar take fails on the graphics card** (a game, Clone Hero or a browser left open can take the memory it
   needs), songcharter runs that take again on the CPU, once a song, and carries on. The page says so: a note at the
-  top, and "take 3 of 4 (on the CPU)". That take takes a few minutes longer. If a second take fails, or a take was
-  stopped because the PC ran out of memory, the chart stops and the page says what to try.
+  top, and "(on the CPU)" beside the take. That take takes a few minutes longer. If a second take fails, or a take
+  was stopped because the PC ran out of memory, the chart stops and the page says what to try.
 - **A very long or very busy song's guitar** may be transcribed in pieces (more than the guitar model takes in one
   go), which songcharter joins into one chart; the Done screen then shows a note that says so.
 - **Keep the PC awake while a song charts:** a chart takes long enough for the PC to go to sleep. While songcharter's
@@ -96,8 +97,9 @@ page.
 - **Several songs for an evening:** drop several song files at once (or choose several), pick Best or Quick once for
   all of them, and press "Chart them": songcharter charts them one after the other, by itself, while you are away. The
   list under the chart shows each song: "Install" and "Look" (its own Done screen) once it is done, "Remove" while it
-  waits; more songs can be added while one charts ("Add songs"). Leave the page in front, or set the PC's sleep to
-  Never, so it charts all evening. Cancel stops only the song charting; "Pause after this song" stops the list after
+  waits; more songs can be added while one charts ("Add songs"). Keep your PC awake while these chart: in Windows
+  Settings, set Sleep to Never for now (the page says so under the list); a PC that sleeps stops charting until it
+  wakes. Leaving the page in front helps too. Cancel stops only the song charting; "Pause after this song" stops the list after
   it. If the songcharter window closes, the list waits: start songcharter again and press "Carry on". Lyrics and
   pictures are for one song at a time.
 - **Your charts:** every song you have charted stays listed under "Your charts" on the first screen (folded once the

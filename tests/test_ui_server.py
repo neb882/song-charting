@@ -120,11 +120,11 @@ def upload(ctx, data: bytes, name: str) -> tuple[int, dict]:
     return status, json.loads(body)
 
 
-def sse(port, last_id=None, timeout=15) -> list[tuple[int | None, dict | str]]:
+def sse(port, last_id=None, timeout=15, job="current") -> list[tuple[int | None, dict | str]]:
     """The stream's items until it closes: (id, event) for events, (None, comment) for comments."""
     headers = {"Last-Event-ID": str(last_id)} if last_id is not None else {}
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
-    conn.request("GET", "/api/jobs/current/events", headers={"Host": f"127.0.0.1:{port}", **headers})
+    conn.request("GET", f"/api/jobs/{job}/events", headers={"Host": f"127.0.0.1:{port}", **headers})
     r = conn.getresponse()
     assert r.status == 200 and r.headers["Content-Type"].startswith("text/event-stream") and secure(r.headers)
     items, block = [], []
@@ -623,22 +623,30 @@ def test_the_file_name_gives_the_artist_and_title_the_page_prefills(served, tmp_
 
 def test_one_job_at_a_time_a_second_song_waits_then_cancel(served):
     """M8-10: a second song added while one charts waits (202, no job), its options checked at once (a bad one 400;
-    lyrics refused in a waiting song); cancel ends the charting song only, and the server starts the waiting one."""
+    lyrics refused in a waiting song); a song added again while it charts or waits is refused in plain words (the
+    v0.5.0 review's install-01: it would chart twice); cancel ends the charting song only, and the server starts the
+    waiting one; a finished song may be charted again."""
     ctx, port = served, served.port
     status, up = upload(ctx, song(ctx.home / "s.wav"), "Song.wav")
     assert status == 200
+    _, other = upload(ctx, song(ctx.home / "t.wav", 1.5), "Other Song.wav")
+    _, third = upload(ctx, song(ctx.home / "u.wav", 1.2), "Third Song.wav")
     status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"], "options": {}}).encode(),
                            guarded(port))
     assert status == 202 and json.loads(body)["job"] == ctx.app.jobs.current.id
     assert json.loads(body)["state"] == "charting"
     assert ctx.threads == [device.default_threads()]   # doctor's device is the CPU
     job = ctx.app.jobs.current
-    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"], "options": {}}).encode(),
+    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": other["id"], "options": {}}).encode(),
                            guarded(port))
     waits = json.loads(body)
     assert status == 202 and waits["job"] is None and waits["state"] == "waiting", body
+    for which, why in ((up, J.ALREADY["charting"]), (other, J.ALREADY["waiting"])):   # the same upload again
+        status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": which["id"], "options": {
+            "takes": 3}}).encode(), guarded(port))
+        assert status == 400 and json.loads(body)["error"] == why, body
     for options in ({"takes": 2}, {"lyrics": "zorp quiv"}):
-        status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"], "options": options})
+        status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": third["id"], "options": options})
                                .encode(), guarded(port))
         assert status == 400, body
     assert "takes is 1, or 3 or more" not in json.loads(body)["error"]
@@ -704,8 +712,9 @@ def test_the_upload_gives_the_songs_length_and_the_job_its_estimate(served, monk
     doctor = {**DOCTOR, "device": {"chosen": "cuda"}, "guitar_device": "cuda"}
     monkeypatch.setattr(ctx.app, "doctor", lambda: doctor)
     est = start({})
-    assert (est["takes"], est["device"]) == (4, "cuda")
+    assert (est["takes"], est["device"]) == (1, "cuda")   # 1 take on the GPU too (the owner, 2026-11-09)
     assert est == E.for_job(up["seconds"], J.parse_options({}), "cuda", "cuda")
+    assert start({"takes": 4})["takes"] == 4   # Best
     doctor["guitar_device"] = "cpu"   # autochart's CUDA provider did not load: one take, on the CPU
     assert (start({})["takes"], start({})["device"]) == (1, "cpu")
     doctor["device"] = {"chosen": None}   # the machine check failed: "auto" is unknown, so is the time
@@ -755,6 +764,36 @@ def test_sse_replays_to_a_late_client_and_streams_to_an_early_one(served, monkey
     assert call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))[0] == 202
     ctx.app.jobs.cancel()
     assert sse(port)[-1][1]["event"] == "cancelled"
+
+
+def test_a_page_that_reconnects_after_its_song_ended_gets_that_songs_end_not_the_next_songs_events(served):
+    """The v0.5.0 review's correct-2 (and tests-1): song A ends and the queue starts B while the page's connection is
+    down; the page reconnects to A's events (/api/jobs/<A>/events, as app.js's follow() asks) with the last id it saw.
+    It gets A's closing event alone, never B's events from A's index on; B's own stream starts at its first event,
+    and a resume within B stays in B (break: the events route on the current job whatever the id, or app.js
+    following /api/jobs/current/events: B's stage_end and result arrive as A's)."""
+    ctx, port = served, served.port
+    _, a_up = upload(ctx, song(ctx.home / "a.wav"), "Song A.wav")
+    _, b_up = upload(ctx, song(ctx.home / "b.wav", 1.5), "Song B.wav")
+    ctx.mode = "slow"
+    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": a_up["id"]}).encode(), guarded(port))
+    a = ctx.app.jobs.current
+    assert status == 202 and json.loads(body)["job"] == a.id
+    ctx.mode = "ok"
+    assert call(port, "POST", "/api/jobs", json.dumps({"upload": b_up["id"]}).encode(), guarded(port))[0] == 202
+    deadline = time.monotonic() + 20
+    while ctx.app.jobs.current is a or ctx.app.jobs.current.state == "running":
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+    b = ctx.app.jobs.current
+    assert a.state == "done" and b is not a and len(b.events) == 4
+    resumed = sse(port, last_id=1, job=a.id)   # a page that saw A's plan and first stage
+    assert resumed == [(2, a.events[-1])] and resumed[0][1]["folder"] == str(a.out) != str(b.out)
+    assert sse(port, job=a.id) == [(0, a.events[-1])]   # nothing seen yet: still A's end alone
+    assert sse(port, job=b.id) == [(n, e) for n, e in enumerate(b.events)]   # the page then follows B from 0
+    assert sse(port, last_id=2, job=b.id) == [(3, b.events[3])]   # a resume within B
+    assert call(port, "GET", "/api/jobs/20000101-000000/events")[0] == 404   # no such job (a restart: gone)
+    assert sse(port, last_id=1, job="current")[-1][1]["folder"] == str(b.out)   # `current`: whichever is current
 
 
 # ------------------------------------------------------------------------------------------------ startup
@@ -1032,7 +1071,8 @@ def test_stopping_the_server_kills_the_running_charts_whole_tree(tmp_path, how):
     """The chart runs in a session of its own, so a hangup or a Ctrl+C never reaches it: only the server's stop
     path kills it. Stopped by SIGTERM, by SIGHUP, or by its console window closing (its controlling terminal is a pty
     whose other end closes: the kernel hangs it up, and every console write then fails with EIO), the server kills
-    the chart and its grandchild, closes, logs "stopped" and exits 0."""
+    the chart and its grandchild, closes, logs "stopped" and exits 0; the song that waited behind it never starts,
+    and both wait in queue.json."""
     home = tmp_path / "home"
     home.mkdir()
     (home / "doctor.json").write_text(json.dumps(DOCTOR), encoding="utf-8")
@@ -1063,6 +1103,8 @@ def test_stopping_the_server_kills_the_running_charts_whole_tree(tmp_path, how):
         status, up = upload(ctx, song(tmp_path / "s.wav"), "Song.wav")
         assert status == 200
         assert call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))[0] == 202
+        _, other = upload(ctx, song(tmp_path / "t.wav", 1.5), "Other Song.wav")   # a second song waits
+        assert call(port, "POST", "/api/jobs", json.dumps({"upload": other["id"]}).encode(), guarded(port))[0] == 202
         deadline = time.monotonic() + 30
         while not pids:
             assert time.monotonic() < deadline
@@ -1080,6 +1122,12 @@ def test_stopping_the_server_kills_the_running_charts_whole_tree(tmp_path, how):
         assert not any(proc.alive(p) for p in pids)   # the chart and its grandchild, by pid
         log = next((home / "logs").glob("ui-*.log")).read_text(encoding="utf-8")
         assert "stopping" in log and "cancelled (exit -15)" in log and log.rstrip().endswith("stopped")
+        # the queue stops with it (Queue.shutdown): both songs wait for Carry on, and the waiting one never started
+        # (the v0.5.0 review's tests-2; break: the stop path calling Jobs.shutdown, v0.4's call: the waiting song
+        # starts as the first is killed and charts on with no window, the first recorded as cancelled)
+        entries = json.loads(J.queue_path(home).read_text(encoding="utf-8"))["entries"]
+        assert [(e["state"], e["job"]) for e in entries] == [("waiting", None), ("waiting", None)]
+        assert log.count(": started on ") == 1
     finally:
         if master is not None:
             os.close(master)
@@ -1089,6 +1137,122 @@ def test_stopping_the_server_kills_the_running_charts_whole_tree(tmp_path, how):
             if proc.alive(p):
                 os.kill(p, signal.SIGKILL)
         errors.close()
+
+
+@pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="needs /proc (Linux)")
+def test_a_chart_left_by_a_server_killed_outright_is_stopped_at_the_next_start(tmp_path):
+    """A second advisor's finding 7: SIGKILL (a crash) gives the server no chance to clean up, and the chart, in a
+    session of its own, runs on under init. The next start stops it, and its grandchild, before it reads the queue
+    (chart.pid), so Carry on never starts a second chart on the same work folder; the song waits, paused (break:
+    _main without jobs.stop_orphan: the chart still runs after the restart)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "doctor.json").write_text(json.dumps(DOCTOR), encoding="utf-8")
+    (tmp_path / "standin.py").write_text(STANDIN, encoding="utf-8")
+    (tmp_path / "driver.py").write_text(DRIVER, encoding="utf-8")
+    port = free_ports(1)[0]
+    root = Path(songcharter.__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": str(root)}
+    env.pop("WSL_DISTRO_NAME", None)
+    argv = [sys.executable, str(tmp_path / "driver.py"), str(tmp_path / "standin.py"), str(home), str(port)]
+
+    def serve():
+        server = subprocess.Popen(argv, env=env, cwd=tmp_path, stdout=subprocess.DEVNULL,
+                                  stderr=open(tmp_path / "stderr.txt", "a"), start_new_session=True)
+        deadline = time.monotonic() + 30
+        while S.hello(port) is None:
+            assert server.poll() is None and time.monotonic() < deadline, (tmp_path / "stderr.txt").read_text()
+            time.sleep(0.1)
+        return server
+
+    servers, pids = [serve()], []
+    try:
+        ctx = SimpleNamespace(port=port)
+        _, up = upload(ctx, song(tmp_path / "s.wav"), "Song.wav")
+        assert call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))[0] == 202
+        deadline = time.monotonic() + 30
+        while not pids:
+            assert time.monotonic() < deadline
+            events = json.loads(call(port, "GET", "/api/jobs/current")[2])["events"]
+            pids = next((e["pids"] for e in events if e["event"] == "take"), [])
+            time.sleep(0.05)
+        assert json.loads(J.pid_path(home).read_text(encoding="utf-8"))["pid"] == pids[0]
+        servers[0].kill()   # SIGKILL: no clean-up
+        servers[0].wait(10)
+        time.sleep(0.5)
+        assert all(proc.alive(p) for p in pids)   # the orphan, as the finding found it
+        servers.append(serve())   # started again
+        deadline = time.monotonic() + 15
+        while any(proc.alive(p) for p in pids) or J.pid_path(home).exists():   # stopped once its port was bound
+            assert time.monotonic() < deadline, [proc.alive(p) for p in pids]
+            time.sleep(0.05)
+        q = json.loads(call(port, "GET", "/api/queue")[2])
+        assert [e["state"] for e in q["entries"]] == ["waiting"] and q["paused"] == "restart"
+        log = "".join(f.read_text(encoding="utf-8") for f in (home / "logs").glob("ui-*.log"))
+        assert f"pid {pids[0]}) was stopped" in log
+    finally:
+        for server in servers:
+            if server.poll() is None:
+                server.send_signal(signal.SIGTERM)
+                try:
+                    server.wait(15)
+                except subprocess.TimeoutExpired:
+                    server.kill()
+        for p in pids:
+            if proc.alive(p):
+                os.kill(p, signal.SIGKILL)
+
+
+@pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="needs /proc (Linux)")
+def test_a_second_start_that_cannot_bind_never_stops_a_live_songcharters_chart(tmp_path, monkeypatch):
+    """The v0.5.0 re-review's R1: a second start that did not find the running songcharter (its hello slower than
+    0.5 s on a PC deep in swap, or another --port) and cannot bind its ports exits 2 and leaves that songcharter's
+    chart running: the orphan check runs only once the port is bound, and spares a chart whose server is alive
+    (breaks: jobs.stop_orphan before bind; the server not checked)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "doctor.json").write_text(json.dumps(DOCTOR), encoding="utf-8")
+    (tmp_path / "standin.py").write_text(STANDIN, encoding="utf-8")
+    (tmp_path / "driver.py").write_text(DRIVER, encoding="utf-8")
+    port = free_ports(1)[0]
+    env = {**os.environ, "PYTHONPATH": str(Path(songcharter.__file__).resolve().parents[1])}
+    env.pop("WSL_DISTRO_NAME", None)
+    server = subprocess.Popen([sys.executable, str(tmp_path / "driver.py"), str(tmp_path / "standin.py"), str(home),
+                               str(port)], env=env, cwd=tmp_path, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              start_new_session=True)
+    pids = []
+    try:
+        deadline = time.monotonic() + 30
+        while S.hello(port) is None:
+            assert server.poll() is None and time.monotonic() < deadline
+            time.sleep(0.1)
+        ctx = SimpleNamespace(port=port)
+        _, up = upload(ctx, song(tmp_path / "s.wav"), "Song.wav")
+        assert call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))[0] == 202
+        while not pids:
+            assert time.monotonic() < deadline + 30
+            events = json.loads(call(port, "GET", "/api/jobs/current")[2])["events"]
+            pids = next((e["pids"] for e in events if e["event"] == "take"), [])
+            time.sleep(0.05)
+        monkeypatch.setattr(S, "find_running", lambda ports: None)   # its hello missed the timeout
+        monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+        from songcharter import wsl
+        monkeypatch.setattr(wsl, "is_wsl", lambda: False)
+        asked = []
+        real = S.stop_orphan
+        monkeypatch.setattr(S, "stop_orphan", lambda *a, **k: asked.append(a) or real(*a, **k))
+        assert S.main(port=port, browser=False, home=home) == 2   # its port is taken
+        assert asked == [] and all(proc.alive(p) for p in pids) and J.pid_path(home).exists()
+        assert J.stop_orphan(home, timeout=1) is None and all(proc.alive(p) for p in pids)   # its server is alive
+    finally:
+        server.send_signal(signal.SIGTERM)
+        try:
+            server.wait(15)
+        except subprocess.TimeoutExpired:
+            server.kill()
+        for p in pids:
+            if proc.alive(p):
+                os.kill(p, signal.SIGKILL)
 
 
 # ------------------------------------------------------------------------------------------------ after the build (M4-06)
@@ -2132,13 +2296,13 @@ const ctx = { document, window: { addEventListener() {} }, XMLHttpRequest: class
   sessionStorage: { setItem() {}, getItem() { return null; } },
   fetch: async (path) => {
     if (path === "/api/jobs/current") return { status: 200, json: async () => JSON.parse(JSON.stringify(job)) };
-    if (path === "/api/jobs/current/results") return { status: 200, json: async () => ({ job: job.job,
+    if (/^\/api\/jobs\/[^/]+\/results$/.test(path)) return { status: 200, json: async () => ({ job: job.job,
       installable: false, preview: { why: "it was turned off in the options" }, art: null, lyrics: null,
       listen: null }) };
     if (path === "/api/status") return { status: 200, json: async () => ({ device: { chosen: "cpu" }, problems: [],
       notes: [], job: null, update: UP }) };
     if (path === "/api/hello") return { status: 200, json: async () => ({ app: "songcharter", version: "0.3.1" }) };
-    if (path === "/api/jobs/current/events") {   // a stream that stays open: the test hands the events in
+    if (/^\/api\/jobs\/[^/]+\/events$/.test(path)) {   // a stream that stays open: the test hands the events in
       return { status: 200, body: { getReader: () => ({ read: () => new Promise(() => {}) }) } };
     }
     return { status: 404, json: async () => ({}) };
@@ -2329,6 +2493,8 @@ let job = { job: "j1", state: "running", upload: { name: "Some Song.mp3" }, star
 // the events' answers, one a call, the last one again when they run out: "404", "down" (nothing answers), "ended" (a
 // stream that ends with no event), "open" (a stream that stays open)
 let answers = ["open"], asked = 0;
+let queue = null;   // GET /api/queue's answer from a songcharter started since; none: 404
+const paths = [];   // the events' paths asked for
 const stream = (read) => ({ status: 200, body: { getReader: () => ({ read }) } });
 const ctx = { document, window: { addEventListener() {} }, XMLHttpRequest: class {}, encodeURIComponent, console,
   navigator, setInterval() {}, clearInterval() {}, TextDecoder,
@@ -2336,7 +2502,9 @@ const ctx = { document, window: { addEventListener() {} }, XMLHttpRequest: class
   sessionStorage: { setItem() {}, getItem() { return null; } },
   fetch: async (path) => {
     if (path === "/api/jobs/current") return { status: 200, json: async () => JSON.parse(JSON.stringify(job)) };
-    if (path !== "/api/jobs/current/events") return { status: 404, json: async () => ({}) };
+    if (path === "/api/queue" && queue) return { status: 200, json: async () => JSON.parse(JSON.stringify(queue)) };
+    if (!/^\/api\/jobs\/[^/]+\/events$/.test(path)) return { status: 404, json: async () => ({}) };
+    if (!paths.includes(path)) paths.push(path);
     const a = answers[Math.min(asked, answers.length - 1)];
     asked += 1;
     if (a === "down") throw new TypeError("Failed to fetch");
@@ -2357,7 +2525,15 @@ const run = async (name, seq) => { answers = seq; asked = 0; job = { ...job, job
   await ctx.attach(); await settle(); return look(); };
 const out = { tries: vm.runInContext("FOLLOW_TRIES", ctx) };
 (async () => {
-  out.gone = await run("j1", ["404"]);   // the window closed, songcharter started again: no job
+  out.gone = await run("j1", ["404"]);   // the window closed, songcharter started again: no job, no list
+  ctx.again();
+  // the v0.5.0 review's install-01: the list a songcharter started since answers holds the song, waiting
+  queue = { paused: "restart", restarted: 1, run: 1, entries: [{ id: "e1", run: 1, name: "Some Song.mp3",
+                                                                 state: "waiting", job: null }] };
+  out.listed = await run("j0", ["404"]);
+  queue = { ...queue, entries: [{ ...queue.entries[0], name: "Other Song.mp3" }] };   // another song waits
+  out.other = (await run("j0b", ["404"])).text;
+  queue = null;
   ctx.again();
   const T = out.tries;
   out.down = await run("j2", ["down"]);   // nothing answers any more
@@ -2369,6 +2545,7 @@ const out = { tries: vm.runInContext("FOLLOW_TRIES", ctx) };
   out.errors = await run("j4", ["500"]);   // an answer that is not the events counts as a failure too
   ctx.again();
   out.open = await run("j5", ["open"]);   // a chart that runs on: nothing ends
+  out.paths = paths;
   console.log(JSON.stringify(out));
 })().catch((e) => { console.error(e); process.exit(1); });
 """
@@ -2381,7 +2558,11 @@ def test_the_page_lets_go_when_songcharter_is_gone(tmp_path):
     working reconnect starts the count again), the page ends the chart: the screen's lock let go, not running, the
     tab's title "Stopped", the update notice back, the rows left open, and what to do. With no answer at all the
     window may still be open (the page lost it for a while, after the PC slept, while the chart runs on), so the text
-    says to reload first, which reattaches, and then what to do if it was closed (the v0.4.0 gate's advisor)."""
+    says to reload first, which reattaches, and then what to do if it was closed (the v0.4.0 gate's advisor). What to
+    do once songcharter is started again (the v0.5.0 review's install-01): reload and press Carry on, as the song
+    waits at the top of the list, unless the list it answers has no such song waiting, then chart it again; each
+    chart's events asked by its own job id (correct-2; breaks: the old "chart the song again" text, follow() on
+    /api/jobs/current/events)."""
     script = tmp_path / "gone.cjs"
     script.write_text(GONE_PAGE, encoding="utf-8")
     app_js = tmp_path / "app.js"
@@ -2396,17 +2577,24 @@ def test_the_page_lets_go_when_songcharter_is_gone(tmp_path):
     kept = "what it had worked out is kept, so it goes faster."
     assert out["gone"] == {**ended, "asked": 1, "text": "songcharter was closed while it charted (closing its "
                            f"window stops the chart) and has been started again. Chart the song again: {kept}"}
+    # the v0.5.0 review's install-01: the song back at the top of the list is to be carried on, not charted twice
+    carry = f"press Carry on: the song waits at the top of the list, and {kept}"
+    assert out["listed"] == {**out["gone"], "text": "songcharter was closed while it charted (closing its window "
+                             f"stops the chart) and has been started again. Reload this page (press F5) and {carry}"}
+    assert out["other"] == out["gone"]["text"]   # another song waits: this one is to be charted again
     # M8-04 (the v0.4.0 gate's note): with nothing answering, the heading and the tab say so, not "stopped"
     assert out["down"] == {**ended, "title": "Not answering - songcharter", "heading": "songcharter is not answering",
                            "asked": tries, "text": "songcharter is not answering. If the songcharter window "
                            "is still open, reload this page (press F5) to follow the chart. If the window was "
-                           "closed, which stops the chart, start songcharter again from the Start menu, then chart the "
-                           f"song again: {kept}"}
+                           "closed, which stops the chart, start songcharter again from the Start menu, then reload "
+                           f"this page and {carry}"}
     running = {"title": "Charting - songcharter", "running": True, "held": 1, "update": True, "done": True,
                "cancel": False}
     assert {k: out["flaky"][k] for k in running} == running and out["flaky"]["asked"] == 2 * tries
     assert out["errors"] == {**out["down"], "asked": tries}
     assert {k: out["open"][k] for k in running} == running and out["open"]["asked"] == 1
+    # the v0.5.0 review's correct-2: each chart's events by its own job id, never "current"
+    assert out["paths"] == [f"/api/jobs/{j}/events" for j in ("j1", "j0", "j0b", "j2", "j3", "j4", "j5")]
 
 
 def test_the_done_screen_puts_the_install_first_and_folds_the_rest():
@@ -2683,7 +2871,7 @@ const document = { getElementById: (id) => els[id] || (els[id] = node(id)), crea
 // the options form: the boxes and radios its selectors ask for, by name and value
 const box = (name, value, checked) => Object.assign(node("input"), { name, value, checked, defaultChecked: checked });
 const inputs = [box("instruments", "guitar", true), box("instruments", "bass", true), box("instruments", "drums", true),
-  box("levels", "expert", true), box("levels", "hard", false), box("how", "best", true), box("how", "quick", false)];
+  box("levels", "expert", true), box("levels", "hard", false), box("how", "quick", true), box("how", "best", false)];
 const field = (value) => Object.assign(node("input"), { value });
 const elements = { title: field(""), artist: field(""), album: field(""), year: field(""), genre: field(""),
   solos: field("labels"), solo_names: field(""), takes: field(""), device: field("auto"),
@@ -2712,11 +2900,11 @@ const ctx = { document, window: { addEventListener() {}, confirm: () => true }, 
     const body = init && init.body ? JSON.parse(init.body) : null;
     if (init && init.method === "POST") posted.push([path, body]);
     if (path === "/api/jobs/current") return { status: 200, json: async () => JSON.parse(JSON.stringify(job)) };
-    if (path === "/api/jobs/current/results") return { status: 200, json: async () => RESULTS };
+    if (/^\/api\/jobs\/[^/]+\/results$/.test(path)) return { status: 200, json: async () => RESULTS };
     // M8-10: the Done screen names its song by the job id the results gave
     if (path === "/api/jobs/j1/listen") return { status: 200, json: async () => ({ url: "/l/guitar-expert.ogg" }) };
     if (path === "/api/open") return { status: openAnswer[0], json: async () => openAnswer[1] };
-    if (path === "/api/jobs/current/events") return { status: 200, body: { getReader: () => ({
+    if (/^\/api\/jobs\/[^/]+\/events$/.test(path)) return { status: 200, body: { getReader: () => ({
       read: () => new Promise(() => {}) }) } };
     return { status: 404, json: async () => ({}) };
   } };
@@ -2733,7 +2921,7 @@ const out = {};
                                       quick: { takes: 1, low_min: 4, high_min: 10 } } });
   out.gpu = { choice: els.choice.hidden, cpu: els["choice-cpu"].hidden, best: els["best-label"].textContent,
               quick: els["quick-label"].textContent, folded: ["more", "lyrics-box", "pictures-box"].map((i) => els[i].open) };
-  out.best = ctx.readOptions();
+  out.filled = ctx.readOptions();
   inputs.find((i) => i.value === "quick").checked = true;
   inputs.find((i) => i.value === "best").checked = false;
   vm.runInContext("choose()", ctx);
@@ -2751,8 +2939,11 @@ const out = {};
   elements.takes.value = "";
   vm.runInContext("typedTakes()", ctx);
   out.typedNone = how();
+  elements.takes.value = "4";
+  vm.runInContext("typedTakes()", ctx);
+  out.typed4 = how();
   // the CPU: no choice, a line with its minutes; what it sends is the defaults
-  ctx.fillOptions({ ...up, choices: { gpu: false, best: { takes: 1, low_min: 12, high_min: 21 }, quick: null } });
+  ctx.fillOptions({ ...up, choices: { gpu: false, best: null, quick: { takes: 1, low_min: 12, high_min: 21 } } });
   out.cpu = { choice: els.choice.hidden, cpu: els["choice-cpu"].hidden, line: els["choice-cpu"].textContent,
               sent: ctx.readOptions() };
   ctx.fillOptions({ ...up, choices: { gpu: false, best: null, quick: null } });
@@ -2884,11 +3075,17 @@ def test_the_ui_pass_page(tmp_path):
     assert out["big"] == "About 30 to 40 more minutes, from how long the first guitar take took."
     defaults = {"instruments": ["guitar", "bass", "drums"], "levels": ["expert"], "solos": "labels", "device": "auto",
                 "preview": True, "stems": False, "one_audio": False}   # M8-12: the stems off, the split audio on
-    assert out["gpu"] == {"choice": False, "cpu": True, "best": "Best chart (4 guitar takes, about 9 to 23 minutes)",
-                          "quick": "Quick chart (1 take, about 4 to 10 minutes)", "folded": [False, False, False]}
-    assert out["best"] == defaults and out["bestAgain"] == defaults   # Best: what the form sent before M8-04
-    assert out["quick"] == {**defaults, "takes": 1}
-    assert out["typed3"] == {"how": [], "takes": 3} and out["typed1"] == ["quick"] and out["typedNone"] == ["best"]
+    # the owner's decision of 2026-11-09: Quick (1 take) is the default, Best (4 takes) slower and only sometimes
+    # better (break: Best checked first, or Quick sending --takes 1 and Best nothing, as before)
+    assert out["gpu"] == {"choice": False, "cpu": True,
+                          "best": ("Best chart (4 guitar takes, about 9 to 23 minutes): slower, and only sometimes "
+                                   "better"),
+                          "quick": "Quick chart (1 guitar take, about 4 to 10 minutes)",
+                          "folded": [False, False, False]}
+    assert out["filled"] == defaults and out["quick"] == defaults   # as filled, and Quick chosen: the defaults
+    assert out["bestAgain"] == {**defaults, "takes": 4}
+    assert out["typed3"] == {"how": [], "takes": 3} and out["typed1"] == ["quick"] and out["typedNone"] == ["quick"]
+    assert out["typed4"] == ["best"]
     assert out["cpu"] == {"choice": True, "cpu": False, "sent": defaults,
                           "line": "This PC charts the guitar on the CPU, so it makes 1 guitar take: about 12 to 21 "
                                   "minutes for this song."}
@@ -3051,23 +3248,31 @@ def test_the_songs_folders_guess_is_always_given(finished, tmp_path, monkeypatch
     ({"device": {"chosen": "cpu"}, "guitar_device": "cpu"}, False),
     ({"device": {"chosen": None}}, False)])
 def test_best_or_quick_offered_on_the_gpu_with_each_ones_estimate(tmp_path, doctor, gpu):
-    """M8-04 item 8: the upload's `choices`: on a PC that charts the guitar on the GPU, Best (every option at its
-    default: 4 takes) and Quick (1 take), each estimate.for_job's range for this song; elsewhere no choice, and Best's
-    range (1 take) for the line; and what each choice sends is the command line's own: Best no --takes (the
-    pipeline's 4 on CUDA), Quick --takes=1."""
+    """M8-04 item 8, with the owner's decision of 2026-11-09 (1 take is the default on the GPU too): the upload's
+    `choices`: on a PC that charts the guitar on the GPU, Quick (every option at its default: 1 take) and Best (4
+    takes), each estimate.for_job's range for this song; elsewhere no choice, and Quick's range (1 take) for the line;
+    and what each choice sends is the command line's own: Quick no --takes (the pipeline's 1), Best --takes=4
+    (break: the default back to 4 takes: Quick's range is 4 takes')."""
     from songcharter.ui import estimate as E
     app = S.App(tmp_path, report=lambda: {**DOCTOR, **doctor})
     c = app.choices(241.0)
     auto, guitar = doctor["device"]["chosen"], doctor.get("guitar_device")
     assert c["gpu"] is gpu
-    assert c["best"] == E.for_job(241.0, J.parse_options({}), auto, guitar)
-    assert c["quick"] == (E.for_job(241.0, J.parse_options({"takes": 1}), auto, guitar) if gpu else None)
+    assert c["quick"] == E.for_job(241.0, J.parse_options({}), auto, guitar)
+    assert c["best"] == (E.for_job(241.0, J.parse_options({"takes": 4}), auto, guitar) if gpu else None)
+    if auto is not None:
+        assert c["quick"]["takes"] == 1
     if gpu:
-        assert (c["best"]["takes"], c["quick"]["takes"]) == (4, 1) and c["quick"]["high_s"] < c["best"]["low_s"] * 2
+        assert c["best"]["takes"] == 4 and c["quick"]["high_s"] < c["best"]["low_s"] * 2
+        assert (c["quick"]["low_min"], c["quick"]["high_min"]) == (2, 7)   # a 4-minute song: the guide's minutes
     assert app.choices(None) == {"gpu": gpu, "best": None, "quick": None}
-    best = J.chart_command(Path("s.wav"), Path("out"), J.parse_options({}), None)
-    quick = J.chart_command(Path("s.wav"), Path("out"), J.parse_options({"takes": 1}), None)
-    assert not any(a.startswith("--takes") for a in best) and quick == best + ["--takes=1"]
+    quick = J.chart_command(Path("s.wav"), Path("out"), J.parse_options({}), None)
+    best = J.chart_command(Path("s.wav"), Path("out"), J.parse_options({"takes": 4}), None)
+    assert not any(a.startswith("--takes") for a in quick) and best == quick + ["--takes=4"]
+    html = S.static_files()["index.html"].decode()   # Quick checked, first; Best said to be slower
+    assert html.index('value="quick" checked>') < html.index('value="best">') and 'value="best" checked' not in html
+    assert ">Best chart (4 guitar takes): slower, and only sometimes better</span>" in html
+    assert 'placeholder="default: 1 (Best chart: 4)"' in html
 
 
 # ------------------------------------------------------------------------------------------------ the queue (M8-10)
@@ -3091,9 +3296,15 @@ def test_a_finished_songs_routes_by_its_job_id_after_the_next_has_started(finish
     snap = json.loads(get(ctx, f"/api/jobs/{first.id}")[2])
     assert snap["state"] == "done" and snap["events"][-1]["event"] == "result" and snap["kept"] is True
     for path in ("/api/jobs/20000101-000000/results", "/api/jobs/x/results", "/api/jobs/../current/results",
-                 f"/api/jobs/{first.id}/events", f"/api/jobs/{first.id}/nope", f"/api/jobs/{first.id}/preview/x.png",
+                 "/api/jobs/20000101-000000/events", f"/api/jobs/{first.id}/nope",
+                 f"/api/jobs/{first.id}/preview/x.png",
                  f"/api/jobs/{first.id}/art/album.jpg", f"/api/jobs/{first.id}/listen/guitar-expert.ogg"):
         assert get(ctx, path)[0] == 404, path
+    # its album art by its own job id too, as the preview and Listen (the v0.5.0 review's tests-3; break: the art's URL
+    # on "current", which is the next song's while it charts)
+    (first.out / "album.jpg").write_bytes(b"\xff\xd8\xffmade-up")
+    art = json.loads(get(ctx, f"/api/jobs/{first.id}/results")[2])["art"]["album_art"]
+    assert art == f"/api/jobs/{first.id}/art/album.jpg" and get(ctx, art)[2] == b"\xff\xd8\xffmade-up"
     songs = tmp_path / "Songs"
     songs.mkdir()
     assert post(ctx, "/api/clonehero", {"folder": str(songs)})[0] == 200
@@ -3120,6 +3331,60 @@ def test_a_finished_songs_routes_by_its_job_id_after_the_next_has_started(finish
     assert kept is not None and again.jobs.current is None
     assert S.results(kept, first.id)["folder"] == str(first.out) and again.queue.snapshot()["paused"] is None
     assert [e["state"] for e in again.queue.snapshot()["entries"]] == ["ready", "ready"]
+
+
+def test_a_look_open_on_a_song_the_list_has_dropped_keeps_working(finished, tmp_path, monkeypatch):
+    """The v0.5.0 review's correct-1: song A's Done screen (Look) is open by A's job id; Clear the list (or the trim)
+    takes A out of the list. Its results, preview, album art, snapshot, Install, the zip, Open folder and Listen by
+    A's id still answer, through its chart in the library (the server's own record of A's folder, never a path from
+    the page), named by A's id; an id that was never a job's stays 404, and a chart deleted since is said gone by its
+    name (break: Handler._job without Queue.dropped_chart: 404 and "no finished chart yet")."""
+    from songcharter import cache, wsl
+    ctx = finished
+    root = tmp_path / "cache"
+    monkeypatch.setattr(ctx.app, "_cache_root", root)
+    songs = tmp_path / "Songs"
+    songs.mkdir()
+    assert post(ctx, "/api/clonehero", {"folder": str(songs)})[0] == 200
+    first = ctx.run()
+    work = root / "work" / f"song-{first.upload['id']}"   # its work folder in the cache, as a real chart's is
+    work.mkdir(parents=True)
+    cache.mark(work, Path("s.wav"), first.upload["id"], None)
+    (work / "preview").mkdir()
+    (work / "preview" / "overview.png").write_bytes(b"\x89PNG\r\n\x1a\nmade-up")
+    (work / "pipeline.json").write_text(json.dumps({"assemble": {"folder": str(first.out), "ok": True},
+                                                    "preview": {"ok": True, "flags": [], "remarks": []}}))
+    (first.out / "album.jpg").write_bytes(b"\xff\xd8\xffmade-up")
+    listen_chart(first.out)
+    status, ctx.upload = upload(ctx, song(tmp_path / "t.wav", 2.0), "Other Song.wav")
+    second = ctx.run()
+    assert post(ctx, "/api/queue/clear")[0] == 200 and ctx.app.queue.snapshot()["entries"] == []
+    assert ctx.app.queue.job(first.id) is None   # out of the list
+    status, _, body = get(ctx, f"/api/jobs/{first.id}/results")
+    res = json.loads(body)
+    assert status == 200 and res["job"] == first.id and res["folder"] == str(first.out) and res["installable"]
+    assert res["preview"]["overview"] == f"/api/jobs/{first.id}/preview/overview.png"
+    assert get(ctx, res["preview"]["overview"])[2] == b"\x89PNG\r\n\x1a\nmade-up"
+    assert res["art"]["album_art"] == f"/api/jobs/{first.id}/art/album.jpg"
+    assert get(ctx, res["art"]["album_art"])[2] == b"\xff\xd8\xffmade-up"
+    snap = json.loads(get(ctx, f"/api/jobs/{first.id}")[2])
+    assert snap["job"] == first.id and snap["events"][-1]["folder"] == str(first.out)
+    status, answer = post(ctx, f"/api/jobs/{first.id}/install", {"replace": False})
+    assert status == 200 and answer["installed"] == str(songs / first.out.name)
+    assert post(ctx, f"/api/jobs/{first.id}/export/zip")[0] == 200
+    monkeypatch.setattr(wsl, "open_url", lambda url: True)
+    status, answer = post(ctx, "/api/open", {"what": "built", "job": first.id})
+    assert status == 200 and answer["path"] == str(first.out)
+    status, answer = post(ctx, f"/api/jobs/{first.id}/listen", {"part": "guitar", "level": "expert"})
+    assert status == 200 and answer["url"] == f"/api/jobs/{first.id}/listen/guitar-expert.ogg", answer
+    assert get(ctx, answer["url"])[2][:4] == b"OggS"
+    assert json.loads(get(ctx, "/api/jobs/current/results")[2])["folder"] == str(second.out)   # current unchanged
+    assert get(ctx, "/api/jobs/20000101-000000/results")[0] == 404   # never a job's: as before
+    shutil.rmtree(first.out)   # deleted in Windows since: said by its name, as for a library chart
+    status, answer = post(ctx, f"/api/jobs/{first.id}/install", {"replace": True})
+    assert status == 400 and answer["error"] == (f"{first.out.name}'s folder is not there any more: it was moved or "
+                                                 "deleted")
+    assert get(ctx, f"/api/jobs/{first.id}/results")[0] == 404
 
 
 def test_the_queues_endpoints_are_behind_the_guards(finished, monkeypatch):
@@ -3157,6 +3422,12 @@ def test_the_queues_endpoints_are_behind_the_guards(finished, monkeypatch):
     (ctx.home / "doctor.json").write_text(json.dumps({**DOCTOR, "disk": {"home_free_mb": 90000,
                                                                          "windows_c_free_mb": None}}))
     assert ctx.app.disk_low() is None
+    # WSL's own disk (and the only one measured on a Linux install without C:), the v0.5.0 review's tests-5 (break:
+    # home_free_mb left out of App.disk_low: each song fails in turn on a full disk instead)
+    (ctx.home / "doctor.json").write_text(json.dumps({**DOCTOR, "disk": {"home_free_mb": 900,
+                                                                         "windows_c_free_mb": None}}))
+    assert ctx.app.disk_low() == ("WSL's disk is nearly full (under 6 GB free), so the queue is paused: free some "
+                                  "space, then Carry on")
 
 
 QUEUE_PAGE = r"""
@@ -3216,7 +3487,7 @@ const ctx = { document, window: { addEventListener() {}, confirm: () => true }, 
     if (path.endsWith("/results")) return ok({ job: path.split("/")[3], installable: false, preview: { why: "off" },
       art: null, lyrics: null, listen: null, folder: "/x/y" });
     if (path.endsWith("/install")) return ok({ installed: "/s", windows_path: null, replaced: null, note: null });
-    if (path === "/api/jobs/current/events") return { status: 200, body: { getReader: () => ({
+    if (/^\/api\/jobs\/[^/]+\/events$/.test(path)) return { status: 200, body: { getReader: () => ({
       read: () => new Promise(() => {}) }) } };
     return { status: 404, json: async () => ({}) };
   } };
@@ -3255,6 +3526,7 @@ const out = {};
   out.running = { title: document.title, locks: locks.length, rows: rows(), left: els["queue-left"].textContent,
     actions: els["queue-actions"].hidden,
     keep: els["queue-keep"].hidden, pause: els.pause.hidden, box: els["queue-box"].hidden };
+  out.awake = { two: els["queue-awake"].hidden };
   ctx.handle({ event: "take", index: 3, count: 4, seed: 3 });
   out.take = document.title;
   // the update notice is held while a song waits, as while one charts
@@ -3289,6 +3561,7 @@ const out = {};
   await settle();
   out.end = { title: document.title, released: locks[0].released, done: els["done-screen"].hidden,
               rows: rows(), keep: els["queue-keep"].hidden, actions: els["queue-actions"].hidden };
+  out.awake.done = els["queue-awake"].hidden;
   // a restart with three songs waiting: paused, with Carry on and Clear the list
   ctx.setQueue({ paused: "restart", restarted: 3, run: 2, left: { low_s: 600, high_s: 1500, songs: 3 },
                  entries: ["c", "d", "e"].map((x) => ({ ...entry(x, "waiting", null), run: 2 })) });
@@ -3305,6 +3578,7 @@ const out = {};
   out.disk = els["queue-paused-text"].textContent;
   // a song that waits for the one charting gets no lyrics: said beside the box
   ctx.setQueue({ ...queue, paused: null, entries: [entry("g", "charting", "j9")] });
+  out.awake.one = els["queue-awake"].hidden;
   ctx.fillOptions({ name: "One.mp3", bytes: 1e6, tags: {}, origin: {} });
   out.lyrics = { wait: els["lyrics-wait"].hidden, disabled: els.options.elements.lyrics.disabled,
                  song: els["song-box"].hidden, button: els.chart.textContent };
@@ -3386,7 +3660,8 @@ def test_the_page_queues_several_songs_and_follows_them_one_after_the_other(tmp_
     assert out["first"] == "Uploading First.mp3 (1 of 2)…" and out["second"] == "Uploading Second.mp3 (2 of 2)…"
     assert out["form"] == {"shown": True, "names": ["First.mp3 (2.0 MB)", "Second.mp3 (3.0 MB)"],
                            "namesHidden": False, "song": True, "lyrics": True, "pictures": True,
-                           "button": "Chart them", "best": "Best charts (4 guitar takes)",
+                           "button": "Chart them",
+                           "best": "Best charts (4 guitar takes): slower, and only sometimes better",
                            "head": "2 songs, charted one after the other with these options:"}
     assert "title" not in out["options"] and "lyrics" not in out["options"] and out["options"]["device"] == "auto"
     assert out["sent"] == ["a", "b"]
@@ -3419,6 +3694,12 @@ def test_the_page_queues_several_songs_and_follows_them_one_after_the_other(tmp_
     assert out["disk"].startswith("C: is nearly full")
     assert out["lyrics"] == {"wait": False, "disabled": True, "song": False, "button": "Chart it"}
     assert out["hours"] == ["5 min", "59 min", "1 h", "1 h 10 min", "3 h 20 min"]
+    # the advisor's finding 7 on v0.5.0: with 2 songs this evening, one of them to chart, the line on keeping the PC
+    # awake shows; with 1 song, or once all have finished, it does not (break: the line never shown, or shown for one)
+    assert out["awake"] == {"two": False, "done": True, "one": True}
+    html = S.static_files()["index.html"].decode()
+    assert ('<p id="queue-awake" hidden>Keep your PC awake while these chart: in Windows Settings, set Sleep to Never '
+            'for now.</p>') in html
     # the review's fixes
     assert out["note"] == {"text": "1 song was not added (1 is waiting already): J.mp3. Drop it again once some are "
                            "charted.", "hidden": False, "progress": False}
@@ -3437,17 +3718,144 @@ def test_the_page_queues_several_songs_and_follows_them_one_after_the_other(tmp_
     assert '<button type="button" id="again">Add a song</button>' in html
 
 
+# QUEUE_PAGE's stand-in DOM and server with a flow of its own: between()'s wait for the next song, and the time left
+BETWEEN_FLOW = r"""
+(async () => {
+  queue = { paused: null, run: 1, left: null, entries: [entry("a", "charting", "j1"), entry("b", "waiting", null)] };
+  job = { job: "j1", state: "running", upload: { name: "a.mp3" }, started: 1000, now: 1000, estimate: EST };
+  ctx.setQueue(queue);
+  await ctx.attach();
+  await settle();
+  // A's result comes a second or so before its process exits, which the server waits for before it records the end:
+  // the list read just after it still has A charting; the next read has B charting
+  const base = ctx.fetch, asked = [];
+  let reads = 0;
+  ctx.fetch = async (path, init) => {
+    if (path === "/api/queue" && ++reads === 2) {
+      queue = { ...queue, entries: [entry("a", "ready", "j1"), entry("b", "charting", "j2")] };
+      job = { ...job, job: "j2", upload: { name: "b.mp3" }, started: 1100 };
+    }
+    if (/\/events$/.test(path)) asked.push(path);
+    return base(path, init);
+  };
+  ctx.handle({ event: "result", ok: true, folder: "/h/library/x/A", summary: "gate: OK", at: 1090 });
+  await settle();
+  out.between = { followed: vm.runInContext("state.job.job", ctx), reads, events: asked };
+  // a time-left answer that is the song before's (a GET /api/jobs/current sent before it ended) is not shown
+  const rem = { from: 1000, low_s: 60, high_s: 120, low_min: 1, high_min: 2, takes_left: 0 };
+  job = { ...job, job: "j1", remaining: rem };
+  await ctx.askRemaining();
+  out.stale = vm.runInContext("state.remaining", ctx);
+  job = { ...job, job: "j2" };
+  await ctx.askRemaining();
+  out.fresh = vm.runInContext("state.remaining && state.remaining.high_s", ctx);
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_page_waits_for_the_next_song_and_never_shows_the_last_songs_time_left(tmp_path):
+    """The v0.5.0 review's tests-6 (app.js in node, QUEUE_PAGE's stand-ins): after A's result, between() follows the
+    next song only once the list has a song charting that is not A (break: any charting song: the page attaches A
+    again, which still reads as charting while its process exits, and replays its events); askRemaining drops an
+    answer for another job than the one followed (break: its job check left out: the last song's time left shows on
+    the next)."""
+    script = tmp_path / "between.cjs"
+    script.write_text(QUEUE_PAGE[:QUEUE_PAGE.index("(async () => {")] + BETWEEN_FLOW, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(S.static_files()["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["between"] == {"followed": "j2", "reads": 2, "events": ["/api/jobs/j2/events"]}
+    assert out["stale"] is None and out["fresh"] == 120
+
+
+# QUEUE_PAGE's stand-ins: one song ends while "current" is already another's (a gap that spanned a whole song)
+ENDED_FLOW = r"""
+(async () => {
+  ctx.setQueue({ paused: null, run: 1, left: null, entries: [entry("a", "charting", "j1")] });
+  job = { job: "j1", state: "running", upload: { name: "a.mp3" }, started: 1000, now: 1000, estimate: EST };
+  await ctx.attach();
+  await settle();
+  job = { ...job, job: "j2", upload: { name: "b.mp3" } };   // what /api/jobs/current says by now
+  const base = ctx.fetch, asked = [];
+  ctx.fetch = async (path, init) => { if (path.endsWith("/results")) asked.push(path); return base(path, init); };
+  ctx.setQueue({ paused: null, run: 1, left: null, entries: [entry("a", "ready", "j1"), entry("b", "ready", "j2")] });
+  ctx.handle({ event: "result", ok: true, folder: "/h/library/x/Made-Up Band - First", summary: "gate: OK", at: 1100 });
+  await settle();
+  out.ended = { asked, title: els["done-title"].textContent, text: els["done-text"].textContent,
+                shown: vm.runInContext("state.shown", ctx) };
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_done_screen_loads_the_results_of_the_song_that_ended(tmp_path):
+    """The v0.5.0 review fixes, F2: the Done screen of the song whose end the page just read loads that song's
+    results by its job id, not "current", which after a gap spanning a whole song is the next one's (break:
+    closedNow's loadResults() with no id: song A's title over song B's results)."""
+    script = tmp_path / "ended.cjs"
+    script.write_text(QUEUE_PAGE[:QUEUE_PAGE.index("(async () => {")] + ENDED_FLOW, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(S.static_files()["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout)["ended"] == {
+        "asked": ["/api/jobs/j1/results"], "title": "Ready", "shown": "j1",
+        "text": "Made-Up Band - First is charted and passed its check."}
+
+
+# QUEUE_PAGE's stand-ins again: a song the server refuses (already in the list), sent from the top "Chart it"
+REFUSED_FLOW = r"""
+(async () => {
+  const err = document.getElementById("options-error"), seen = [];
+  err.scrollIntoView = (how) => seen.push(how || null);
+  ctx.setQueue({ paused: null, run: 1, left: null, entries: [entry("a", "charting", "j1")] });
+  vm.runInContext('state.uploads = [{ id: "a", name: "a.mp3" }]', ctx);
+  ctx.show("options-screen");
+  jobsAnswers = [{ status: 400, body: { error: "This song is already in the list: it is charting now." } }];
+  await ctx.chartIt({ preventDefault() {} });
+  await settle();
+  out.refused = { text: err.textContent, hidden: err.hidden, scrolled: [...seen], form: !els["options-screen"].hidden };
+  els.options.elements.takes.value = "2.5";   // the form's own check, the same way
+  await ctx.chartIt({ preventDefault() {} });
+  out.takes = { text: err.textContent, scrolled: seen.length };
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_a_refused_song_is_said_where_he_sees_it(tmp_path):
+    """The v0.5.0 review fixes: the form's error sits under it, a screen below the top "Chart it" at 700 px, so a
+    refusal ("This song is already in the list") is scrolled into view, the form kept (break: the error shown where
+    it is, out of sight)."""
+    script = tmp_path / "refused.cjs"
+    script.write_text(QUEUE_PAGE[:QUEUE_PAGE.index("(async () => {")] + REFUSED_FLOW, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(S.static_files()["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["refused"] == {"text": "This song is already in the list: it is charting now.", "hidden": False,
+                              "scrolled": [{"block": "center"}], "form": True}
+    assert out["takes"] == {"text": "Guitar takes is a whole number: 1, or 3 or more.", "scrolled": 2}
+
+
 def test_a_cancel_by_id_after_its_song_ended_is_refused_and_the_list_full_says_so(served, monkeypatch):
     """M8-10's review S-S1 through the API: song A ends, the server starts B; POST /api/jobs/<A>/cancel answers 409
     "that chart has ended" and B charts on; /api/jobs/<B>/cancel cancels it. With QUEUE_MAX 1, the third of three
     songs is refused (409, "1 song is waiting already")."""
     ctx, port = served, served.port
-    status, up = upload(ctx, song(ctx.home / "s.wav"), "Song.wav")
+    ups = [upload(ctx, song(ctx.home / f"{n}.wav", 1.0 + n / 10), f"Song {n}.wav")[1] for n in range(4)]
     ctx.mode = "slow"
-    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))
+    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": ups[0]["id"]}).encode(), guarded(port))
     a = json.loads(body)["job"]
     ctx.mode = "hang"   # B's chart, when the server starts it
-    assert call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))[0] == 202
+    assert call(port, "POST", "/api/jobs", json.dumps({"upload": ups[1]["id"]}).encode(), guarded(port))[0] == 202
     deadline = time.monotonic() + 20
     while ctx.app.jobs.current.id == a or ctx.app.jobs.current.state != "running":
         assert time.monotonic() < deadline
@@ -3457,8 +3865,8 @@ def test_a_cancel_by_id_after_its_song_ended_is_refused_and_the_list_full_says_s
     assert status == 409 and json.loads(body)["error"] == "that chart has ended"
     assert b.state == "running" and ctx.app.jobs.current is b
     monkeypatch.setattr(J, "QUEUE_MAX", 1)
-    assert call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))[0] == 202
-    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))
+    assert call(port, "POST", "/api/jobs", json.dumps({"upload": ups[2]["id"]}).encode(), guarded(port))[0] == 202
+    status, _, body = call(port, "POST", "/api/jobs", json.dumps({"upload": ups[3]["id"]}).encode(), guarded(port))
     assert status == 409 and json.loads(body)["error"].startswith("1 song is waiting already")
     status, _, body = call(port, "POST", f"/api/jobs/{b.id}/cancel", b"", guarded(port))
     assert status == 200 and json.loads(body) == {"job": b.id, "state": "cancelled"}

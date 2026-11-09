@@ -15,9 +15,18 @@
     also true on a GPU the torch build has no kernels for. CUDA running out of memory falls back to the CPU too, and
     `info` says why the CPU was used (the UI tells the user).
   * **Cache.** Stems are cached as float32 WAV (the decoded mix peaks above 1.0, which an integer format would clip),
-    keyed by the samples and every setting that changes the result. A cached run returns the same arrays.
-    info.json is written last and is the hit, but only when every stem it lists is there and reads: a folder half
-    deleted (or half written) is separated again, never an error.
+    keyed by the samples and every setting that changes the result, the device among them (CUDA's stems differ from
+    the CPU's in their last bits). A cached run returns the same arrays. info.json is written last and is the hit,
+    but only when every stem it lists is there and reads and it says they were made on the device asked for: a
+    folder half deleted (or half written) is separated again, never an error. A hit says this call's fallback, not
+    the one of the run that made it.
+      - **The keys since v0.5.0.** The CPU's key is the key every earlier version gave on either device, so stems
+        already cached on the CPU still answer. Stems made on CUDA get a key of their own: CUDA stems cached by an
+        earlier version sit under the CPU's key, answer no CUDA request (each such song is separated once more on
+        CUDA, under the new key) and no CPU request either (their info.json says cuda: separated again on the CPU,
+        in place).
+      - CUDA running out of memory gives CPU stems, under the CPU's key (a CPU stem folder there already answers
+        it), and a later CUDA request separates on CUDA again rather than taking them.
 
 Needs torch and demucs >= 4.1 (`pip install songcharter[separate]`); importing this module does not.
 """
@@ -118,13 +127,36 @@ def load_model(name: str = DEFAULT_MODEL, download: Callable[..., str] | None = 
     return model
 
 
-def cache_key(mix: np.ndarray, model: str, revision: str | None, seed: int, shifts: int, overlap: float) -> str:
-    """A hash of the samples and every setting that changes the stems."""
+def cache_key(mix: np.ndarray, model: str, revision: str | None, seed: int, shifts: int, overlap: float,
+              device: str = "cpu") -> str:
+    """A hash of the samples and every setting that changes the stems, the device among them ("cpu" or "cuda"). The
+    CPU's key is exactly the device-less key of the versions before v0.5.0 (the module docstring, Cache)."""
     h = hashlib.sha256()
     a = np.ascontiguousarray(mix, dtype="<f4")
-    h.update(repr((a.shape, model, revision, seed, shifts, overlap, SAMPLE_RATE)).encode())
+    settings = (a.shape, model, revision, seed, shifts, overlap, SAMPLE_RATE)
+    h.update(repr(settings if device == "cpu" else (*settings, device)).encode())
     h.update(a.tobytes())
     return h.hexdigest()[:24]
+
+
+def _cached(cache_dir: Path | str | None, key: str, mix: np.ndarray, device: str,
+            fallback: str | None) -> tuple[dict[str, np.ndarray], SeparationInfo] | None:
+    """The stems in cache_dir/<key>/ and their info with this call's `fallback`, else None: a hit only when every
+    stem info.json lists is there and reads, as long as the mix, and info.json says they were made on `device` (CUDA
+    stems of an earlier version sit under the CPU's key)."""
+    folder = Path(cache_dir) / key if cache_dir is not None else None
+    if folder is None or not (folder / "info.json").exists():
+        return None
+    try:  # a folder half deleted is a miss
+        meta = json.loads((folder / "info.json").read_text(encoding="utf-8"))
+        if meta["info"]["device"] != device:
+            return None
+        stems = {s: A.read_wav(folder / f"{s}.wav")[0] for s in meta["stems"]}
+    except (OSError, RuntimeError, ValueError, KeyError, TypeError):  # soundfile's errors are RuntimeErrors
+        return None
+    if not stems or any(y.shape != mix.shape for y in stems.values()):
+        return None
+    return stems, SeparationInfo(**{**meta["info"], "seconds": 0.0, "cached": True, "fallback": fallback})
 
 
 def cuda_works() -> tuple[bool, str | None]:
@@ -163,7 +195,8 @@ def separate(mix: np.ndarray, sample_rate: int = SAMPLE_RATE, *, model: Any = DE
 
     model:  a name in MODELS (loaded from its pinned files) or a Demucs model object (tests).
     device: "auto" (CUDA if a kernel runs: cuda_works), "cuda" or "cpu". CUDA out of memory retries on the CPU.
-    cache_dir: if given, stems are read from and written to cache_dir/<key>/ (float32 WAV, then info.json).
+    cache_dir: if given, stems are read from and written to cache_dir/<key>/ (float32 WAV, then info.json), the key
+           the device's (cache_key; info.key: the folder the stems are in).
     """
     if sample_rate != SAMPLE_RATE:
         raise ValueError(f"separate needs {SAMPLE_RATE} Hz audio, not {sample_rate} Hz")
@@ -173,24 +206,18 @@ def separate(mix: np.ndarray, sample_rate: int = SAMPLE_RATE, *, model: Any = DE
     revision = MODELS[model].revision if isinstance(model, str) and model in MODELS else None
     if isinstance(model, str) and model not in MODELS:
         raise ValueError(f"unknown separation model {model!r} (known: {', '.join(MODELS)})")
-    key = cache_key(mix, name, revision, seed, shifts, overlap)
-    folder = Path(cache_dir) / key if cache_dir is not None else None
-    if folder is not None and (folder / "info.json").exists():
-        try:  # a hit only when every stem info.json lists is there and reads (a folder half deleted is a miss)
-            meta = json.loads((folder / "info.json").read_text(encoding="utf-8"))
-            stems = {s: A.read_wav(folder / f"{s}.wav")[0] for s in meta["stems"]}
-        except (OSError, RuntimeError, ValueError, KeyError, TypeError):  # soundfile's errors are RuntimeErrors
-            stems = None
-        if stems and all(y.shape == mix.shape for y in stems.values()):
-            return stems, SeparationInfo(**{**meta["info"], "seconds": 0.0, "cached": True})
-
-    import torch
     fallback = None
-    if device == "auto":
+    if device == "auto":   # resolved before the cache: the key is the device's
         works, why = cuda_works()
         device = "cuda" if works else "cpu"
         if why:
             fallback = f"CUDA does not run here ({why}); separated on the CPU"
+    key = cache_key(mix, name, revision, seed, shifts, overlap, device)
+    hit = _cached(cache_dir, key, mix, device, fallback)
+    if hit is not None:
+        return hit
+
+    import torch
     net = load_model(model) if isinstance(model, str) else model
     t0 = time.perf_counter()  # wall time is reported only; nothing depends on it
     try:
@@ -200,17 +227,24 @@ def separate(mix: np.ndarray, sample_rate: int = SAMPLE_RATE, *, model: Any = DE
             raise
         torch.cuda.empty_cache()
         fallback = f"CUDA ran out of memory ({str(e).splitlines()[0][:120]}); separated on the CPU"
-        device = "cpu"
+        device, key = "cpu", cache_key(mix, name, revision, seed, shifts, overlap, "cpu")   # CPU stems: its key
+        hit = _cached(cache_dir, key, mix, device, fallback)
+        if hit is not None:
+            return hit
         stems = _run(net, mix, device, seed, shifts, overlap, progress)
     for s, y in stems.items():
         if y.shape != mix.shape:
             raise RuntimeError(f"stem {s} has shape {y.shape}, not the mix's {mix.shape}")
     info = SeparationInfo(name, revision, device, fallback, round(time.perf_counter() - t0, 2), False, key, seed,
                           shifts, overlap)
+    folder = Path(cache_dir) / key if cache_dir is not None else None
     if folder is not None:
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "info.json").unlink(missing_ok=True)  # written last: a folder without it is never a hit
         for s, y in stems.items():
+            # a new file, never the old one rewritten: eval/golden.py hard-links a separation cache's stems here, and
+            # writing through such a link would change the other cache's file (the v0.5.0 re-review's R2)
+            (folder / f"{s}.wav").unlink(missing_ok=True)
             A.write_wav(y, folder / f"{s}.wav")
         (folder / "info.json").write_text(json.dumps({"stems": list(stems), "info": asdict(info)}, indent=1),
                                           encoding="utf-8")
