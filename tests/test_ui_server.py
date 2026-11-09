@@ -2076,15 +2076,15 @@ def test_the_page_shows_the_update_notice_copies_the_line_and_later_hides_it(tmp
                           timeout=60)
     assert done.returncode == 0, done.stderr
     out = json.loads(done.stdout)
-    assert out["none"] == {"box": True, "asked": ["/api/status"], "timers": [2000, 6000, 15000]}
+    assert out["none"] == {"box": True, "asked": ["/api/status", "/api/library"], "timers": [2000, 6000, 15000]}
     text = ("songcharter 9.9.9 is out (you have 0.1.0). To update: close the songcharter window, open Ubuntu from "
             "the Start menu, paste this line and press Enter:")   # the guide's words: not this page's window
     assert out["shown"] == {"hidden": False, "text": text, "line": up["line"], "row": False, "href": up["url"],
                             "link": False, "button": "Copy", "said": None, "selected": False,
-                            "asked": ["/api/status", "/api/status", "/api/hello"]}
+                            "asked": ["/api/status", "/api/library", "/api/status", "/api/hello"]}
     assert out["copied"]["copied"] == [up["line"]] and out["copied"]["button"] == "Copied"
     assert out["copied"]["said"] == "Copied. In the Ubuntu window, a right-click or Ctrl+V pastes it."
-    assert out["asked"] == ["/api/status", "/api/status", "/api/hello"]   # the later asks asked nothing
+    assert out["asked"] == ["/api/status", "/api/library", "/api/status", "/api/hello"]   # the later asks asked nothing
     select = "This browser does not let the page copy here: the line is selected, so press Ctrl+C to copy it."
     for case in ("fallback", "refused"):
         assert out[case]["selected"] is True and out[case]["button"] == "Select and copy", case

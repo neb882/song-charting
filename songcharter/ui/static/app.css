@@ -228,3 +228,10 @@ footer { max-width: 52rem; margin: 0 auto; padding: 0.5rem 1.25rem 2rem; }
 .queue-list li.charting .queue-state { color: var(--accent); }
 .queue-actions { display: inline-flex; flex-wrap: wrap; gap: 0.4rem; margin-left: 0.5rem; vertical-align: middle; }
 .queue-msg { display: block; }
+
+/* your charts (M8-13): every chart in the library, under the drop zone (and the queue), folded when long */
+#charts-box { margin-top: 1rem; }
+#charts-fold > summary { font-size: 1.05rem; }
+.charts-list li.unreadable .queue-state { color: var(--warn); }
+.chart-artist { color: var(--muted); overflow-wrap: anywhere; }
+.chart-facts { display: block; color: var(--muted); }

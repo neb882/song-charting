@@ -33,7 +33,8 @@ const $ = (id) => document.getElementById(id);
 const state = { status: null, upload: null, job: null, stages: {}, offset: 0, ticker: null, follow: 0, ch: null,
   images: { album_art: null, background: null }, sending: 0, version: null, update: null, later: false,
   listen: { parts: {}, job: null }, running: false, wake: null, remaining: null, asking: false,
-  box: { items: [], at: 0 }, queue: null, queueKey: null, uploads: [], shown: null, note: "" };
+  box: { items: [], at: 0 }, queue: null, queueKey: null, uploads: [], shown: null, note: "",
+  charts: null, chartsKey: null };
 // the Listen control's names for the parts and levels the chart has (the results' `listen`)
 const PART_NAMES = { guitar: "Guitar", bass: "Bass", drums: "Drums" };
 const LEVEL_NAMES = { expert: "Expert", hard: "Hard", medium: "Medium", easy: "Easy" };
@@ -42,6 +43,7 @@ const PICTURES = { album_art: "None chosen: the song file's own picture, if it h
 
 function show(screen) {
   for (const id of ["drop-screen", "options-screen", "progress-screen", "done-screen"]) $(id).hidden = id !== screen;
+  placeCharts();
 }
 
 function text(el, value) { el.textContent = value == null ? "" : String(value); return el; }
@@ -1094,6 +1096,7 @@ function renderQueue() {
   $("queue-box").hidden = !list.length;
   const key = JSON.stringify(list);
   if (key !== state.queueKey) {   // the rows made again only when a song changed (a click is not lost)
+    if (state.queueKey != null) refreshCharts();   // a song that ended is a chart in the library (M8-13)
     state.queueKey = key;
     $("queue-list").replaceChildren(...list.map(queueRow));
   }
@@ -1133,7 +1136,8 @@ async function clearList() {
   await queueAction("/api/queue/clear");
 }
 
-// Install from the list: the song's own chart by its job id; a song in Clone Hero already asks before replacing
+// Install from the list: the song's own chart by its job id; a song in Clone Hero already asks before replacing.
+// `e.look` false (a chart of the library without Look, M8-13): the messages do not send him to Look.
 async function installFrom(e, msg, replace) {
   text(msg, "Installing…").hidden = false;
   try {
@@ -1147,7 +1151,17 @@ async function installFrom(e, msg, replace) {
       }
       text(msg, "Not installed: the older chart stays.");
     } else if (r.status === 400 && /Songs folder/.test(d.error || "")) {
-      text(msg, "songcharter does not know your Clone Hero Songs folder yet: press Look, and give it there.");
+      text(msg, e.look === false ? "songcharter does not know your Clone Hero Songs folder yet: give it on the Done " +
+        "screen of the next song you chart, then Install here." :
+        "songcharter does not know your Clone Hero Songs folder yet: press Look, and give it there.");
+    } else if (r.status === 403 && e.look === false) {
+      text(msg, "Windows did not let songcharter finish writing into the Songs folder: try again in a moment, or save the zip and extract it there yourself. ");
+      if (d.zip_url) {
+        const a = make("a", null, "Save the zip");
+        a.href = d.zip_url;
+        a.download = "";
+        msg.append(a);
+      }
     } else if (r.status === 403) {
       text(msg, "Windows did not let songcharter finish writing into the Songs folder: press Look to try again, or to save the zip.");
     } else {
@@ -1525,12 +1539,14 @@ function renderStems(st) {
   text($("stems-line"), st.why || `${st.files.length} instruments as lossless files (${Math.round(st.bytes / 1e6)} MB), in the folder "${st.name}" beside the song's. Piano and "other" come out the least clean.`);
 }
 
-async function exportStems() {
-  const msg = $("stems-msg");
-  $("stems-zip").disabled = true;
+// the Done screen's button, or a chart's in Your charts (M8-13: its path by the chart's id, its own message)
+async function exportStems(path, msg, button) {
+  msg = msg || $("stems-msg");
+  button = button || $("stems-zip");
+  button.disabled = true;
   text(msg, "Making the zip: a few seconds…").hidden = false;
   try {
-    const r = await api("POST", jobPath("/export/stems"));
+    const r = await api("POST", path || jobPath("/export/stems"));
     if (r.status === 200) {
       download(r.data.url, r.data.name);
       text(msg, `The zip is ${r.data.name}: your browser saves it, into Downloads unless you chose another folder.`).hidden = false;
@@ -1540,7 +1556,7 @@ async function exportStems() {
   } catch (x) {
     text(msg, "songcharter does not answer: is it still running?").hidden = false;
   } finally {
-    $("stems-zip").disabled = false;
+    button.disabled = false;
   }
 }
 
@@ -1572,10 +1588,12 @@ async function exportZip() {
   }
 }
 
-async function openFolder(what, where) {
+// `job`: the chart's id (M8-13: a chart of Your charts); else the Done screen's own for "built"
+async function openFolder(what, where, job) {
   text(where, "").hidden = true;   // an earlier refusal goes once this one is asked
+  const id = what === "built" ? job || state.shown : null;
   try {
-    const r = await api("POST", "/api/open", what === "built" && state.shown ? { what, job: state.shown } : { what });
+    const r = await api("POST", "/api/open", id ? { what, job: id } : { what });
     if (r.status === 200 && !r.data.opened) {
       text(where, `Open it yourself: ${r.data.windows_path || r.data.path}`).hidden = false;
     } else if (r.status !== 200) {
@@ -1584,6 +1602,91 @@ async function openFolder(what, where) {
   } catch (x) {
     text(where, "songcharter does not answer: is it still running?").hidden = false;
   }
+}
+
+// ------------------------------------------------------------------------------------------------ your charts (M8-13)
+
+// Every chart in the library (GET /api/library), newest first, under the drop zone and the queue: open while short,
+// folded when long ("Your charts (24)"), and reached from the Done screen and the queue's list. Each with its name and
+// artist, the date, the verdict in plain words, the audio and the stems; Install, Open, Download the stems, and Look
+// while songcharter still has its work folder (the preview and Listen). Nothing is deleted from here: Open shows the
+// folder, where Windows can.
+const CHARTS_OPEN = 6;   // a list this long or shorter is shown open; a longer one folded [judgement]
+const AUDIO_WORDS = { one: "one audio file", split: "a sound file per instrument" };
+
+async function refreshCharts() {
+  let r;
+  try { r = await api("GET", "/api/library"); } catch (e) { return; }
+  if (r.status === 200 && Array.isArray(r.data.charts)) setCharts(r.data.charts);
+}
+
+function setCharts(charts) {
+  const key = JSON.stringify(charts);
+  if (key !== state.chartsKey) {   // the rows made again only when a chart changed (a message is not lost)
+    state.chartsKey = key;
+    $("charts-list").replaceChildren(...charts.map(chartRow));
+  }
+  if (state.charts == null && charts.length) $("charts-fold").open = charts.length <= CHARTS_OPEN;   // then his own
+  state.charts = charts;
+  const title = `Your charts (${charts.length})`;
+  text($("charts-title"), title);
+  text($("to-charts"), title);
+  text($("queue-charts"), title);
+  $("charts-lost").hidden = !charts.some((c) => c.readable && !c.look);
+  placeCharts();
+}
+
+// with the start, progress and Done screens; not over the options he is filling
+function placeCharts() {
+  const n = (state.charts || []).length;
+  $("charts-box").hidden = !n || !$("options-screen").hidden;
+  $("to-charts").hidden = !n;
+  $("queue-charts").hidden = !n;
+}
+
+function toCharts() {
+  const box = $("charts-box");
+  $("charts-fold").open = true;
+  if (!box.hidden && typeof box.scrollIntoView === "function") box.scrollIntoView({ block: "start" });
+  refreshCharts();
+}
+
+function chartDate(t) {
+  if (typeof t !== "number") return "";
+  return new Date(t * 1000).toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric",
+                                                       hour: "numeric", minute: "2-digit" });
+}
+
+function chartVerdict(c) {
+  if (!c.readable) return "Can't be read";
+  return c.ok ? "Passed its check" : "Did not pass its check: kept for a look, not for Clone Hero";
+}
+
+function chartRow(c) {
+  const li = make("li", c.readable ? (c.ok ? "ready" : "check_failed") : "unreadable");
+  li.append(make("span", "queue-name", c.name));
+  if (c.artist) li.append(" ", make("span", "chart-artist", c.artist));
+  li.append(" ", make("span", "queue-state", chartVerdict(c)));
+  const facts = [chartDate(c.time)];
+  if (c.readable && c.audio) facts.push(AUDIO_WORDS[c.audio] || c.audio);
+  if (c.stems) facts.push("stems saved");
+  li.append(make("span", "chart-facts small", facts.filter(Boolean).join(" · ")));
+  const actions = make("span", "queue-actions");
+  const msg = make("span", "queue-msg small");
+  msg.hidden = true;
+  if (c.ok) {
+    actions.append(smallButton("Install", () => installFrom({ job: c.id, chart: c.name, look: !!c.look }, msg),
+                               "small-button"));
+  }
+  actions.append(smallButton("Open", () => openFolder("built", msg, c.id)));
+  if (c.stems) {
+    const b = smallButton("Download the stems", () => exportStems(`/api/jobs/${encodeURIComponent(c.id)}/export/stems`,
+                                                                  msg, b));
+    actions.append(b);
+  }
+  if (c.look) actions.append(smallButton("Look", () => look(c.id)));
+  li.append(actions, msg);
+  return li;
 }
 
 // ------------------------------------------------------------------------------------------------ start
@@ -1605,7 +1708,7 @@ async function start() {
   $("install").addEventListener("click", () => install(false));
   $("replace").addEventListener("click", () => install(true));
   $("zip").addEventListener("click", exportZip);
-  $("stems-zip").addEventListener("click", exportStems);
+  $("stems-zip").addEventListener("click", () => exportStems());
   $("listen-part").addEventListener("change", listenLevels);
   $("listen").addEventListener("click", () => listenTo(0));
   $("open-song").addEventListener("click", () => openFolder("song", $("open-msg")));
@@ -1617,6 +1720,8 @@ async function start() {
   $("queue-clear").addEventListener("click", clearList);
   $("queue-clear-all").addEventListener("click", clearList);
   $("back").addEventListener("click", () => show("progress-screen"));
+  $("to-charts").addEventListener("click", toCharts);
+  $("queue-charts").addEventListener("click", toCharts);
   document.addEventListener("visibilitychange", visible);
   show("drop-screen");
   let st;
@@ -1629,6 +1734,7 @@ async function start() {
   state.status = st;
   renderStatus(st);
   setQueue(st.queue);
+  refreshCharts();
   showUpdate(st.update);
   setInterval(refreshQueue, 5000);   // the list's states, and a song the server starts by itself
   if (!st.update) for (const ms of UPDATE_ASKS) setTimeout(askForUpdate, ms);
