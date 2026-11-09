@@ -27,6 +27,11 @@ a stem WAV that Demucs wrote for allin1 (the caller makes them), little-endian, 
 written but the result, which also reports the runner's own peak memory (`peak_rss_mb`). `analyze()` is not
 used: it would separate the song again with its own Demucs and download unpinned weights. Only the standard
 library, numpy, torch, omegaconf and the package are imported here, never songcharter.
+
+A run uses the job's device only. CUDA running out of memory is not retried here on the CPU: the run ends with
+torch's OutOfMemoryError (exit 1), and the caller runs the job again on the CPU in a fresh process, after
+checking that the song fits this PC's memory there (sections.py, CUDA and Memory). A CPU run in this process
+would be checked by nothing and would keep the CUDA run's host memory.
 """
 from __future__ import annotations
 
@@ -205,19 +210,11 @@ def run(job_path: Path, stream=None) -> None:
     t0 = time.perf_counter()  # timings are reported only
     spec = spectrogram(module, read_stems(stream or sys.stdin.buffer, int(job["samples"])))
     t_spec = round(time.perf_counter() - t0, 2)
-    device, fallback = job["device"], None
-    try:
-        result, t_load, t_infer = _infer(module, job["checkpoints"], spec, device)
-    except torch.cuda.OutOfMemoryError as e:
-        if device == "cpu":
-            raise
-        torch.cuda.empty_cache()
-        fallback = f"CUDA ran out of memory ({str(e).splitlines()[0][:120]}); analysed on the CPU"
-        device = "cpu"
-        result, t_load, t_infer = _infer(module, job["checkpoints"], spec, device)
+    device = job["device"]   # only this one: a CUDA out-of-memory ends the run (the module docstring)
+    result, t_load, t_infer = _infer(module, job["checkpoints"], spec, device)
     _write(Path(job["out"]), {
         **result, "package": dist, "version": _version(dist), "torch": torch.__version__,
-        "attention": attention(module), "device": device, "fallback": fallback, "threads": torch.get_num_threads(),
+        "attention": attention(module), "device": device, "threads": torch.get_num_threads(),
         "frames": int(spec.shape[1]), "peak_rss_mb": peak_rss_mb(),
         "seconds": {"spectrogram": t_spec, "load": t_load, "inference": t_infer,
                     "total": round(time.perf_counter() - t0, 2)}})
