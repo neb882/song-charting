@@ -131,12 +131,12 @@
     },
     {
       "order": "M8-11: the thinning spike on the owner's GPU",
-      "stage": "M8-02 part D recommended it (recall 0.659 against 0.7); the owner agreed 2026-11-09; eval/gpu.sh thin-spike is being given --app (branch m8-11-thin-app) since he has the installed app and no eval tools",
+      "stage": "M8-02 part D recommended it (recall 0.659 against 0.7); the owner agreed 2026-11-09; eval/gpu.sh thin-spike --app merged 2026-11-09 at 3572b24 (docs/reports/M8-11-thin-app.md), the owner's steps in eval/README.md (\"The thin spike with the installed app\")",
       "then": "the owner runs it on his sooth file (about 2.5 hours of GPU) and sends thin_spike_results.zip; a measurer scores it against M5-99's bar; if an arm clears, the references' arm (about 1 hour), then a build only if it comes back before the gate's charting runs"
     }
   ],
   "next": [
-    "M8-11's thinning spike on the owner's GPU, once eval/gpu.sh thin-spike --app is merged (the owner agreed 2026-11-09).",
+    "M8-11's thinning spike on the owner's GPU (eval/README.md, \"The thin spike with the installed app\"; about 2.5 hours unattended), then thin_spike_results.zip scored here against M5-99's bar on well-aligned charts (M8-02's 25 badly aligned alternative charts include sooth's).",
     "M8 (v0.5.0, docs/work-orders/M8-00-plan.md): every build order is merged or closed (M8-02 closed M8-06 and M8-07; M8-03 closed M8-08 and M8-09); next the release gate (M8-00 section 9): the version 0.5.0, CI, the golden charts, the stress and 20-song sets against v0.4.0, the full review workflow, the test song end to end and the screens, the advisor, then the owner's GPU check and play test and his approval.",
     "M4: M4-08 part B, the friend's PC: he follows the guide alone, charts the test song with 1 take and with the defaults, charts a song of his own, installs it into Clone Hero and plays it, and sends the diagnostics zip saved after his last chart.",
     "Before the next quality decision beyond this version's defect fixes: grow the reference set to 20 or more human charts, with human-charted solos among them. M5-09 makes a song one entry in eval/stress.json; the songs are the owner's to pick (M5-99); this version's set is the two hard songs and one ordinary rock song."
