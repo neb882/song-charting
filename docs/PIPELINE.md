@@ -2,7 +2,8 @@
 
 How songcharter is built with agents. CLAUDE.md has the commands and the hard rules; this file has the process.
 Adopted on 2026-11-03 from Anthropic's guidance on agentic work and from the Overclock project's pipeline (sources
-in `docs/PROGRESS.json`), and revised on 2026-11-04 after an advisor's review (`docs/reports/pipeline-review.md`).
+in `docs/PROGRESS.json`), and revised on 2026-11-04 after an advisor's review (`docs/reports/pipeline-review.md`)
+and on 2026-11-09 after an advisor's review of every rule.
 Each rule's reason is in brackets, so a rule can be dropped once its reason no longer holds.
 
 ## Roles
@@ -27,7 +28,7 @@ folders a role may write to are the role's own rule, not the harness's.
 | `sc-skeptic` | tries to refute a major finding | xhigh | the largest | no |
 | `sc-inspector` | facts from fresh checkouts | medium | a smaller one | no |
 | `sc-measurer` | measurements and lookups | medium | a smaller one | scratch only |
-| advisor | a second opinion at two gates | xhigh | a different model from the one that wrote what it reviews | no |
+| advisor | a second opinion on a plan, a measurement report and a release with a full review (Gates) | xhigh | a different model from the one that wrote what it reviews | no |
 
 Never set `CLAUDE_CODE_EFFORT_LEVEL`. [It overrides every agent's own effort.]
 
@@ -47,7 +48,8 @@ reviewed, merged work then found 3 real issues, none of them major.]
 - **Direct:** merges, doc edits and small fixes.
 - **An order** (the normal case): the lifecycle below.
 - **The full workflow** (build, review lenses, a skeptic per major finding, fix): big or risky integrations only. It
-  is saved as `.claude/workflows/full-review.js`, and runs once over an integrated release before its hardware test.
+  is saved as `.claude/workflows/full-review.js`, and runs over a friend release only when its diff touches what
+  the release gate names (Gates, step 4).
   It routes findings as an order's review does (step 4 below): the minor ones and the test gaps go to the fixer
   unverified.
 - **Usage.** Read the usage meter (`mcp__usage-meter__usage`) before each wave, before starting any builder and before
@@ -133,19 +135,27 @@ A plan fixes each question's bar before any number is seen, and each order resta
     owner's goals, writes the orders and PROGRESS to a plan branch, and ends; the orchestrator runs the waves.
     [Both of M4's plans needed a full round of the advisor's corrections (11, then 12, all accepted). Planning is the
     cheap phase, and a fresh agent also tests that the repository holds everything a new session needs.]
-- **A release, before the friend gets it:**
+- **A measurement report, before anything in it is closed** (adopted, refuted or `inconclusive`): the advisor
+  reviews it.
+- **Between friend releases,** main carries internal candidates, gated by CI, the golden charts when the charting
+  path changes, and one reviewer per order.
+- **A friend release** is cut when the friend has played the last one and sent his feedback, or for a fix he is
+  waiting on. The owner approves each. Before the friend gets it:
   0. The version is the release's: `songcharter/__init__.py`, `pyproject.toml` and `uv.lock` say it before the
      gate's runs, so the commit the gate measures is the one that is tagged (`build.sh` refuses another version,
      M5-12). [v0.2.0's candidate still said 0.1.0: its page would have told the friend, after the update, that
      0.2.0 is out, every day.]
-  1. The full suite passes.
+  1. CI is green on the release's commit: the full suite passes.
   2. The golden charts show no UNEXPECTED change on the whole reference set: `eval/README.md`'s commands (Golden
-     charts), run from the release's checkout with the last release checked out at `/dev/shm/golden-old` and every
-     variable it names set. Read `report.md`: the pooled F1 per part, and the engines that ran.
-  3. The full review workflow has run over the integrated release, and its confirmed findings are fixed.
-  4. The test song runs end to end with the gate ok, and someone has looked at its preview.
-  5. The advisor reviews the release candidate.
-  6. The owner approves the release.
+     charts), run from the release's checkout with the last friend release checked out at `/dev/shm/golden-old` and
+     every variable it names set. Read `report.md`: the pooled F1 per part, and the engines that ran.
+  3. The held-out songs are scored (Measurements and bars), and their numbers go in the gate's report.
+  4. The full review workflow runs over the integrated release only when its diff from the last friend release
+     touches `packaging/`, the install or update path, the library or the state files (`<home>/library/`,
+     `<home>/state/`); its confirmed findings are fixed.
+  5. The test song runs end to end with the gate ok, and someone has looked at its preview.
+  6. The advisor reviews the release candidate, only when the full review ran.
+  7. The owner approves the release.
 
   [The Overclock project's per-change checks missed a flashing chorus that only a whole-film check caught.]
 

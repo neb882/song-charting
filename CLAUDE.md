@@ -55,5 +55,9 @@ gate. In short:
 - one builder, then one reviewer who also tests the tests;
 - a skeptic for a major finding that would change code;
 - CI on GitHub as the inspection, and the golden charts when the charting path changes;
-- an advisor from a different model before a plan's build and before a release;
+- an advisor from a different model before a plan's build and before a measurement report's results are closed (at a
+  release, only with the full review);
+- bars fixed before the numbers, with one primary measure each;
+- a friend release when the friend has played the last one, or for a fix he waits on; between them, main carries
+  internal candidates;
 - the owner approves anything that goes to the friend.
