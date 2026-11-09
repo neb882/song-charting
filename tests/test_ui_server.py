@@ -1070,7 +1070,8 @@ def test_stopping_the_server_kills_the_running_charts_whole_tree(tmp_path, how):
     """The chart runs in a session of its own, so a hangup or a Ctrl+C never reaches it: only the server's stop
     path kills it. Stopped by SIGTERM, by SIGHUP, or by its console window closing (its controlling terminal is a pty
     whose other end closes: the kernel hangs it up, and every console write then fails with EIO), the server kills
-    the chart and its grandchild, closes, logs "stopped" and exits 0."""
+    the chart and its grandchild, closes, logs "stopped" and exits 0; the song that waited behind it never starts,
+    and both wait in queue.json."""
     home = tmp_path / "home"
     home.mkdir()
     (home / "doctor.json").write_text(json.dumps(DOCTOR), encoding="utf-8")
@@ -1101,6 +1102,8 @@ def test_stopping_the_server_kills_the_running_charts_whole_tree(tmp_path, how):
         status, up = upload(ctx, song(tmp_path / "s.wav"), "Song.wav")
         assert status == 200
         assert call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))[0] == 202
+        _, other = upload(ctx, song(tmp_path / "t.wav", 1.5), "Other Song.wav")   # a second song waits
+        assert call(port, "POST", "/api/jobs", json.dumps({"upload": other["id"]}).encode(), guarded(port))[0] == 202
         deadline = time.monotonic() + 30
         while not pids:
             assert time.monotonic() < deadline
@@ -1118,6 +1121,12 @@ def test_stopping_the_server_kills_the_running_charts_whole_tree(tmp_path, how):
         assert not any(proc.alive(p) for p in pids)   # the chart and its grandchild, by pid
         log = next((home / "logs").glob("ui-*.log")).read_text(encoding="utf-8")
         assert "stopping" in log and "cancelled (exit -15)" in log and log.rstrip().endswith("stopped")
+        # the queue stops with it (Queue.shutdown): both songs wait for Carry on, and the waiting one never started
+        # (the v0.5.0 review's tests-2; break: the stop path calling Jobs.shutdown, v0.4's call: the waiting song
+        # starts as the first is killed and charts on with no window, the first recorded as cancelled)
+        entries = json.loads(J.queue_path(home).read_text(encoding="utf-8"))["entries"]
+        assert [(e["state"], e["job"]) for e in entries] == [("waiting", None), ("waiting", None)]
+        assert log.count(": started on ") == 1
     finally:
         if master is not None:
             os.close(master)
@@ -3156,6 +3165,11 @@ def test_a_finished_songs_routes_by_its_job_id_after_the_next_has_started(finish
                  "/api/jobs/20000101-000000/events", f"/api/jobs/{first.id}/nope", f"/api/jobs/{first.id}/preview/x.png",
                  f"/api/jobs/{first.id}/art/album.jpg", f"/api/jobs/{first.id}/listen/guitar-expert.ogg"):
         assert get(ctx, path)[0] == 404, path
+    # its album art by its own job id too, as the preview and Listen (the v0.5.0 review's tests-3; break: the art's URL
+    # on "current", which is the next song's while it charts)
+    (first.out / "album.jpg").write_bytes(b"\xff\xd8\xffmade-up")
+    art = json.loads(get(ctx, f"/api/jobs/{first.id}/results")[2])["art"]["album_art"]
+    assert art == f"/api/jobs/{first.id}/art/album.jpg" and get(ctx, art)[2] == b"\xff\xd8\xffmade-up"
     songs = tmp_path / "Songs"
     songs.mkdir()
     assert post(ctx, "/api/clonehero", {"folder": str(songs)})[0] == 200
@@ -3273,6 +3287,12 @@ def test_the_queues_endpoints_are_behind_the_guards(finished, monkeypatch):
     (ctx.home / "doctor.json").write_text(json.dumps({**DOCTOR, "disk": {"home_free_mb": 90000,
                                                                          "windows_c_free_mb": None}}))
     assert ctx.app.disk_low() is None
+    # WSL's own disk (and the only one measured on a Linux install without C:), the v0.5.0 review's tests-5 (break:
+    # home_free_mb left out of App.disk_low: each song fails in turn on a full disk instead)
+    (ctx.home / "doctor.json").write_text(json.dumps({**DOCTOR, "disk": {"home_free_mb": 900,
+                                                                         "windows_c_free_mb": None}}))
+    assert ctx.app.disk_low() == ("WSL's disk is nearly full (under 6 GB free), so the queue is paused: free some "
+                                  "space, then Carry on")
 
 
 QUEUE_PAGE = r"""
@@ -3551,6 +3571,60 @@ def test_the_page_queues_several_songs_and_follows_them_one_after_the_other(tmp_
     assert 'multiple hidden></label>' in html and html.count(' multiple hidden>') == 2   # the drop zone and Add songs
     assert html.index('id="progress-screen"') < html.index('id="queue-box"') < html.index('id="done-screen"')
     assert '<button type="button" id="again">Add a song</button>' in html
+
+
+# QUEUE_PAGE's stand-in DOM and server with a flow of its own: between()'s wait for the next song, and the time left
+BETWEEN_FLOW = r"""
+(async () => {
+  queue = { paused: null, run: 1, left: null, entries: [entry("a", "charting", "j1"), entry("b", "waiting", null)] };
+  job = { job: "j1", state: "running", upload: { name: "a.mp3" }, started: 1000, now: 1000, estimate: EST };
+  ctx.setQueue(queue);
+  await ctx.attach();
+  await settle();
+  // A's result comes a second or so before its process exits, which the server waits for before it records the end:
+  // the list read just after it still has A charting; the next read has B charting
+  const base = ctx.fetch, asked = [];
+  let reads = 0;
+  ctx.fetch = async (path, init) => {
+    if (path === "/api/queue" && ++reads === 2) {
+      queue = { ...queue, entries: [entry("a", "ready", "j1"), entry("b", "charting", "j2")] };
+      job = { ...job, job: "j2", upload: { name: "b.mp3" }, started: 1100 };
+    }
+    if (/\/events$/.test(path)) asked.push(path);
+    return base(path, init);
+  };
+  ctx.handle({ event: "result", ok: true, folder: "/h/library/x/A", summary: "gate: OK", at: 1090 });
+  await settle();
+  out.between = { followed: vm.runInContext("state.job.job", ctx), reads, events: asked };
+  // a time-left answer that is the song before's (a GET /api/jobs/current sent before it ended) is not shown
+  const rem = { from: 1000, low_s: 60, high_s: 120, low_min: 1, high_min: 2, takes_left: 0 };
+  job = { ...job, job: "j1", remaining: rem };
+  await ctx.askRemaining();
+  out.stale = vm.runInContext("state.remaining", ctx);
+  job = { ...job, job: "j2" };
+  await ctx.askRemaining();
+  out.fresh = vm.runInContext("state.remaining && state.remaining.high_s", ctx);
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_page_waits_for_the_next_song_and_never_shows_the_last_songs_time_left(tmp_path):
+    """The v0.5.0 review's tests-6 (app.js in node, QUEUE_PAGE's stand-ins): after A's result, between() follows the
+    next song only once the list has a song charting that is not A (break: any charting song: the page attaches A
+    again, which still reads as charting while its process exits, and replays its events); askRemaining drops an
+    answer for another job than the one followed (break: its job check left out: the last song's time left shows on
+    the next)."""
+    script = tmp_path / "between.cjs"
+    script.write_text(QUEUE_PAGE[:QUEUE_PAGE.index("(async () => {")] + BETWEEN_FLOW, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(S.static_files()["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["between"] == {"followed": "j2", "reads": 2, "events": ["/api/jobs/j2/events"]}
+    assert out["stale"] is None and out["fresh"] == 120
 
 
 def test_a_cancel_by_id_after_its_song_ended_is_refused_and_the_list_full_says_so(served, monkeypatch):
