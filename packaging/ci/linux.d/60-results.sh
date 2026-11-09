@@ -23,6 +23,11 @@
 # folder, no longer reports noAlbumArt; the Done screen's results name the album art, which the page can fetch.
 # M5-06: the clip is named "Test Artist - Test Clip" and has no tags, so the upload's answer, the song folder's name
 # and its song.ini take the artist and the title from the file name, and the album's placeholder "Test Clip - (Single)".
+# M8-12: the song folder's audio is Clone Hero's multitrack by default: bass.ogg and drums.ogg (the parts charted
+# here) and song.ogg the rest, in the folder, its zip and its install; scan-chart reads them with no audio issue. The
+# chart phase asks for the stems too: the results name six FLACs, and "Download the stems" gives a zip of
+# "<name> (stems)" stored without compression, each 24-bit FLAC at 44.1 kHz as long as the clip. The stems zip stays
+# in memory (it is audio: never in $CI_ART).
 # Run by packaging/ci/run-hooks.sh with bash -euo pipefail; uses CI_PY, CI_TMP, CI_ART and CI_CLIP (M4-05a's contract).
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 art="$CI_ART/60-results"
@@ -90,6 +95,7 @@ phase, base, clip, songs, home, art = sys.argv[1], sys.argv[2], Path(sys.argv[3]
     Path(sys.argv[6])
 background = Path(sys.argv[7])
 PICTURES = ["album.jpg", "background.jpg"]
+AUDIO = ["bass.ogg", "drums.ogg", "song.ogg"]   # M8-12: a file per part charted (no guitar here), song.ogg the rest
 HEADERS = {"X-Songcharter": "1", "Origin": base}
 LYRICS = "zorp blen-dak quiv\nfim wob\n\n[Glorp]\ndree smee plin\n"   # made-up words
 WORDS = (b"zorp", b"blen", b"quiv", b"wob", b"Glorp", b"dree", b"smee", b"plin")
@@ -135,6 +141,7 @@ if phase == "chart":   # M4-11: a background through the page's picker, as the s
                                                         {"X-Filename": background.name}))
     assert (bg["format"], bg["width"], bg["height"]) == ("JPEG", 2400, 1350), bg
     options["background"] = bg["id"]
+    options["stems"] = True   # M8-12
 if phase == "lyrics":
     options = {"instruments": ["bass"], "device": "cpu", "lyrics": LYRICS}
 expect(202, f"a job on the clip ({phase})", request("POST", "/api/jobs", {"upload": up["id"], "options": options}))
@@ -161,9 +168,26 @@ if phase == "chart":
     status, headers, body = request("GET", zipped["url"], raw=True)
     assert status == 200 and headers["Content-Disposition"].startswith("attachment;"), headers
     names = sorted(zipfile.ZipFile(io.BytesIO(body)).namelist())
-    assert names == sorted(f"{res['name']}/{f}" for f in ["notes.chart", "report.json", "song.ini", "song.ogg",
+    assert names == sorted(f"{res['name']}/{f}" for f in ["notes.chart", "report.json", "song.ini", *AUDIO,
                                                          *PICTURES]), names
     say(f"the zip downloaded: {names}")
+    # M8-12: the stems, beside the song folder, through "Download the stems"
+    import soundfile as sf
+    six = sorted(f"{s}.flac" for s in ("drums", "bass", "guitar", "piano", "vocals", "other"))
+    assert res["stems"] and res["stems"]["name"] == f"{res['name']} (stems)" and res["stems"]["files"] == six, res
+    stems = expect(200, "the stems' zip", request("POST", "/api/jobs/current/export/stems"))
+    status, headers, body = request("GET", stems["url"], raw=True)
+    assert status == 200 and headers["Content-Disposition"].startswith("attachment;"), headers
+    frames = sf.info(str(clip)).frames
+    with zipfile.ZipFile(io.BytesIO(body)) as z:
+        assert sorted(z.namelist()) == [f"{res['stems']['name']}/{f}" for f in six], z.namelist()
+        assert {i.compress_type for i in z.infolist()} == {zipfile.ZIP_STORED}
+        for n in z.namelist():
+            info = sf.info(io.BytesIO(z.read(n)))
+            assert (info.format, info.subtype, info.samplerate, info.channels, info.frames) == (
+                "FLAC", "PCM_24", 44100, 2, frames), (n, info)
+    say(f"the stems downloaded: {stems['name']}, {len(six)} FLACs of {frames} frames each, "
+        f"{res['stems']['bytes']} bytes")
     for bad in ("..%2Fui.json", "x.zip", urllib.parse.quote(res["name"])):
         assert request("GET", "/api/exports/" + bad)[0] == 404, bad
     expect(400, "a Songs folder that does not exist", request("POST", "/api/clonehero", {"folder": songs + "-not"}))
@@ -173,7 +197,7 @@ if phase == "chart":
     target = Path(songs) / res["name"]
     assert done["installed"] == str(target), done
     files = sorted(p.name for p in target.iterdir())
-    assert files == sorted(["notes.chart", "report.json", "song.ini", "song.ogg", *PICTURES]), files
+    assert files == sorted(["notes.chart", "report.json", "song.ini", *AUDIO, *PICTURES]), files
     report = json.loads((target / "report.json").read_text(encoding="utf-8"))
     assert report["gate"]["ok"] is True
     # M4-11: the pictures, and scan-chart without noAlbumArt (the gate's run, and one here on the installed folder)
@@ -182,7 +206,8 @@ if phase == "chart":
     found = json.loads(subprocess.run(["node", os.environ["SONGCHARTER_SCAN_CHART"], str(target)], check=True,
                                       capture_output=True, text=True).stdout)
     issues = [i["folderIssue"] for i in found["folderIssues"]]
-    assert found["playable"] and not {"noAlbumArt", "albumArtSize", "badAlbumArt"} & set(issues), issues
+    assert found["playable"] and not {"noAlbumArt", "albumArtSize", "badAlbumArt", "invalidAudio", "multipleAudio",
+                                      "noAudio"} & set(issues), issues
     assert report["art"]["album_art"]["from"] == "embedded" and report["art"]["background"]["from"] == "given", \
         report["art"]
     album, bg_out = Image.open(target / "album.jpg"), Image.open(target / "background.jpg")
@@ -203,7 +228,8 @@ if phase == "chart":
     names = {"name = Test Clip", "artist = Test Artist", "album = Test Clip - (Single)"}   # M5-06
     assert res["name"] == "Test Artist - Test Clip" and names <= set(ini), (res["name"], ini)
     say(f"the names from the file's: {res['name']}, {sorted(names)}")
-    assert (target / "song.ogg").read_bytes()[:4] == b"OggS" and (target / "notes.chart").stat().st_size > 0
+    assert all((target / f).read_bytes()[:4] == b"OggS" for f in AUDIO) and (target / "notes.chart").stat().st_size
+    assert report["audio_files"] == ["song.ogg", "bass.ogg", "drums.ogg"] and report["sync"]["ok"], report["sync"]
     say(f"installed into {target}: {files}")
     again = expect(409, "installed again", request("POST", "/api/jobs/current/install", {"replace": False}))
     assert again["exists"] and again["ours"], again

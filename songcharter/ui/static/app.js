@@ -18,6 +18,7 @@ const CLOSING = new Set(["result", "error", "cancelled"]);
 const LABELS = {
   decode: "Read the song", separate: "Separate the instruments", drums: "Drums", bass: "Bass",
   sections: "Sections", lyrics: "Lyrics", guitar: "Guitar", assemble: "Build and check the chart", preview: "Preview",
+  stems: "Save the stems",
 };
 const DISMISSED = "songcharter.dismissed";   // sessionStorage: the finished job "Chart another song" put away
 // the status asked again this long (ms) after the start while it has no `update`: the server's check starts once this
@@ -349,7 +350,19 @@ function fillOptions(up, many) {
   }
   soloNames();
   for (const key of Object.keys(PICTURES)) clearPicture(key);
+  stemsSize([up]);
   text($("options-error"), "").hidden = true;
+}
+
+// how much disk the stems take (pipeline.stems_bytes: six stems of 24-bit stereo at 44.1 kHz, about half of it as
+// FLAC): about 0.8 MB a second of the song, 190 MB for 4 minutes
+const STEMS_MB_PER_S = 44100 * 2 * 3 * 6 * 0.5 / 1e6;
+
+function stemsSize(ups) {
+  const known = ups.length > 0 && ups.every((u) => u.seconds > 0);
+  const mb = Math.round(ups.reduce((sum, u) => sum + (u.seconds || 0), 0) * STEMS_MB_PER_S);
+  text($("stems-size"), known ? `About ${mb} MB of disk ${ups.length > 1 ? "for these songs" : "for this song"}.`
+    : "About 190 MB of disk for a 4-minute song.");
 }
 
 // ------------------------------------------------------------------------------------------------ the pictures
@@ -372,6 +385,7 @@ function fillMany(ups) {
   fillOptions(ups[0], true);
   text($("song-name"), `${ups.length} songs, charted one after the other with these options:`);
   $("song-names").replaceChildren(...ups.map((u) => make("li", null, `${u.name} (${(u.bytes / 1e6).toFixed(1)} MB)`)));
+  stemsSize(ups);
 }
 
 function clearPicture(key) {
@@ -447,6 +461,8 @@ function readOptions() {
   if (takes) options.takes = Number(takes);
   options.device = f.device.value;
   options.preview = f.preview.checked;
+  options.stems = f.stems.checked;           // per song, so the queue keeps them for a waiting one (M8-12)
+  options.one_audio = f.one_audio.checked;
   if (many) return options;
   const lyrics = f.lyrics.value;   // as pasted; the server keeps it out of every record
   if (lyrics.trim() && !f.lyrics.disabled) options.lyrics = lyrics;
@@ -1176,6 +1192,7 @@ async function loadResults(job) {
   renderLyrics(res.lyrics);
   renderListen(res.listen, res.job);   // before the preview, whose flags offer Listen for the parts it has
   renderPreview(res.preview, res.job);
+  renderStems(res.stems);
   $("export-box").hidden = !res.installable;
   text($("export-msg"), "").hidden = true;
   $("open-exports").hidden = true;
@@ -1499,6 +1516,33 @@ async function install(replace) {
   }
 }
 
+// the stems the run saved (M8-12): their folder beside the song's, and a zip of them to download
+function renderStems(st) {
+  $("stems-box").hidden = !st;
+  text($("stems-msg"), "").hidden = true;
+  if (!st) return;
+  text($("stems-line"), `${st.files.length} instruments as lossless files (${Math.round(st.bytes / 1e6)} MB), in the folder "${st.name}" beside the song's. Piano and "other" come out the least clean.`);
+}
+
+async function exportStems() {
+  const msg = $("stems-msg");
+  $("stems-zip").disabled = true;
+  text(msg, "Making the zip: a few seconds…").hidden = false;
+  try {
+    const r = await api("POST", jobPath("/export/stems"));
+    if (r.status === 200) {
+      download(r.data.url, r.data.name);
+      text(msg, `The zip is ${r.data.name}: your browser saves it, into Downloads unless you chose another folder.`).hidden = false;
+    } else {
+      text(msg, r.data.error || `The zip could not be made (${r.status}).`).hidden = false;
+    }
+  } catch (x) {
+    text(msg, "songcharter does not answer: is it still running?").hidden = false;
+  } finally {
+    $("stems-zip").disabled = false;
+  }
+}
+
 function download(url, name) {
   const a = make("a");
   a.href = url;
@@ -1560,6 +1604,7 @@ async function start() {
   $("install").addEventListener("click", () => install(false));
   $("replace").addEventListener("click", () => install(true));
   $("zip").addEventListener("click", exportZip);
+  $("stems-zip").addEventListener("click", exportStems);
   $("listen-part").addEventListener("change", listenLevels);
   $("listen").addEventListener("click", () => listenTo(0));
   $("open-song").addEventListener("click", () => openFolder("song", $("open-msg")));

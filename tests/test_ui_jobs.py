@@ -159,7 +159,39 @@ def test_the_options_become_the_command_line(tmp_path, monkeypatch):
     assert J.parse_options(None) == defaults and J.parse_options({"solos": "OFF", "takes": None}).solos == "off"
 
 
+def test_the_stems_and_one_audio_options_become_their_flags(tmp_path, monkeypatch):
+    """M8-12: `stems` and `one_audio`, off by default, become --stems and --one-audio, reach pipeline.Options, and
+    the job's records show them (break: a flag left off the command, or not read by the command line)."""
+    opts = J.parse_options({"stems": True, "one_audio": True})
+    assert opts.stems and opts.one_audio and opts.as_dict()["stems"] is True and opts.as_dict()["one_audio"] is True
+    out = tmp_path / "Ann - T"
+    cmd = J.chart_command(Path("/s.mp3"), out, opts, None)
+    assert cmd[-2:] == ["--stems", "--one-audio"]
+    off = J.parse_options({})
+    assert not off.stems and not off.one_audio and "--stems" not in J.chart_command(Path("/s.mp3"), out, off, None)
+    assert "--one-audio" not in J.chart_command(Path("/s.mp3"), out, off, None)
+    import songcharter.pipeline as P
+    from songcharter.cli import main
+    seen = {}
+
+    def chart(song, o, options, events=None):
+        seen.update(options=options)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(P, "chart", chart)
+    assert main(cmd[3:]) == 130
+    assert seen["options"].stems is True and seen["options"].one_audio is True
+    assert main(J.chart_command(Path("/s.mp3"), out, off, None)[3:]) == 130
+    assert seen["options"].stems is False and seen["options"].one_audio is False
+    # a cancelled chart's stems staging goes with assemble's (partial_folders)
+    for name in (".Ann - T.x1.partial", ".Ann - T (stems).x2.partial", ".Other.x3.partial"):
+        (tmp_path / name).mkdir()
+    assert [p.name for p in J.partial_folders(out)] == [".Ann - T (stems).x2.partial", ".Ann - T.x1.partial"]
+
+
 @pytest.mark.parametrize("raw, message", [
+    ({"stems": "yes"}, "stems is true or false"),
+    ({"one_audio": 1}, "one_audio is true or false"),
     ({"instruments": ["guitar", "piano"]}, "instruments are guitar, bass, drums"),
     ({"instruments": []}, "no instruments"),
     ({"instruments": "guitar"}, "instruments is a list"),
@@ -639,6 +671,21 @@ def test_pause_after_this_song_remove_and_the_disk(queued):
     assert [e["state"] for e in settled(queued.queue)["entries"]] == ["cancelled", "ready"]
     with pytest.raises(J.NotInQueue):
         queued.queue.pause()   # none waits
+
+
+def test_a_waiting_song_keeps_its_stems_and_audio_options(queued):
+    """M8-12: the options are per song: queue.json keeps `stems` and `one_audio` for a waiting song, and its job
+    gets them as flags when it starts (break: the queue dropping an option it keeps for no other song)."""
+    queued.add("hang")
+    up = {"id": "00000000000000aa", "name": "ok.mp3", "seconds": 60}
+    entry, job = queued.queue.add(up, {"title": "ok", "stems": True, "one_audio": True}, None)
+    assert job is None
+    kept = json.loads(J.queue_path(queued.home).read_text(encoding="utf-8"))
+    saved = next(e for e in kept["entries"] if e["id"] == entry["id"])
+    assert saved["options"]["stems"] is True and saved["options"]["one_audio"] is True
+    opts = J.parse_options(saved["options"])   # what `prepare` gives the job when the song starts
+    cmd = J.chart_command(Path("/s.mp3"), Path("/o"), opts, None)
+    assert opts.stems and opts.one_audio and "--stems" in cmd and "--one-audio" in cmd
 
 
 def test_lyrics_only_for_a_song_that_starts_at_once_and_the_lists_limit(queued, monkeypatch):

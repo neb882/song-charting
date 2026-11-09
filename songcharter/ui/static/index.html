@@ -94,6 +94,13 @@
         </label>
         <label id="solo-names-label" hidden>Section names, separated by commas <input name="solo_names" placeholder="Solo 1, Solo 2" autocomplete="off"></label>
       </fieldset>
+      <fieldset id="audio-box">
+        <legend>Audio</legend>
+        <label class="check"><input type="checkbox" name="one_audio"> One audio file: the music does not drop out on a miss</label>
+        <p class="small">Without it, the guitar, bass and drums each get a sound file of their own, and Clone Hero stops a part's sound while you miss its notes, as on the official songs.</p>
+        <label class="check"><input type="checkbox" name="stems"> Also save the separated instruments (stems)</label>
+        <p class="small">Drums, bass, guitar, piano, vocals and the rest ("other"), each a lossless file (FLAC) that lines up with your song file, in a folder beside the song's. <span id="stems-size"></span> Piano and "other" come out the least clean.</p>
+      </fieldset>
       <details id="more" class="fold">
         <summary>More options</summary>
         <fieldset>
@@ -204,8 +211,14 @@
           <button type="button" id="zip" class="plain">Save as a zip</button>
           <button type="button" id="open-exports" class="plain" hidden>Open the exports folder</button>
         </p>
-        <p class="small">The zip holds song.ogg, made from your recording. Sharing it is sharing the song.</p>
+        <p class="small">The zip holds the song's sound, made from your recording. Sharing it is sharing the song.</p>
         <p id="export-msg" class="small" hidden></p>
+      </div>
+      <div id="stems-box" hidden>
+        <h3>The instruments</h3>
+        <p id="stems-line" class="small"></p>
+        <p class="actions"><button type="button" id="stems-zip" class="plain">Download the stems</button></p>
+        <p id="stems-msg" class="small" hidden></p>
       </div>
       <div id="look">
         <figure id="art" hidden>
