@@ -1085,7 +1085,7 @@ def test_chart_events(charted, tmp_path, monkeypatch, capsys):
     assert [e["text"] for e in events if e["event"] == "warning"] == report["warnings"]
     assert kinds.index("fallback") < kinds.index("stage_end:separate")   # as it happens
     assert events[-1] == {"event": "result", "ok": True, "exit": 0, "folder": str(tmp_path / "Sóng ♫"),
-                          "work": str(work), "preview": str(work / "preview"), "summary": out.rstrip("\n")}
+                          "work": str(work), "preview": str(work / "preview"), "stems": None, "summary": out.rstrip("\n")}
     assert EVENT not in out and "Sóng ♫" in out
     # the same run without --events (in a work folder of its own, as warm): no event line, and the same lines
     # otherwise, but for the times and the work folder's name
