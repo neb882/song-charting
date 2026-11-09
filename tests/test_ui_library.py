@@ -55,8 +55,9 @@ def work(root, key, made: Path, preview=True):
 
 
 def made_up_library(home: Path, root: Path) -> SimpleNamespace:
-    """Four charts (a split one with its stems and its work folder, a failed one-file one with its stems, one whose
-    report.json is damaged, an older one whose work folder a later chart of the song took) and four folders that are not charts."""
+    """Four charts (a split one with its stems and its work folder, a failed one-file one with its stems, one
+    whose report.json is damaged, an older one whose work folder a later chart of the song took) and four folders
+    that are not charts."""
     first = chart(home, A, FIRST, 1000, files=SPLIT, audio_files=SPLIT,
                   ini="[song]\nname = First Song\nartist = Made-Up Band\ncharter = songcharter\n")
     stems = first.with_name(FIRST + " (stems)")
