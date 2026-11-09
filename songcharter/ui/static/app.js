@@ -7,7 +7,10 @@
 // notice when a newer version is out, put away while a chart runs. No framework, no build step. Every request sends
 // X-Songcharter: 1 (the server's guard for anything but a GET). The job's events come over a streamed fetch of
 // /api/jobs/current/events (Server-Sent Events), which can send that header too, and which resumes after the last
-// event it saw when the connection drops; a reload reattaches to the current job.
+// event it saw when the connection drops; a reload reattaches to the current job. M8-10: a queue of songs, which the
+// server runs (it starts the next itself): a drop of several songs shares one options form, the list under the
+// progress screen gives each song's state with Install and Look (its own Done screen, by its job id), and the tab's
+// title, the wake lock, the update notice and the whole queue's estimate go across the songs.
 "use strict";
 
 const HEADER = { "X-Songcharter": "1" };
@@ -29,7 +32,7 @@ const $ = (id) => document.getElementById(id);
 const state = { status: null, upload: null, job: null, stages: {}, offset: 0, ticker: null, follow: 0, ch: null,
   images: { album_art: null, background: null }, sending: 0, version: null, update: null, later: false,
   listen: { parts: {}, job: null }, running: false, wake: null, remaining: null, asking: false,
-  box: { items: [], at: 0 } };
+  box: { items: [], at: 0 }, queue: null, queueKey: null, uploads: [], shown: null, note: "" };
 // the Listen control's names for the parts and levels the chart has (the results' `listen`)
 const PART_NAMES = { guitar: "Guitar", bass: "Bass", drums: "Drums" };
 const LEVEL_NAMES = { expert: "Expert", hard: "Hard", medium: "Medium", easy: "Easy" };
@@ -78,6 +81,9 @@ function mmss(s) {
 // the tab's title: what the page is doing, so a tab in the background says it too
 function setTitle(what) { document.title = what ? `${what} - ${APP}` : APP; }
 
+// ... and while a queue runs, where in it the page is: "2 of 6: Guitar: take 3 of 4"
+function progressTitle(what) { setTitle(queuePrefix() + what); }
+
 // ------------------------------------------------------------------------------------------------ the header
 
 function renderStatus(st) {
@@ -112,7 +118,7 @@ function renderStatus(st) {
 function renderUpdate(up, have) {
   const box = $("update");
   // while a chart runs, its line ("close the songcharter window") would stop the chart: shown again at its end
-  if (!up || state.later || state.running) { box.hidden = true; return; }
+  if (!up || state.later || state.running || waitingCount() > 0) { box.hidden = true; return; }
   const yours = have ? ` (you have ${have})` : "";
   if (up.line) {
     text($("update-text"), `songcharter ${up.version} is out${yours}. To update: close the songcharter window, open Ubuntu from the Start menu, paste this line and press Enter:`);
@@ -179,33 +185,56 @@ function dropError(message) {
   text(el, message);
 }
 
-function upload(file) {
-  dropError("");
+// The song files, each uploaded in turn (`rest` the ones after this one; `got` the answers so far, `failed` the
+// refusals): one gets the options form as before, several share one (M8-10)
+function upload(file, rest, got, failed) {
+  rest = rest || [];
+  got = got || [];
+  failed = failed || [];
+  if (!got.length && !failed.length) dropError("");
   $("upload").hidden = false;
-  text($("upload-name"), `Uploading ${file.name}…`);
+  const total = got.length + failed.length + rest.length + 1, n = got.length + failed.length + 1;
+  text($("upload-name"), total > 1 ? `Uploading ${file.name} (${n} of ${total})…` : `Uploading ${file.name}…`);
   const bar = $("upload-bar");
   bar.value = 0;
+  const who = total > 1 ? `${file.name}: ` : "";
+  const next = () => {
+    if (rest.length) upload(rest[0], rest.slice(1), got, failed);
+    else uploaded(got, failed);
+  };
   const xhr = new XMLHttpRequest();
   xhr.open("POST", "/api/upload");
   xhr.setRequestHeader("X-Songcharter", "1");
   xhr.setRequestHeader("X-Filename", encodeURIComponent(file.name));
   xhr.upload.addEventListener("progress", (e) => { if (e.lengthComputable) bar.value = e.loaded / e.total; });
   xhr.addEventListener("load", () => {
-    $("upload").hidden = true;
     let data = {};
     try { data = JSON.parse(xhr.responseText); } catch (e) { data = {}; }
-    if (xhr.status === 200) {
-      state.upload = data;
-      fillOptions(data);
-      show("options-screen");
-    } else if (xhr.status === 415) {
-      dropError(`That is not a song file songcharter takes. ${data.error || ""}`);
-    } else {
-      dropError(data.error || `The upload failed (${xhr.status}).`);
-    }
+    if (xhr.status === 200) got.push(data);
+    else if (xhr.status === 415) failed.push(`${who}That is not a song file songcharter takes. ${data.error || ""}`);
+    else failed.push(`${who}${data.error || `The upload failed (${xhr.status}).`}`);
+    next();
   });
-  xhr.addEventListener("error", () => { $("upload").hidden = true; dropError("The upload failed: is songcharter still running?"); });
+  xhr.addEventListener("error", () => { failed.push(`${who}The upload failed: is songcharter still running?`); next(); });
   xhr.send(file);
+}
+
+function uploaded(got, failed) {
+  $("upload").hidden = true;
+  if (!got.length) { dropError(failed.join("\n")); return; }
+  state.upload = got[0];
+  state.uploads = got;
+  if (got.length === 1) fillOptions(got[0]);
+  else fillMany(got);
+  if (failed.length) text($("options-error"), failed.join("\n")).hidden = false;
+  show("options-screen");
+}
+
+function uploadFiles(files) {
+  const list = [...(files || [])];
+  state.note = "";   // the last drop's refusals go with the next drop
+  renderQueue();
+  if (list.length) upload(list[0], list.slice(1));
 }
 
 function setupDrop() {
@@ -216,8 +245,7 @@ function setupDrop() {
   for (const kind of ["dragleave", "drop"]) zone.addEventListener(kind, () => zone.classList.remove("over"));
   zone.addEventListener("drop", (e) => {
     e.preventDefault();
-    const file = e.dataTransfer && e.dataTransfer.files[0];
-    if (file) upload(file);
+    uploadFiles(e.dataTransfer && e.dataTransfer.files);
   });
   // the zone takes the keyboard's focus (tabindex 0): Enter or Space opens the file chooser, as a click on its button
   zone.addEventListener("keydown", (e) => {
@@ -229,7 +257,22 @@ function setupDrop() {
   // a file dropped beside the zone must not navigate away from the page
   window.addEventListener("dragover", (e) => e.preventDefault());
   window.addEventListener("drop", (e) => e.preventDefault());
-  $("file").addEventListener("change", (e) => { const f = e.target.files[0]; if (f) upload(f); e.target.value = ""; });
+  $("file").addEventListener("change", (e) => { uploadFiles(e.target.files); e.target.value = ""; });
+  // the progress screen's Add songs strip (M8-10): the drop screen, for the upload's progress, then the options
+  const strip = $("add-drop");
+  const adding = (files) => { show("drop-screen"); $("back-row").hidden = !state.running; uploadFiles(files); };
+  for (const kind of ["dragenter", "dragover"]) {
+    strip.addEventListener(kind, (e) => { e.preventDefault(); strip.classList.add("over"); });
+  }
+  for (const kind of ["dragleave", "drop"]) strip.addEventListener(kind, () => strip.classList.remove("over"));
+  strip.addEventListener("drop", (e) => { e.preventDefault(); adding(e.dataTransfer && e.dataTransfer.files); });
+  strip.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      e.preventDefault();
+      $("add-file").click();
+    }
+  });
+  $("add-file").addEventListener("change", (e) => { adding(e.target.files); e.target.value = ""; });
 }
 
 // ------------------------------------------------------------------------------------------------ options
@@ -249,18 +292,20 @@ function minutes(est) {
   return est && est.low_min > 0 && est.high_min > 0 ? `about ${est.low_min} to ${est.high_min} minutes` : "";
 }
 
-function fillChoice(choices) {
+function fillChoice(choices, many) {
   const c = choices || {};
   const best = minutes(c.best), quick = minutes(c.quick);
   $("choice").hidden = !c.gpu;
   $("choice-cpu").hidden = !!c.gpu;
   if (c.gpu) {
     const takes = (c.best && c.best.takes) || 4;
-    text($("best-label"), `Best chart (${takes} guitar takes${best ? `, ${best}` : ""})`);
-    text($("quick-label"), `Quick chart (1 take${quick ? `, ${quick}` : ""})`);
+    // several songs: no minutes here (each song's own are in the list, and the whole queue's under it)
+    text($("best-label"), many ? `Best charts (${takes} guitar takes)` :
+      `Best chart (${takes} guitar takes${best ? `, ${best}` : ""})`);
+    text($("quick-label"), many ? "Quick charts (1 take)" : `Quick chart (1 take${quick ? `, ${quick}` : ""})`);
   } else {
     text($("choice-cpu"), "This PC charts the guitar on the CPU, so it makes 1 guitar take" +
-      (best ? `: ${best} for this song.` : "."));
+      (best && !many ? `: ${best} for this song.` : "."));
   }
 }
 
@@ -279,11 +324,16 @@ function typedTakes() {
   for (const r of $("options").querySelectorAll("input[name=how]")) r.checked = r.value === want;
 }
 
-function fillOptions(up) {
+function fillOptions(up, many) {
   const form = $("options");
   form.reset();
   for (const id of ["more", "lyrics-box", "pictures-box"]) $(id).open = false;
-  fillChoice(up.choices);
+  fillChoice(up.choices, many);
+  // a song's own fields only for a drop of one; lyrics only for a song that starts at once (M8-10)
+  for (const id of ["song-box", "lyrics-box", "pictures-box"]) $(id).hidden = !!many;
+  $("song-names").hidden = !many;
+  for (const id of ["chart", "chart-top"]) text($(id), many ? "Chart them" : "Chart it");
+  lockLyrics();
   text($("song-name"), `${up.name} (${(up.bytes / 1e6).toFixed(1)} MB)`);
   const tags = up.tags || {}, origin = up.origin || {};
   for (const [field, key] of Object.entries(META)) {
@@ -303,6 +353,26 @@ function fillOptions(up) {
 }
 
 // ------------------------------------------------------------------------------------------------ the pictures
+
+// lyrics only for a song that starts at once: the box locked while a song charts or waits, and open again at the
+// end (the review's P-F2)
+function lockLyrics() {
+  const busy = queueBusy();
+  $("lyrics-wait").hidden = !busy;
+  const box = $("options").elements && $("options").elements.lyrics;
+  if (box) box.disabled = busy;
+}
+
+// the options form is being filled (a song or several uploaded, not yet sent): a song's end, or the next one's
+// start, never takes it away (the review's P-F2)
+function adding() { return state.uploads.length > 0 && !$("options-screen").hidden; }
+
+// several songs (M8-10): one form, shared; each song takes its own tags, as a chart with the Song fields blank does
+function fillMany(ups) {
+  fillOptions(ups[0], true);
+  text($("song-name"), `${ups.length} songs, charted one after the other with these options:`);
+  $("song-names").replaceChildren(...ups.map((u) => make("li", null, `${u.name} (${(u.bytes / 1e6).toFixed(1)} MB)`)));
+}
 
 function clearPicture(key) {
   state.images[key] = null;
@@ -361,7 +431,8 @@ function soloNames() {
 function readOptions() {
   const form = $("options"), f = form.elements;
   const options = {};
-  for (const field of Object.keys(META)) {
+  const many = state.uploads.length > 1;   // the shared form: no song's own fields, lyrics or pictures
+  for (const field of many ? [] : Object.keys(META)) {
     const v = f[field].value.trim();
     if (v) options[field] = v;
   }
@@ -376,8 +447,9 @@ function readOptions() {
   if (takes) options.takes = Number(takes);
   options.device = f.device.value;
   options.preview = f.preview.checked;
+  if (many) return options;
   const lyrics = f.lyrics.value;   // as pasted; the server keeps it out of every record
-  if (lyrics.trim()) options.lyrics = lyrics;
+  if (lyrics.trim() && !f.lyrics.disabled) options.lyrics = lyrics;
   for (const key of Object.keys(PICTURES)) if (state.images[key]) options[key] = state.images[key];
   return options;
 }
@@ -392,21 +464,52 @@ async function chartIt(e) {
     return;
   }
   chartButtons(true);
+  const ups = state.uploads.length ? state.uploads : [state.upload];
+  const refused = [];
+  let started = false;
   try {
-    const r = await api("POST", "/api/jobs", { upload: state.upload.id, options });
-    if (r.status === 202) {
-      attach();
-    } else if (r.status === 409) {
-      text(err, "A chart is running already: showing it.").hidden = false;
-      attach();
-    } else {
-      text(err, r.data.error || `It could not start (${r.status}).`).hidden = false;
+    for (const up of ups) {   // in turn: the first starts at once when nothing charts, the rest wait
+      const r = await api("POST", "/api/jobs", { upload: up.id, options });
+      if (r.status === 202) started = started || !!r.data.job;
+      else refused.push({ name: up.name, status: r.status, error: r.data.error || `It could not start (${r.status}).` });
     }
   } catch (x) {
-    text(err, "songcharter does not answer: is it still running?").hidden = false;
+    refused.push({ name: "", status: 0, error: "songcharter does not answer: is it still running?" });
   } finally {
     chartButtons(false);
   }
+  if (refused.length === ups.length) {   // nothing added: the form stays, with why
+    const many = ups.length > 1;
+    text(err, refused.map((x) => (many && x.name ? `${x.name}: ` : "") + x.error).join("\n")).hidden = false;
+    return;
+  }
+  state.uploads = [];
+  await refreshQueue();
+  // some were added and some refused (the list full, say): said where the page lands, above the list (the review's
+  // P-F1), until the next drop
+  state.note = refusedNote(refused);
+  renderQueue();
+  if (started || queueCharting()) {
+    attach();
+  } else {   // the list is paused (after a restart, say): the songs wait in it, on the drop screen
+    show("drop-screen");
+    $("back-row").hidden = true;
+  }
+}
+
+function refusedNote(refused) {
+  const full = refused.filter((x) => x.status === 409 && x.name);
+  const parts = [];
+  if (full.length) {
+    const n = full.length, max = (state.queue && state.queue.max) || 20;
+    parts.push(`${n === 1 ? "1 song was" : `${n} songs were`} not added (${max} ${max === 1 ? "is" : "are"} ` +
+      `waiting already): ${full.map((x) => x.name).join(", ")}. Drop ${n === 1 ? "it" : "them"} again once some ` +
+      "are charted.");
+  }
+  for (const x of refused.filter((y) => !full.includes(y))) {
+    parts.push(x.name ? `${x.name} was not added: ${x.error}` : x.error);
+  }
+  return parts.join(" ");
 }
 
 // ------------------------------------------------------------------------------------------------ progress
@@ -532,7 +635,7 @@ function handle(ev) {
       row.ended = false;
       setRow(row, "running", "◐");
       text(row.detail, ev.detail);
-      setTitle(stageLabel(ev.stage));
+      progressTitle(stageLabel(ev.stage));
       break;
     }
     case "stage_end": {
@@ -549,7 +652,7 @@ function handle(ev) {
       // a take run again on the CPU after its GPU run failed says so (the banner above gives why)
       text(stageRow("guitar").takes,
            `take ${ev.index} of ${ev.count}${ev.device === "cpu" ? " (on the CPU)" : ""}`);
-      setTitle(`${stageLabel("guitar")}: take ${ev.index} of ${ev.count}`);
+      progressTitle(`${stageLabel("guitar")}: take ${ev.index} of ${ev.count}`);
       if (state.running && !state.remaining) askRemaining();   // from the second take on, the server times the first
       break;
     case "warning":
@@ -560,30 +663,76 @@ function handle(ev) {
       $("fallbacks").append(make("p", "banner", `${stageLabel(ev.stage)} runs on ${where}: ${ev.reason}`));
       break;
     }
-    case "result": {
-      stopRunningRows("stopped");
-      const name = songName(ev.folder);
-      finish(ev.ok ? "Ready" : "The check failed",
-             ev.ok ? `${name} is charted and passed its check.` :
-               `${name} did not pass the check, so it is kept for a look (Open folder), not for Clone Hero.`,
-             ev.summary, { at: ev.at, line: "Charted in", report: !ev.ok });
-      loadResults();
-      return true;
-    }
+    case "result":
     case "error":
-      stopRunningRows("stopped");
-      finish("It did not finish", ev.message, null, { at: ev.at, line: "Stopped after", open: true });
-      return true;
     case "cancelled":
-      stopRunningRows("cancelled");
-      finish("Cancelled",
-             "The chart was cancelled. What it had worked out is kept, so the same song goes faster next time.", null,
-             { at: ev.at, line: "Cancelled after" });
+      stopRunningRows(ev.event === "cancelled" ? "cancelled" : "stopped");
+      closed(closing(ev));
       return true;
     default:
       break;
   }
   return false;
+}
+
+// A closing event's words, for the end of a chart and for a finished song's Look (M8-10): the Done screen's title and
+// text, the build's report, how the stages fold, whether there are results, and the song's state in the list
+function closing(ev) {
+  if (ev.event === "result") {
+    const name = songName(ev.folder);
+    return { title: ev.ok ? "Ready" : "The check failed",
+      message: ev.ok ? `${name} is charted and passed its check.` :
+        `${name} did not pass the check, so it is kept for a look (Open folder), not for Clone Hero.`,
+      summary: ev.summary, how: { at: ev.at, line: "Charted in", report: !ev.ok }, results: true,
+      outcome: ev.ok ? "ready" : "check_failed" };
+  }
+  if (ev.event === "error") {
+    return { title: "It did not finish", message: ev.message, summary: null,
+      how: { at: ev.at, line: "Stopped after", open: true }, results: false, outcome: "not_finished" };
+  }
+  return { title: "Cancelled",
+    message: "The chart was cancelled. What it had worked out is kept, so the same song goes faster next time.",
+    summary: null, how: { at: ev.at, line: "Cancelled after" }, results: false, outcome: "cancelled" };
+}
+
+// A chart's end: with more songs to come (the list as last read: songs waiting, not paused) the page waits for the
+// server to start the next and follows it, the screen kept awake; else the Done screen, as for one song
+function closed(c) {
+  if (moreToCome()) between(c);
+  else closedNow(c);
+}
+
+function closedNow(c) {
+  const was = state.job && state.job.job;
+  finish(c.title, c.message, c.summary, { ...c.how, tab: endTitle(c.outcome) || c.how.tab });
+  if (c.results) loadResults();
+  settleQueue(was);
+}
+
+// the list read again until the song that just ended is no longer charting in it: its result comes a second or so
+// before its process has exited, which the server waits for before it records the end
+async function settleQueue(job) {
+  for (let i = 0; i < 10; i++) {
+    await refreshQueue();
+    if (!entries().some((e) => e.job === job && e.state === "charting")) return;
+    await new Promise((ok) => setTimeout(ok, 1000));
+  }
+}
+
+async function between(c) {
+  const was = state.job && state.job.job;
+  clearInterval(state.ticker);
+  state.ticker = null;
+  $("cancel").hidden = true;
+  text($("progress-title"), "Starting the next song…");
+  for (let i = 0; i < 30; i++) {
+    await refreshQueue();
+    const q = state.queue;
+    if (q && q.entries.some((e) => e.state === "charting" && e.job && e.job !== was)) { attach(adding()); return; }
+    if (!q || q.paused || !q.entries.some((e) => e.state === "waiting")) break;
+    await new Promise((ok) => setTimeout(ok, 1000));
+  }
+  closedNow(c);
 }
 
 // The end (M7-10): the stages folded into one line ("Charted in 12 min 43 s"; the rows stay open after an error,
@@ -606,17 +755,26 @@ function finish(title, message, summary, how) {
   $("progress-remaining").hidden = true;
   state.remaining = null;
   $("progress-keep").hidden = true;
+  setTitle(how.tab || title);
+  state.running = false;
+  letSleep();
+  lockLyrics();
+  renderUpdate(state.update, state.version);
+  showDone(title, message, summary, how);
+}
+
+// the Done screen's own part: for the chart that just ended, and for a finished song's Look (M8-10)
+function showDone(title, message, summary, how) {
+  $("results").hidden = true;
   $("built-row").hidden = true;   // shown with the results, for a chart that has a folder
   text($("built-msg"), "").hidden = true;
   text($("done-title"), title);
   text($("done-text"), message);
-  setTitle(how.tab || title);
   text($("summary"), summary || "");
   $("summary-box").hidden = !summary;
-  $("summary-box").open = !!how.report;   // the engines' lines, for a look; open when the check failed
-  state.running = false;
-  letSleep();
-  renderUpdate(state.update, state.version);
+  $("summary-box").open = !!(how && how.report);   // the engines' lines, for a look; open when the check failed
+  text($("again"), state.running ? "Back to the chart" : "Add a song");
+  if (adding()) return;   // under the form he is filling: in the list, with Look, until he leaves it
   $("done-screen").hidden = false;
   toDone();
 }
@@ -731,16 +889,20 @@ function gone(down) {
     `again. Chart the song again: ${kept}`, null, { open: true, tab: down ? "Not answering" : "Stopped" });
 }
 
-async function attach() {
+// `quiet` (the next song, or one started elsewhere, while he fills the options form): followed without taking the
+// form away; it shows once he sends or leaves the form
+async function attach(quiet) {
   const r = await api("GET", "/api/jobs/current");
   if (r.status !== 200) return;
   const job = r.data;
   state.job = job;
   state.offset = (job.now || Date.now() / 1000) - Date.now() / 1000;
   resetProgress(job);
-  $("done-screen").hidden = true;
-  show("progress-screen");
-  setTitle("Charting");
+  if (!quiet) {
+    $("done-screen").hidden = true;
+    show("progress-screen");
+  }
+  progressTitle("Charting");
   state.running = job.state === "running";   // a finished job's events end it again at once
   renderUpdate(state.update, state.version);
   holdAwake();
@@ -748,13 +910,16 @@ async function attach() {
   state.ticker = setInterval(tick, 1000);
   state.follow += 1;
   follow(state.follow);
+  renderQueue();
 }
 
 async function cancel() {
   if (!window.confirm("Cancel this chart? What it has worked out so far is kept for the next try.")) return;
   $("cancel").disabled = true;
   try {
-    const r = await api("POST", "/api/jobs/current/cancel");
+    // the job this page shows: a Cancel confirmed after its song ended never reaches the next (the review's S-S1)
+    const which = state.job && state.job.job;
+    const r = await api("POST", `/api/jobs/${encodeURIComponent(which || "current")}/cancel`);
     if (r.status !== 200 && r.status !== 409) $("cancel").disabled = false;
   } catch (e) {
     $("cancel").disabled = false;
@@ -762,6 +927,14 @@ async function cancel() {
 }
 
 function again() {
+  state.uploads = [];   // the form, if any, is left
+  if (state.running) {   // a finished song's Look while the next charts: back to the chart (M8-10)
+    stopListening();
+    closeBox();
+    $("done-screen").hidden = true;
+    show("progress-screen");
+    return;
+  }
   if (state.job) {
     try { sessionStorage.setItem(DISMISSED, state.job.job); } catch (e) { /* private mode: no matter */ }
   }
@@ -774,6 +947,7 @@ function again() {
   closeBox();
   dropError("");
   show("drop-screen");
+  $("back-row").hidden = true;
   setTitle(null);
   refreshStatus();   // a session of charts fills the disk: the header measures it again for the next song
 }
@@ -784,19 +958,219 @@ async function refreshStatus() {
     if (r.status !== 200) return;
     state.status = r.data;
     renderStatus(r.data);
+    setQueue(r.data.queue);
     showUpdate(r.data.update);
   } catch (e) {
     // the server is gone: the next request says so
   }
 }
 
+// ------------------------------------------------------------------------------------------------ the queue (M8-10)
+
+// The server's list (GET /api/queue, and /api/status's `queue`): each song with its state, Install and Look once
+// finished, Remove while it waits; Pause after this song, Carry on and Clear the list; the whole queue's estimate.
+const FINISHED = new Set(["ready", "check_failed", "not_finished", "cancelled"]);
+const STATE_WORDS = { waiting: "Waiting", charting: "Charting now", ready: "Ready",
+  check_failed: "The check failed (kept for a look)", not_finished: "Did not finish", cancelled: "Cancelled" };
+const END_WORDS = [["ready", "ready"], ["check_failed", "check failed"], ["not_finished", "did not finish"],
+  ["cancelled", "cancelled"], ["waiting", "waiting"]];
+
+function entries() { return (state.queue && state.queue.entries) || []; }
+function waitingCount() { return entries().filter((e) => e.state === "waiting").length; }
+function queueCharting() { return entries().find((e) => e.state === "charting") || null; }
+function queueBusy() { return !!queueCharting() || waitingCount() > 0 || state.running; }
+function moreToCome() { return !!state.queue && !state.queue.paused && waitingCount() > 0; }
+// the evening's songs: those added since the list was last idle (the server's `run`)
+function runEntries(q) { return q && q.entries ? q.entries.filter((e) => e.run === q.run) : []; }
+
+function queuePrefix() {
+  const run = runEntries(state.queue);
+  if (run.length < 2 || !state.job) return "";
+  const at = run.findIndex((e) => e.job === state.job.job);
+  return at >= 0 ? `${at + 1} of ${run.length}: ` : "";
+}
+
+// the tab's title at the queue's end: "6 ready", "5 ready, 1 did not finish" (the song that just ended counted as
+// `outcome`); null for one song
+function endTitle(outcome) {
+  const run = runEntries(state.queue);
+  if (run.length < 2) return null;
+  const counts = {};
+  for (const e of run) {
+    const st = state.job && e.job === state.job.job ? outcome : e.state;
+    counts[st] = (counts[st] || 0) + 1;
+  }
+  return END_WORDS.filter(([k]) => counts[k]).map(([k, w]) => `${counts[k]} ${w}`).join(", ");
+}
+
+function hoursMinutes(min) {
+  return min < 60 ? `${min} min` : `${Math.floor(min / 60)} h` + (min % 60 ? ` ${min % 60} min` : "");
+}
+
+function leftText(q) {
+  const run = runEntries(q);
+  if (!q || !q.left || run.length < 2 || !(q.left.high_s > 0)) return "";
+  const [lo, hi] = roundMinutes(q.left.low_s, q.left.high_s);
+  return `All ${run.length} songs: about ${hoursMinutes(lo)} to ${hoursMinutes(hi)} more`;
+}
+
+function pausedText(q) {
+  if (q.paused === "restart") {
+    const n = q.restarted || waitingCount();
+    return `${n} song${n === 1 ? " was" : "s were"} waiting when songcharter closed. Carry on charts ` +
+      `${n === 1 ? "it" : "them"}; Clear the list lets ${n === 1 ? "it" : "them"} go.`;
+  }
+  if (q.paused === "you") return "Paused after this song: Carry on charts the rest.";
+  if (q.paused === "failures") {
+    return "Two songs in a row did not finish, so the queue is paused: see why with Look. Carry on tries the rest.";
+  }
+  return q.why || "The queue is paused: Carry on goes on.";
+}
+
+function setQueue(q) {
+  state.queue = q && Array.isArray(q.entries) ? q : null;
+  renderQueue();
+}
+
+async function refreshQueue() {
+  let r;
+  try { r = await api("GET", "/api/queue"); } catch (e) { return; }
+  if (r.status !== 200) return;
+  setQueue(r.data);
+  // a song the server started while this page followed none (Carry on in another tab, say): followed
+  const c = queueCharting();
+  if (c && c.job && !state.running && (!state.job || state.job.job !== c.job)) attach(adding());
+}
+
+function smallButton(label, f, cls) {
+  const b = make("button", cls || "plain small-button", label);
+  b.type = "button";
+  b.addEventListener("click", f);
+  return b;
+}
+
+function queueRow(e) {
+  const li = make("li", e.state);
+  li.append(make("span", "queue-name", e.chart || e.name), " ");
+  let word = STATE_WORDS[e.state] || e.state;
+  if (e.state === "not_finished" && e.error) word += `: ${e.error}`;
+  if (e.state === "waiting" && e.estimate && e.estimate.low_min > 0) {
+    word += ` (usually about ${e.estimate.low_min} to ${e.estimate.high_min} minutes)`;
+  }
+  li.append(make("span", "queue-state", word));
+  const actions = make("span", "queue-actions");
+  const msg = make("span", "queue-msg small");
+  msg.hidden = true;
+  if (e.state === "ready" && e.job) actions.append(smallButton("Install", () => installFrom(e, msg), "small-button"));
+  if (FINISHED.has(e.state) && e.job) actions.append(smallButton("Look", () => look(e.job)));
+  if (e.state === "waiting") actions.append(smallButton("Remove", () => removeEntry(e)));
+  li.append(actions, msg);
+  if (e.lyrics_lost) {   // the review's S-S2: pasted lyrics are never kept, so a restart lost them
+    li.append(make("span", "queue-msg small warn-text", "Its pasted lyrics were not kept when songcharter closed: " +
+      "add it again with its lyrics, or chart it without."));
+  }
+  return li;
+}
+
+function renderQueue() {
+  const q = state.queue;
+  const list = entries();
+  $("queue-box").hidden = !list.length;
+  const key = JSON.stringify(list);
+  if (key !== state.queueKey) {   // the rows made again only when a song changed (a click is not lost)
+    state.queueKey = key;
+    $("queue-list").replaceChildren(...list.map(queueRow));
+  }
+  const paused = q && q.paused;
+  $("queue-paused").hidden = !paused;
+  if (paused) text($("queue-paused-text"), pausedText(q));
+  $("queue-clear").hidden = paused !== "restart";
+  const charting = queueCharting(), waiting = waitingCount();
+  $("queue-actions").hidden = !!charting || !!paused || !list.length;
+  const left = leftText(q);
+  text($("queue-left"), left).hidden = !left;
+  $("queue-keep").hidden = !(waiting > 0 || (charting && runEntries(q).length > 1));
+  $("pause").hidden = !(charting && waiting > 0 && !paused);
+  text($("queue-note"), state.note).hidden = !state.note;
+  lockLyrics();
+}
+
+async function queueAction(path, body) {
+  let r;
+  try { r = await api("POST", path, body); } catch (e) { return null; }
+  if (r.status === 200) setQueue(r.data);
+  return r;
+}
+
+function removeEntry(e) { return queueAction("/api/queue/remove", { entry: e.id }); }
+function pauseQueue() { return queueAction("/api/queue/pause"); }
+
+async function carryOn() {
+  const r = await queueAction("/api/queue/carry-on");
+  if (r && r.status === 200 && queueCharting()) attach();
+}
+
+async function clearList() {
+  const waiting = waitingCount();
+  if (waiting && !window.confirm(`Clear the list? The ${waiting === 1 ? "song" : `${waiting} songs`} waiting ` +
+    "will not be charted; the charts already made stay.")) return;
+  await queueAction("/api/queue/clear");
+}
+
+// Install from the list: the song's own chart by its job id; a song in Clone Hero already asks before replacing
+async function installFrom(e, msg, replace) {
+  text(msg, "Installing…").hidden = false;
+  try {
+    const r = await api("POST", `/api/jobs/${encodeURIComponent(e.job)}/install`, { replace: !!replace });
+    const d = r.data;
+    if (r.status === 200) {
+      text(msg, "Installed. In Clone Hero, open Settings > General and press Scan Songs.");
+    } else if (r.status === 409 && d.exists && d.ours) {
+      if (window.confirm(`${e.chart || e.name} is in Clone Hero already, from an earlier chart. Replace the older chart?`)) {
+        return installFrom(e, msg, true);
+      }
+      text(msg, "Not installed: the older chart stays.");
+    } else if (r.status === 400 && /Songs folder/.test(d.error || "")) {
+      text(msg, "songcharter does not know your Clone Hero Songs folder yet: press Look, and give it there.");
+    } else if (r.status === 403) {
+      text(msg, "Windows did not let songcharter finish writing into the Songs folder: press Look to try again, or to save the zip.");
+    } else {
+      text(msg, d.error || `It could not be installed (${r.status}).`);
+    }
+  } catch (x) {
+    text(msg, "songcharter does not answer: is it still running?");
+  }
+  return null;
+}
+
+// Look: a finished song's own Done screen (its result, preview and flags, Listen, the zip), by its job id
+async function look(job) {
+  let r;
+  try { r = await api("GET", `/api/jobs/${encodeURIComponent(job)}`); } catch (e) { return; }
+  if (r.status !== 200) return;
+  const ev = (r.data.events || []).filter((x) => CLOSING.has(x.event)).pop();
+  if (!ev) return;
+  stopListening();
+  closeBox();
+  state.uploads = [];   // the form, if any, is left: the Look's own screen (the review's P-F2)
+  show(state.running ? "progress-screen" : null);
+  const c = closing(ev);
+  state.shown = job;
+  showDone(c.title, c.message, c.summary, c.how);
+  if (c.results) await loadResults(job);
+}
+
 // ------------------------------------------------------------------------------------------------ the Done screen
 
-async function loadResults() {
+// the Done screen's routes name the song it shows by its job id (M8-10: a finished song's, after the next started)
+function jobPath(rest) { return `/api/jobs/${encodeURIComponent(state.shown || "current")}${rest}`; }
+
+async function loadResults(job) {
   let r;
-  try { r = await api("GET", "/api/jobs/current/results"); } catch (e) { return; }
+  try { r = await api("GET", `/api/jobs/${encodeURIComponent(job || "current")}/results`); } catch (e) { return; }
   if (r.status !== 200) return;
   const res = r.data;
+  state.shown = res.job || job || null;
   renderBuilt(res);
   renderArt(res.art, res.name, res.job);
   renderLyrics(res.lyrics);
@@ -1007,7 +1381,7 @@ async function listenTo(from) {
   $("listen").disabled = true;
   text(msg, `Making the ${what} into sound: a few seconds…`).hidden = false;
   try {
-    const r = await api("POST", "/api/jobs/current/listen", { part, level });
+    const r = await api("POST", jobPath("/listen"), { part, level });
     if (r.status === 200) {
       text(msg, `${what}, over the song. Listen for a tone that comes late or not at all, ` +
                 "or tones where the song is quiet.");
@@ -1097,7 +1471,7 @@ async function install(replace) {
   $("install").disabled = true;
   $("replace").disabled = true;
   try {
-    const r = await api("POST", "/api/jobs/current/install", { replace });
+    const r = await api("POST", jobPath("/install"), { replace });
     const d = r.data;
     if (r.status === 200) {
       installMessage("Done. In Clone Hero, open Settings > General and press Scan Songs." + (d.note ? `\n(${d.note})` : ""),
@@ -1138,7 +1512,7 @@ async function exportZip() {
   const msg = $("export-msg");
   $("zip").disabled = true;
   try {
-    const r = await api("POST", "/api/jobs/current/export/zip");
+    const r = await api("POST", jobPath("/export/zip"));
     if (r.status === 200) {
       download(r.data.url, r.data.name);
       text(msg, `The zip is ${r.data.name}: your browser saves it, into Downloads unless you chose another folder.`).hidden = false;
@@ -1156,7 +1530,7 @@ async function exportZip() {
 async function openFolder(what, where) {
   text(where, "").hidden = true;   // an earlier refusal goes once this one is asked
   try {
-    const r = await api("POST", "/api/open", { what });
+    const r = await api("POST", "/api/open", what === "built" && state.shown ? { what, job: state.shown } : { what });
     if (r.status === 200 && !r.data.opened) {
       text(where, `Open it yourself: ${r.data.windows_path || r.data.path}`).hidden = false;
     } else if (r.status !== 200) {
@@ -1192,6 +1566,11 @@ async function start() {
   $("open-exports").addEventListener("click", () => openFolder("exports", $("export-msg")));
   $("update-copy").addEventListener("click", copyLine);
   $("update-later").addEventListener("click", later);
+  $("pause").addEventListener("click", pauseQueue);
+  $("carry-on").addEventListener("click", carryOn);
+  $("queue-clear").addEventListener("click", clearList);
+  $("queue-clear-all").addEventListener("click", clearList);
+  $("back").addEventListener("click", () => show("progress-screen"));
   document.addEventListener("visibilitychange", visible);
   show("drop-screen");
   let st;
@@ -1203,7 +1582,9 @@ async function start() {
   }
   state.status = st;
   renderStatus(st);
+  setQueue(st.queue);
   showUpdate(st.update);
+  setInterval(refreshQueue, 5000);   // the list's states, and a song the server starts by itself
   if (!st.update) for (const ms of UPDATE_ASKS) setTimeout(askForUpdate, ms);
   let dismissed = null;
   try { dismissed = sessionStorage.getItem(DISMISSED); } catch (e) { dismissed = null; }

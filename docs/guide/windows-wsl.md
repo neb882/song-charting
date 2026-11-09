@@ -93,6 +93,13 @@ page.
   chart). To come back, start songcharter again from the Start menu: the page shows the chart where it is.
 - Drop the song file on the page (or use "Choose a file"), then press "Chart it". The options you rarely need (the
   number of takes, the device, the preview) are under "More options".
+- **Several songs for an evening:** drop several song files at once (or choose several), pick Best or Quick once for
+  all of them, and press "Chart them": songcharter charts them one after the other, by itself, while you are away. The
+  list under the chart shows each song: "Install" and "Look" (its own Done screen) once it is done, "Remove" while it
+  waits; more songs can be added while one charts ("Add songs"). Leave the page in front, or set the PC's sleep to
+  Never, so it charts all evening. Cancel stops only the song charting; "Pause after this song" stops the list after
+  it. If the songcharter window closes, the list waits: start songcharter again and press "Carry on". Lyrics and
+  pictures are for one song at a time.
 - **Lyrics, if you want them on screen:** before "Chart it", open "Lyrics" and paste the song's words into the box,
   one line for each sung line. songcharter times the words you paste to the singing; it never looks lyrics up. The
   first song with lyrics downloads 1.26 GB, once.

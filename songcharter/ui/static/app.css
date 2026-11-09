@@ -213,3 +213,18 @@ button.small-button { padding: 0.1rem 0.5rem; margin-top: 0; font-size: 0.85rem;
 #lightbox-img { display: block; width: 100%; height: auto; background: #fff; border-radius: 4px; }
 footer { max-width: 52rem; margin: 0 auto; padding: 0.5rem 1.25rem 2rem; }
 [hidden] { display: none !important; }
+
+/* the queue (M8-10): the Add songs strip under the stages, and the list under the progress screen */
+.drop.strip { padding: 0.5rem 0.75rem; margin-top: 0.75rem; }
+#queue-box { margin-top: 1rem; }
+#queue-box h3 { margin: 0 0 0.5rem; }
+.queue-list { margin: 0.25rem 0; padding-left: 1.5rem; }
+.queue-list li { padding: 0.35rem 0; border-bottom: 1px solid var(--line); }
+.queue-list li:last-child { border-bottom: 0; }
+.queue-name { font-weight: 600; overflow-wrap: anywhere; }
+.queue-state { color: var(--muted); }
+.queue-list li.ready .queue-state { color: var(--ok); }
+.queue-list li.check_failed .queue-state, .queue-list li.not_finished .queue-state { color: var(--bad); }
+.queue-list li.charting .queue-state { color: var(--accent); }
+.queue-actions { display: inline-flex; flex-wrap: wrap; gap: 0.4rem; margin-left: 0.5rem; vertical-align: middle; }
+.queue-msg { display: block; }

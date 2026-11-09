@@ -3156,6 +3156,52 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     14" and "about 2 to 7 minutes" for a 4:01 song on a GPU summary; "Ready" at y=17, Open folder at y=107 and "Play
     it" from y=154; a flag's page in the lightbox fills the window; Listen here plays from 0:59 for a flag at 0:59.9.
     No console errors.
+- **The queue** (M8-10, from M8-04's design note and the orchestrator's decision in `docs/work-orders/M8-10-queue.md`)
+  [code]: the owner's ask, about ten songs loaded before an evening out and charted by the time he is back.
+  - **The server runs it** (`jobs.Queue`), not the page: `POST /api/jobs` adds a song, whose options are checked at
+    once, and `Jobs.on_end` starts the next waiting song when a chart ends or is cancelled, so a closed, hidden or
+    disconnected tab never stops the evening. Still one child process group at a time (a chart's tree peaked at
+    10.1 GB on the test song, M8-00 section 6); a test with a stand-in child that records its start and end shows
+    the runs never overlap.
+  - **queue.json** (`<home>/state/`, written whole through a temporary file) keeps each song's upload id, its options
+    with the pictures as upload ids, its estimate, its state (waiting, charting, ready, check_failed, not_finished,
+    cancelled) and a finished song's closing event, never lyrics; at most 20 waiting songs and the last 50 finished
+    ones. The uploads it names are kept past the 7 days' pruning until their song is charted or removed.
+  - **A restart waits for a click:** closing the window kills the chart's tree as before, and its song goes back to
+    waiting at the top (its stages and takes stay in the work cache); started again, songcharter pauses the list
+    ("3 songs were waiting when songcharter closed") with Carry on and Clear the list, so opening it later to
+    install one song never starts a 10 GB chart under a game.
+  - **Cancel** ends the charting song only, and the next starts; **Pause after this song** lets it finish and starts
+    none; a waiting song has **Remove**; no reordering. **Two songs in a row that do not finish** (exit 2 or 3,
+    killed, or one whose file is gone) pause the list, as exit 2 is often the machine; a failed check is a finished
+    chart. **The disk** is measured before each song the queue starts itself (`device.refresh_disk`), and under
+    doctor's 6 GB the list pauses with "C: is nearly full ...": the cache keeps every work folder used in the last
+    24 hours whatever its 5 GB budget, so an evening of 10 songs keeps about 7-12 GB (the rule for a queue's own
+    finished songs is `cache.py`'s, a follow-up).
+  - **Lyrics only for a song that starts at once** (refused beside the box, and by the server, for a song that would
+    wait): they stay a memory file for the seconds before the child reads them, never hours.
+  - **Routes by job id:** results, preview, art, Listen, install and the zip take `/api/jobs/<id>/...` beside
+    `current`, from the current job or the queue's record of a finished one (after a restart too), so a finished
+    song's Install and Look work while the next charts.
+  - **The page:** a drop (or a choice) of several songs uploads them in turn into one shared form (Best or Quick and
+    More options; a song's own fields, lyrics and pictures only for a drop of one). The list sits under the progress
+    screen: each song's state, Install and Look (its own Done screen) when finished, Remove while it waits, the
+    pause's banner with Carry on, and "All 6 songs: about 1 h 10 min to 3 h 20 min more" (the waiting songs' ranges
+    with the charting song's time left). The tab's title reads "2 of 6: Guitar: take 3 of 4" and, at the end, "6
+    ready" or "5 ready, 1 did not finish"; the wake lock is held across songs, and the page says to leave the tab in
+    front or set sleep to Never; the update notice waits for the list to empty. "Chart another song" became "Add a
+    song", and the progress screen has an "Add songs" strip.
+  - In Chromium at 1280x860 and 700 px, light and dark [here, the real App, Jobs and Queue with a stand-in chart
+    program and made-up songs]: two songs dropped at once share one form ("2 songs, charted one after the other",
+    "Best charts (4 guitar takes)", "Chart them"); the first charts as "1 of 2: Guitar: take 1 of 4", the list under
+    it with the second waiting (Remove) and "All 2 songs: about 6 min to 24 min more"; when it ends the page follows
+    the second ("2 of 2"), the first Ready with Install and Look, and Look shows its Done screen with "Back to the
+    chart"; at the end "2 ready". A window closed mid-song and songcharter started again: "1 song was waiting when
+    songcharter closed" with Carry on and Clear the list, and Carry on charts it. On this machine (under 6 GB free)
+    the real disk check paused the list at once, "WSL's disk is nearly full", until the stand-in was given a made-up
+    disk. No console errors but the one connection the server's restart reset.
+  - **Left for later:** "Your charts" (the library's list, its own order), lyrics held in memory for a waiting song,
+    "Chart next", and Windows' own keep-awake call (a check under Smart App Control first).
 - **Status** [code]: screens 1 to 3 built in M4-04; in M4-06 the Done screen (the preview's overview and pages, "Worth a look" from its flags, the zip, Install into Clone Hero, Another folder, Open folder), the "Paste lyrics" box (the text handed to the chart through a memory file, never written to disk or logged), and the diagnostics bundle (`diagnostics.py`, `songcharter diagnostics --out PATH`, `/api/diagnostics`: logs, `doctor.json`, settings and a MANIFEST.txt, every file checked by name, size and first bytes; no audio, chart, image or pasted text). In M4-11 the "Album art" and "Background image" pickers and the album art on the Done screen (§2.16). In M6-09 the Done screen's "Listen" (§2.17). In M7-10 the estimate, the folded stages, the install first, the tab's title, the wake lock, the drop zone's keys and the update notice put away while a chart runs (above). Quick fixes, Preview in Clone Hero and the polish workspace are not built.
 
 ### 4.6 CI (with the Windows build)
