@@ -321,6 +321,49 @@ eval/gpu.sh results                                        # eval/data/gpu_resul
   guard stops it, send its lines as they are:** each names a file by its label path and the kind of hit (id, title,
   artist, charter, user name, md5, path), never the name. A path the scripts print is written with `~`.
 
+## The thin spike with the installed app (M8-11)
+
+`eval/gpu.sh thin-spike` (`eval/spike/thin_spike.sh`) makes Expert takes of a song under four engine settings, the
+"arms": `base` (temperature 0.95, the app's), `hot` (1.05), `dense5` and `dense6` (the density knob, "speed", at 5
+and 6), four seeds each, with a patched copy of the app's driver (the app's own is never changed). With `--app` it runs
+on the installed app's autochart, Node, Python and ffmpeg, as `takes --app` does: it needs what that section needs
+(the app on the cu132 lane, the GPU, a clone), no eval tools, and no set built. From the clone (the paths are
+placeholders):
+
+```sh
+cd /path/to/song-charting && git pull
+eval/gpu.sh thin-spike --app "/path/to/the song.mp3"   # the check, then the spike, detached
+eval/gpu.sh status                                     # the latest lines of eval/data/runs/thin_spike/thin_spike.log
+eval/gpu.sh stop                                       # only if needed: the same thin-spike line carries on
+```
+
+- **The check** runs first, as `check --app` does: the GPU, the app's lane, onnxruntime-node's CUDA provider, the CUDA
+  13 and cuDNN libraries. A problem stops it before anything starts (`ALLOW_CPU=1` starts it anyway). The run itself
+  stops after a take whose transcriber did not run on CUDA.
+- **Time:** 16 takes (4 arms x 4 seeds), about 2.5 hours of the GPU (M8-11's estimate), unattended. Keep one Ubuntu
+  window open while it runs.
+- **The takes** are in `eval/data/runs/thin_spike/song/<arm>/seed_<seed>/`. After a stop, the same line keeps every
+  take already made from the same file (by its SHA-256) and makes the rest.
+- **The zip**, `eval/data/runs/thin_spike/thin_spike_results.zip`, is made at the end of the run. It holds this run's
+  takes: each one's `notes.chart` as the engine wrote it, and its `autochart_run/summary.json` copied field by field
+  (the settings, the devices, tokens and timings: no path, no message). There is no log and no audio in it. A guard
+  then reads it back (this PC's home folder, a Windows user folder, a `\\wsl$` path, the user name), and
+  `check_no_audio.py` checks it. If either stops it, no zip is made: send the lines it printed as they are.
+  `(cd eval/data/runs/thin_spike && explorer.exe .)` opens the folder in Windows, to send the zip back.
+
+**Later, the references' arm.** If an arm clears M5-99's bar, M8-11 checks it on the references before adopting it:
+the same steps with `ARMS` set to the winner and `base`, on each reference's `input.wav`. `eval/gpu.sh build --app
+refs` builds those (GPU takes with the installed app, above). One line runs them all, one after the other, each song's
+takes under its id (`.../thin_spike/<id>/<arm>/seed_<seed>/`):
+
+```sh
+ARMS="base:T=0.95 dense5:speed=5" eval/gpu.sh thin-spike --app eval/data/refs/*/input.wav   # the winner for dense5
+```
+
+That is 8 takes a song (2 arms x 4 seeds), twice the takes of `eval/gpu.sh takes --app refs`, with the test song's
+too if it was built. The zip is made again in the same place, with this run's takes only, so send the first one
+before starting this run.
+
 ## Rebuilding the dev machine
 
 The golden charts (`eval/golden.py`) and the engines' development need a set of installs and data that live outside
