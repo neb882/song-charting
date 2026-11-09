@@ -3637,6 +3637,43 @@ def test_the_page_waits_for_the_next_song_and_never_shows_the_last_songs_time_le
     assert out["stale"] is None and out["fresh"] == 120
 
 
+# QUEUE_PAGE's stand-ins again: a song the server refuses (already in the list), sent from the top "Chart it"
+REFUSED_FLOW = r"""
+(async () => {
+  const err = document.getElementById("options-error"), seen = [];
+  err.scrollIntoView = (how) => seen.push(how || null);
+  ctx.setQueue({ paused: null, run: 1, left: null, entries: [entry("a", "charting", "j1")] });
+  vm.runInContext('state.uploads = [{ id: "a", name: "a.mp3" }]', ctx);
+  ctx.show("options-screen");
+  jobsAnswers = [{ status: 400, body: { error: "This song is already in the list: it is charting now." } }];
+  await ctx.chartIt({ preventDefault() {} });
+  await settle();
+  out.refused = { text: err.textContent, hidden: err.hidden, scrolled: [...seen], form: !els["options-screen"].hidden };
+  els.options.elements.takes.value = "2.5";   // the form's own check, the same way
+  await ctx.chartIt({ preventDefault() {} });
+  out.takes = { text: err.textContent, scrolled: seen.length };
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_a_refused_song_is_said_where_he_sees_it(tmp_path):
+    """The v0.5.0 review fixes: the form's error sits under it, a screen below the top "Chart it" at 700 px, so a
+    refusal ("This song is already in the list") is scrolled into view, the form kept (break: the error shown where
+    it is, out of sight)."""
+    script = tmp_path / "refused.cjs"
+    script.write_text(QUEUE_PAGE[:QUEUE_PAGE.index("(async () => {")] + REFUSED_FLOW, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(S.static_files()["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["refused"] == {"text": "This song is already in the list: it is charting now.", "hidden": False,
+                              "scrolled": [{"block": "center"}], "form": True}
+    assert out["takes"] == {"text": "Guitar takes is a whole number: 1, or 3 or more.", "scrolled": 2}
+
+
 def test_a_cancel_by_id_after_its_song_ended_is_refused_and_the_list_full_says_so(served, monkeypatch):
     """M8-10's review S-S1 through the API: song A ends, the server starts B; POST /api/jobs/<A>/cancel answers 409
     "that chart has ended" and B charts on; /api/jobs/<B>/cancel cancels it. With QUEUE_MAX 1, the third of three

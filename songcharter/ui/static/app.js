@@ -472,13 +472,20 @@ function readOptions() {
   return options;
 }
 
+// why the form was not sent, under it, scrolled into view: the top "Chart it" is a screen above it at 700 px, so a
+// refusal ("This song is already in the list", say) was out of sight (the v0.5.0 review fixes)
+function formError(message) {
+  const err = $("options-error");
+  text(err, message).hidden = false;
+  if (typeof err.scrollIntoView === "function") err.scrollIntoView({ block: "center" });
+}
+
 async function chartIt(e) {
   e.preventDefault();
-  const err = $("options-error");
-  err.hidden = true;
+  $("options-error").hidden = true;
   const options = readOptions();
   if (options.takes !== undefined && !Number.isInteger(options.takes)) {
-    text(err, "Guitar takes is a whole number: 1, or 3 or more.").hidden = false;
+    formError("Guitar takes is a whole number: 1, or 3 or more.");
     return;
   }
   chartButtons(true);
@@ -498,7 +505,7 @@ async function chartIt(e) {
   }
   if (refused.length === ups.length) {   // nothing added: the form stays, with why
     const many = ups.length > 1;
-    text(err, refused.map((x) => (many && x.name ? `${x.name}: ` : "") + x.error).join("\n")).hidden = false;
+    formError(refused.map((x) => (many && x.name ? `${x.name}: ` : "") + x.error).join("\n"));
     return;
   }
   state.uploads = [];

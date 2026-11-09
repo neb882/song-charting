@@ -329,7 +329,9 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
     its virtual disk's free space, so a nearly full C: passed the check (the v0.5.0 review's install-02). A disk that
     fills while they are written is a warning (M8-12's review), and so is any other error writing them, as in WSL a
     full C: is an I/O error rather than ENOSPC [inference: not run on Windows]: the staging folder is removed, the
-    chart stands with its Install, and the Done screen says in plain words why there are no stems.
+    chart stands with its Install, and the Done screen says in plain words why there are no stems: the disk ran out
+    of room, or, for any other error, "The stems could not be saved (input/output error); your chart is fine. ..."
+    in the error's own words (`STEMS_NOT_SAVED`), never a full disk it was not.
   - Piano and "other" are htdemucs_6s's least clean stems (piano at −31 dB on the test song, above), which the page
     says.
 - **Goal 1:** no new separation. Reuse the `ft` stems (lag 0) and the ADTOF test's 6s drum stems (lag 0).
@@ -3161,7 +3163,8 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     says it only when the list the songcharter started since answers has that song waiting (by its name), and
     "Chart the song again" otherwise. The queue also refuses a song whose upload is already waiting or charting:
     "This song is already in the list: it is charting now." (or "it is charted in its turn.", or, paused, "press
-    Carry on to chart it."); a finished song may be charted again.
+    Carry on to chart it."); a finished song may be charted again. The form's errors sit under it, a screen below
+    the top "Chart it" at 700 px, so they are scrolled into view (centred) when shown.
   - **The drop zone** opens the file chooser on Enter or Space (it had a tab stop and no key handler), and **the
     update notice** is hidden while a chart runs (its line says to close the songcharter window, which would stop
     the chart) and shown again at its end.
