@@ -324,9 +324,12 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
     vendor string and the samples' MD5) [code; tested, two runs].
   - A run whose separation is cached separates nothing for it; a stems folder holding anything else (a person's own
     .flac, a folder) is refused before any audio work; too little free space for the estimate is an `InputError`
-    naming the folder and the space right after the decode, before the long work. A disk that fills while they are
-    written is a warning (M8-12's review): the staging folder is removed, the chart stands with its Install, and the
-    Done screen says in plain words why there are no stems.
+    naming the folder and the space right after the decode, before the long work. In WSL C: is measured too, where
+    WSL's own disk grows (the measure of doctor's `windows_c_free_mb` and the queue's disk pause): WSL's disk reports
+    its virtual disk's free space, so a nearly full C: passed the check (the v0.5.0 review's install-02). A disk that
+    fills while they are written is a warning (M8-12's review), and so is any other error writing them, as in WSL a
+    full C: is an I/O error rather than ENOSPC [inference: not run on Windows]: the staging folder is removed, the
+    chart stands with its Install, and the Done screen says in plain words why there are no stems.
   - Piano and "other" are htdemucs_6s's least clean stems (piano at −31 dB on the test song, above), which the page
     says.
 - **Goal 1:** no new separation. Reuse the `ft` stems (lag 0) and the ADTOF test's 6s drum stems (lag 0).
@@ -2624,10 +2627,15 @@ charts changes. What each sound means:
   file may risk that. The check follows links and `..` (resolve()) and also compares each existing parent of the
   output with the song folder by identity (device and inode), which sees what resolve() cannot: the folder spelled in
   another case on a case-insensitive drive such as WSL's /mnt/c, or reached through a bind mount [the review's R1]. The page renders into the job's work folder, `listen/<part>-<level>-<hash>.ogg`, the hash of the
-  song folder's notes.chart (or notes.mid), song.ini and song.ogg, so a new chart of the same song (the same work
-  folder) renders again and the older render goes. The server serves only what it rendered for the current job, by
-  name (no path from the request reaches the file system), with byte ranges so the player can seek. A chart that
-  failed its gate can be listened to as well: it is for a look.
+  song folder's notes.chart (or notes.mid), song.ini and every audio file Clone Hero reads there
+  (`audio.song_audio_files`: song.ogg, and guitar.ogg, bass.ogg and drums.ogg in a split folder, M8-12; the render
+  plays them summed), so a new chart of the same song (the same work folder) renders again and the older render
+  goes. The server records each render under the job it was made for (`App.listened`, by job id) and serves it by
+  that job and its name only (no path from the request reaches the file system), with byte ranges so the player can
+  seek: the current job's, a finished song's while the next charts (M8-10's routes by job id), one the queue's list
+  has dropped since (by its chart in the library; the v0.5.0 review's correct-1), and a library chart's (Your charts,
+  M8-13, by its id), while its work folder is still in the cache. A chart that failed its gate can be listened to
+  as well: it is for a look.
 - **Not done:** a level for the song other than -12 dB (a parameter of `render`, no option), a tones-only switch on the
   page, a sound for star power or solos, and a check by ear on the friend's or the owner's PC (the builder could only
   measure: onsets, pitches, lengths, levels).
@@ -3145,8 +3153,15 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     for 20 s while the chart runs on (localhost after the PC sleeps or wakes), and a song dropped again would get
     "a chart is running already". So that text says to reload first, which reattaches: "songcharter is not
     answering. If the songcharter window is still open, reload this page (press F5) to follow the chart. If the window was
-    closed, which stops the chart, start songcharter again from the Start menu, then chart the song again: ..." (the
-    v0.4.0 gate's advisor).
+    closed, which stops the chart, start songcharter again from the Start menu, then ..." (the v0.4.0 gate's
+    advisor). Since M8-10 a closed window puts the charting song back to waiting at the top of the list, paused for
+    Carry on, and a song dropped again was queued behind it, so following the old "chart the song again" charted it
+    twice (the v0.5.0 review's install-01). Now both texts say "reload this page (press F5) and press Carry on: the
+    song waits at the top of the list, and what it had worked out is kept, so it goes faster"; "songcharter stopped"
+    says it only when the list the songcharter started since answers has that song waiting (by its name), and
+    "Chart the song again" otherwise. The queue also refuses a song whose upload is already waiting or charting:
+    "This song is already in the list: it is charting now." (or "it is charted in its turn.", or, paused, "press
+    Carry on to chart it."); a finished song may be charted again.
   - **The drop zone** opens the file chooser on Enter or Space (it had a tab stop and no key handler), and **the
     update notice** is hidden while a chart runs (its line says to close the songcharter window, which would stop
     the chart) and shown again at its end.
@@ -3192,16 +3207,29 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     timing at the low end (`GUITAR_ONCE`'s high rate times the song's length) and at the first take's time itself at
     the high end, as the events do not say whether autochart's cache held take 1's separation (a song charted again
     after a cancel; taking it off put the 9:05 song's range at 1182-1543 s against about 1636 s left, the review's
-    F3); nothing off when the cache answered take 1 itself; plus the build (`ASSEMBLE`: 0.5-5 s and 0.025-0.08 s a second,
-    from the test song's 16 and 17.2 s, Take Me Out's 19.3 s and CI's clip) and the preview at their rates. A 1-take
+    F3); nothing off when the cache answered take 1 itself; plus the stages after the guitar at their rates: the
+    build, the stems when saved, and the preview. The build was 0.5-5 s and 0.025-0.08 s a second (`ASSEMBLE_ONE`
+    now), from the test song's 16 and 17.2 s, Take Me Out's 19.3 s and CI's clip, all one-file builds; M8-12's split
+    audio, the default, about doubled it (three more encodes, and the four files decoded back for the gate), so
+    creep's 35.1 s was over the high end's 24.2 s and the time left ran out before the build ended (the v0.5.0
+    review). `ASSEMBLE` is now the split build's, 0.5-5 s and 0.05-0.16 s a second: the golden runs at v0.5.0's
+    candidate built the seven songs split in 25.8 s (2:55) to 59.8 s (6:52) on this CPU, 0.135-0.150 s a second,
+    every level [here, each run's pipeline.json], and creep in 35.1 s (M8-12, Expert only); the one-file rate stays
+    for "One audio file" (the estimate's `audio`), which the golden set's kept one-file builds (10.5-29.6 s, 0.060-0.072
+    s a second) and M8-12's creep (17.1 s) fall inside. "Save the stems" adds 0.5-2 s and 0.01-0.04 s a second when the
+    plan has it (creep's 4.3 s) [est.]. The whole chart's estimate is unchanged: its other stages' range already held
+    the split build (0.52-0.57 s a second for the decode, drums, bass, sections and build on this CPU). A 1-take
     chart has only the guitar's `stage_end`, after which the stages after it alone. None after a take was run again
     on the CPU. The job's snapshot carries it (`remaining`); the page asks for it at a take and at the guitar's end,
     and counts it down on the server's clock: "About 8 to 13 more minutes, from how long the first guitar take
     took.", the first estimate struck through above it, "Nearly done, or taking longer than estimated." past its high
     end; a later take or the guitar's end asks again, so after the guitar the stages after it alone. On the test
-    song's takes on the 5070 (264, 224, 164, 187 s) it gives 495-856 s at take 2's start against the 602 s they and
-    the build and preview took [here, tests/test_ui_estimate.py]; on the owner's 9:05 song (2173 s for its 4 takes,
-    split with the ordinary songs' mean first-take part) 1394-1870 s against 1577 s of later takes and a build.
+    song's takes on the 5070 (264, 224, 164, 187 s) it gives 505-889 s at take 2's start (495-856 s with the
+    one-file rates) against the 602 s they and a one-file build and the preview took, about 618 s with a split
+    build [est.] [here, tests/test_ui_estimate.py]; on the owner's 9:05 song (2173 s for its 4 takes, split with the
+    ordinary songs' mean first-take part) 1408-1914 s against 1577 s of later takes and a build. After the guitar on
+    creep (4:00, this CPU) it gives 19.9-60.4 s against M8-12's 35.1 s build and about 12 s of preview (13.9-41.2 s
+    before).
   - **The not-answering heading** (the gate's note): when nothing answers, the heading is "songcharter is not
     answering" and the tab "Not answering"; a 404 from a songcharter started since keeps "songcharter stopped".
   - In Chromium at 1280x860 and 700 px, light and dark [here, a stand-in server on a golden folder, M7-10's route]:
@@ -3235,7 +3263,20 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     wait): they stay a memory file for the seconds before the child reads them, never hours.
   - **Routes by job id:** results, preview, art, Listen, install and the zip take `/api/jobs/<id>/...` beside
     `current`, from the current job or the queue's record of a finished one (after a restart too), so a finished
-    song's Install and Look work while the next charts.
+    song's Install and Look work while the next charts. A finished song that leaves the list (Clear the list,
+    Remove, the trim past the last 50) is found by its job id through its chart in the library (the server keeps
+    its result folder's library id for its life, `Queue.dropped_chart`; never a path from the page), so a Look still
+    open on it keeps its preview, Install, Open folder and Listen (the v0.5.0 review's correct-1: they answered 404
+    and "no finished chart yet").
+  - **The events by job id** (the v0.5.0 review's correct-2): the page follows `/api/jobs/<id>/events` for the job
+    it attached to, not `current`. The stream's ids are bare indexes, and the server now starts the next song by
+    itself: a page whose connection dropped while one song ended and the next started resumed the next song's
+    events from the old song's index, as the old song's (its plan and early stages skipped, its result shown as the
+    old song's, and Cancel naming the old song, 409). By id, a reconnect resumes within that job only, and once it
+    has ended and is no longer current its closing event alone comes, so the page ends it as usual and follows the
+    next song from its first event. Chosen over an id that names the job in each event, which needs a format both
+    sides parse and the page to compare: the per-job stream changes one URL on the page and gives it the end it
+    missed.
   - **The page:** a drop (or a choice) of several songs uploads them in turn into one shared form (Best or Quick and
     More options; a song's own fields, lyrics and pictures only for a drop of one). The list sits under the progress
     screen: each song's state, Install and Look (its own Done screen) when finished, Remove while it waits, the
