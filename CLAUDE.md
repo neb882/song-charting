@@ -34,8 +34,10 @@ the lock itself.
 
 ## Hard rules
 
-- Never look up, quote or reproduce song lyrics. The one exception, scripts reading the reference charts' lyric events
-  for timing only, has its limits in `docs/work-orders/M4-10-lyrics.md`.
+- Never look up, quote or reproduce song lyrics: absolute, for every agent and every file in the repository. The one
+  exception, scripts reading the reference charts' lyric events for timing only, has its limits in
+  `docs/work-orders/M4-10-lyrics.md`, beside the app's own rule: it keeps the text a user pasted only in its state
+  folder until that song is charted, then deletes it, and never puts it in the diagnostics zip, a log or a report.
 - Never commit audio, stems, reference charts or model weights.
 - No names or identifiers of the AI assistant models that build songcharter in code, docs or commit messages, apart
   from the attribution trailer the session's instructions require on each commit. The machine-learning models
