@@ -129,11 +129,15 @@ def test_two_runs_give_byte_identical_audio_and_stems(runs, tmp_path, monkeypatc
     assert (second.folder / "notes.chart").read_bytes() == (first.folder / "notes.chart").read_bytes()
 
 
-def test_a_full_disk_while_saving_the_stems(runs, tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("code, said", [(errno.ENOSPC, "the disk filled while the stems were written into "),
+                                         (errno.EIO, "the stems could not be written into ")])
+def test_a_full_disk_while_saving_the_stems(runs, tmp_path, monkeypatch, capsys, code, said):
     """The disk filling while they are written: a warning, the run ends as its gate says with no stems (the page says
     why in plain words), no stems folder or staging folder left, the chart in place (break: the staging folder kept;
-    the error raised, which hid a good chart from the page: M8-12's review). Too little room at the export: NoRoom
-    naming the folder and the space needed."""
+    the error raised, which hid a good chart from the page: M8-12's review). Any other error writing them too: in
+    WSL a full C:, where WSL's disk grows, is an I/O error, not ENOSPC (the v0.5.0 review's install-02; break: only
+    ENOSPC caught, so the finished chart is reported as failed). Too little room at the export: NoRoom naming the
+    folder and the space needed."""
     root, _, out = runs
     monkeypatch.setenv("SONGCHARTER_CACHE", str(root / "cache"))
     real = A.write_flac
@@ -142,7 +146,7 @@ def test_a_full_disk_while_saving_the_stems(runs, tmp_path, monkeypatch, capsys)
     def full(audio, path, rate=SR):
         count.append(path)
         if len(count) == 3:
-            raise OSError(errno.ENOSPC, "No space left on device")
+            raise OSError(code, "No space left on device" if code == errno.ENOSPC else "Input/output error")
         return real(audio, path, rate)
 
     monkeypatch.setattr(A, "write_flac", full)
@@ -152,8 +156,8 @@ def test_a_full_disk_while_saving_the_stems(runs, tmp_path, monkeypatch, capsys)
                    sampler=None, events=events.append)
     assert done.ok and done.stems is None and (target / "notes.chart").is_file()
     assert sorted(p.name for p in target.parent.iterdir()) == ["Click Song"]
-    assert [w for w in done.warnings if w.startswith("stems: not saved (the disk filled while the stems were written "
-                                                     "into ")] and "they need about 51 MB" in done.warnings[-1]
+    assert [w for w in done.warnings if w.startswith(f"stems: not saved ({said}")]
+    assert "they need about 51 MB" in done.warnings[-1]
     record = json.loads((done.work / "pipeline.json").read_text(encoding="utf-8"))["stems"]
     assert record["saved"] is False and record["why"] == P.STEMS_NO_ROOM.format(mb="51 MB")
     assert [e["stage"] for e in events if e["event"] == "stage_end"][-2:] == ["stems", "preview"]
@@ -162,6 +166,41 @@ def test_a_full_disk_while_saving_the_stems(runs, tmp_path, monkeypatch, capsys)
         P.export_stems(source, tmp_path / "x (stems)", free=lambda p: 1)
     assert not (tmp_path / "x (stems)").exists() and not list(tmp_path.glob(".x (stems)*"))
     assert P.stems_bytes(240 * SR) == 190_512_000   # a 4-minute song: about 190 MB
+
+
+def test_in_wsl_the_stems_room_is_measured_on_c_too(tmp_path, monkeypatch):
+    """The v0.5.0 review's install-02: in WSL the library is on WSL's own disk, which reports its virtual disk's free
+    space (here 950 GB) while that disk grows on C:, nearly full here; the stems' checks right after the decode and at
+    the export measure C: as well, as doctor and the queue do, and say so (break: only the library's own disk
+    measured: they pass, and 190 MB go onto a full C:). Outside WSL, C: is not asked about."""
+    import shutil
+    from types import SimpleNamespace
+    from songcharter import wsl
+    c = tmp_path / "c"
+    c.mkdir()
+    monkeypatch.setattr(wsl, "MNT_C", c)
+    monkeypatch.setattr(wsl, "is_wsl", lambda: True)
+    room = {"c": 120_000_000}
+    monkeypatch.setattr(shutil, "disk_usage", lambda path: SimpleNamespace(
+        free=room["c"] if Path(path) == c else 950 * 10 ** 9))
+    folder = tmp_path / "library" / "0123456789abcdef" / "Made-Up Band - Song (stems)"
+    with pytest.raises(InputError, match=r"^no room for the stems on C:, where WSL's disk grows: they need about 191 "
+                                         r"MB, and 120 MB are free there\. Free some space, or chart again without"):
+        P.stems_room(folder, 240 * SR)
+    source = tmp_path / "sep"
+    source.mkdir()
+    for s in P.STEM_FILES:
+        A.write_wav(np.zeros((2, SR), dtype=np.float32), source / f"{s}.wav")
+    room["c"] = 100_000   # a second of six stems needs about 0.8 MB
+    with pytest.raises(P.NoRoom, match=r"^no room for the stems on C:, where WSL's disk grows: they need about 1 MB"):
+        P.export_stems(source, folder)
+    assert not folder.exists() and not list(folder.parent.glob(".*partial"))
+    room["c"] = 10 ** 9
+    P.stems_room(folder, 240 * SR)   # room on both
+    assert P.export_stems(source, folder)["files"] == [f"{s}.flac" for s in P.STEM_FILES]
+    room["c"] = 1
+    monkeypatch.setattr(wsl, "is_wsl", lambda: False)   # not WSL: C: is not WSL's disk
+    P.stems_room(folder, 240 * SR)
 
 
 def test_a_stems_folder_holding_other_files_is_refused_first(runs, tmp_path, monkeypatch):

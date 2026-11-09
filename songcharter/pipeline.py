@@ -31,9 +31,11 @@
      cache before its prune, so a run that finds the separation cached separates nothing. An existing stems folder
      holding anything else is refused before any audio work (`check_stems_folder`), and a disk without room for them
      (STEMS_FLAC_SHARE of 24-bit PCM, `stems_bytes`) right after the decode, where their size is known
-     (`stems_room`: an InputError naming the folder and the space needed). A disk that has filled by the time they are
-     written is a warning (M8-12's review): the half-written folder is removed, the run ends as the gate says, the
-     result's `stems` is null and pipeline.json's `stems` says why in plain words for the page (`STEMS_NO_ROOM`).
+     (`stems_room`: an InputError naming the folder and the space needed; in WSL C: is measured too, where WSL's disk
+     grows). A disk that has filled by the time they are written, or any other error writing them (in WSL a full C:
+     is an I/O error), is a warning (M8-12's review; the v0.5.0 review's install-02): the half-written folder is
+     removed, the run ends as the gate says, the result's `stems` is null and pipeline.json's `stems` says why in
+     plain words for the page (`STEMS_NO_ROOM`).
   5. **Preview** (preview.py) of the folder assemble wrote, the song folder or its .failed, into work/preview/
      (overview.png, page_NN.png), judged against the work folder's stems, when matplotlib and librosa import. It
      only informs: absent libraries or a preview that fails give one warning, never another exit code, and so does
@@ -918,13 +920,37 @@ def disk_free(path: Path) -> int:
     return shutil.disk_usage(path).free
 
 
-def stems_room(folder: Path, frames: int, channels: int = 2) -> None:
-    """An InputError when the disk holding the stems folder has less free than `stems_bytes`: run right after the
-    decode, before the long work."""
-    need, have = stems_bytes(frames, channels), disk_free(folder.parent)
+def _c_free() -> int | None:
+    """Free bytes on C: in WSL, where WSL's own disk grows (wsl.MNT_C, the measure of device.report's
+    `windows_c_free_mb`, the queue's disk pause and doctor's findings); None elsewhere or when it cannot be read."""
+    import shutil
+    from . import wsl
+    try:
+        return shutil.disk_usage(wsl.MNT_C).free if wsl.is_wsl() and wsl.MNT_C.is_dir() else None
+    except OSError:
+        return None
+
+
+def _no_room(path: Path, need: int, free: Callable[[Path], int] | None = None) -> str | None:
+    """Why `need` bytes of stems have no room under `path`, or None: the disk that holds it (`free`, default
+    disk_free), and in WSL C: too. WSL's own disk reports the free space of its virtual disk, which grows on C:, so a
+    nearly full C: leaves the stems no room while WSL's disk still looks empty (the v0.5.0 review's install-02)."""
+    have = (free or disk_free)(path)
     if have < need:
-        raise InputError(f"no room for the stems in {folder.parent}: they need about {_mb(need)}, and {_mb(have)} "
-                         "are free. Free some space, or chart again without the stems")
+        return f"no room for the stems in {path}: they need about {_mb(need)}, and {_mb(have)} are free"
+    c = _c_free()
+    if c is not None and c < need:
+        return (f"no room for the stems on C:, where WSL's disk grows: they need about {_mb(need)}, and {_mb(c)} are "
+                "free there")
+    return None
+
+
+def stems_room(folder: Path, frames: int, channels: int = 2) -> None:
+    """An InputError when the disk holding the stems folder, or in WSL C: where that disk grows (`_no_room`), has
+    less free than `stems_bytes`: run right after the decode, before the long work."""
+    why = _no_room(folder.parent, stems_bytes(frames, channels))
+    if why is not None:
+        raise InputError(f"{why}. Free some space, or chart again without the stems")
 
 
 def stems_bytes(frames: int, channels: int = 2, files: int = len(STEM_FILES)) -> int:
@@ -939,9 +965,11 @@ def _mb(n: int) -> str:
 def export_stems(source: Path, folder: Path, free: Callable[[Path], int] | None = None) -> dict:
     """The separation's stems (`source`: <stem>.wav each, float32 at 44.1 kHz on the input's timeline) as 24-bit FLAC
     (audio.write_flac) into `folder`, through a hidden staging folder beside it that replaces it at the end. NoRoom
-    (an InputError) naming the folder and the space needed when the disk has less free than `stems_bytes` or fills
-    while they are written; the staging folder is removed then, and `folder` keeps what it held. Returns the record:
-    {"folder", "files", "bytes", "seconds"}."""
+    (an InputError) naming the folder and the space needed when the disk, or in WSL C: (`_no_room`), has less free
+    than `stems_bytes`, or when writing them fails: the disk filled (ENOSPC), or any other OSError, as in WSL a full C:
+    shows as one (an I/O error: WSL's disk cannot grow), and the finished chart stands either way (the v0.5.0 review's
+    install-02). The staging folder is removed then, and `folder` keeps what it held. Returns the record: {"folder",
+    "files", "bytes", "seconds"}."""
     import shutil
     import tempfile
     wavs = [(s, source / f"{s}.wav") for s in STEM_FILES if (source / f"{s}.wav").is_file()]
@@ -952,10 +980,9 @@ def export_stems(source: Path, folder: Path, free: Callable[[Path], int] | None 
     frames = max(i.frames for i in infos.values())
     need = stems_bytes(frames, max(i.channels for i in infos.values()), len(wavs))
     folder.parent.mkdir(parents=True, exist_ok=True)
-    have = (free or disk_free)(folder.parent)
-    if have < need:
-        raise NoRoom(f"no room for the stems in {folder.parent}: they need about {_mb(need)}, and {_mb(have)} are "
-                     "free", need)
+    why = _no_room(folder.parent, need, free)
+    if why is not None:
+        raise NoRoom(why, need)
     staging = Path(tempfile.mkdtemp(prefix=f".{folder.name}.", suffix=".partial", dir=folder.parent))
     written = 0
     try:
@@ -973,7 +1000,8 @@ def export_stems(source: Path, folder: Path, free: Callable[[Path], int] | None 
         if e.errno in (errno.ENOSPC, errno.EDQUOT):
             raise NoRoom(f"the disk filled while the stems were written into {folder}: they need about "
                          f"{_mb(need)}", need) from None
-        raise
+        raise NoRoom(f"the stems could not be written into {folder} ({e.strerror or e}; in WSL a full C: shows as "
+                     f"this): they need about {_mb(need)}", need) from None
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
