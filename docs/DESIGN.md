@@ -1488,6 +1488,15 @@ is unmeasured) instead of a dead end.
   asked for), so that chart runs it on CUDA again. When the CUDA default's first take is the one retried, the probe
   rule above keeps it alone, with a warning that says why (more takes on a GPU that just failed one could fail too,
   with the retry spent).
+- **What the song folder keeps** (v0.5.0's advisor, finding 2) [code]: such a chart is one CPU take where four were
+  meant, and pipeline.json, which says so, goes when the work folder is pruned. So report.json's `pipeline`
+  (`pipeline.folder_record`) keeps the device asked for and chosen, the takes asked for, planned and made, each
+  take's device, the seeds run again on the CPU, and each fallback's stage, from and to: numbers and short words, no
+  reason (an engine's line can hold a path). "Your charts" and a diagnostics zip can tell such a chart from a good
+  one by it. The page's warning says it in plain words: "The GPU failed on the guitar's first take (most likely out
+  of memory: a game, Clone Hero or a video can take it), so this chart has 1 take, made on the CPU, instead of 4.
+  Chart the song again later, with those closed, for the best result." Running that first take on CUDA once more
+  before settling for one CPU take (the advisor's 2c) waits for a measurement at the gate's GPU check.
 - **What a failure is** (`pipeline.failure`, M5-05's review F1, confirmed by a skeptic with the real driver, engine
   and models): `ac_headless.cjs` exits 1 whatever failed, its engine killed by a signal, its wall-clock timeout and
   its stall kill included, so the exit code cannot tell them apart; v0.1 called all of them GPU failures. The

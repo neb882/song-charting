@@ -340,6 +340,21 @@ def guitar_takes(asked: int | None, device: str) -> tuple[int, str]:
     return 1, "the default on the cpu: 1 take (each one more is another transcription there, about 3.6 min for a 7-min song)"
 
 
+def folder_record(record: Mapping) -> dict:
+    """report.json's `pipeline` (assemble's `pipeline=`): what the song folder keeps of pipeline.json's `record`, so
+    that a chart made with less than was meant can be told from a good one once the work folder is pruned ("Your
+    charts", a diagnostics zip; v0.5.0's advisor, finding 2): the device asked for and chosen; the guitar's takes
+    (None without a guitar): asked for (None: the default), planned, made (1 when the CUDA default's first take was
+    run again on the CPU or moved there), each take's transcriber device and the seeds run again on the CPU; and each
+    fallback's stage, from and to. Numbers and short words only: no reason, as an engine's line can hold a path."""
+    dev, takes = record.get("device") or {}, record.get("takes")
+    return {"device": {"asked": dev.get("asked"), "chosen": dev.get("chosen")},
+            "takes": None if takes is None else {
+                "asked": takes.get("asked"), "planned": takes.get("planned"), "made": takes.get("takes"),
+                "devices": takes.get("devices"), "cpu_retries": takes.get("cpu_retries")},
+            "fallbacks": [{k: f.get(k) for k in ("stage", "from", "to")} for f in record.get("fallbacks") or []]}
+
+
 AUTOCHART_EXIT = re.compile(r"autochart seed \d+ failed \(exit (-?\d+)\)")   # engines/autochart.py's ToolError
 
 
@@ -1117,7 +1132,7 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         config = work / "assemble.json"
         config.write_text(json.dumps(cfg, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
         t0 = begin("assemble", "grid, parts, tiers, phrases, sections, gate")
-        result = assemble(load_config(config, out), lyrics=timed, art=pictures.record)
+        result = assemble(load_config(config, out), lyrics=timed, art=pictures.record, pipeline=folder_record(report))
         g = result.report["gate"]
         if timed is not None:
             report["lyrics"]["chart"] = result.report.get("lyrics")
@@ -1284,7 +1299,7 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
     if "guitar" in options.instruments:
         gdev = "cuda" if device == "cuda" else "cpu"
         n_takes, why = guitar_takes(options.takes, gdev)
-        seeds = take_seeds(n_takes)
+        planned, seeds = n_takes, take_seeds(n_takes)
         # the CUDA default first runs one take alone: when autochart moved its transcriber off CUDA by itself (a
         # provider that failed to load), the other three would cost CPU minutes each; when its CUDA run failed and
         # it was run again on the CPU, the others could fail there too, with the one retry spent. Every take is a
@@ -1340,8 +1355,9 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
         if probe and (retried or _transcriber(runs[0]) not in (None, gdev)):   # none reported: taken as on CUDA
             moved = "cpu" if retried else _transcriber(runs[0])
             if retried:   # its CUDA run failed: more takes there could fail too, with the retry spent
-                warn(f"guitar: the first take was run again on the CPU (its GPU run failed): that take is used alone, "
-                     f"not {n_takes - 1} more on the GPU")
+                warn(f"The GPU failed on the guitar's first take (most likely out of memory: a game, Clone Hero or "
+                     f"a video can take it), so this chart has 1 take, made on the CPU, instead of {n_takes}. Chart "
+                     "the song again later, with those closed, for the best result.")
                 why = f"{why}; but the first take was run again on the CPU (its GPU run failed), so that take alone"
             else:
                 fallback("guitar", gdev, moved, f"autochart's transcriber ran on {moved}, not {gdev}, for the first "
@@ -1375,7 +1391,8 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
                 log(line)
             for text in told:
                 warn(text)
-        record["takes"] = {"asked": options.takes, "takes": n_takes, "auto": options.takes is None, "why": why,
+        record["takes"] = {"asked": options.takes, "planned": planned, "takes": n_takes, "auto": options.takes is None,
+                           "why": why,
                            "seeds": list(seeds), "transcriber_moved_to": moved,
                            "devices": [_transcriber(r) for r in runs], "cpu_retries": list(retried),
                            "cut_short": [st.get("cut_short") for st in stitches],

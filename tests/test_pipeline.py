@@ -992,7 +992,8 @@ def test_takes_follow_the_guitar_stages_device(charted, monkeypatch, capsys):
 
     others = [str(result.work / "guitar" / f"seed_{s}" / "notes.chart") for s in (101, 202, 303)]
     takes, calls, devices, part, err = run("Cpu")
-    assert takes == {"asked": None, "takes": 1, "auto": True, "seeds": [DEFAULT_SEED], "transcriber_moved_to": None,
+    assert takes == {"asked": None, "planned": 1, "takes": 1, "auto": True, "seeds": [DEFAULT_SEED],
+                     "transcriber_moved_to": None,
                      "why": "the default on the cpu: 1 take (each one more is another transcription there, about "
                             "3.6 min for a 7-min song)", "devices": ["cpu"], "cpu_retries": [],
                      "cut_short": [None], "pieces": [0], "last_note_s": [None]}   # no take cut short (M5-02)
@@ -1017,8 +1018,9 @@ def test_takes_follow_the_guitar_stages_device(charted, monkeypatch, capsys):
         assert calls == [(DEFAULT_SEED,), (101,), (202,), (303,)] and part == others, name
         assert "warning: guitar: autochart's transcriber" not in err, name
     takes, calls, devices, part, err = run("Asked", "--takes", "3", auto="cuda")
-    assert takes == {"asked": 3, "takes": 3, "auto": False, "why": "3 asked for", "seeds": [DEFAULT_SEED, 101, 202],
-                     "transcriber_moved_to": None, "devices": ["cuda"] * 3, "cpu_retries": [],
+    assert takes == {"asked": 3, "planned": 3, "takes": 3, "auto": False, "why": "3 asked for",
+                     "seeds": [DEFAULT_SEED, 101, 202], "transcriber_moved_to": None, "devices": ["cuda"] * 3,
+                     "cpu_retries": [],
                      "cut_short": [None] * 3, "pieces": [0] * 3, "last_note_s": [None] * 3}
     assert calls == [(DEFAULT_SEED,), (101,), (202,)] and devices == {"cuda"} and part == others[:2]
     takes, calls, devices, part, err = run("One", "--takes", "1", auto="cuda", moved="cpu")
@@ -1361,13 +1363,26 @@ def test_a_guitar_take_that_fails_on_cuda_is_run_again_on_the_cpu(charted, tmp_p
     the CPU's take: it runs that take on CUDA again. A second CUDA failure in the same chart ends it with
     gpu_failed's advice and that one take was run again already; a retry that fails says so, naming the CPU (killed
     by a signal: the CPU's run was stopped; a timeout: autochart's message). The first take of the CUDA default run
-    again on the CPU is used alone, with a warning that says why, and is not recorded twice; with takes asked for,
-    the others still run on CUDA."""
+    again on the CPU is used alone, with a warning in the page's words that says so, and is not recorded twice; with
+    takes asked for, the others still run on CUDA. The song folder's report.json says how many takes were planned
+    and made, on which device, and every fallback, with no path or reason (v0.5.0's advisor, finding 2), so a chart
+    of one CPU take can be told from a good one once the work folder is gone."""
     root, result, _, _ = charted
     chart_it, driver = real_guitar(root, tmp_path, monkeypatch, capsys)
 
     def guitar_warnings(report):
-        return [w for w in report["warnings"] if w.startswith("guitar")]
+        return [w for w in report["warnings"] if w.startswith(("guitar", "The GPU"))]
+
+    def in_folder(report):   # the song folder's report.json, its record of the run
+        record = json.loads((Path(report["assemble"]["folder"]) / "report.json").read_text(encoding="utf-8"))
+        text = json.dumps(record["pipeline"])
+        assert "/" not in text and "\\" not in text and "seed_" not in text, text   # no path, no reason
+        return record["pipeline"]
+
+    def run_record(planned, made, devices, retries, fallbacks):
+        return {"device": {"asked": "auto", "chosen": "cuda"},
+                "takes": {"asked": None, "planned": planned, "made": made, "devices": devices, "cpu_retries": retries},
+                "fallbacks": [{"stage": "guitar", "from": "cuda", "to": "cpu"}] * fallbacks}
 
     def take_events():
         return [(e["index"], e["count"], e["seed"], e.get("device")) for e in driver["events"] if e["event"] == "take"]
@@ -1393,6 +1408,7 @@ def test_a_guitar_take_that_fails_on_cuda_is_run_again_on_the_cpu(charted, tmp_p
     assert (chosen["takes"], chosen["seeds"], chosen["transcriber_moved_to"]) == (4, [DEFAULT_SEED, 101, 202, 303],
                                                                                   None)
     assert (chosen["devices"], chosen["cpu_retries"]) == (["cuda", "cuda", "cpu", "cuda"], [202])
+    assert in_folder(report) == run_record(4, 4, ["cuda", "cuda", "cpu", "cuda"], [202], 1)
     part = json.loads((a / "assemble.json").read_text(encoding="utf-8"))["parts"][0]
     assert part["takes"] == [str(a / "guitar" / f"seed_{s}" / "notes.chart") for s in (101, 202, 303)]
     guitar = next(s for s in report["stages"] if s["stage"] == "guitar")
@@ -1401,6 +1417,7 @@ def test_a_guitar_take_that_fails_on_cuda_is_run_again_on_the_cpu(charted, tmp_p
     code, last, report, ran, takes = chart_it(a)
     assert (code, driver["run"].on, takes, report["fallbacks"]) == (0, [(202, "cuda")], [(3, 4)], [])
     assert (report["takes"]["devices"], report["takes"]["cpu_retries"]) == (["cuda"] * 4, [])
+    assert in_folder(report) == run_record(4, 4, ["cuda"] * 4, [], 0)   # a good chart says so too
     # a second CUDA failure in the same chart: not retried, gpu_failed's advice and the retry already spent
     b = warm_work(result, tmp_path, "b")
     code, last, report, ran, takes = chart_it(b, (202, 303), how={"cuda": 1})
@@ -1436,8 +1453,10 @@ def test_a_guitar_take_that_fails_on_cuda_is_run_again_on_the_cpu(charted, tmp_p
     first = f"take seed_{DEFAULT_SEED}: the CUDA run failed ({line}); run again on the CPU"
     assert report["fallbacks"] == [{**retry, "reason": first}]
     assert guitar_warnings(report) == [warning.replace("seed 202", f"seed {DEFAULT_SEED}"),
-                                       "guitar: the first take was run again on the CPU (its GPU run failed): that "
-                                       "take is used alone, not 3 more on the GPU"]
+                                       "The GPU failed on the guitar's first take (most likely out of memory: a game, "
+                                       "Clone Hero or a video can take it), so this chart has 1 take, made on the "
+                                       "CPU, instead of 4. Chart the song again later, with those closed, for the "
+                                       "best result."]
     assert take_events() == [(1, 4, DEFAULT_SEED, None), (1, 4, DEFAULT_SEED, "cpu")]
     chosen = report["takes"]
     assert (chosen["takes"], chosen["seeds"], chosen["transcriber_moved_to"]) == (1, [DEFAULT_SEED], "cpu")
@@ -1445,6 +1464,7 @@ def test_a_guitar_take_that_fails_on_cuda_is_run_again_on_the_cpu(charted, tmp_p
     assert chosen["why"].endswith("; but the first take was run again on the CPU (its GPU run failed), so that take "
                                   "alone")
     assert "takes" not in json.loads((d / "assemble.json").read_text(encoding="utf-8"))["parts"][0]
+    assert in_folder(report) == run_record(4, 1, ["cpu"], [DEFAULT_SEED], 1)   # one CPU take of the 4 planned
     # the same when the CPU's take reports no devices (taken as on CUDA otherwise): it was run again on the CPU
     code, last, report, ran, takes = chart_it(warm_work(result, tmp_path, "d2"), DEFAULT_SEED, how={"cuda": 1},
                                               devices=False)
