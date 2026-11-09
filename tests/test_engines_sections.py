@@ -39,13 +39,16 @@ def song(seconds=10.0, seed=0):
 NO_KERNEL = (b"Traceback (most recent call last):\n  ...\ntorch.AcceleratorError: CUDA error: no kernel image is "
              b"available for execution on the device\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side "
              b"assertions.\n")
+# the real runner's last lines when CUDA runs out of memory (its error line; the end-to-end test below checks the form)
+OUT_OF_MEMORY = (b"Traceback (most recent call last):\n  ...\ntorch.OutOfMemoryError: CUDA out of memory. Tried to "
+                 b"allocate 2.00 GiB. GPU 0 has a total capacity of 11.99 GiB of which 1.07 GiB is free.\n")
 
 
 class FakeAllin1:
     """A Python with allin1: answers the runner's probe and run commands the way allin1_runner.py does. fail:
-    "probe", "run", "cuda" (every run on cuda fails as on a GPU the torch build has no kernels for) or "kill" (every
-    run on the CPU, or on cuda with fail_on "cuda", ends by SIGKILL, as the OOM killer ends it). during: called while
-    a run "runs"."""
+    "probe", "run", "cuda" (every run on cuda fails as on a GPU the torch build has no kernels for), "oom" (every run
+    on cuda ends with CUDA out of memory, as the runner does) or "kill" (every run on the CPU, or on cuda with fail_on
+    "cuda", ends by SIGKILL, as the OOM killer ends it). during: called while a run "runs"."""
 
     def __init__(self, cuda=False, fail=None, cuda_error=None, during=None, fail_on="cpu"):
         self.cuda, self.fail, self.cuda_error, self.during, self.fail_on = cuda, fail, cuda_error, during, fail_on
@@ -75,8 +78,10 @@ class FakeAllin1:
             return subprocess.CompletedProcess(cmd, 1, b"", b"RuntimeError: shapes do not match\n")
         if self.fail == "cuda" and job["device"] == "cuda":
             return subprocess.CompletedProcess(cmd, 1, b"", NO_KERNEL)
+        if self.fail == "oom" and job["device"] == "cuda":
+            return subprocess.CompletedProcess(cmd, 1, b"", OUT_OF_MEMORY)
         result = {"segments": SEGMENTS, "bpm": 120.0, "beats": [0.5, 1.0], "downbeats": [0.5], "device": job["device"],
-                  "fallback": None, "threads": job["threads"], "attention": "torch", "peak_rss_mb": 640.5,
+                  "threads": job["threads"], "attention": "torch", "peak_rss_mb": 640.5,
                   "seconds": {"spectrogram": 1.0, "load": 0.1, "inference": 2.0, "total": 3.1}}
         open(job["out"], "w", encoding="utf-8").write(json.dumps(result))
         return subprocess.CompletedProcess(cmd, 0, b"", b"")
@@ -183,6 +188,22 @@ def test_a_failed_cuda_run_is_run_again_on_the_cpu_when_the_device_was_auto(tmp_
     with pytest.raises(Allin1Error, match=r"CUDA run failed \(RuntimeError: shapes .*\), and then on the CPU: allin1"):
         find_sections(mix, stems, tmp_path / "both", Settings(backend="allin1", python="py"),
                       run=FakeAllin1(cuda=True, fail="run"), download=weights)
+
+
+def test_cuda_out_of_memory_is_run_again_on_the_cpu_for_auto_and_for_cuda_asked_for(tmp_path, weights, monkeypatch):
+    """The runner ends a CUDA run that ran out of memory; this side runs it again on the CPU, as the runner itself
+    once did, for "cuda" asked for too (any other failure raises there), and says so in the runner's old words."""
+    monkeypatch.setattr(S, "MEMINFO", tmp_path / "none")   # no MemTotal: nothing is left out
+    mix, stems = song()
+    words = ("CUDA ran out of memory (CUDA out of memory. Tried to allocate 2.00 GiB. GPU 0 has a total capacity of "
+             "11.99 GiB of which 1.07 GiB is free.); analysed on the CPU")
+    for device in ("auto", "cuda"):
+        fake = FakeAllin1(cuda=True, fail="oom")
+        r = find_sections(mix, stems, tmp_path / device, Settings(backend="allin1", python="py", device=device),
+                          run=fake, download=weights)
+        assert [j["device"] for j in fake.jobs] == ["cuda", "cpu"], device
+        assert r.backend == "allin1" and r.info["allin1"]["device"] == "cpu"
+        assert r.info["allin1"]["fallback"] == words and r.info["why"].endswith(f"; {words}")
 
 
 def test_a_probe_whose_cuda_kernel_failed_means_the_cpu(tmp_path, weights):
@@ -400,6 +421,9 @@ FAKE_PACKAGE = {
             def __init__(self, cfg):
                 self.cfg = cfg
             def to(self, device):
+                if device == "cuda":   # a GPU with too little memory left for it
+                    import torch
+                    raise torch.cuda.OutOfMemoryError("CUDA out of memory. Tried to allocate 2.00 GiB")
                 return self
             def load_state_dict(self, state):
                 loaded.append(state)
@@ -464,7 +488,7 @@ def test_the_runner_on_a_fake_package(tmp_path, fake_package):
     assert allinone.rows == [[1, 2, 3, 4]]
     assert allinone.loaded == [{"fold": 0}, {"fold": 1}]  # an ensemble of two
     assert res["segments"] == [[0.0, 0.02, "start"], [0.02, 0.1, "verse"]] and res["bpm"] == 120.0
-    assert res["device"] == "cpu" and res["fallback"] is None and res["frames"] == 10
+    assert res["device"] == "cpu" and res["frames"] == 10 and "fallback" not in res
     assert res["peak_rss_mb"] == R.peak_rss_mb() and (res["peak_rss_mb"] is None or res["peak_rss_mb"] > 0)
     with pytest.raises(ValueError, match="int16 samples on stdin"):
         R.run(tmp_path / "job.json", io.BytesIO(b"\0" * 10))
@@ -472,6 +496,12 @@ def test_the_runner_on_a_fake_package(tmp_path, fake_package):
     with pytest.raises(ValueError, match="this runner reads"):  # a caller sending another order is refused
         R.run(tmp_path / "job.json", io.BytesIO(stems.astype("<i2").tobytes()))
     assert R.main(["bogus"]) == 2
+    # CUDA out of memory ends the run, with no CPU run here: the caller's CPU run is checked for memory first
+    (tmp_path / "result.json").unlink()
+    (tmp_path / "job.json").write_text(json.dumps({**job, "device": "cuda"}), encoding="utf-8")
+    with pytest.raises(torch.cuda.OutOfMemoryError, match="CUDA out of memory"):
+        R.run(tmp_path / "job.json", io.BytesIO(stems.astype("<i2").tobytes()))
+    assert not (tmp_path / "result.json").exists() and allinone.rows == [[1, 2, 3, 4]]   # no model ran after it
 
 
 @pytest.mark.skipif(sys.platform not in ("linux", "win32"), reason="the runner reports its peak on Linux and Windows")
@@ -711,6 +741,57 @@ def test_allin1_is_left_out_before_its_run_when_the_song_cannot_fit(tmp_path, we
     assert r.backend == "allin1" and [j["device"] for j in cuda.jobs] == ["cuda"]
 
 
+@pytest.fixture
+def loadable(tmp_path, monkeypatch):
+    """Fold 0 as a checkpoint the runner loads (torch's file, no tensors, so it loads for "cuda" on any machine),
+    its hash pinned in place of the real one, and a download that serves it."""
+    torch = pytest.importorskip("torch")
+    path = tmp_path / "hub" / "fold0.pth"
+    path.parent.mkdir()
+    torch.save({"config": {"fps": 100}, "state_dict": {"fold": 0}}, path)
+    name = ALLIN1_FOLDS["harmonix-fold0"][0]
+    monkeypatch.setitem(ALLIN1_FOLDS, "harmonix-fold0", (name, hashlib.sha256(path.read_bytes()).hexdigest()))
+    return lambda repo, file, revision: str(path)
+
+
+@pytest.mark.parametrize("fits", [True, False], ids=["fits", "over"])
+def test_cuda_out_of_memory_goes_to_a_cpu_run_in_a_fresh_process_that_is_checked_first(fits, tmp_path, fake_package,
+                                                                                        loadable, fallback,
+                                                                                        monkeypatch):
+    """The real runner, in processes of its own, on the fake package, whose model runs out of CUDA memory (a GPU
+    probe): the CUDA run ends with torch's error and no CPU run of its own, and the CPU run that follows is checked
+    against MemTotal first. Under the line it runs and the result says why; over it, the librosa fallback with
+    memory_skip's words and no CPU run at all (DESIGN.md 2.5, v0.5.0's gate review)."""
+    mix, stems = song(2.0)
+    edge = S.tree_mib(2.0, False) + S.MARGIN_MIB
+    capacity = edge + 0.01 if fits else edge - 0.5
+    meminfo(tmp_path, monkeypatch, capacity)
+    monkeypatch.setenv("PYTHONPATH", str(fake_package))
+    probe, devices, procs = FakeAllin1(cuda=True), [], []
+
+    def run(cmd, **kw):
+        if cmd[4] == "probe":
+            return probe(cmd, **kw)
+        devices.append(json.loads(open(cmd[5], encoding="utf-8").read())["device"])
+        procs.append(subprocess.run(cmd, **kw))   # the runner as find_sections starts it
+        return procs[-1]
+
+    r = find_sections(mix, stems, tmp_path / "out", Settings(python=sys.executable), run=run, download=loadable)
+    assert procs[0].returncode == 1 and re.search(rb"\ntorch\.(cuda\.)?OutOfMemoryError: CUDA out of memory",
+                                                  procs[0].stderr), procs[0].stderr[-600:]
+    oom = "CUDA ran out of memory (CUDA out of memory. Tried to allocate 2.00 GiB)"
+    if fits:
+        assert devices == ["cuda", "cpu"] and procs[1].returncode == 0, procs[1].stderr[-600:]
+        assert r.backend == "allin1" and r.info["allin1"]["device"] == "cpu"
+        assert [s.label for s in r.segments] == ["start", "verse"]   # the fake model's, from the CPU run
+        assert r.info["allin1"]["fallback"] == f"{oom}; analysed on the CPU"
+        assert r.info["why"].endswith(f"; {oom}; analysed on the CPU")
+    else:
+        skip = S.memory_skip(2.0, False, capacity)
+        assert devices == ["cuda"] and r.backend == "librosa" and skip
+        assert r.info["plain"] == skip and fallback == [[f"{oom}, and then on the CPU: {skip}"]]
+
+
 def test_the_arrays_are_let_go_while_allin1_runs_and_read_again_when_needed(tmp_path, weights, monkeypatch):
     import gc
     import weakref
@@ -763,7 +844,8 @@ def test_the_arrays_are_let_go_while_allin1_runs_and_read_again_when_needed(tmp_
 PAGE_INTERNALS = re.compile(r"/|\\|Error|Traceback|exit|Expired|SONGCHARTER|python|\.py|job\.json")
 
 
-@pytest.mark.parametrize("case", ["timeout", "left out", "not installed", "probe", "run", "kill", "skip", "cuda then cpu"])
+@pytest.mark.parametrize("case", ["timeout", "left out", "not installed", "probe", "run", "kill", "skip",
+                                  "cuda then cpu", "cuda oom then cpu"])
 def test_the_pages_words_for_each_cause_hold_no_path_command_or_exception(case, tmp_path, weights, fallback,
                                                                            monkeypatch):
     """The librosa result's info["plain"], the banner's words, per cause; engine.json's `why` keeps the details."""
@@ -775,16 +857,16 @@ def test_the_pages_words_for_each_cause_hold_no_path_command_or_exception(case, 
     meminfo(tmp_path, monkeypatch, 100.0 if case == "skip" else 9 * 1024)   # 9 GiB: under the install's 11 GB
     python, settings = (None, Settings()) if case in ("left out", "not installed") else ("py", Settings(python="py"))
     run = {"timeout": FakeAllin1(fail="timeout"), "probe": FakeAllin1(fail="probe"), "run": FakeAllin1(fail="run"),
-           "kill": FakeAllin1(fail="kill"), "cuda then cpu": FakeAllin1(cuda=True, fail="kill", fail_on="cuda")
-           }.get(case, FakeAllin1())
-    if case == "cuda then cpu":
-        meminfo(tmp_path, monkeypatch, 100.0)   # killed on CUDA, then left out on the CPU
+           "kill": FakeAllin1(fail="kill"), "cuda then cpu": FakeAllin1(cuda=True, fail="kill", fail_on="cuda"),
+           "cuda oom then cpu": FakeAllin1(cuda=True, fail="oom")}.get(case, FakeAllin1())
+    if case in ("cuda then cpu", "cuda oom then cpu"):
+        meminfo(tmp_path, monkeypatch, 100.0)   # killed on CUDA, or out of its memory, then left out on the CPU
     r = find_sections(mix, stems, tmp_path / "out", settings, run=run, download=weights)
     want = {"timeout": S.TIMEOUT_PLAIN, "left out": S.LEFT_OUT_PLAIN, "not installed": S.NOT_INSTALLED_PLAIN,
             "probe": S.FAILED_PLAIN, "run": S.FAILED_PLAIN, "kill": S.stopped_line(2.0)}
     plain = r.info["plain"]
     assert r.backend == "librosa" and plain == want.get(case, plain)
-    if case in ("skip", "cuda then cpu"):
+    if case in ("skip", "cuda then cpu", "cuda oom then cpu"):
         assert plain == S.memory_skip(2.0, False, 100.0) and plain.startswith("allin1 was left out for memory")
     assert not PAGE_INTERNALS.search(plain), plain
     assert fallback[-1][0] != plain or case in ("kill", "skip")   # the details stay in `why`

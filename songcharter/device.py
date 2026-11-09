@@ -552,6 +552,8 @@ def findings(r: dict, allin1_python: str | None = None) -> tuple[list[str], list
     elif a is None and allin1_python is None:
         notes.append("no allin1 Python is configured: the sections use the librosa fallback")
     elif total is not None and dev.get("chosen") != "cuda" and not (w and total * MB < ALLIN1_MEMORY):
+        # the CPU lane's figure only: on CUDA nothing is checked before allin1's run, and the figure bounds only the
+        # CPU run after a failed CUDA run, so there it would read as a limit the PC does not have (DESIGN.md 2.5)
         from .engines import sections   # the skip's own rule (M8-05): MemTotal, not swap nor what is free now
         longest = sections.longest_s(total)
         notes.append(f"allin1 analyses songs up to about {int(longest // 60)}:{int(longest % 60):02d} on the CPU "

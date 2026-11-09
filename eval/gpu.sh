@@ -8,17 +8,19 @@
 #   eval/gpu.sh takes [SET ...]   check, then run eval/takes.py detached for each set in turn (refs, the default;
 #                         stress; set20): 4 autochart Expert takes of every song (no scoring), then `results`
 #   eval/gpu.sh build SET [TEST_SONG]   build a set's eval data (eval/build_refs.sh; the 20-song set's in SET20_DATA)
-#   eval/gpu.sh thin-spike AUDIO   run eval/spike/thin_spike.sh detached: Expert takes of one song under several engine
-#                         settings (M6's spike on fast runs; its header has the settings); results in $RUNS/thin_spike
+#   eval/gpu.sh thin-spike AUDIO...   (--app: check the app's autochart first) then run eval/spike/thin_spike.sh
+#                         detached on each file in turn: Expert takes under several engine settings (M6's spike on fast
+#                         runs; its header has the settings); $RUNS/thin_spike/thin_spike_results.zip to send back
 #   eval/gpu.sh results   zip the scores, the test-song charts and every set's takes to send back: structured files
 #                         only (no log, no audio), the 20-song set's songs by their labels, checked by a guard
-# --app (check, takes, build; or SONGCHARTER_APP=1): the installed songcharter's Python, Node, scan-chart, ffmpeg and
-#      autochart (SONGCHARTER_HOME, default ~/.local/share/songcharter) in place of eval/.venv and eval/tools; the
-#      check is then autochart's only (eval/README.md, GPU takes with the installed app).
+# --app (check, takes, build, thin-spike; or SONGCHARTER_APP=1): the installed songcharter's Python, Node, scan-chart,
+#      ffmpeg and autochart (SONGCHARTER_HOME, default ~/.local/share/songcharter) in place of eval/.venv and
+#      eval/tools; the check is then autochart's only (eval/README.md, GPU takes with the installed app).
 # Env: TOOLS (default "autochart chartgen strum", so STRUM's long test song runs last), SKIP (e.g. "strum:test_song"),
 #      MEM_WAIT_MB (default 4000), EVAL_DATA, EVAL_PY, SET20_DATA (default $EVAL_DATA/set20), SEEDS, SONGS (ids or
 #      labels, for one set), WINDOWS_PROFILE (the Windows profile results writes %USERPROFILE%; default Windows'
-#      own), ALLOW_CPU=1 (start even if the check fails).
+#      own), ALLOW_CPU=1 (start even if the check fails; a thin spike still stops after a take whose transcriber did
+#      not run on AC_DEVICE), and thin_spike.sh's ARMS, SEEDS and AC_DEVICE.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA="${EVAL_DATA:-$HERE/data}"
@@ -68,17 +70,19 @@ running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
 # --app: the installed songcharter's tools for the eval scripts, from its runtime.json: its Python as EVAL_PY (unless
 # set), its Node first on PATH and its scan-chart (build_ref.py runs `node` and scan.cjs), and `ffmpeg` on PATH: the
 # system's when there is one, else the app's (imageio-ffmpeg's), linked as $DATA/bin/ffmpeg. takes.py --app takes
-# autochart and the rest of the launcher's environment from the same runtime.json itself.
+# autochart and the rest of the launcher's environment from the same runtime.json itself; the thin spike, which runs
+# the driver itself, gets the app's autochart and ffmpeg as APP_AUTOCHART and APP_FFMPEG (not exported).
 app_env() {
-  local py="$APP_HOME/runtime/env/bin/python" record="$APP_HOME/runtime/runtime.json" vals node scan ff
+  local py="$APP_HOME/runtime/env/bin/python" record="$APP_HOME/runtime/runtime.json" vals node scan ff ac
   if [ ! -x "$py" ] || [ ! -f "$record" ]; then
     echo "no installed songcharter at $(tilde "$APP_HOME") (runtime/env/bin/python, runtime/runtime.json): install it, or set SONGCHARTER_HOME"
     return 1
   fi
   vals=$("$py" -I -c 'import json, sys
 r = json.load(open(sys.argv[1], encoding="utf-8"))
-print(r.get("node") or "", r.get("scan_chart") or "", r.get("ffmpeg") or "", sep="\n")' "$record") || return 1
-  { read -r node; read -r scan; read -r ff; } <<< "$vals"
+print(r.get("node") or "", r.get("scan_chart") or "", r.get("ffmpeg") or "", r.get("autochart") or "", sep="\n")' "$record") || return 1
+  { read -r node; read -r scan; read -r ff; read -r ac; } <<< "$vals"
+  APP_AUTOCHART=${ac:-$APP_HOME/runtime/autochart} APP_FFMPEG=$ff
   export EVAL_PY="${EVAL_PY:-$py}"
   if [ -n "$node" ]; then export PATH="$(dirname "$node"):$PATH"; fi
   if [ -n "$scan" ]; then export SONGCHARTER_SCAN_CHART="${SONGCHARTER_SCAN_CHART:-$scan}"; fi
@@ -236,28 +240,52 @@ takes() {   # [SET ...]
   fi
 }
 
-_thin() {
+_thin() {   # AUDIO...: thin_spike.sh on the files, with --app on the app's autochart, Node, Python and ffmpeg
   echo $$ > "$PIDFILE"
   echo 500 > /proc/self/oom_score_adj 2>/dev/null || true
-  echo "$(date '+%F %T') thin spike started"
-  "$HERE/spike/thin_spike.sh" "$1" "$RUNS/thin_spike"
-  local rc=$?
+  echo "$(date '+%F %T') thin spike started ($# files$([ "$APP" = 1 ] && echo ', the installed app'))"
+  local rc=0
+  if [ "$APP" != 1 ]; then
+    SPIKE_OUT="$RUNS/thin_spike" "$HERE/spike/thin_spike.sh" "$@" || rc=$?
+  elif app_env; then   # EVAL_PY and the app's Node first on PATH; its autochart and ffmpeg (FFMPEG wins, as in the app)
+    SPIKE_OUT="$RUNS/thin_spike" SONGCHARTER_AUTOCHART="$APP_AUTOCHART" AUTOCHART_FFMPEG_PATH="${FFMPEG:-$APP_FFMPEG}" \
+      "$HERE/spike/thin_spike.sh" "$@" || rc=$?
+  else
+    rc=2
+  fi
   echo "$(date '+%F %T') thin spike finished (exit $rc)"
   rm -f "$PIDFILE"
 }
 
 # The thin spike checks its own device: it stops after a take whose transcriber did not run on CUDA (the spike's
-# CUDA library path is songcharter's, not cuda_libs above).
-thin_spike() {
-  [ -n "${1:-}" ] && [ -f "$1" ] || { echo "usage: eval/gpu.sh thin-spike AUDIO (the song's audio file)"; exit 2; }
+# CUDA library path is songcharter's, not cuda_libs above). With --app, takes' check of the app's autochart runs
+# first (takes.py --app --check: the lane, the CUDA provider, the CUDA 13 and cuDNN libraries), so a setup that would
+# fall back to the CPU stops here rather than after the first take. ALLOW_CPU=1 skips only this check: the run still
+# stops after a take off AC_DEVICE. AC_DEVICE=cpu needs no GPU (a dry run).
+thin_spike() {   # AUDIO...
+  local f dev=${AC_DEVICE:-cuda} files=()
+  [ $# -gt 0 ] || { echo "usage: eval/gpu.sh thin-spike [--app] AUDIO... (the songs' audio files)"; exit 2; }
+  for f in "$@"; do
+    [ -f "$f" ] || { echo "eval/gpu.sh thin-spike: no such file: $(tilde "$f")"; exit 2; }
+    files+=("$(realpath "$f")")
+  done
   if running; then echo "already running (pid $(cat "$PIDFILE")): eval/gpu.sh status"; exit 1; fi
-  command -v nvidia-smi >/dev/null && nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv,noheader \
-    || { echo "no nvidia-smi: is the GPU visible in WSL?"; exit 1; }
+  if [ "$dev" = cuda ]; then
+    command -v nvidia-smi >/dev/null && nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv,noheader \
+      || { echo "no nvidia-smi: is the GPU visible in WSL?"; exit 1; }
+  fi
+  if [ "$APP" = 1 ]; then
+    app_env || exit 2
+    echo "== the installed app's autochart"
+    if ! "$EVAL_PY" "$HERE/takes.py" --app --check --device "$dev"; then
+      [ "${ALLOW_CPU:-0}" = 1 ] || { echo; echo "check failed: not starting (ALLOW_CPU=1 to start anyway)"; exit 1; }
+    fi
+  fi
   mkdir -p "$RUNS"
-  setsid nohup "$0" _thin "$(realpath "$1")" >> "$RUNS/gpu_run.log" 2>&1 < /dev/null &
+  SONGCHARTER_APP=$APP setsid nohup "$0" _thin "${files[@]}" >> "$RUNS/gpu_run.log" 2>&1 < /dev/null &
   for _ in 1 2 3 4 5 6 7 8 9 10; do running && break; sleep 0.5; done
   if running; then
-    echo; echo "started (pid $(cat "$PIDFILE")). Follow it with: tail -f $(tilde "$RUNS/thin_spike/thin_spike.log")"
+    echo; echo "started (pid $(cat "$PIDFILE")). Follow it with: eval/gpu.sh status   (or: tail -f $(tilde "$RUNS/thin_spike/thin_spike.log"))"
     echo "Keep one Ubuntu window open while it runs: WSL may shut down when the last one closes."
   else
     echo "did not start; see $(tilde "$RUNS/gpu_run.log"):"; tail -n 20 "$RUNS/gpu_run.log" | tilde_lines; exit 1
@@ -288,6 +316,7 @@ status() {
   if running; then echo "running (pid $(cat "$PIDFILE"))"; else echo "not running"; fi
   [ -f "$RUNS/driver.log" ] && { echo "--- driver.log"; tail -n "${N:-12}" "$RUNS/driver.log" | tilde_lines; }
   [ -f "$RUNS/takes/takes.log" ] && { echo "--- takes.log"; tail -n "${N:-12}" "$RUNS/takes/takes.log" | tilde_lines; }
+  [ -f "$RUNS/thin_spike/thin_spike.log" ] && { echo "--- thin_spike.log"; tail -n "${N:-12}" "$RUNS/thin_spike/thin_spike.log" | tilde_lines; }
   local oom; oom=$(grep -c 'rc=137' "$RUNS/driver.log" 2>/dev/null)
   [ "${oom:-0}" -gt 0 ] && echo "note: $oom job(s) ended with rc=137 (killed, most likely out of memory)"
   echo "---"
@@ -531,7 +560,7 @@ set -- ${args[@]+"${args[@]}"}
 case "$cmd" in
   check) check "$@" ;;
   start)
-    [ "$APP" = 1 ] && { echo "eval/gpu.sh start runs the eval tools (strum, chartgen, autochart): --app is for check, takes and build"; exit 2; }
+    [ "$APP" = 1 ] && { echo "eval/gpu.sh start runs the eval tools (strum, chartgen, autochart): --app is for check, takes, build and thin-spike"; exit 2; }
     start ;;
   status) status ;;
   stop) stop ;;

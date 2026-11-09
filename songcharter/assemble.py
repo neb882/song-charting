@@ -75,8 +75,9 @@ own difficulties, star power, fills and sections, and a Clone Hero folder that i
      ("embedded", "given", or "config" when only the config named it).
   7. **Report.** report.json in the folder: the grid's stats, per-part offsets and what quantizing and trimming did,
      note counts per difficulty, phrases (and the share of drum fills that end on a crash), sections, ratings, the
-     sync check, the gate (with scan-chart's verdict) and every warning. Times in the report are seconds of the
-     input audio unless a key says otherwise.
+     sync check, the gate (with scan-chart's verdict) and every warning; from the pipeline (`pipeline=`), the device,
+     the guitar's takes and the fallbacks, so a chart made with less than was meant shows it. Times in the report
+     are seconds of the input audio unless a key says otherwise.
 
 The output folder is replaced only by a build that passes the gate. A build the gate fails goes to
 `<output>.failed` for inspection, and `<output>` keeps what it held; a build that raises (bad input, song.ogg out of
@@ -1771,13 +1772,14 @@ def _octave_pass(cfg: AssembleConfig, first: BeatGrid, onsets: dict[str, list[fl
 
 
 def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | None = None,
-             art: dict | None = None) -> AssembleResult:
+             art: dict | None = None, pipeline: dict | None = None) -> AssembleResult:
     """Build the song folder a config describes (the module docstring), write report.json into it and return the
     chart, the report and every issue. Errors in the checks or the gate do not raise: the build goes to
     <output>.failed for inspection (`AssembleResult.folder`), <output> keeps what it held, and `AssembleResult.ok`
     is False. Bad inputs and a song.ogg out of sync raise, and leave both folders as they were. `lyrics`: the text
     and its syllables' starts in seconds of the decode, written as [Events] lyrics. `art`: where the album art and
-    the background came from (art.Pictures.record), for report.json's `art`."""
+    the background came from (art.Pictures.record), for report.json's `art`. `pipeline`: the chart's device, takes
+    and fallbacks (pipeline.folder_record), written as report.json's `pipeline` (None from a bare assemble)."""
     if isinstance(config, (str, Path)):
         config = load_config(config)
     elif isinstance(config, dict):
@@ -1788,7 +1790,8 @@ def assemble(config: AssembleConfig | dict | str | Path, *, lyrics: L.Timed | No
     takes = {p.key: _import_takes(p, songs[p.key]) for p in cfg.parts}
     sr = SAMPLE_RATE
     warnings: list[str] = []
-    report: dict[str, Any] = {"config": _jsonable({**asdict(cfg), "parts": [asdict(p) for p in cfg.parts]})}
+    report: dict[str, Any] = {"config": _jsonable({**asdict(cfg), "parts": [asdict(p) for p in cfg.parts]}),
+                              "pipeline": pipeline}
 
     # 1. audio and stems (a file ffmpeg cannot read is an InputError)
     mix = A.decode(cfg.audio, sr)
