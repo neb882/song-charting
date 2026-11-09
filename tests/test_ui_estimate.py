@@ -88,10 +88,13 @@ def options(**kw):
 
 def test_a_jobs_device_and_takes():
     d = 241.0
-    est = E.for_job(d, options(), "cuda", "cuda")   # "auto" on a GPU: 4 takes there
-    assert {k: est[k] for k in ("seconds", "takes", "device")} == {"seconds": d, "takes": 4, "device": "cuda"}
-    assert (est["low_s"], est["high_s"]) == tuple(round(x, 1) for x in E.chart_seconds(d, 4, "cuda"))
-    assert (est["low_min"], est["high_min"]) == E.round_minutes(*E.chart_seconds(d, 4, "cuda"))
+    # "auto" on a GPU: 1 take there too, the owner's decision of 2026-11-09 (break: the default back to 4)
+    est = E.for_job(d, options(), "cuda", "cuda")
+    assert {k: est[k] for k in ("seconds", "takes", "device")} == {"seconds": d, "takes": 1, "device": "cuda"}
+    assert (est["low_s"], est["high_s"]) == tuple(round(x, 1) for x in E.chart_seconds(d, 1, "cuda"))
+    assert (est["low_min"], est["high_min"]) == E.round_minutes(*E.chart_seconds(d, 1, "cuda")) == (2, 7)
+    best = E.for_job(d, options(takes=E.BEST_TAKES), "cuda", "cuda")   # "Best chart"
+    assert (best["takes"], best["low_min"], best["high_min"]) == (4, 4, 14)
     assert est == E.for_job(d, options(), "cuda", None)   # a guitar not checked counts as on the GPU
     # the doctor found the guitar on the CPU: one take there, the other stages on the GPU
     est = E.for_job(d, options(), "cuda", "cpu")
@@ -101,7 +104,7 @@ def test_a_jobs_device_and_takes():
     assert E.for_job(d, options(takes=3), "cpu", "cpu")["takes"] == 3   # asked for, on any device
     assert E.for_job(d, options(device="cpu"), "cuda", "cuda")["device"] == "cpu"   # the options' device first
     assert E.for_job(d, options(device="cuda"), "cpu", "cpu")["takes"] == 1   # CUDA asked for, the guitar on the CPU
-    assert E.for_job(d, options(device="cuda"), None, None)["takes"] == 4
+    assert E.for_job(d, options(device="cuda"), None, None)["takes"] == 1
     est = E.for_job(d, options(instruments=["drums", "bass"]), "cuda", "cuda")
     assert est["takes"] == 0 and est["low_s"] == round(E.chart_seconds(d, 0, "cuda")[0], 1)
     est = E.for_job(d, options(preview=False, lyrics="a line\n"), "cpu", "cpu")

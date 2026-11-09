@@ -10,8 +10,9 @@
      (engines/adtof.py), bass from the rule engine (engines/bass.py), sections from allin1 or its librosa fallback
      (engines/sections.py), and guitar from autochart's engine (engines/autochart.py), one take per seed: the
      engine's default seed and, for `takes` > 1, seeds 101, 202, ... for the others, which assemble splices
-     section by section (takes.py). By default 4 takes when the guitar stage runs on CUDA and 1 on the CPU
-     (`guitar_takes`). An engine that charts no note leaves its part out (DESIGN.md 2, absent parts).
+     section by section (takes.py). By default 1 take on every device (`guitar_takes`; the owner, 2026-11-09); 4
+     spliced takes when asked for (`--takes 4`, the page's "Best chart"). An engine that charts no note leaves its
+     part out (DESIGN.md 2, absent parts).
   3b. **Lyrics** (`lyrics`: the text a person gives, else none): aligned to the vocal stem (engines/lyrics.py,
      DESIGN.md 2.15), its own folder work/lyrics/ the cache. Torch or torchaudio missing, the weights out of reach
      or an alignment that fails leaves the lyrics out with a warning: lyrics never fail a chart. The text goes to
@@ -87,7 +88,7 @@
     `cpu_retry` off: those end the chart with a ToolError that says first what to try or what failed
     (`take_failed`), and so does a retry that fails, on the CPU; the takes that finished stay in the cache for the
     next run. When the first take
-    of the CUDA default is the one retried, it is used alone, as when autochart moved it to the CPU by itself.
+    of several on CUDA is the one retried, it is used alone, as when autochart moved it to the CPU by itself.
   * **GPU memory.** On CUDA, torch's cache is emptied after the separation and after the drums, and each stage
     that runs in this process records torch's own peak (`torch_peak_vram_mb`: reset as it begins).
   * **Solos** ("labels" by default): every section the sections engine names "Solo" (allin1's solo label), within
@@ -127,7 +128,7 @@
   * **Events** (`events`, for the UI: `songcharter chart --events`, M4-04): a dict per step, its kind in "event":
     `plan` {"stages"} once the stages are known; `stage_start` {"stage", "index", "count", "detail"} (index from 1,
     as the log's [k/n]); `take` {"index", "count", "seed"} before each guitar take that runs (not one its cache
-    answers; index from 1 among the stage's takes, so the CUDA default's four takes count 1 to 4 of 4), and again
+    answers; index from 1 among the stage's takes, so 4 takes count 1 to 4 of 4), and again
     with "device": "cpu" and the same index before a take's run again on the CPU; `fallback` {"stage", "from", "to", "reason"} for every record in `fallbacks`, also those only
     recorded; `warning` {"text"} for every warning; `stage_end` {"stage", "seconds", "cached", "detail"}. A stage
     that stops (an error, or the preview failing) sends no `stage_end`.
@@ -169,7 +170,7 @@ from .timed import DIFFICULTIES, INSTRUMENTS
 SAMPLE_RATE = A.SAMPLE_RATE
 STEMS = ("drums", "bass", "guitar", "other", "vocals")   # the stems assemble reads (piano only reaches allin1)
 EXTRA_SEED_STEP = 101    # takes after the first use seeds 101, 202, 303, ... (the v1 chart's seeds)
-CUDA_TAKES = 4           # guitar takes by default when the guitar stage runs on CUDA (guitar_takes); 1 on the CPU
+CUDA_TAKES = 1           # guitar takes by default on CUDA too (guitar_takes; the owner, 2026-11-09), as on the CPU
 CPU_RETRIES = 1          # guitar takes a chart runs again on the CPU after their CUDA run failed (cpu_retry)
 REASON_CHARS = 120       # at most this much of the engine's error line goes into a retry's reason (engine_line)
 GUITAR_END_GAP_S = 10.0  # a continued guitar take whose last note is this long before its stem stops playing, and
@@ -186,8 +187,8 @@ STEMS_NO_ROOM = ("The disk ran out of room while the separated instruments were 
                  "so they were not saved. The chart is not affected. Free some space, then chart the song again with "
                  "the stems ticked to save them.")
 # any other error writing them (`why`: its few words, such as "input/output error"; the v0.5.0 review fixes)
-STEMS_NOT_SAVED = ("The stems could not be saved ({why}); your chart is fine. Chart the song again with the stems "
-                   "ticked to try again; if C: is nearly full, free some space first.")
+STEMS_NOT_SAVED = ("The stems could not be saved ({why}). The chart is not affected. Chart the song again with the "
+                   "stems ticked to try again; if C: is nearly full, free some space first.")
 SOLO_MODES = ("stems", "labels", "off")  # assemble's solos modes; a list of section names is the other kind
 # the placeholders for what no tag or caller gives ({name}: the song's name, as resolved); the album's is Encore's
 # song.ini rule for a single (docs/reports/charting-conventions.md, section 8), instead of "Unknown"
@@ -211,7 +212,7 @@ OVERRIDES = ("name", "artist", "album", "genre", "year")
 class Options:
     instruments: tuple[str, ...] = INSTRUMENTS   # which parts to chart: guitar, bass, drums
     takes: int | None = None                     # guitar takes: 1, or 3 and more (a splice needs three runs); None:
-                                                 # 4 when the guitar stage runs on CUDA, else 1 (guitar_takes)
+                                                 # 1 on every device (guitar_takes)
     device: str = "auto"                         # "auto" (CUDA when a CUDA kernel runs here), "cpu" or "cuda"
     threads: int | None = None                   # torch's threads here and in allin1 (None: their defaults)
     work: Path | None = None                     # the work folder (None: one per song in the cache, cache.py)
@@ -325,23 +326,24 @@ class ChartResult:
 
 
 def guitar_takes(asked: int | None, device: str) -> tuple[int, str]:
-    """How many guitar takes to run, and why: the number asked for, on any device; by default CUDA_TAKES (4) when
-    the guitar stage runs on CUDA (`device`: "cuda" or "cpu", the device resolved for it) and 1 otherwise.
+    """How many guitar takes to run, and why: the number asked for, on any device; by default 1 (CUDA_TAKES on CUDA,
+    `device`: "cuda" or "cpu", the device resolved for it; 1 on the CPU).
 
-    The evidence behind the default (the takes experiment, DESIGN.md 2.7): 4 takes spliced by agreement gave +0.013
-    Expert F1@50 over 1 take on 5 reference songs (Lucretia apart: our grid misses its beats), mostly precision, and
-    4 beat 3. Their cost on the owner's RTX 5070: 3.41x the guitar stage over the takes experiment's seven songs
-    (+5.75 min a song), and 3.9x for the 6:52 test song in the GPU smoke test through the real install (854 s for 4
-    takes against about 219 s for one, +10.6 min); kept as the default at the release gate (M4-08 times the friend's
-    4070). On a CPU each take after the first is one more transcription, 217 s for the test song on the dev container
-    (DESIGN.md 5, M3), so 3 more would add about 11 min for that small gain. 2 takes are never the default (two
-    cannot outvote each other), nor 3 (+0.006 to +0.0105 over 1, below 4)."""
+    The evidence behind the default (the owner's decision, 2026-11-09; DESIGN.md 2.7): 4 takes spliced by agreement
+    were the CUDA default from the takes experiment (+0.013 Expert F1@50 over 1 on 5 reference songs). M8-02 measured
+    them again on the owner's GPU over the reference and 20-song sets: +0.005 [-0.005, +0.014] F1@50 and +0.000 at
+    F1@100, for about 4x the guitar stage's time (3.9x for the 6:52 test song: 854 s against about 219 s). And the
+    splice makes a song's repeated sections less alike: pairs of same-label sections whose windows came from
+    different takes lost -0.045 [-0.087, -0.011] repeat-consistency F1 against 1 take, pairs from one take did not
+    (+0.008 [+0.000, +0.018]) (the repeat-consistency measurement, 2026-11-09). So 1 take everywhere, and 4 when asked
+    for (the page's "Best chart": slower, and only sometimes better). On a CPU each take after the first is one more
+    transcription, 217 s for the test song on the dev container (DESIGN.md 5, M3). 2 takes cannot outvote each
+    other."""
     if asked is not None:
         return asked, f"{asked} asked for"
     if device == "cuda":
-        return CUDA_TAKES, (f"the default on cuda: {CUDA_TAKES} takes spliced gave +0.013 Expert F1@50 over 1, for "
-                            "3.9x the guitar stage's time (the GPU smoke test on an RTX 5070: 854 s for the 6:52 "
-                            "test song, about 219 s for 1 take)")
+        return CUDA_TAKES, (f"the default on cuda: {CUDA_TAKES} take (4 spliced gave +0.005 Expert F1@50 over 1 for "
+                            "about 4x the guitar's time, and less alike repeated sections; --takes 4 asks for them)")
     return 1, "the default on the cpu: 1 take (each one more is another transcription there, about 3.6 min for a 7-min song)"
 
 
@@ -349,9 +351,9 @@ def folder_record(record: Mapping) -> dict:
     """report.json's `pipeline` (assemble's `pipeline=`): what the song folder keeps of pipeline.json's `record`, so
     that a chart made with less than was meant can be told from a good one once the work folder is pruned ("Your
     charts", a diagnostics zip; v0.5.0's advisor, finding 2): the device asked for and chosen; the guitar's takes
-    (None without a guitar): asked for (None: the default), planned, made (1 when the CUDA default's first take was
-    run again on the CPU or moved there), each take's transcriber device and the seeds run again on the CPU; and each
-    fallback's stage, from and to. Numbers and short words only: no reason, as an engine's line can hold a path."""
+    (None without a guitar): asked for (None: the default), planned, made (1 when the first of several takes on
+    CUDA was run again on the CPU or moved there), each take's transcriber device and the seeds run again on the
+    CPU; and each fallback's stage, from and to. Numbers and short words only: no reason, as an engine's line can hold a path."""
     dev, takes = record.get("device") or {}, record.get("takes")
     return {"device": {"asked": dev.get("asked"), "chosen": dev.get("chosen")},
             "takes": None if takes is None else {
@@ -1343,11 +1345,12 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
         gdev = "cuda" if device == "cuda" else "cpu"
         n_takes, why = guitar_takes(options.takes, gdev)
         planned, seeds = n_takes, take_seeds(n_takes)
-        # the CUDA default first runs one take alone: when autochart moved its transcriber off CUDA by itself (a
-        # provider that failed to load), the other three would cost CPU minutes each; when its CUDA run failed and
-        # it was run again on the CPU, the others could fail there too, with the one retry spent. Every take is a
-        # call of its own (run_take), so that a take that fails on CUDA can be run again alone.
-        probe = options.takes is None and n_takes > 1
+        # several takes on CUDA (the page's "Best chart", --takes 4; the default until 2026-11-09) first run one take
+        # alone: when autochart moved its transcriber off CUDA by itself (a provider that failed to load), the other
+        # three would cost CPU minutes each; when its CUDA run failed and it was run again on the CPU, the others could
+        # fail there too, with the one retry spent. Every take is a call of its own (run_take), so that a take that
+        # fails on CUDA can be run again alone.
+        probe = gdev == "cuda" and n_takes > 1
         t0 = begin("guitar", f"autochart, {len(seeds)} take{'s' * (len(seeds) > 1)} (seed{'s' * (len(seeds) > 1)} "
                              f"{', '.join(map(str, seeds))}) on {gdev}" + (", the first alone first" if probe else ""))
         song_s = mix.shape[1] / SAMPLE_RATE

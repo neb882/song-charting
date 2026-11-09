@@ -968,12 +968,11 @@ def test_a_matplotlib_that_fails_on_import_is_one_warning(charted, tmp_path, mon
 
 
 def test_takes_follow_the_guitar_stages_device(charted, monkeypatch, capsys):
-    """By default 4 takes when the guitar stage runs on CUDA, the first alone first, and 1 on the CPU, each take a
-    call of its own; when
-    autochart moved its transcriber off CUDA by itself for that first take, the take alone, with one warning (the
-    transcriber's device decides, not the other stages', and a take that reports none counts as on CUDA). A number
-    asked for runs as asked on either device, all at once. pipeline.json says how many, whether by default, and
-    why."""
+    """By default 1 take on either device (the owner's decision, 2026-11-09: 4 on CUDA before; break: the default
+    back to 4). Several takes on CUDA (the page's "Best chart", --takes 4) run the first alone first, each take a call
+    of its own; when autochart moved its transcriber off CUDA by itself for that first take, the take alone, with one
+    warning (the transcriber's device decides, not the other stages', and a take that reports none counts as on
+    CUDA). On the CPU a number asked for runs as asked. pipeline.json says how many, whether by default, and why."""
     root, result, _, _ = charted
     args = ["chart", str(root / "song.flac"), "--work", str(result.work), "--instruments", "guitar", "--genre", "Test"]
 
@@ -999,12 +998,16 @@ def test_takes_follow_the_guitar_stages_device(charted, monkeypatch, capsys):
                      "cut_short": [None], "pieces": [0], "last_note_s": [None]}   # no take cut short (M5-02)
     assert calls == [(DEFAULT_SEED,)] and devices == {"cpu"} and part == []
     takes, calls, devices, part, err = run("Cuda", auto="cuda")
-    assert takes["takes"] == 4 and takes["auto"] and takes["why"].startswith("the default on cuda: 4 takes")
+    assert takes["takes"] == 1 and takes["auto"] and takes["why"].startswith("the default on cuda: 1 take")
+    assert calls == [(DEFAULT_SEED,)] and devices == {"cuda"} and part == []
+    assert "the first alone first" not in err and "warning: guitar" not in err
+    takes, calls, devices, part, err = run("Best", "--takes", "4", auto="cuda")
+    assert takes["takes"] == 4 and not takes["auto"] and takes["why"] == "4 asked for"
     assert calls == [(DEFAULT_SEED,), (101,), (202,), (303,)] and devices == {"cuda"} and part == others
     assert "on cuda, the first alone first" in err and "warning: guitar" not in err
     assert (takes["devices"], takes["cpu_retries"]) == (["cuda"] * 4, [])
-    takes, calls, devices, part, err = run("Moved", auto="cuda", moved="cpu")
-    assert takes["takes"] == 1 and takes["auto"] and takes["transcriber_moved_to"] == "cpu"
+    takes, calls, devices, part, err = run("Moved", "--takes", "4", auto="cuda", moved="cpu")
+    assert takes["takes"] == 1 and not takes["auto"] and takes["transcriber_moved_to"] == "cpu"
     assert "but autochart's transcriber ran on cpu for the first take, so that take alone" in takes["why"]
     assert calls == [(DEFAULT_SEED,)] and part == [] and err.count("warning: guitar") == 1
     assert (takes["devices"], takes["cpu_retries"]) == (["cpu"], [])
@@ -1013,7 +1016,7 @@ def test_takes_follow_the_guitar_stages_device(charted, monkeypatch, capsys):
     # their cache answered): demucs on the CPU still makes 4 takes, and so does a take that reports no devices
     for name, shown in (("Demucs", {"demucs": "cpu", "timing": "cuda", "transcriber": "cuda"}), ("None", None),
                         ("Empty", {})):
-        takes, calls, devices, part, err = run(name, auto="cuda", devices=shown)
+        takes, calls, devices, part, err = run(name, "--takes", "4", auto="cuda", devices=shown)
         assert takes["takes"] == 4 and takes["transcriber_moved_to"] is None, name
         assert calls == [(DEFAULT_SEED,), (101,), (202,), (303,)] and part == others, name
         assert "warning: guitar: autochart's transcriber" not in err, name
@@ -1053,14 +1056,15 @@ def warm_work(result, tmp_path, name: str = "w") -> Path:
 
 def test_chart_events(charted, tmp_path, monkeypatch, capsys):
     """`chart --events` writes the run's events to stderr, a line each, in the order of the log: the plan, each
-    stage's start and end, a take before each guitar take that runs (the CUDA default's first take alone, then the
-    other three: 1 to 4 of 4), every fallback and every warning as recorded, then after the summary the result.
+    stage's start and end, a take before each guitar take that runs (4 takes on CUDA, "Best chart": the first take
+    alone, then the other three: 1 to 4 of 4), every fallback and every warning as recorded, then after the summary
+    the result.
     Without --events nothing of that is written, and the rest of the output is the same."""
     root, result, _, _ = charted
     oom = "CUDA ran out of memory; separated on the CPU"
     monkeypatch.setattr(P, "Engines", standins(auto="cuda", separation_fallback=oom, allin1_device="cpu"))
     work = warm_work(result, tmp_path)
-    args = ["chart", str(root / "song.flac"), "--work", str(work), "--genre", "Test"]
+    args = ["chart", str(root / "song.flac"), "--work", str(work), "--genre", "Test", "--takes", "4"]
     assert main([*args, "--out", str(tmp_path / "Sóng ♫"), "--events"]) == 0
     out, err = capsys.readouterr()
     events = events_in(err)
@@ -1109,7 +1113,7 @@ def test_chart_events_when_the_first_take_moved_and_without_a_preview(charted, t
     monkeypatch.setattr(P, "Engines", standins(auto="cuda", moved="cpu"))
     work = warm_work(result, tmp_path)
     assert main(["chart", str(root / "song.flac"), "--work", str(work), "--out", str(tmp_path / "S"), "--events",
-                 "--instruments", "guitar", "--no-preview"]) == 0
+                 "--instruments", "guitar", "--no-preview", "--takes", "4"]) == 0   # "Best chart"
     events = events_in(capsys.readouterr().err)
     assert events[0]["stages"] == ["decode", "separate", "sections", "guitar", "assemble"]
     assert [(e["index"], e["count"]) for e in events if e["event"] == "take"] == [(1, 4)]
@@ -1274,6 +1278,8 @@ def real_guitar(root: Path, tmp_path: Path, monkeypatch, capsys):
                 return runs if devices else [Run(r.path, r.cached, {**r.info, "devices": None}) for r in runs]
 
         monkeypatch.setattr(P, "Engines", Real)
+        if auto == "cuda" and "--takes" not in extra and "--device" not in extra:
+            extra = ("--takes", "4", *extra)   # "Best chart": the CUDA default until 2026-11-09, now 1 take
         code = main(["chart", str(root / "song.flac"), "--out", str(tmp_path / f"Out{next(runs)}"), "--work",
                      str(work), "--instruments", "guitar", "--events", *extra])
         driver["err"] = capsys.readouterr().err
@@ -1379,9 +1385,9 @@ def test_a_guitar_take_that_fails_on_cuda_is_run_again_on_the_cpu(charted, tmp_p
         assert "/" not in text and "\\" not in text and "seed_" not in text, text   # no path, no reason
         return record["pipeline"]
 
-    def run_record(planned, made, devices, retries, fallbacks):
+    def run_record(planned, made, devices, retries, fallbacks, asked=4):   # chart_it's "Best chart" (--takes 4)
         return {"device": {"asked": "auto", "chosen": "cuda"},
-                "takes": {"asked": None, "planned": planned, "made": made, "devices": devices, "cpu_retries": retries},
+                "takes": {"asked": asked, "planned": planned, "made": made, "devices": devices, "cpu_retries": retries},
                 "fallbacks": [{"stage": "guitar", "from": "cuda", "to": "cpu"}] * fallbacks}
 
     def take_events():
@@ -1471,12 +1477,14 @@ def test_a_guitar_take_that_fails_on_cuda_is_run_again_on_the_cpu(charted, tmp_p
     assert (code, driver["run"].on) == (0, [(DEFAULT_SEED, "cuda"), (DEFAULT_SEED, "cpu")])
     assert (report["takes"]["takes"], report["takes"]["devices"], report["takes"]["transcriber_moved_to"]) == \
         (1, [None], "cpu")
-    # takes asked for: no probe, so the takes after a first one run again on the CPU go on, on CUDA
+    # since 2026-11-09 (1 take by default; "Best chart" asks for 4) takes asked for on CUDA run the first alone first
+    # too, so after it was run again on the CPU it is used alone, as the CUDA default's was (break: the probe only for
+    # takes=None: the takes after it go on, on CUDA, with the one retry spent)
     e = warm_work(result, tmp_path, "e")
     code, last, report, ran, takes = chart_it(e, DEFAULT_SEED, "--takes", "3", how={"cuda": 1})
-    assert (code, driver["run"].on) == (0, [(DEFAULT_SEED, "cuda"), (DEFAULT_SEED, "cpu"), (101, "cuda"),
-                                            (202, "cuda")])
-    assert (report["takes"]["devices"], report["takes"]["cpu_retries"]) == (["cpu", "cuda", "cuda"], [DEFAULT_SEED])
+    assert (code, driver["run"].on) == (0, [(DEFAULT_SEED, "cuda"), (DEFAULT_SEED, "cpu")])
+    assert (report["takes"]["takes"], report["takes"]["devices"], report["takes"]["cpu_retries"]) == \
+        (1, ["cpu"], [DEFAULT_SEED])
     assert report["fallbacks"] == [{**retry, "reason": first}]
 
 
@@ -1696,7 +1704,8 @@ def test_every_fallback_is_recorded_and_warned(charted, tmp_path):
     oom = "CUDA ran out of memory (CUDA out of memory. Tried to allocate 2.00 GiB); separated on the CPU"
     shown = {"demucs": None, "timing": None, "transcriber": "cpu"}
     moved = f"autochart's transcriber ran on cpu, not cuda, for the first take ({shown}): that take is used alone"
-    report, warned, engines = run("Cuda", {}, auto="cuda", separation_fallback=oom, allin1_device="cpu", moved="cpu")
+    report, warned, engines = run("Cuda", {"takes": 4}, auto="cuda", separation_fallback=oom, allin1_device="cpu",
+                                  moved="cpu")   # "Best chart": 4 takes on CUDA, the first alone first
     assert report["device"] == {"asked": "auto", "chosen": "cuda", "reason": None}
     assert report["fallbacks"] == [
         {"stage": "separate", "from": "cuda", "to": "cpu", "reason": oom},
@@ -1963,7 +1972,7 @@ def test_options_and_seeds():
         Options(cpu_retry=1).check()
     Options(instruments=("bass",)).check()  # the defaults need no guitar: takes, and solos by the label
     Options(instruments=("bass",), solos="labels").check()
-    assert [P.guitar_takes(None, d)[0] for d in ("cuda", "cpu")] == [4, 1]
+    assert [P.guitar_takes(None, d)[0] for d in ("cuda", "cpu")] == [1, 1]   # the owner, 2026-11-09
     assert [P.guitar_takes(n, d)[0] for n in (1, 3, 5) for d in ("cuda", "cpu")] == [1, 1, 3, 3, 5, 5]
 
 

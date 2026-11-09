@@ -83,8 +83,8 @@ songcharter is a free, local tool. A song file goes in (MP3 or anything ffmpeg r
 
 **As built** (`songcharter chart <file> --out <dir>`: `pipeline.py` [code]): steps 1, 2, 4 and 5, with step 3 as
 Goal 1 builds it (`beatgrid` on the drum stem with the guitar stem second, no Beat This start; assemble). The engines
-are ADTOF with drummap2's lanes (drums), our rules (bass), autochart's engine (guitar: by default 4 takes when it
-runs on CUDA, 1 on the CPU) and allin1 or librosa (sections), each cached in the song's work folder in the per-user
+are ADTOF with drummap2's lanes (drums), our rules (bass), autochart's engine (guitar: by default 1 take on every
+device, 4 spliced takes for the page's "Best chart", §2.7) and allin1 or librosa (sections), each cached in the song's work folder in the per-user
 cache (`%LOCALAPPDATA%\songcharter\work`, pruned to 5 GB; §2); then assemble builds and gates the folder (Expert only
 by default, solos on the sections named Solo), and a preview of it (an overview and a page a minute, PNG) goes into
 the work folder (§2.0). It ran end to end on the test song's MP3 in 12.7 min on the dev container's CPU and passed
@@ -344,7 +344,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
     fills while they are written is a warning (M8-12's review), and so is any other error writing them, as in WSL a
     full C: is an I/O error rather than ENOSPC [inference: not run on Windows]: the staging folder is removed, the
     chart stands with its Install, and the Done screen says in plain words why there are no stems: the disk ran out
-    of room, or, for any other error, "The stems could not be saved (input/output error); your chart is fine. ..."
+    of room, or, for any other error, "The stems could not be saved (input/output error). The chart is not affected. ..."
     in the error's own words (`STEMS_NOT_SAVED`), never a full disk it was not.
   - Piano and "other" are htdemucs_6s's least clean stems (piano at −31 dB on the test song, above), which the page
     says.
@@ -1487,6 +1487,17 @@ sections, scored with `score.py` against the six human charts [here, takes exper
   runs alone first: when its summary shows the transcriber off CUDA (autochart fell back by itself), the run warns
   and uses that take alone, rather than three more CPU transcriptions. `pipeline.json`'s `takes` records how many,
   whether by default, and why.
+- **Superseded: 1 take by default on every device** (the owner's decision, 2026-11-09) [decision, on this evidence].
+  M8-02 measured the CUDA default again on the owner's GPU over the reference and 20-song sets: 4 spliced takes gave
+  **+0.005 [−0.005, +0.014] F1@50** over one (+0.000 at F1@100), for about 4× the guitar stage's time. A
+  repeat-consistency measurement (2026-11-09) then found the splice makes a song's repeated sections less alike:
+  over 22 songs the primary measure was −0.014 [−0.033, +0.001], and split by where each section's windows came
+  from, pairs whose two instances came from **different takes lost −0.045 [−0.087, −0.011]** F1 (17 songs) while
+  pairs from one take did not (+0.008 [+0.000, +0.018]). So `guitar_takes` gives 1 take by default on CUDA as on the
+  CPU (`CUDA_TAKES` 1); `--takes 4` still splices 4, and the page offers it as "Best chart (4 guitar takes): slower,
+  and only sometimes better" beside the default "Quick chart (1 guitar take)" (§4.5). Several takes on CUDA, asked
+  for, still run their first take alone first, as the default did (the protection above is Best's now). The golden
+  charts are one CPU take and do not move.
 - Three of the experiment's Creep builds failed the gate on `noteAfterAudio` (seed 303's last chord rings past the
   audio's end); assemble now clips it (§2.13).
 
@@ -1667,11 +1678,11 @@ to detect, from the guitar's pick noise, where our chart is too sparse, and to f
   - on every song, F1@50 ≥ autochart's on that song − max(0.035, the measured seed spread).
 
   Otherwise use B1 or D. B1 vs B2 vs D is the owner's call (§9 Q3).
-- **Takes:** seeded, with its tokens cached for re-runs (critique G6); several when time allows. As built, 4 on CUDA
-  and 1 on the CPU by default (the takes experiment, above).
+- **Takes:** seeded, with its tokens cached for re-runs (critique G6); several when time allows. As built, 1 by default on every
+  device since 2026-11-09 (4 on CUDA before; above), 4 for "Best chart".
 - **As built** (B1, decided in §9 Q3; `engines/autochart.py` [code]): `songcharter chart` runs the engine's default
-  seed (20260609), and for 4 takes on CUDA by default, or `--takes N` (N ≥ 3: a splice needs three runs) on any
-  device, seeds 101, 202, …, spliced per section by takes.py; a take that repeats another's notes is left out. The engine's tokens are not cached,
+  seed (20260609), and for `--takes N` (N ≥ 3: a splice needs three runs; 4 on CUDA was the default until
+  2026-11-09) on any device, seeds 101, 202, …, spliced per section by takes.py; a take that repeats another's notes is left out. The engine's tokens are not cached,
   but each finished take is (its folder, keyed by the input's SHA-256, the seed and the sampling settings). On the
   dev container's CPU the test song's take took 403.5 s, its own htdemucs_6s pass included, inside a 12.7-min run
   [here, pipeline run]; it is not the GPU take of the same seed (Expert F1@50 0.799 between them, exact lanes
@@ -2907,7 +2918,7 @@ v1's absolute targets, kept as information only:
     its chord share 0.33 against the humans' 0.03–0.05, its 1-s density peak 7 against their 27. On this CPU take
     the shred instrumental's guitar runs to 532 s of its 546 (its last two 30-s windows F1@100 0.78 and 0.65), and
     its chart marks 0.80 of its span as solos (the humans 0 and 0.36).
-- **Limits:** Linux or WSL only (`fcntl` locks, hard links). One CPU take: the CUDA default of 4 spliced takes is not
+- **Limits:** Linux or WSL only (`fcntl` locks, hard links). One CPU take: "Best chart"'s 4 spliced takes are not
   covered. The kept engine outputs are the code of whichever commit made them; a change to an engine's code without
   `--rerun` compares that old output on both sides, which `report.md` shows as "kept folders made by".
 - **Confidence:** high for what it compares. **Would change it:** a change the hashes miss that a playtest finds
@@ -3072,7 +3083,7 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
      - instruments;
      - difficulties (Expert by default, §2.11);
      - solos (the sections named Solo by default, or the sections the player picks; §2.10);
-     - guitar takes (by default 4 on CUDA, 1 on the CPU);
+     - guitar takes (by default 1 on every device; 4 for "Best chart");
      - tempo (auto / constant / follow the band);
      - chord-density slider.
   3. **Progress:** one bar per stage with time estimates and a cancel button. Any CPU fallback is shown here. As
@@ -3159,8 +3170,8 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     song much longer than 9 minutes** may pass the high end on the 4070: the owner's 9:05 song's 4 takes are 95 % of
     the 5070's own high end, and along d to the 2.4th a 4070 1.35x as slow passes the page's high end from about 10
     minutes (on the 5070 it holds to 20) [inference, the v0.4.0 gate]; M4-08 part B or the friend's first long song
-    will tell. For a 4-minute song the page says 4 to 14 minutes with the GPU's 4 takes, 2 to 7 with 1, 6 to 11 on the
-    CPU; the guide keeps the rounder "about 5 to 15" and "2 to 7". Not counted: the caches (a song charted before goes
+    will tell. For a 4-minute song the page says 2 to 7 minutes with the GPU's default of 1 take, 4 to 14 with "Best
+    chart"'s 4, 6 to 11 on the CPU, and the guide the same. Not counted: the caches (a song charted before goes
     faster) and the lyrics' first download. Its evidence is in the module's docstring, and tests/test_ui_estimate.py
     checks the rates against those runs and the 4070's margin. The estimate is for a look: a bug in it is logged, and
     the chart starts without one.
@@ -3234,6 +3245,11 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     PC charts the guitar on the CPU, so it makes 1 guitar take: about N to M minutes for this song." The choice only
     fills the Guitar takes box (Best: empty, the default; Quick: 1), so the options sent are what they were for each
     (Best the defaults, Quick `--takes=1`), and a number typed in the box checks the matching choice, or neither.
+    Since the owner's decision of 2026-11-09 (1 take by default on every device, §2.7) Quick comes first and is the
+    default: "Quick chart (1 guitar take, about N to M minutes)" checked, its box empty (the defaults), and "Best
+    chart (4 guitar takes, about N to M minutes): slower, and only sometimes better", which fills the box with 4
+    (`--takes=4`); the upload's `quick` is the defaults' range and `best` 4 takes' (null off the GPU), and the CPU's
+    line gives `quick`'s minutes.
     The takes box, the device and "Make a preview" are under a folded "More options"; Lyrics and Pictures are folded
     each in a `<details>` of their own.
   - **The time left after the first take** (the gate's note; `estimate.remaining`, no change to `pipeline.py`): the
@@ -3287,7 +3303,13 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
   - **A restart waits for a click:** closing the window kills the chart's tree as before, and its song goes back to
     waiting at the top (its stages and takes stay in the work cache); started again, songcharter pauses the list
     ("3 songs were waiting when songcharter closed") with Carry on and Clear the list, so opening it later to
-    install one song never starts a 10 GB chart under a game.
+    install one song never starts a 10 GB chart under a game. A server killed outright (SIGKILL, a crash) cannot
+    clean up, and its chart, in a session of its own, ran on under init, so Carry on started a second chart on the
+    same work folder (a second advisor's finding 7). `<home>/state/chart.pid` names the running chart (its pid,
+    which is its process group's, and its start time from /proc) from its start to its end, and the next start
+    stops that group before it reads the queue, only while its leader is the process named (a pid used again is
+    never touched). A parent-death signal (PR_SET_PDEATHSIG) was not used: it follows the thread that started the
+    child, and charts start from request and queue threads that end at once.
   - **Cancel** ends the charting song only, and the next starts; **Pause after this song** lets it finish and starts
     none; a waiting song has **Remove**; no reordering. **Two songs in a row that do not finish** (exit 2 or 3,
     killed, or one whose file is gone) pause the list, as exit 2 is often the machine; a failed check is a finished
@@ -4156,8 +4178,9 @@ decides), and the p95-drift click test (critique G4).
   covers Solo 2 and half of Solo 1 with fold-0 sections and Solo 2 alone with the ensemble (CUDA's until M6-10); on the
   six references both find 1 of 2 human solos, "labels" with 2 false solos to 1 on fold 0 and 4 to 1 on the
   ensemble. No new mode: the union of the two only adds false solos (§2.10).
-- **Guitar takes:** 4 by default when the guitar stage runs on CUDA, 1 on the CPU; the first CUDA take alone first,
-  that take alone when autochart moved its transcriber off CUDA; `--takes N` as asked on any device. The takes
+- **Guitar takes:** 4 by default when the guitar stage runs on CUDA, 1 on the CPU (1 on every device since
+  2026-11-09, §2.7); the first CUDA take alone first, that take alone when autochart moved its transcriber off CUDA;
+  `--takes N` as asked on any device. The takes
   experiment behind it is in §2.7, with its verifier's two corrections (3 takes give +0.006 to +0.0105 over one, not
   less; 4 beat 3); `guitar_takes`'s docstring no longer says 3 takes score below 1.
 - **Strumming:** the under-charted-strumming detector failed (held-out precision 0.22, no better than an audio-free

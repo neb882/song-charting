@@ -712,8 +712,9 @@ def test_the_upload_gives_the_songs_length_and_the_job_its_estimate(served, monk
     doctor = {**DOCTOR, "device": {"chosen": "cuda"}, "guitar_device": "cuda"}
     monkeypatch.setattr(ctx.app, "doctor", lambda: doctor)
     est = start({})
-    assert (est["takes"], est["device"]) == (4, "cuda")
+    assert (est["takes"], est["device"]) == (1, "cuda")   # 1 take on the GPU too (the owner, 2026-11-09)
     assert est == E.for_job(up["seconds"], J.parse_options({}), "cuda", "cuda")
+    assert start({"takes": 4})["takes"] == 4   # Best
     doctor["guitar_device"] = "cpu"   # autochart's CUDA provider did not load: one take, on the CPU
     assert (start({})["takes"], start({})["device"]) == (1, "cpu")
     doctor["device"] = {"chosen": None}   # the machine check failed: "auto" is unknown, so is the time
@@ -1136,6 +1137,68 @@ def test_stopping_the_server_kills_the_running_charts_whole_tree(tmp_path, how):
             if proc.alive(p):
                 os.kill(p, signal.SIGKILL)
         errors.close()
+
+
+@pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="needs /proc (Linux)")
+def test_a_chart_left_by_a_server_killed_outright_is_stopped_at_the_next_start(tmp_path):
+    """A second advisor's finding 7: SIGKILL (a crash) gives the server no chance to clean up, and the chart, in a
+    session of its own, runs on under init. The next start stops it, and its grandchild, before it reads the queue
+    (chart.pid), so Carry on never starts a second chart on the same work folder; the song waits, paused (break:
+    _main without jobs.stop_orphan: the chart still runs after the restart)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "doctor.json").write_text(json.dumps(DOCTOR), encoding="utf-8")
+    (tmp_path / "standin.py").write_text(STANDIN, encoding="utf-8")
+    (tmp_path / "driver.py").write_text(DRIVER, encoding="utf-8")
+    port = free_ports(1)[0]
+    root = Path(songcharter.__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": str(root)}
+    env.pop("WSL_DISTRO_NAME", None)
+    argv = [sys.executable, str(tmp_path / "driver.py"), str(tmp_path / "standin.py"), str(home), str(port)]
+
+    def serve():
+        server = subprocess.Popen(argv, env=env, cwd=tmp_path, stdout=subprocess.DEVNULL,
+                                  stderr=open(tmp_path / "stderr.txt", "a"), start_new_session=True)
+        deadline = time.monotonic() + 30
+        while S.hello(port) is None:
+            assert server.poll() is None and time.monotonic() < deadline, (tmp_path / "stderr.txt").read_text()
+            time.sleep(0.1)
+        return server
+
+    servers, pids = [serve()], []
+    try:
+        ctx = SimpleNamespace(port=port)
+        _, up = upload(ctx, song(tmp_path / "s.wav"), "Song.wav")
+        assert call(port, "POST", "/api/jobs", json.dumps({"upload": up["id"]}).encode(), guarded(port))[0] == 202
+        deadline = time.monotonic() + 30
+        while not pids:
+            assert time.monotonic() < deadline
+            events = json.loads(call(port, "GET", "/api/jobs/current")[2])["events"]
+            pids = next((e["pids"] for e in events if e["event"] == "take"), [])
+            time.sleep(0.05)
+        assert json.loads(J.pid_path(home).read_text(encoding="utf-8"))["pid"] == pids[0]
+        servers[0].kill()   # SIGKILL: no clean-up
+        servers[0].wait(10)
+        time.sleep(0.5)
+        assert all(proc.alive(p) for p in pids)   # the orphan, as the finding found it
+        servers.append(serve())   # started again
+        assert not any(proc.alive(p) for p in pids)   # stopped before the queue was read
+        assert not J.pid_path(home).exists()
+        q = json.loads(call(port, "GET", "/api/queue")[2])
+        assert [e["state"] for e in q["entries"]] == ["waiting"] and q["paused"] == "restart"
+        log = "".join(f.read_text(encoding="utf-8") for f in (home / "logs").glob("ui-*.log"))
+        assert f"pid {pids[0]}) was stopped" in log
+    finally:
+        for server in servers:
+            if server.poll() is None:
+                server.send_signal(signal.SIGTERM)
+                try:
+                    server.wait(15)
+                except subprocess.TimeoutExpired:
+                    server.kill()
+        for p in pids:
+            if proc.alive(p):
+                os.kill(p, signal.SIGKILL)
 
 
 # ------------------------------------------------------------------------------------------------ after the build (M4-06)
@@ -2179,7 +2242,7 @@ const ctx = { document, window: { addEventListener() {} }, XMLHttpRequest: class
   sessionStorage: { setItem() {}, getItem() { return null; } },
   fetch: async (path) => {
     if (path === "/api/jobs/current") return { status: 200, json: async () => JSON.parse(JSON.stringify(job)) };
-    if (path === "/api/jobs/current/results") return { status: 200, json: async () => ({ job: job.job,
+    if (/^\/api\/jobs\/[^/]+\/results$/.test(path)) return { status: 200, json: async () => ({ job: job.job,
       installable: false, preview: { why: "it was turned off in the options" }, art: null, lyrics: null,
       listen: null }) };
     if (path === "/api/status") return { status: 200, json: async () => ({ device: { chosen: "cpu" }, problems: [],
@@ -2754,7 +2817,7 @@ const document = { getElementById: (id) => els[id] || (els[id] = node(id)), crea
 // the options form: the boxes and radios its selectors ask for, by name and value
 const box = (name, value, checked) => Object.assign(node("input"), { name, value, checked, defaultChecked: checked });
 const inputs = [box("instruments", "guitar", true), box("instruments", "bass", true), box("instruments", "drums", true),
-  box("levels", "expert", true), box("levels", "hard", false), box("how", "best", true), box("how", "quick", false)];
+  box("levels", "expert", true), box("levels", "hard", false), box("how", "quick", true), box("how", "best", false)];
 const field = (value) => Object.assign(node("input"), { value });
 const elements = { title: field(""), artist: field(""), album: field(""), year: field(""), genre: field(""),
   solos: field("labels"), solo_names: field(""), takes: field(""), device: field("auto"),
@@ -2783,7 +2846,7 @@ const ctx = { document, window: { addEventListener() {}, confirm: () => true }, 
     const body = init && init.body ? JSON.parse(init.body) : null;
     if (init && init.method === "POST") posted.push([path, body]);
     if (path === "/api/jobs/current") return { status: 200, json: async () => JSON.parse(JSON.stringify(job)) };
-    if (path === "/api/jobs/current/results") return { status: 200, json: async () => RESULTS };
+    if (/^\/api\/jobs\/[^/]+\/results$/.test(path)) return { status: 200, json: async () => RESULTS };
     // M8-10: the Done screen names its song by the job id the results gave
     if (path === "/api/jobs/j1/listen") return { status: 200, json: async () => ({ url: "/l/guitar-expert.ogg" }) };
     if (path === "/api/open") return { status: openAnswer[0], json: async () => openAnswer[1] };
@@ -2804,7 +2867,7 @@ const out = {};
                                       quick: { takes: 1, low_min: 4, high_min: 10 } } });
   out.gpu = { choice: els.choice.hidden, cpu: els["choice-cpu"].hidden, best: els["best-label"].textContent,
               quick: els["quick-label"].textContent, folded: ["more", "lyrics-box", "pictures-box"].map((i) => els[i].open) };
-  out.best = ctx.readOptions();
+  out.filled = ctx.readOptions();
   inputs.find((i) => i.value === "quick").checked = true;
   inputs.find((i) => i.value === "best").checked = false;
   vm.runInContext("choose()", ctx);
@@ -2822,8 +2885,11 @@ const out = {};
   elements.takes.value = "";
   vm.runInContext("typedTakes()", ctx);
   out.typedNone = how();
+  elements.takes.value = "4";
+  vm.runInContext("typedTakes()", ctx);
+  out.typed4 = how();
   // the CPU: no choice, a line with its minutes; what it sends is the defaults
-  ctx.fillOptions({ ...up, choices: { gpu: false, best: { takes: 1, low_min: 12, high_min: 21 }, quick: null } });
+  ctx.fillOptions({ ...up, choices: { gpu: false, best: null, quick: { takes: 1, low_min: 12, high_min: 21 } } });
   out.cpu = { choice: els.choice.hidden, cpu: els["choice-cpu"].hidden, line: els["choice-cpu"].textContent,
               sent: ctx.readOptions() };
   ctx.fillOptions({ ...up, choices: { gpu: false, best: null, quick: null } });
@@ -2955,11 +3021,17 @@ def test_the_ui_pass_page(tmp_path):
     assert out["big"] == "About 30 to 40 more minutes, from how long the first guitar take took."
     defaults = {"instruments": ["guitar", "bass", "drums"], "levels": ["expert"], "solos": "labels", "device": "auto",
                 "preview": True, "stems": False, "one_audio": False}   # M8-12: the stems off, the split audio on
-    assert out["gpu"] == {"choice": False, "cpu": True, "best": "Best chart (4 guitar takes, about 9 to 23 minutes)",
-                          "quick": "Quick chart (1 take, about 4 to 10 minutes)", "folded": [False, False, False]}
-    assert out["best"] == defaults and out["bestAgain"] == defaults   # Best: what the form sent before M8-04
-    assert out["quick"] == {**defaults, "takes": 1}
-    assert out["typed3"] == {"how": [], "takes": 3} and out["typed1"] == ["quick"] and out["typedNone"] == ["best"]
+    # the owner's decision of 2026-11-09: Quick (1 take) is the default, Best (4 takes) slower and only sometimes
+    # better (break: Best checked first, or Quick sending --takes 1 and Best nothing, as before)
+    assert out["gpu"] == {"choice": False, "cpu": True,
+                          "best": ("Best chart (4 guitar takes, about 9 to 23 minutes): slower, and only sometimes "
+                                   "better"),
+                          "quick": "Quick chart (1 guitar take, about 4 to 10 minutes)",
+                          "folded": [False, False, False]}
+    assert out["filled"] == defaults and out["quick"] == defaults   # as filled, and Quick chosen: the defaults
+    assert out["bestAgain"] == {**defaults, "takes": 4}
+    assert out["typed3"] == {"how": [], "takes": 3} and out["typed1"] == ["quick"] and out["typedNone"] == ["quick"]
+    assert out["typed4"] == ["best"]
     assert out["cpu"] == {"choice": True, "cpu": False, "sent": defaults,
                           "line": "This PC charts the guitar on the CPU, so it makes 1 guitar take: about 12 to 21 "
                                   "minutes for this song."}
@@ -3122,23 +3194,31 @@ def test_the_songs_folders_guess_is_always_given(finished, tmp_path, monkeypatch
     ({"device": {"chosen": "cpu"}, "guitar_device": "cpu"}, False),
     ({"device": {"chosen": None}}, False)])
 def test_best_or_quick_offered_on_the_gpu_with_each_ones_estimate(tmp_path, doctor, gpu):
-    """M8-04 item 8: the upload's `choices`: on a PC that charts the guitar on the GPU, Best (every option at its
-    default: 4 takes) and Quick (1 take), each estimate.for_job's range for this song; elsewhere no choice, and Best's
-    range (1 take) for the line; and what each choice sends is the command line's own: Best no --takes (the
-    pipeline's 4 on CUDA), Quick --takes=1."""
+    """M8-04 item 8, with the owner's decision of 2026-11-09 (1 take is the default on the GPU too): the upload's
+    `choices`: on a PC that charts the guitar on the GPU, Quick (every option at its default: 1 take) and Best (4
+    takes), each estimate.for_job's range for this song; elsewhere no choice, and Quick's range (1 take) for the line;
+    and what each choice sends is the command line's own: Quick no --takes (the pipeline's 1), Best --takes=4
+    (break: the default back to 4 takes: Quick's range is 4 takes')."""
     from songcharter.ui import estimate as E
     app = S.App(tmp_path, report=lambda: {**DOCTOR, **doctor})
     c = app.choices(241.0)
     auto, guitar = doctor["device"]["chosen"], doctor.get("guitar_device")
     assert c["gpu"] is gpu
-    assert c["best"] == E.for_job(241.0, J.parse_options({}), auto, guitar)
-    assert c["quick"] == (E.for_job(241.0, J.parse_options({"takes": 1}), auto, guitar) if gpu else None)
+    assert c["quick"] == E.for_job(241.0, J.parse_options({}), auto, guitar)
+    assert c["best"] == (E.for_job(241.0, J.parse_options({"takes": 4}), auto, guitar) if gpu else None)
+    if auto is not None:
+        assert c["quick"]["takes"] == 1
     if gpu:
-        assert (c["best"]["takes"], c["quick"]["takes"]) == (4, 1) and c["quick"]["high_s"] < c["best"]["low_s"] * 2
+        assert c["best"]["takes"] == 4 and c["quick"]["high_s"] < c["best"]["low_s"] * 2
+        assert (c["quick"]["low_min"], c["quick"]["high_min"]) == (2, 7)   # a 4-minute song: the guide's minutes
     assert app.choices(None) == {"gpu": gpu, "best": None, "quick": None}
-    best = J.chart_command(Path("s.wav"), Path("out"), J.parse_options({}), None)
-    quick = J.chart_command(Path("s.wav"), Path("out"), J.parse_options({"takes": 1}), None)
-    assert not any(a.startswith("--takes") for a in best) and quick == best + ["--takes=1"]
+    quick = J.chart_command(Path("s.wav"), Path("out"), J.parse_options({}), None)
+    best = J.chart_command(Path("s.wav"), Path("out"), J.parse_options({"takes": 4}), None)
+    assert not any(a.startswith("--takes") for a in quick) and best == quick + ["--takes=4"]
+    html = S.static_files()["index.html"].decode()   # Quick checked, first; Best said to be slower
+    assert html.index('value="quick" checked>') < html.index('value="best">') and 'value="best" checked' not in html
+    assert ">Best chart (4 guitar takes): slower, and only sometimes better</span>" in html
+    assert 'placeholder="default: 1 (Best chart: 4)"' in html
 
 
 # ------------------------------------------------------------------------------------------------ the queue (M8-10)
@@ -3526,7 +3606,8 @@ def test_the_page_queues_several_songs_and_follows_them_one_after_the_other(tmp_
     assert out["first"] == "Uploading First.mp3 (1 of 2)…" and out["second"] == "Uploading Second.mp3 (2 of 2)…"
     assert out["form"] == {"shown": True, "names": ["First.mp3 (2.0 MB)", "Second.mp3 (3.0 MB)"],
                            "namesHidden": False, "song": True, "lyrics": True, "pictures": True,
-                           "button": "Chart them", "best": "Best charts (4 guitar takes)",
+                           "button": "Chart them",
+                           "best": "Best charts (4 guitar takes): slower, and only sometimes better",
                            "head": "2 songs, charted one after the other with these options:"}
     assert "title" not in out["options"] and "lyrics" not in out["options"] and out["options"]["device"] == "auto"
     assert out["sent"] == ["a", "b"]
@@ -3635,6 +3716,42 @@ def test_the_page_waits_for_the_next_song_and_never_shows_the_last_songs_time_le
     out = json.loads(done.stdout)
     assert out["between"] == {"followed": "j2", "reads": 2, "events": ["/api/jobs/j2/events"]}
     assert out["stale"] is None and out["fresh"] == 120
+
+
+# QUEUE_PAGE's stand-ins: one song ends while "current" is already another's (a gap that spanned a whole song)
+ENDED_FLOW = r"""
+(async () => {
+  ctx.setQueue({ paused: null, run: 1, left: null, entries: [entry("a", "charting", "j1")] });
+  job = { job: "j1", state: "running", upload: { name: "a.mp3" }, started: 1000, now: 1000, estimate: EST };
+  await ctx.attach();
+  await settle();
+  job = { ...job, job: "j2", upload: { name: "b.mp3" } };   // what /api/jobs/current says by now
+  const base = ctx.fetch, asked = [];
+  ctx.fetch = async (path, init) => { if (path.endsWith("/results")) asked.push(path); return base(path, init); };
+  ctx.setQueue({ paused: null, run: 1, left: null, entries: [entry("a", "ready", "j1"), entry("b", "ready", "j2")] });
+  ctx.handle({ event: "result", ok: true, folder: "/h/library/x/Made-Up Band - First", summary: "gate: OK", at: 1100 });
+  await settle();
+  out.ended = { asked, title: els["done-title"].textContent, text: els["done-text"].textContent,
+                shown: vm.runInContext("state.shown", ctx) };
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_done_screen_loads_the_results_of_the_song_that_ended(tmp_path):
+    """The v0.5.0 review fixes, F2: the Done screen of the song whose end the page just read loads that song's
+    results by its job id, not "current", which after a gap spanning a whole song is the next one's (break:
+    closedNow's loadResults() with no id: song A's title over song B's results)."""
+    script = tmp_path / "ended.cjs"
+    script.write_text(QUEUE_PAGE[:QUEUE_PAGE.index("(async () => {")] + ENDED_FLOW, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(S.static_files()["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout)["ended"] == {
+        "asked": ["/api/jobs/j1/results"], "title": "Ready", "shown": "j1",
+        "text": "Made-Up Band - First is charted and passed its check."}
 
 
 # QUEUE_PAGE's stand-ins again: a song the server refuses (already in the list), sent from the top "Chart it"

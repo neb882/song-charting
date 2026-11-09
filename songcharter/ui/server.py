@@ -28,7 +28,9 @@ one chart runs at a time as a child process group (jobs.py). In WSL the Windows 
   5. **Logs** to $SONGCHARTER_HOME/logs/ui-<yyyyMMdd>.log (every request too) and to the console window. Uploads older
      than 7 days go, but those the queue's waiting songs name (jobs.queued_uploads).
   6. **Stops** on SIGHUP or SIGTERM (the window closes) and Ctrl+C: a running job's tree is killed first, and its
-     song goes back to waiting at the top of the queue (Queue.shutdown). A page that closes does not stop it.
+     song goes back to waiting at the top of the queue (Queue.shutdown). A page that closes does not stop it. A
+     server killed outright (SIGKILL, a crash) cannot: its chart runs on, and the next start stops it before it
+     reads the queue (jobs.stop_orphan, by <home>/state/chart.pid; a second advisor's finding 7).
 
 **The update notice** (M5-07): once the first page (index.html) has been served, never before (nothing on the
 startup path waits on the network, or asks it), a daemon thread runs updates.check once per server process: at most
@@ -56,9 +58,9 @@ Nothing is downloaded or installed; charting never waits for it.
     with upload.json beside it; answers {"id", "name", "bytes", "tags", "origin", "seconds", "choices"}: the song.ini
     values the chart would take from the tags or the file's name (pipeline.read_tags and song_metadata), where each
     came from, the song's length as ffmpeg's header gives it (estimate.duration; null when it cannot say), and the
-    options screen's Best or Quick (M8-04, `App.choices`): {"gpu", "best", "quick"}, `gpu` when the doctor summary
-    charts the guitar on the GPU, `best` estimate.for_job's range with every option at its default, `quick` with 1
-    take (null off the GPU).
+    options screen's Quick or Best (M8-04, `App.choices`): {"gpu", "best", "quick"}, `gpu` when the doctor summary
+    charts the guitar on the GPU, `quick` estimate.for_job's range with every option at its default (1 take),
+    `best` with 4 takes (null off the GPU).
   * POST /api/upload/image (M4-11): a picture for the album art or the background, as the song is uploaded (the same
     guards, folder and pruning; upload.json's kind "image"). An extension not in art.EXTENSIONS: 415; over
     art.MAX_BYTES (20 MB): 413. It must decode as art.py's checks say (a JPEG, PNG or WebP within its pixel limit),
@@ -199,7 +201,7 @@ from ..timed import DIFFICULTIES, INSTRUMENTS
 from . import estimate
 from . import home as default_home
 from .jobs import (CLOSING, LIBRARY_ID, ChartOptions, Charted, Job, Jobs, JobRunning, NotInQueue, NotRunning, Queue,
-                   QueueFull, find_chart, library, parse_options, queued_uploads)
+                   QueueFull, find_chart, library, parse_options, queued_uploads, stop_orphan)
 
 APP = "songcharter"
 PORTS = range(8765, 8785)          # 8765-8784
@@ -374,17 +376,18 @@ class App:
 
     # --- the options screen's choice (M8-04)
     def choices(self, seconds: Any) -> dict:
-        """Best or Quick for a song of `seconds`: {"gpu", "best", "quick"}. `gpu`: the doctor summary charts the guitar
-        on the GPU (its device CUDA, the guitar not found on the CPU), where the page offers the two; `best` is
-        estimate.for_job's range with every option at its default (4 takes there, 1 on the CPU), `quick` with 1 take
-        (None off the GPU). A bug in the estimate is logged, and both are None."""
+        """Quick or Best for a song of `seconds`: {"gpu", "best", "quick"}. `gpu`: the doctor summary charts the guitar
+        on the GPU (its device CUDA, the guitar not found on the CPU), where the page offers the two; `quick` is
+        estimate.for_job's range with every option at its default (1 take, on every device since the owner's decision
+        of 2026-11-09), `best` with estimate.BEST_TAKES (4) takes (None off the GPU). A bug in the estimate is logged,
+        and both are None."""
         doctor = self.doctor()
         auto = (doctor.get("device") or {}).get("chosen")
         guitar = doctor.get("guitar_device")
         gpu = auto == "cuda" and guitar != "cpu"
         try:
-            best = estimate.for_job(seconds, ChartOptions(), auto, guitar)
-            quick = estimate.for_job(seconds, ChartOptions(takes=1), auto, guitar) if gpu else None
+            quick = estimate.for_job(seconds, ChartOptions(), auto, guitar)
+            best = estimate.for_job(seconds, ChartOptions(takes=estimate.BEST_TAKES), auto, guitar) if gpu else None
         except Exception:  # noqa: BLE001  the choice is offered without its minutes
             self.log(f"estimate: internal error:\n{traceback.format_exc()}", console=False)
             best = quick = None
@@ -1502,6 +1505,7 @@ def _main(port: int | None, browser: bool, from_shortcut: bool, home: Path | Non
     gone = prune_uploads(root, keep=queued_uploads(root))
     if gone:
         log(f"uploads older than {UPLOAD_DAYS} days deleted: {len(gone)}")
+    stop_orphan(root, log)   # a chart a songcharter killed outright left running, before the queue is read (jobs.py)
     app = App(root, log=log, updates=lambda say: updates.check(root, __version__, say=say))
     threading.Thread(target=app.doctor, name="songcharter-doctor", daemon=True).start()   # the header, in advance
     check = windows_check(app) if in_wsl and wsl.interop_ok() else None

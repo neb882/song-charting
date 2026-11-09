@@ -316,7 +316,8 @@ def main(argv: list[str] | None = None) -> int:
                         "charted)")
     c.add_argument("--takes", type=int, default=None, metavar="N",
                    help="guitar takes, spliced by agreement: 1, or 3 or more, each about one more autochart run "
-                        "(default: 4 when the guitar runs on CUDA, 1 on the CPU)")
+                        "(default: 1 on every device; 4 is the page's \"Best chart\": slower, and only sometimes "
+                        "better)")
     c.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto",
                    help="where the models run (default: auto, CUDA when available)")
     c.add_argument("--no-cpu-retry", action="store_true",
