@@ -669,9 +669,20 @@ function closed(c) {
 }
 
 function closedNow(c) {
+  const was = state.job && state.job.job;
   finish(c.title, c.message, c.summary, { ...c.how, tab: endTitle(c.outcome) || c.how.tab });
   if (c.results) loadResults();
-  refreshQueue();
+  settleQueue(was);
+}
+
+// the list read again until the song that just ended is no longer charting in it: its result comes a second or so
+// before its process has exited, which the server waits for before it records the end
+async function settleQueue(job) {
+  for (let i = 0; i < 10; i++) {
+    await refreshQueue();
+    if (!entries().some((e) => e.job === job && e.state === "charting")) return;
+    await new Promise((ok) => setTimeout(ok, 1000));
+  }
 }
 
 async function between(c) {
