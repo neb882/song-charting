@@ -100,6 +100,12 @@ page.
   Never, so it charts all evening. Cancel stops only the song charting; "Pause after this song" stops the list after
   it. If the songcharter window closes, the list waits: start songcharter again and press "Carry on". Lyrics and
   pictures are for one song at a time.
+- **Your charts:** every song you have charted stays listed under "Your charts" on the first screen (folded once the
+  list is long: click it to open it; the Done screen has a "Your charts" button too), newest first, with whether it
+  passed its check. "Install" puts it into Clone Hero again (into a new Songs folder, say, or after you deleted it
+  there), "Open" shows its folder, "Download the stems" gives the separated instruments when you saved them, and
+  "Look" shows its preview and Listen for a day or so after charting. Nothing is deleted from the page: to delete a
+  chart, Open its folder and delete it in Windows.
 - **Lyrics, if you want them on screen:** before "Chart it", open "Lyrics" and paste the song's words into the box,
   one line for each sung line. songcharter times the words you paste to the singing; it never looks lyrics up. The
   first song with lyrics downloads 1.26 GB, once.
