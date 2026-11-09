@@ -70,6 +70,7 @@ ones then, but the CI runs they link still name the old ones.
 | `M8-03-measure-cpu.md` | M8-03: allin1's memory against the song's length, freeing the parent's arrays (clears) and allin1 in chunks (misses); the bass's pitch gate and slow star power (both miss) |
 | `M8-05-allin1-memory.md` | M8-05: allin1 on a long song: the fallback in plain words, a memory kill named, the arrays freed, the skip before the kill; the review |
 | `M8-04-ui-pass.md` | The UI pass after v0.4.0 (the song by name, flags to their pages and to Listen, the Songs folder's guess, Best or Quick, the time left after the first take, the not-answering heading) and the queue's design note |
+| `M8-10-queue.md` | The queue: several songs charted one after another with one form, the list kept across a restart, paused after two failures or on a full disk, the routes by job id ("Your charts" its own order) |
 | `M8-video-review2.md` | The owner's second video review (pm2's v0.4.0 GPU chart): its claims checked; solos' remainder, HOPO chords and the GPU intro's taps measured |
 | `M8-video-review3.md` | The owner's third video review (his full v0.4.0 GPU chart of sooth): solos merged, the tail's tempo and the outro trim measured (none clears) |
 | `M8-compare-autochart-eu.md` | AutoChart.eu against songcharter on take_me_out (the owner's MP3), and a half-beat grid slip on that master |
