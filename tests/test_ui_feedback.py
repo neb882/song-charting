@@ -572,14 +572,17 @@ def test_the_results_name_the_chart_in_the_library(lib):
     and "Chart it differently" need), by a chart's id and by the job that made it (break: the job's results without
     them)."""
     status, _, body = call(lib.port, "GET", by_id(V2, "/results"))
-    assert status == 200 and json.loads(body)["library"] == {"id": V2, "version": 2, "guitar": True, "lyrics": False}
+    assert status == 200 and json.loads(body)["library"] == {"id": V2, "version": 2, "guitar": True, "lyrics": False,
+                                                             "rating": None, "spots": 0}
     status, answer = post(lib, by_id(V2, "/again"), {})
     assert status == 202
     wait_idle(lib.app)
     status, _, body = call(lib.port, "GET", f"/api/jobs/{answer['job']}/results")
     res = json.loads(body)
-    assert res["library"] == {"id": f"{A}:{FIRST}:v3", "version": 3, "guitar": True, "lyrics": False}
+    assert res["library"] == {"id": f"{A}:{FIRST}:v3", "version": 3, "guitar": True, "lyrics": False, "rating": None,
+                              "spots": 0}
     assert post(lib, f"/api/jobs/{answer['job']}/feedback", {"rating": 5})[1]["chart"] == f"{A}:{FIRST}:v3"
+    assert json.loads(call(lib.port, "GET", f"/api/jobs/{answer['job']}/results")[2])["library"]["rating"] == 5
 
 
 # ------------------------------------------------------------------------------------------------ the page
@@ -628,10 +631,11 @@ const enc = (id) => encodeURIComponent(id);
   // "How did it play?" folded under each chart that passed, its line with the rating and spots
   const base = { artist: "Made-Up Band", readable: true, ok: true, audio: "split", stems: false, look: false,
     upload: "aaaaaaaaaaaaaaaa", guitar: true, lyrics: false, rating: null, spots: 0, name: "First Song" };
-  ctx.setCharts([{ ...base, id: V2, folder: "Made-Up Band - First Song", time: 1762682400, version: 2, seed: 1, rating: 4, spots: 1 },
+  const listed = () => [{ ...base, id: V2, folder: "Made-Up Band - First Song", time: 1762682400, version: 2, seed: 1, rating: 4, spots: 1 },
                  { ...base, id: V1, folder: "Made-Up Band - First Song", time: 1762596000, version: 1, seed: 0, lyrics: true },
                  { ...base, id: "bbbbbbbbbbbbbbbb:Other - Drums", upload: "bbbbbbbbbbbbbbbb", name: "Drums", version: 1,
-                   seed: 0, time: 1762509600, guitar: false, ok: false }]);
+                   seed: 0, time: 1762509600, guitar: false, ok: false }];
+  ctx.setCharts(listed());
   const rows = els["charts-list"].children;
   out.rows = rows.map((li) => ({ facts: words(find(li, (x) => x.className === "chart-facts small")),
     buttons: find(li, (x) => x.className === "queue-actions").children.map((b) => b.textContent),
@@ -710,9 +714,24 @@ const enc = (id) => encodeURIComponent(id);
     ctx.replaceQuestion({ version: 1, installed_version: 3 }, "this song", "C:\\S\\F")];
   // the Done screen: its version, the folded box and "Chart it differently"; none of them without a library chart
   ctx.renderPlayed({ ok: true, folder: "/h/library/aaaaaaaaaaaaaaaa/v2/Made-Up Band - First Song",
-    library: { id: V2, version: 2, guitar: true, lyrics: false } });
+    library: { id: V2, version: 2, guitar: true, lyrics: false, rating: null, spots: 0 } });
   out.done = { version: [els["done-version"].textContent, els["done-version"].hidden], played: els.played.hidden,
     parts: els.played.children.map((c) => c.className), button: !!button(els.played, "Chart it differently") };
+  // a rating given in the Done screen's box: the chart's row in Your charts says it too, and the list as read
+  ctx.setCharts(listed());
+  const rowBox = find(els["charts-list"].children[0], (x) => x.className === "fold feedback");
+  const doneBox = els.played.children[0];
+  answers[`GET /api/jobs/${enc(V2)}/feedback`] = [[200, { ...FB, rating: null }]];
+  doneBox.open = true;
+  doneBox.on.toggle();
+  await settle();
+  answers[`POST /api/jobs/${enc(V2)}/feedback`] = [[200, { ...FB, rating: 2, spots: [{ id: "s3", at: 9, time: "0:09",
+    reasons: ["great"], note: null }] }]];
+  button(doneBox.children[1], "2").on.click();
+  await settle();
+  out.synced = { done: doneBox.children[0].textContent, row: rowBox.children[0].textContent,
+    listed: vm.runInContext("JSON.stringify(state.charts.map((c) => [c.rating, c.spots]))", ctx),
+    key: vm.runInContext("state.chartsKey === JSON.stringify(state.charts)", ctx) };
   ctx.renderPlayed({ ok: false, folder: "/h/x.failed", library: { id: V1, version: 1, guitar: true, lyrics: false } });
   out.failed = { version: els["done-version"].hidden, parts: els.played.children.map((c) => c.className) };
   ctx.renderPlayed({ ok: true, folder: "/h/x", library: null });
@@ -785,6 +804,9 @@ def test_the_page_rates_marks_and_charts_it_differently(tmp_path):
     assert out["done"] == {"version": ["Version 2: this song charted differently.", False], "played": False,
                            "parts": ["fold feedback", "actions", "small", "chart-again", "small again-msg"],
                            "button": True}
+    assert out["synced"]["done"] == out["synced"]["row"] == "How did it play? 2 of 5, 1 spot marked"
+    assert json.loads(out["synced"]["listed"]) == [[2, 1], [None, 0], [None, 0]] and out["synced"]["key"] is True
+    # (breaks: syncFeedback not called; the list as read not patched, so its next read makes the rows again)
     assert out["failed"] == {"version": True, "parts": ["actions", "small", "chart-again", "small again-msg"]}
     assert out["none"] == [True, True]
     assert out["queueRow"] == "First Song.wav (version 3)"

@@ -129,7 +129,7 @@ Nothing is downloaded or installed; charting never waits for it.
     file; 400 {"error", "drop": true, "name"} when its song file is no longer among the uploads (kept 7 days): the
     page asks for it to be dropped again, then sends its upload id. `lyrics` as /api/jobs takes them (a chart made
     with lyrics had them pasted again: they are never kept). The results (GET .../results) carry `library`: {"id",
-    "version", "guitar", "lyrics"} of the chart, or null.
+    "version", "guitar", "lyrics", "rating", "spots"} of the chart, or null.
 
 **After the build** (M4-06). The routes on "the chart" use the job's `result` event (the current one's, or by id); those that export or
 install need one that passed its gate (else 400): a .failed folder is for a look, not for Clone Hero. A job whose
@@ -871,14 +871,15 @@ class Handler(BaseHTTPRequestHandler):
         return folder
 
     def _library_info(self, job) -> dict | None:
-        """The results' `library`: the chart's id, version, whether it has a guitar part and pasted lyrics, or None
-        (no result yet, or not in the library)."""
+        """The results' `library`: the chart's id, version, whether it has a guitar part and pasted lyrics, its
+        rating and how many spots it has, or None (no result yet, or not in the library)."""
         try:
             folder = self._library_chart(job)
         except Refused:
             return None
         c = read_chart(folder, None)
-        return {k: c[k] for k in ("id", "version", "guitar", "lyrics")}
+        return {**{k: c[k] for k in ("id", "version", "guitar", "lyrics")},
+                **feedback.summary(feedback.read(self.app.home, c["id"]))}
 
     def _feedback(self, job, body: dict | None = None) -> None:
         """GET (body None) or POST /api/jobs/<id>/feedback (the module docstring)."""

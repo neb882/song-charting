@@ -36,7 +36,7 @@ const state = { status: null, upload: null, job: null, stages: {}, offset: 0, ti
   images: { album_art: null, background: null }, sending: 0, version: null, update: null, later: false,
   listen: { parts: {}, job: null }, running: false, wake: null, remaining: null, asking: false,
   box: { items: [], at: 0 }, queue: null, queueKey: null, uploads: [], shown: null, note: "",
-  charts: null, chartsKey: null, chartsOwn: false, again: null };
+  charts: null, chartsKey: null, chartsOwn: false, again: null, feedbackRows: new Map(), feedbackDone: null };
 // the Listen control's names for the parts and levels the chart has (the results' `listen`)
 const PART_NAMES = { guitar: "Guitar", bass: "Bass", drums: "Drums" };
 const LEVEL_NAMES = { expert: "Expert", hard: "Hard", medium: "Medium", easy: "Easy" };
@@ -1685,6 +1685,7 @@ function setCharts(charts) {
     state.chartsKey = key;
     // a song with versions (M8-14): each of its rows says which
     const versioned = new Set(charts.filter((c) => c.version > 1).map((c) => c.upload));
+    state.feedbackRows = new Map();   // the rows' "How did it play?" boxes, by chart id (M8-14)
     $("charts-list").replaceChildren(...charts.map((c) => chartRow(c, versioned.has(c.upload))));
   }
   if (!state.chartsOwn) $("charts-fold").open = charts.length <= CHARTS_OPEN;   // until he opens or folds it himself
@@ -1770,7 +1771,7 @@ function chartRow(c, versioned) {
     actions.append(b);
   }
   li.append(actions, msg, extra);
-  if (c.ok) li.append(feedbackBox(c.id, { rating: c.rating, spots: c.spots }));
+  if (c.ok) li.append(feedbackBox(c.id, { rating: c.rating, spots: c.spots }, "row"));
   return li;
 }
 
@@ -1790,14 +1791,34 @@ function feedbackLine(fb) {
   return "How did it play?" + (said.length ? ` ${said.join(", ")}` : "");
 }
 
-// the folded box for the chart `ref` (a chart's id, a job's, or "current"); `summary` its rating and spots as known
-function feedbackBox(ref, summary) {
+// the folded box for the chart `ref` (its library id); `summary` its rating and spots as known; `where` "row" (Your
+// charts) or "done" (the Done screen): the two boxes of one chart say the same after a change in either
+function feedbackBox(ref, summary, where) {
   const box = make("details", "fold feedback");
   const fb = { ref, data: null, line: make("summary", null, feedbackLine(summary)), body: make("div", "feedback-body"),
     box };
   box.append(fb.line, fb.body);
   box.addEventListener("toggle", () => { if (box.open && !fb.data) loadFeedback(fb); });
+  if (where === "row") state.feedbackRows.set(ref, fb);
+  else if (where === "done") state.feedbackDone = fb;
   return box;
+}
+
+// a change saved in one box: the chart's other box (the Done screen's, or its row's) and the list as read say it too,
+// so the next read of the list makes no row again for it (an open box would close)
+function syncFeedback(fb) {
+  for (const other of [state.feedbackDone, state.feedbackRows.get(fb.ref)]) {
+    if (!other || other === fb || other.ref !== fb.ref) continue;
+    other.data = fb.data;
+    if (other.box.open) renderFeedback(other);
+    else text(other.line, feedbackLine(fb.data));
+  }
+  const c = (state.charts || []).find((x) => x.id === fb.ref);
+  if (c) {
+    c.rating = fb.data.rating;
+    c.spots = (fb.data.spots || []).length;
+    state.chartsKey = JSON.stringify(state.charts);
+  }
 }
 
 async function loadFeedback(fb) {
@@ -1819,6 +1840,7 @@ async function sendFeedback(fb, body, msg) {
   if (r && r.status === 200) {
     fb.data = r.data;
     renderFeedback(fb);
+    syncFeedback(fb);
     return true;
   }
   text(msg, r ? r.data.error || `It could not be saved (${r.status}).` : "songcharter does not answer: is it still running?")
@@ -1968,7 +1990,8 @@ function renderPlayed(res) {
   const v = lib && lib.version > 1 ? `Version ${lib.version}: this song charted differently.` : "";
   text($("done-version"), v).hidden = !v;
   if (!lib) return;
-  if (res.ok) box.append(feedbackBox(lib.id, null));
+  state.feedbackDone = null;
+  if (res.ok) box.append(feedbackBox(lib.id, { rating: lib.rating, spots: lib.spots }, "done"));
   if (lib.guitar) {
     const msg = make("p", "small again-msg");
     msg.hidden = true;

@@ -269,3 +269,4 @@ button.rate { min-width: 2.2rem; }
 .chart-again:empty { display: none; }
 .chart-again textarea { margin: 0.3rem 0; }
 #again-drop .actions { margin-top: 0.25rem; }
+.queue-list .spots li { border-bottom: 0; padding: 0; }   /* a chart's spots inside Your charts' row */
