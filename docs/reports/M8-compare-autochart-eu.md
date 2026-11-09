@@ -99,3 +99,8 @@ moves lanes above the top lane down): the shapes are the transcriber's, on the t
 the other takes move is not known (the chart keeps one take). So the GPU takes fix it only if a take that moves exists
 and the selector picks it. A direction for M8 or M9, measured before built: shape changes per onset and lane direction
 on the sets' human charts, then a pass that moves a held shape where the stem's harmony changes.
+
+**Across the 23 songs (docs/reports/M8-lanes-drums.md, the v0.4.0 CPU charts):** not the engine's habit. Ours changes
+shape 0.627 times per onset against the humans' 0.697, long chord holds no more often than theirs, and on
+kimochi_warui's CPU chart one change in 3.1 onsets (the human's 2.6). The held sections above are the owner's GPU
+chart's: M8-02 part A measures the shape changes on the GPU takes.

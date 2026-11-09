@@ -71,6 +71,9 @@ humans' (mean and range over the song's charts):
 - the sustain share; the engine's forced-HOPO and forced-strum shares and its tap share (from the flags as the take
   wrote them);
 - the 1-s peak density and the share of the song in fast runs.
+- the shape changes per onset (an onset's lane set against the one before) and the chord onsets in same-shape runs of
+  16 or more (eval/m8/lanes-drums/measure.py's part 1): the owner's GPU chart of kimochi_warui changed shape once in
+  7.0 onsets where the CPU chart changes once in 3.1 and the human once in 2.6 (docs/reports/M8-lanes-drums.md);
 Then the paired difference GPU minus CPU per song with its CI, pooled. This says how the GPU's takes differ before any
 rule reads them.
 

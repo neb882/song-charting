@@ -72,6 +72,7 @@ ones then, but the CI runs they link still name the old ones.
 | `M8-video-review2.md` | The owner's second video review (pm2's v0.4.0 GPU chart): its claims checked; solos' remainder, HOPO chords and the GPU intro's taps measured |
 | `M8-video-review3.md` | The owner's third video review (his full v0.4.0 GPU chart of sooth): solos merged, the tail's tempo and the outro trim measured (none clears) |
 | `M8-compare-autochart-eu.md` | AutoChart.eu against songcharter on take_me_out (the owner's MP3), and a half-beat grid slip on that master |
+| `M8-lanes-drums.md` | Held chord shapes and the drums' pads and regularity on the 23 songs (v0.4.0 CPU charts): shapes as mobile as the humans', the crash charted as ride or hi-hat, no regularity rule |
 | `M8-spike-contour.md` | M8's spike: pitch trackers on the guitar stem against the humans' fret direction in fast runs (none clears); the GPU charts differ from the CPU charts M7 measured |
 | `M8-spike-takescore.md` | M8's spike: window scores for the take splice from the guitar stem's evidence (none clears; a per-window oracle shows +0.042 of headroom) |
 | `pipeline-review.md` | an advisor's review of how work is run (2026-11-04), finding by finding, with what was done |
