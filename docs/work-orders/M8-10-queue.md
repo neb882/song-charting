@@ -26,7 +26,8 @@ M8-00 section 6), and that stays: a queue is the server's waiting list, never tw
 ## Design (written by M8-04's builder; the questions it must answer)
 
 1. **What waits:** an upload and its options (the pasted lyrics too: today a memory file handed to the child, never on
-   disk; a queued song's lyrics must stay off disk, or the queue refuses lyrics, said on the page).
+   disk; a queued song's lyrics may wait in `<home>/state/` until it is charted, then be deleted, never in the
+   diagnostics, a log or a report (M4-10's rule), or the queue refuses lyrics, said on the page).
 2. **Where it lives:** in the server's memory only (lost when the black window closes: said on the page), or on disk
    under `<home>/state/` (survives a restart; then what a restart does with the song that was running).
 3. **Cancel and failure:** cancel the running chart and go on with the next, or stop the queue; a failed chart (exit 2
@@ -66,7 +67,8 @@ evening. Still one child process group at a time: a chart's tree peaked at 10.1 
    in memory while the song waits: for hours, beside a 10 GB chart, a memory file's pages are likely to reach WSL's
    swap file on C: [inference: memfd pages are swappable], which today's few seconds before the child reads it hardly
    allow; and a restart would lose them, a further state for the page. Holding them in memory is the alternative
-   (+1 h), if the owner wants lyrics in a queue.
+   (+1 h), if the owner wants lyrics in a queue; M4-10's rule also allows `<home>/state/` until the song is charted,
+   then deleted, never in the diagnostics, a log or a report.
 2. **Where it lives: on disk**, `<home>/state/queue.json` (written whole to a temporary file and renamed), with each
    picture's upload id and no lyrics. **Changed: after a restart the queue waits for a click** rather than carrying
    on. When the window closes (its X, Ctrl+C, a Windows restart for an update overnight), the server stops and the
@@ -149,8 +151,8 @@ The note is accepted with its suggested narrowing:
   failures in a row pause the queue; the disk pause under `device.MIN_FREE`; the update notice held.
 - "Your charts" (D) becomes a small order of its own after M8-10.
 - The cache rule for a queue's finished songs (`cache.py`) is a follow-up, decided on evidence.
-- Lyrics held in memory, "Chart next" and the Windows keep-awake call are later options; the last waits for a check
-  on the owner's PC.
+- Lyrics held for a waiting song (in memory, or in `<home>/state/` until it is charted, as M4-10's rule allows),
+  "Chart next" and the Windows keep-awake call are later options; the last waits for a check on the owner's PC.
 
 ## What to do
 

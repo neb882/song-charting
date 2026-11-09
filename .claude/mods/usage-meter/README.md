@@ -2,8 +2,8 @@
 
 The plan's 5-hour and weekly usage in a pane and the status line, toasts as the weekly window passes 50, 75 and
 90 %, and a tool, `mcp__usage-meter__usage`, that the session reads before each wave and before sizing heavy work
-(docs/PIPELINE.md: the owner's limit pauses new work at 70 % of the weekly usage). It reads only the session's own
-rate-limit windows; nothing leaves the session.
+(docs/PIPELINE.md, Usage: no percentage limit, and never usage credits). It reads only the session's own rate-limit
+windows; nothing leaves the session.
 
 A mod is not loaded from the repository. To install it in a new session:
 
