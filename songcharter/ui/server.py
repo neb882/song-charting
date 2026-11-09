@@ -100,21 +100,28 @@ install need one that passed its gate (else 400): a .failed folder is for a look
 is still exiting (a second or more, with its state still `running`): the page asks for the results the moment it
 reads that event (the release gate's finding: the Done screen once hid "Install into Clone Hero" after a normal chart).
   * GET /api/jobs/current/results: {"job", "state", "ok", "folder", "name", "windows_path", "installable",
-    "preview", "lyrics", "art", "listen"} (`windows_path`: the folder's, Open folder's hover text): the preview's
+    "preview", "lyrics", "art", "listen", "stems"} (`windows_path`: the folder's, Open folder's hover text): the preview's
     overview and pages as URLs with its flags and remarks, `page_s` (PAGE_S, the seconds a page shows) and `at`, for
     each flag {"part", "start", "page"} (`flag_at`: its start read from its text, its page floor(start / page_s) + 1
     within the pages there are) or null, or {"why"} there is none;
     pipeline.json's lyrics as counts ({"given", "added", "words", "phrases", "why", "low"}), null when none were
     given; the folder's art ({"album_art": its URL or null, "album_from": "embedded", "given" or null,
     "background": whether there is one}); what the Listen control offers ({"parts": {"guitar": ["expert", ...],
-    ...}}, the parts with notes and their levels, with "why" when the chart could not be read). 404 before the first
-    job.
+    ...}}, the parts with notes and their levels, with "why" when the chart could not be read); the stems the run
+    saved ({"name", "files", "bytes"}: the stems folder's name, its .flac files and their size), {"why"} in plain words
+    when they were asked for and not saved (pipeline.json's stems.why: the disk filled), null without. 404 before the
+    first job.
   * GET /api/jobs/current/art/album.jpg: the result's album art (image/jpeg), that one name only; anything else 404.
   * GET /api/jobs/current/preview/<name>: only overview.png and page_NN.png from the result's preview folder (the
     work folder's preview/), by an exact pattern; anything else 404.
   * POST /api/jobs/current/export/zip: clonehero.export_zip into $SONGCHARTER_HOME/exports/<name>.zip; answers
     {"url": "/api/exports/<name>.zip", "name", "windows_path"}. GET /api/exports/<name>.zip downloads it
     (Content-Disposition: attachment): a single name ending .zip that is a file in exports/; anything else 404.
+    POST /api/jobs/current/export/stems (M8-12): the same for the stems folder the run saved ("<song> (stems).zip",
+    stored without compression: FLAC does not shrink), a gate that failed too (the stems do not depend on the
+    chart); 400 when the run saved none or they are not there any more. A stems zip is about 190 MB for 4 minutes,
+    so it is deleted once its GET has sent it, and a new one deletes any other stems zip left there (a download never
+    fetched): exports/ never keeps more than the one being fetched (M8-12's review).
   * GET /api/clonehero: clonehero.describe ({"folder", "windows_path", "source", "under_onedrive", "guess"}), with
     `guess` (<Documents>\\Clone Hero\\Songs, Windows' form) always given, not only when no folder is found (M8-04).
     POST /api/clonehero {"folder"}: clonehero.set_songs_folder (400 with why when it does not exist or cannot be
@@ -185,6 +192,7 @@ CSP = ("default-src 'self'; img-src 'self' data:; connect-src 'self'; script-src
 SECURITY_HEADERS = {"Content-Security-Policy": CSP, "X-Content-Type-Options": "nosniff",
                     "Referrer-Policy": "no-referrer"}
 AUDIO = (".mp3", ".wav", ".flac", ".ogg", ".opus", ".m4a", ".aac", ".wma", ".aiff", ".aif")
+STEMS_ZIP = " (stems).zip"   # the stems' zip in exports/ (pipeline.STEMS_SUFFIX and .zip): deleted once sent
 MAX_UPLOAD = 10 ** 9               # 1 GB (10^9 bytes, the unit of the project's limits)
 MAX_JSON = 1 << 20                 # a JSON request body
 DRAIN = 16 << 20                   # a refused body this small is read first, so the client sees the answer
@@ -703,12 +711,16 @@ class Handler(BaseHTTPRequestHandler):
             except NotRunning:
                 raise Refused(409, "no chart is running" if m[1] == "current" else "that chart has ended") from None
             return self._json(200, {"job": job.id, "state": job.state})
-        if m and m[2] in ("/export/zip", "/install", "/listen"):
+        if m and m[2] in ("/export/zip", "/export/stems", "/install", "/listen"):
             ref, rest = m[1], m[2]
             job = self._job(ref)
-            if rest == "/export/zip":
+            if rest.startswith("/export/"):
                 self._drain()
-                out = clonehero.export_zip(self._built(job), app.home)
+                if rest == "/export/stems":   # one stems zip at a time: an earlier one never fetched goes
+                    stems = self._stems(job)
+                    for old in (app.home / clonehero.EXPORTS).glob("*" + STEMS_ZIP):
+                        old.unlink(missing_ok=True)
+                out = clonehero.export_zip(self._built(job) if rest == "/export/zip" else stems, app.home)
                 app.log(f"exported {out}")
                 return self._json(200, {"url": export_url(out.name), "name": out.name,
                                         "windows_path": clonehero.windows_path(out)})
@@ -751,6 +763,17 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(200, queue.snapshot())
 
     # --- after the build
+    def _stems(self, job) -> Path:
+        """The stems folder the job's run saved (its result's `stems`), when it is there; else Refused(400)."""
+        result = job.result() if job is not None else None
+        if result is None:
+            raise Refused(400, "no finished chart yet")
+        folder = stems_of(result)
+        if folder is None:
+            raise Refused(400, "this chart was made without the stems" if not result.get("stems") else
+                          f"the stems are not in {result['stems']} any more")
+        return folder
+
     def _built(self, job) -> Path:
         """The job's song folder, when its chart passed the gate and is in place (its `result` is out, whatever its
         process is still doing: the module docstring); else Refused(400)."""
@@ -849,7 +872,11 @@ class Handler(BaseHTTPRequestHandler):
         path = folder / name
         if path.parent != folder or not path.is_file():
             return self._refuse(404, "not found")
-        return self._download(path, name)
+        try:
+            return self._download(path, name)
+        finally:   # a stems zip is as big as the stems: kept only until it is sent (the module docstring)
+            if name.endswith(STEMS_ZIP) and self.command == "GET":
+                path.unlink(missing_ok=True)
 
     def _download(self, path: Path, name: str) -> None:
         """A file as an attachment, streamed: the browser saves it into Downloads."""
@@ -1107,13 +1134,24 @@ def _preview_why(pv: Any) -> str:
     return "its pictures are not there any more"
 
 
+def stems_of(result: dict) -> Path | None:
+    """The stems folder a result event names (`stems`), when it is a folder holding .flac files; else None."""
+    if not result.get("stems"):
+        return None
+    folder = Path(str(result["stems"]))
+    try:
+        return folder if folder.is_dir() and any(folder.glob("*.flac")) else None
+    except OSError:
+        return None
+
+
 def results(job, ref: str = "current") -> dict:
     """GET /api/jobs/<ref>/results (the module docstring), from the job's result event and its pipeline.json; its
     URLs name the job as the request did (`current`, or its id)."""
     result = job.result()
     out: dict[str, Any] = {"job": job.id, "state": job.state, "ok": None, "folder": None, "name": None,
                            "windows_path": None, "installable": False, "preview": None, "lyrics": None, "art": None,
-                           "listen": None}
+                           "listen": None, "stems": None}
     if result is None:
         return out
     folder = Path(str(result.get("folder")))
@@ -1149,6 +1187,13 @@ def results(job, ref: str = "current") -> dict:
         out["listen"] = {"parts": listen.available(folder)}
     except InputError as e:
         out["listen"] = {"parts": {}, "why": str(e)}
+    saved = stems_of(result)
+    if saved is not None:
+        files = sorted(saved.glob("*.flac"))
+        out["stems"] = {"name": saved.name, "files": [f.name for f in files],
+                        "bytes": sum(f.stat().st_size for f in files)}
+    elif isinstance(pipeline.get("stems"), dict) and pipeline["stems"].get("saved") is False:
+        out["stems"] = {"why": str(pipeline["stems"].get("why") or "They were not saved.")}
     ly = pipeline.get("lyrics")
     if isinstance(ly, dict):
         out["lyrics"] = {"given": bool(ly.get("given")), "added": bool(ly.get("added")), "words": ly.get("words"),

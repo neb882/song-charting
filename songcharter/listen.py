@@ -2,7 +2,8 @@
 
 Watching a chart scroll by, or Clone Hero's bot that hits every note, cannot show a wrong, late, missing or extra
 note; hearing the chart over the song can. This renders one part and level of a built song folder (notes.chart or
-notes.mid, song.ini, song.ogg) as sound, over the song or alone, into a stereo file:
+notes.mid, song.ini, song.ogg, or song.ogg with guitar.ogg, bass.ogg and drums.ogg summed: M8-12) as sound, over the song
+or alone, into a stereo file:
 
   * **5-fret parts** (guitar, bass): each note a tone at its lane's pitch, green lowest to orange highest, on
     stacked thirds (C5 E5 G5 B5 D6, a major ninth chord: steps of 3 and 4 semitones, any chord of them pleasant, and
@@ -308,10 +309,9 @@ def render(folder: Path | str, part: str = "guitar", difficulty: str = "expert",
                key=lambda kv: (INSTRUMENTS.index(kv[0][0]), DIFFICULTIES.index(kv[0][1]))) if q.notes]
         raise InputError(f"the chart in {folder} has no {part} on {_level(difficulty)}"
                          + (f" (it has {', '.join(has)})" if has else " (it has no notes)"))
-    ogg = folder / "song.ogg"
-    music = None
-    if ogg.is_file():
-        music = A.decode(ogg, SR, 2).astype(np.float64)
+    music = A.decode_song_audio(folder, SR, 2)   # song.ogg, or the split files summed (Clone Hero's multitrack)
+    if music is not None:
+        music = music.astype(np.float64)
         samples = music.shape[1]
     elif tones_only:
         last = max((n.end if getattr(n, "end", None) is not None else n.time) for n in p.notes)
@@ -399,10 +399,11 @@ def output_path(folder: Path, out: Path | None, part: str, difficulty: str) -> P
 
 
 def cache_key(folder: Path, part: str, difficulty: str) -> str:
-    """16 hex of a hash of VERSION, the part, the level and the folder's chart, song.ini and song.ogg."""
+    """16 hex of a hash of VERSION, the part, the level and the folder's chart, song.ini and audio files (song.ogg,
+    or the split files: audio.song_audio_files)."""
     h = hashlib.sha256(f"songcharter-listen {VERSION} {part} {difficulty}\n".encode())
-    for name in ("notes.chart", "notes.mid", "song.ini", "song.ogg"):
-        f = folder / name
+    for f in [folder / n for n in ("notes.chart", "notes.mid", "song.ini")] + A.song_audio_files(folder):
+        name = f.name
         if f.is_file():
             h.update(f"{name} {f.stat().st_size}\n".encode())
             with open(f, "rb") as fh:

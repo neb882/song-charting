@@ -393,13 +393,14 @@ def test_the_song_folder_gets_the_art_and_nothing_else_changes(songs, tmp_path, 
     code, out, err = chart_it(songs, "song.flac", tmp_path / "A", capsys=capsys)
     assert code == 0, err
     plain = tmp_path / "A"
-    assert sorted(p.name for p in plain.iterdir()) == ["notes.chart", "report.json", "song.ini", "song.ogg"]
+    assert sorted(p.name for p in plain.iterdir()) == ["bass.ogg", "drums.ogg", "notes.chart", "report.json",
+                                                       "song.ini", "song.ogg"]   # bass and drums charted: M8-12
     assert "art: " not in out
     code, out, err = chart_it(songs, "pictured.flac", tmp_path / "B", "--background", str(bg), capsys=capsys)
     assert code == 0, err
     built = tmp_path / "B"
-    assert sorted(p.name for p in built.iterdir()) == ["album.jpg", "background.jpg", "notes.chart", "report.json",
-                                                       "song.ini", "song.ogg"]
+    assert sorted(p.name for p in built.iterdir()) == ["album.jpg", "background.jpg", "bass.ogg", "drums.ogg",
+                                                       "notes.chart", "report.json", "song.ini", "song.ogg"]
     assert opened((built / "album.jpg").read_bytes()).size == (512, 512)
     assert opened((built / "background.jpg").read_bytes()).size == (1920, 1080)
     assert not any(m in (built / "background.jpg").read_bytes() for m in NO_METADATA)
@@ -436,8 +437,8 @@ def test_the_song_folder_gets_the_art_and_nothing_else_changes(songs, tmp_path, 
     mine = write(photos / "mine.png", picture((500, 500), centre=GREEN, band=GREEN))
     code, out, err = chart_it(songs, "pictured.flac", built, "--album-art", str(mine), capsys=capsys)
     assert code == 0, err
-    assert sorted(p.name for p in built.iterdir()) == ["album.jpg", "notes.chart", "report.json", "song.ini",
-                                                       "song.ogg"]
+    assert sorted(p.name for p in built.iterdir()) == ["album.jpg", "bass.ogg", "drums.ogg", "notes.chart",
+                                                       "report.json", "song.ini", "song.ogg"]
     assert near(opened((built / "album.jpg").read_bytes()).getpixel((256, 256)), GREEN)
     assert "art: album.jpg (given)" in out.splitlines()
     pipeline = json.loads((work / "pipeline.json").read_text(encoding="utf-8"))

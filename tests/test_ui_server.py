@@ -568,7 +568,7 @@ const field = (value) => ({ value, placeholder: "", checked: true });
 els.options = Object.assign(node("form"), { querySelectorAll: () => [],
   reset() { for (const k of META) this.elements[k].value = ""; },   // a form's reset: the fields' values go
   elements: { title: field("Last Song"), artist: field("Last Band"), album: field(""), year: field(""),
-    genre: field(""), solos: field("labels"), takes: field(""), device: field("auto"), preview: field(""),
+    genre: field(""), solos: field("labels"), takes: field(""), device: field("auto"), preview: field(""), stems: { checked: false }, one_audio: { checked: false },
     lyrics: field("") } });
 let xhr = null;
 class XMLHttpRequest {
@@ -1120,6 +1120,12 @@ out.mkdir(parents=True, exist_ok=True)
 (out / "song.ini").write_text("[song]\nname = x\ncharter = songcharter\n", encoding="utf-8")
 (out / "song.ogg").write_bytes(b"OggS" + bytes(64))
 (out / "report.json").write_text(json.dumps({"gate": {"ok": ok}}), encoding="utf-8")
+stems = None
+if "--stems" in sys.argv:   # M8-12: the six stems beside the song folder
+    stems = out.with_name(out.name + " (stems)")
+    stems.mkdir(parents=True, exist_ok=True)
+    for name in ("drums", "bass", "guitar", "piano", "vocals", "other"):
+        (stems / f"{name}.flac").write_bytes(b"fLaC" + name.encode() * 50)
 preview = work / "preview"
 preview.mkdir(parents=True, exist_ok=True)
 for name in ("overview.png", "page_01.png", "page_02.png", "flags.txt", "page_1.png"):
@@ -1129,7 +1135,7 @@ for name in ("overview.png", "page_01.png", "page_02.png", "flags.txt", "page_1.
     **({"lyrics": {"given": True, "added": True, "words": 5, "chart": {"phrases": 2},
                    "confidence": {"median": 0.2, "low": True}}} if given else {})}), encoding="utf-8")
 ev(event="result", ok=ok, exit=0 if ok else 1, folder=str(out), work=str(work), preview=str(preview),
-   summary="gate: OK" if ok else "gate: FAILED", lyrics_sha256=sha)
+   summary="gate: OK" if ok else "gate: FAILED", lyrics_sha256=sha, stems=str(stems) if stems else None)
 deadline = time.monotonic() + 30
 while mode == "linger" and not (work / "release").exists() and time.monotonic() < deadline:
     time.sleep(0.02)
@@ -1153,7 +1159,7 @@ def finished(tmp_path, monkeypatch):
     ctx = SimpleNamespace(mode="ok", lines=[], home=home, work=tmp_path / "work", commands=[])
 
     def command(song, out, options, threads):
-        return [sys.executable, str(script), ctx.mode, str(out), str(ctx.work)]
+        return [sys.executable, str(script), ctx.mode, str(out), str(ctx.work)] + ["--stems"] * options.stems
 
     jobs = J.Jobs(home, command=command, env={**os.environ, "PYTHONPATH": str(root)})
     app = S.App(home, jobs=jobs, log=S.Log(home / "ui.log", console=ctx.lines.append), report=lambda: DOCTOR)
@@ -1258,6 +1264,120 @@ def test_the_zip_export_and_its_download(finished):
                 "sub%5Cy.zip", ".x.zip.part", f"{urllib.parse.quote(name)}%00", urllib.parse.quote(job.out.name),
                 "", "%2Fetc%2Fpasswd.zip"):
         assert get(ctx, "/api/exports/" + bad)[0] == 404, bad
+
+
+STEM_NAMES = ["bass.flac", "drums.flac", "guitar.flac", "other.flac", "piano.flac", "vocals.flac"]
+
+
+def test_the_stems_download(finished):
+    """M8-12: a run with the stems shows them in its results and "Download the stems" zips their folder, stored
+    without compression, a gate that failed too; without them, or once they are gone, 400 with why (break: the route
+    zipping the song folder, or the results not naming the stems)."""
+    import io
+    import zipfile
+    ctx = finished
+    ctx.run()
+    assert json.loads(get(ctx, "/api/jobs/current/results")[2])["stems"] is None
+    status, answer = post(ctx, "/api/jobs/current/export/stems")
+    assert status == 400 and answer["error"] == "this chart was made without the stems"
+    job = ctx.run({"stems": True})
+    assert "--stems" in job.command
+    folder = job.out.with_name(job.out.name + " (stems)")
+    res = json.loads(get(ctx, "/api/jobs/current/results")[2])
+    assert res["stems"] == {"name": folder.name, "files": STEM_NAMES,
+                            "bytes": sum((folder / f).stat().st_size for f in STEM_NAMES)}
+    status, answer = post(ctx, f"/api/jobs/{job.id}/export/stems")   # by its id, as the Look's screen asks
+    name = f"{folder.name}.zip"
+    assert status == 200 and answer["name"] == name and answer["url"] == "/api/exports/" + urllib.parse.quote(name)
+    status, headers, body = get(ctx, answer["url"])
+    assert status == 200 and headers["Content-Disposition"].startswith("attachment;")
+    with zipfile.ZipFile(io.BytesIO(body)) as z:
+        assert sorted(z.namelist()) == [f"{folder.name}/{f}" for f in STEM_NAMES]
+        assert {i.compress_type for i in z.infolist()} == {zipfile.ZIP_STORED}
+        assert z.read(f"{folder.name}/piano.flac") == (folder / "piano.flac").read_bytes()
+    # sent, it is gone: no second copy of the stems in exports/ (M8-12's review); one never fetched goes with the next
+    assert not list((ctx.home / "exports").glob("*.zip")) and get(ctx, answer["url"])[0] == 404
+    post(ctx, f"/api/jobs/{job.id}/export/stems")
+    post(ctx, "/api/jobs/current/export/zip")   # the song's own zip stays: it is small
+    (ctx.home / "exports" / "Other Song (stems).zip").write_bytes(b"PK")   # another song's, never fetched
+    assert post(ctx, f"/api/jobs/{job.id}/export/stems")[0] == 200
+    assert sorted(p.name for p in (ctx.home / "exports").glob("*.zip")) == sorted([f"{job.out.name}.zip", name])
+    ctx.mode = "fail"
+    job = ctx.run({"stems": True})
+    assert post(ctx, "/api/jobs/current/export/zip")[0] == 400   # not the chart: it failed its check
+    assert post(ctx, "/api/jobs/current/export/stems")[0] == 200   # the stems do not depend on it
+    shutil.rmtree(folder)
+    status, answer = post(ctx, "/api/jobs/current/export/stems")
+    assert status == 400 and answer["error"] == f"the stems are not in {folder} any more"
+    assert json.loads(get(ctx, "/api/jobs/current/results")[2])["stems"] is None
+    # asked for and not saved (the disk filled): the results say why, from pipeline.json
+    pipeline = json.loads((ctx.work / "pipeline.json").read_text(encoding="utf-8"))
+    pipeline["stems"] = {"saved": False, "why": "The disk ran out of room ..."}
+    (ctx.work / "pipeline.json").write_text(json.dumps(pipeline), encoding="utf-8")
+    assert json.loads(get(ctx, "/api/jobs/current/results")[2])["stems"] == {"why": "The disk ran out of room ..."}
+
+
+STEMS_TAIL = r"""
+const out = {};
+els.options.elements.stems.checked = true;
+out.options = ctx.readOptions();
+ctx.stemsSize([{ seconds: 240 }]);
+out.one = els["stems-size"].textContent;
+ctx.stemsSize([{ seconds: 120 }, { seconds: 60 }]);
+out.many = els["stems-size"].textContent;
+ctx.stemsSize([{ seconds: 120 }, {}]);
+out.unknown = els["stems-size"].textContent;
+ctx.renderStems({ name: "Made-Up Band - Song (stems)", files: ["a", "b", "c", "d", "e", "f"], bytes: 181e6 });
+out.shown = { box: els["stems-box"].hidden, line: els["stems-line"].textContent };
+const asked = [];
+ctx.fetch = async (path, init) => {
+  asked.push(`${init.method} ${path}`);
+  return { status: 200, json: async () => ({ url: "/api/exports/S%20(stems).zip", name: "S (stems).zip" }) };
+};
+document.createElement = (tag) => Object.assign(node(tag), { click() { asked.push(`click ${this.href}`); },
+  remove() {} });
+document.body = { append() {} };
+vm.runInContext('state.shown = "20261109-101500"', ctx);
+ctx.exportStems().then(() => {
+  out.asked = asked;
+  out.msg = els["stems-msg"].textContent;
+  ctx.renderStems(null);
+  out.none = els["stems-box"].hidden;
+  ctx.renderStems({ why: "The disk ran out of room." });
+  out.why = { box: els["stems-box"].hidden, line: els["stems-line"].textContent, button: els["stems-zip"].hidden };
+  console.log(JSON.stringify(out));
+});
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_page_offers_the_stems_and_their_download(tmp_path):
+    """The page (app.js in node): the options carry `stems` and `one_audio`; the form says how much disk the stems
+    take for the song's length (190 MB for 4 minutes); the Done screen shows them and "Download the stems" asks for
+    this song's zip by its job (break: the option not sent, or the button asking for the song folder's zip)."""
+    files = S.static_files()
+    script = tmp_path / "stems.cjs"
+    script.write_text(PICTURES_PAGE.split("const out = {};")[0] + STEMS_TAIL, encoding="utf-8")   # its stand-in DOM
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(files["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["options"]["stems"] is True and out["options"]["one_audio"] is False
+    assert out["one"] == "About 191 MB of disk for this song."
+    assert out["many"] == "About 143 MB of disk for these songs."
+    assert out["unknown"] == "About 190 MB of disk for a 4-minute song."
+    assert out["shown"] == {"box": False, "line": '6 instruments as lossless files (181 MB), in the folder "Made-Up '
+                                                  'Band - Song (stems)" beside the song\'s. Piano and "other" come out '
+                                                  'the least clean.'}
+    assert out["asked"] == ["POST /api/jobs/20261109-101500/export/stems", "click /api/exports/S%20(stems).zip"]
+    assert out["msg"].startswith("The zip is S (stems).zip: your browser saves it") and out["none"] is True
+    assert out["why"] == {"box": False, "line": "The disk ran out of room.", "button": True}
+    html = files["index.html"].decode()
+    assert '<input type="checkbox" name="stems"> Also save the separated instruments (stems)</label>' in html
+    assert '<input type="checkbox" name="one_audio"> One audio file: the music does not drop out on a miss</label>' in html
+    assert '<button type="button" id="stems-zip" class="plain">Download the stems</button>' in html
+    assert html.index('id="stems-box"') > html.index('id="export-box"')   # outside it: a failed gate has them too
 
 
 def test_clone_hero_through_the_api(finished, tmp_path, monkeypatch):
@@ -1617,7 +1737,7 @@ const document = { getElementById: (id) => els[id] || (els[id] = node(id)), crea
 const field = (value) => ({ value, checked: true });
 els.options = Object.assign(node("form"), { querySelectorAll: () => [], elements: { title: field(""),
   artist: field(""), album: field(""), year: field(""), genre: field(""), solos: field("labels"), takes: field(""),
-  device: field("auto"), preview: field(""), lyrics: field("") } });
+  device: field("auto"), preview: field(""), stems: { checked: false }, one_audio: { checked: false }, lyrics: field("") } });
 let xhr = null;
 class XMLHttpRequest {
   constructor() { this.on = {}; this.headers = {}; this.upload = { addEventListener() {} }; xhr = this; }
@@ -2562,7 +2682,8 @@ const inputs = [box("instruments", "guitar", true), box("instruments", "bass", t
 const field = (value) => Object.assign(node("input"), { value });
 const elements = { title: field(""), artist: field(""), album: field(""), year: field(""), genre: field(""),
   solos: field("labels"), solo_names: field(""), takes: field(""), device: field("auto"),
-  preview: Object.assign(node("input"), { checked: true }), lyrics: field("") };
+  preview: Object.assign(node("input"), { checked: true }), lyrics: field(""),
+  stems: Object.assign(node("input"), { checked: false }), one_audio: Object.assign(node("input"), { checked: false }) };
 els.options = Object.assign(node("form"), { elements,
   querySelectorAll(sel) { const m = /name=(\w+)\](:checked)?/.exec(sel);
     return inputs.filter((i) => i.name === m[1] && (!m[2] || i.checked)); },
@@ -2757,7 +2878,7 @@ def test_the_ui_pass_page(tmp_path):
     assert out["rounding"] == [list(E.round_minutes(lo, hi)) for lo, hi in grid]   # the page's copy of the rounding
     assert out["big"] == "About 30 to 40 more minutes, from how long the first guitar take took."
     defaults = {"instruments": ["guitar", "bass", "drums"], "levels": ["expert"], "solos": "labels", "device": "auto",
-                "preview": True}
+                "preview": True, "stems": False, "one_audio": False}   # M8-12: the stems off, the split audio on
     assert out["gpu"] == {"choice": False, "cpu": True, "best": "Best chart (4 guitar takes, about 9 to 23 minutes)",
                           "quick": "Quick chart (1 take, about 4 to 10 minutes)", "folded": [False, False, False]}
     assert out["best"] == defaults and out["bestAgain"] == defaults   # Best: what the form sent before M8-04
@@ -3046,7 +3167,7 @@ const META = ["title", "artist", "album", "year", "genre"];
 els.options = Object.assign(node("form"), { querySelectorAll: () => [],
   reset() { for (const k of META) this.elements[k].value = ""; this.elements.lyrics.value = ""; },
   elements: { title: field(""), artist: field(""), album: field(""), year: field(""), genre: field(""),
-    solos: field("labels"), takes: field(""), device: field("auto"), preview: field(""), lyrics: field(""),
+    solos: field("labels"), takes: field(""), device: field("auto"), preview: field(""), stems: { checked: false }, one_audio: { checked: false }, lyrics: field(""),
     solo_names: field("") } });
 const locks = [];
 const navigator = { wakeLock: { request: async (type) => { const l = { type, released: false, addEventListener() {},

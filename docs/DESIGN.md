@@ -308,6 +308,27 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
   `info.json` is written last and is the hit, only when every stem it lists is there and reads: a folder half
   deleted or half written is separated again, never an error (a run used to fail as a bug, exit 3, on a stem a
   partial prune had deleted [here, defaults review]) [code; tested with the unit-test model].
+- **The stems as files** (M8-12, the friend's ask: "a useful tool in and of itself for sampling") [code]: with
+  `--stems` (the page's "Also save the separated instruments", off by default) the six stems go, after assemble and
+  before the cache's prune, from the cache's float32 WAVs into "<song folder> (stems)" beside the song folder, never
+  inside it (Clone Hero would read a guitar.* there as the song's audio): drums, bass, guitar, piano, vocals and
+  other `.flac`, at 44.1 kHz on the input's own timeline (no lead-in), so a stem lines up with the user's file in an
+  audio editor.
+  - **FLAC, 24-bit** (`audio.write_flac`, libsndfile through soundfile, made in memory and written as one file, so a
+    full disk is an `OSError` there): lossless for what an editor does with it, every editor reads it, and half the
+    size of 24-bit WAV. On creep (4:00) the five stems but the vocals came to 0.35 (other) to 0.68 (drums) of their
+    24-bit PCM, 0.48 on average [here, M8-12]; `STEMS_FLAC_SHARE` 0.5 is the estimate, about 190 MB for a 4-minute
+    song against 381 MB as 24-bit WAV (508 MB as the cache's float32). No sample of those stems was over full scale,
+    so the clip to ±1 before the 24-bit cast changed nothing there (the encode of song.ogg clips the same way).
+  - **Deterministic:** byte-identical for the same input (the seeded separation; libFLAC's header holds only its
+    vendor string and the samples' MD5) [code; tested, two runs].
+  - A run whose separation is cached separates nothing for it; a stems folder holding anything else (a person's own
+    .flac, a folder) is refused before any audio work; too little free space for the estimate is an `InputError`
+    naming the folder and the space right after the decode, before the long work. A disk that fills while they are
+    written is a warning (M8-12's review): the staging folder is removed, the chart stands with its Install, and the
+    Done screen says in plain words why there are no stems.
+  - Piano and "other" are htdemucs_6s's least clean stems (piano at −31 dB on the test song, above), which the page
+    says.
 - **Goal 1:** no new separation. Reuse the `ft` stems (lag 0) and the ADTOF test's 6s drum stems (lag 0).
 - **Leakage gate** (kept from v1, untested): a note candidate from a stem needs the stem within 30 dB of the mix in that window. It is motivated by the 6s stems' −34 dB leakage in the test song's intro.
 - **BS-RoFormer SW is not in this version.** It has the best stems, but its weights have no licence, their origin is disputed, and it costs 8–14 min on a 6–8-core CPU [est.] (20–25 min in the dev container [here]). The owner may override (§9).
@@ -2179,9 +2200,41 @@ later than Expert.
 - **Writers:** the existing `chart.write_chart`, `ini.write_ini` and `package.build_song_folder` [code].
   - Resolution 192; ` = ` with single spaces; sections in the order [Song], [SyncTrack], [Events], then the tracks; ticks ascending.
   - `Offset = 0`, `MusicStream = "song.ogg"`, quoted global events, no `end` event.
-- **Audio:** the Clone Hero folder holds only `song.ogg`, the full mix. Separated stems are never shipped there, because Clone Hero would play the parts twice.
+- **Audio** (M8-12, on by default; the owner: "make the muting default, but optional"): Clone Hero's multitrack, as
+  official songs ship it, so the game mutes a part's own sound on a missed note. `guitar.ogg`, `bass.ogg` and
+  `drums.ogg` from the stems of the parts charted (a part not charted gets no file and stays in `song.ogg`), and
+  `song.ogg` the decode less those stems: the separation's residual, the vocals, piano and "other" stay there, so the
+  files played together sum to the one-file `song.ogg` within the encoder's noise and a player who misses nothing
+  hears what he heard before. Each file has the same lead-in pad, length, rate and Vorbis quality
+  (`package.build_song_folder`'s `split`; assemble's `split_audio`). `--one-audio` (the page's "One audio file: the
+  music does not drop out on a miss") writes the one `song.ogg` instead. A muted part's bleed stays audible in
+  `song.ogg` (htdemucs_6s leaves some guitar in "other"); whether that is acceptable is the release gate's play test.
+  - Every `.ogg` is written with ffmpeg's bitexact flags: the Ogg stream serial was random, so `song.ogg` differed
+    run to run in its serial only (the GPU smoke test's finding); now byte-identical [code; tested].
+  - Everything that reads the song's audio reads the folder's files summed (`audio.song_audio_files`, the names
+    Clone Hero reads, preview and crowd aside): Listen and its cache key, the preview's end of audio, eval/scorer
+    (which already summed them), and scan-chart (which reads each name as a stem).
+  - **On creep** (4:00, the golden set's kept folder, CPU) [here, M8-12]: the four files are Vorbis at 44.1 kHz, each
+    10,695,286 samples (the input's 10,584,012 and the pad's 111,274), 4.1 to 6.2 MB each (20.6 MB against the one
+    file's 6.1 MB). Summed, they are 21.9 dB below the mix against the padded decode, where the one file is 21.0 dB
+    below it: the same encoder noise (Vorbis keeps what is heard, not the waveform); the four against the one file,
+    two lossy encodes apart, 19.3 dB. song.ogg alone, the rest, is 5.7 dB under the one file. The sum's sync: 0.00
+    samples, lowest correlation 0.997; scan-chart reads the folder playable, with no audio issue. Two runs are
+    byte-identical (every .ogg, the chart, the six stems). assemble takes 35 s instead of 17 s (three more encodes
+    and the four decodes back); the stems stage 4.3 s, 188 MB of FLAC, each of the input's length; the six stems
+    summed are 22.1 dB below the decode (htdemucs_6s's residual, which stays in song.ogg).
 - **Gate,** in this order, on the final folder including `song.ogg` (scan-chart reports `playable=false` when there is no audio [here]):
-  1. `verify_sync` < 1 sample.
+  1. `verify_sync` < 1 sample: of `song.ogg`, or of the split files' decodes summed against the padded decode, the same
+     rule (the only check on a split folder's song.ogg), and each split file against its own samples: its length;
+     every loud window (within 30 dB of the loudest measured) correlating 0.9 or better at no lag, which a shift past
+     the ±100 ms lag search fails (M8-12's review: 120 to 500 ms late passed before); and no lag of a sample or more
+     correlating 0.9 or better and 0.05 better than no lag (a steady tone correlates as well a period away, which is
+     no shift: a stand-in's sine once read as 4410 samples off). On the seven golden songs' stems every split file's
+     windows correlate 0.992 or better at no lag [here, M8-12's review]. The audio files follow scan-chart's rule
+     (`audio_file_issues`): each a name Clone Hero reads, none twice, one of them the song's music; one file only was
+     the rule before M8-12. guitar.ogg, bass.ogg and drums.ogg are a build's own (replaced, not refused) only where
+     its report.json's `audio_files` lists them, as a background is (M5-12): someone else's multitrack folder given
+     as the output is refused.
   2. scan-chart 8.0.1 (`node tools/scan-chart/scan.cjs <folder> --notes`): playable, and 0 chart issues except `noAlbumArt`.
   3. Self-check: scan-chart's parsed notes match what we wrote (count, ms ±1, HOPO/tap/cymbal flags).
   4. Encore rules: sustains ≥ 200 ms; sustain gaps ≥ 60 ms (target 85 ms); first note ≥ 2 s (`min_lead = 2.5 s` covers this and scan-chart's leading-silence check).
@@ -3202,6 +3255,16 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     disk. No console errors but the one connection the server's restart reset.
   - **Left for later:** "Your charts" (the library's list, its own order), lyrics held in memory for a waiting song,
     "Chart next", and Windows' own keep-awake call (a check under Smart App Control first).
+- **The stems and the audio** (M8-12) [code]: the options' **Audio** box, unfolded under Guitar: "One audio file: the
+  music does not drop out on a miss" (off: the split audio of §2.13, with a line on why a part's sound stops) and
+  "Also save the separated instruments (stems)" (off), whose line says what they are, how much disk they take for
+  the song's length (or the songs' together, in the shared form; §2.2's estimate, about 0.8 MB a second) and that
+  piano and "other" come out the least clean. Both are per song, like the other options: the shared form carries
+  them and queue.json keeps them for a waiting song. The Done screen of a run with the stems has "The instruments"
+  (outside "Play it", so a chart that failed its check has it too): their count, size and folder, and "Download the
+  stems", a zip of "<song> (stems)" stored without compression (`POST /api/jobs/<ref>/export/stems`), deleted from
+  exports/ once it is sent (a ~190 MB copy otherwise stayed in WSL each time; M8-12's review). The stems
+  stage shows as "Save the stems" in the progress. Listen and the preview read a split folder's files summed.
 - **Status** [code]: screens 1 to 3 built in M4-04; in M4-06 the Done screen (the preview's overview and pages, "Worth a look" from its flags, the zip, Install into Clone Hero, Another folder, Open folder), the "Paste lyrics" box (the text handed to the chart through a memory file, never written to disk or logged), and the diagnostics bundle (`diagnostics.py`, `songcharter diagnostics --out PATH`, `/api/diagnostics`: logs, `doctor.json`, settings and a MANIFEST.txt, every file checked by name, size and first bytes; no audio, chart, image or pasted text). In M4-11 the "Album art" and "Background image" pickers and the album art on the Done screen (§2.16). In M6-09 the Done screen's "Listen" (§2.17). In M7-10 the estimate, the folded stages, the install first, the tab's title, the wake lock, the drop zone's keys and the update notice put away while a chart runs (above). Quick fixes, Preview in Clone Hero and the polish workspace are not built.
 
 ### 4.6 CI (with the Windows build)

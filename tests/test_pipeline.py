@@ -308,7 +308,8 @@ def test_the_song_folder_passes_the_gate(charted):
     root, result, _, _ = charted
     assert result.ok, [i for i in result.assembled.issues if i.error]
     assert result.folder == root / "out" / "Click Song"
-    assert sorted(p.name for p in result.folder.iterdir()) == ["notes.chart", "report.json", "song.ini", "song.ogg"]
+    assert sorted(p.name for p in result.folder.iterdir()) == ["bass.ogg", "drums.ogg", "guitar.ogg", "notes.chart",
+                                                               "report.json", "song.ini", "song.ogg"]  # split: M8-12
     assert sorted(p.name for p in (root / "out").iterdir()) == ["Click Song"]  # the work folder is in the cache
     report = result.assembled.report
     assert report["gate"]["ok"] and report["sync"]["ok"] and abs(report["grid"]["bpm_median"] - 120) < 0.05
@@ -1084,7 +1085,7 @@ def test_chart_events(charted, tmp_path, monkeypatch, capsys):
     assert [e["text"] for e in events if e["event"] == "warning"] == report["warnings"]
     assert kinds.index("fallback") < kinds.index("stage_end:separate")   # as it happens
     assert events[-1] == {"event": "result", "ok": True, "exit": 0, "folder": str(tmp_path / "Sóng ♫"),
-                          "work": str(work), "preview": str(work / "preview"), "summary": out.rstrip("\n")}
+                          "work": str(work), "preview": str(work / "preview"), "stems": None, "summary": out.rstrip("\n")}
     assert EVENT not in out and "Sóng ♫" in out
     # the same run without --events (in a work folder of its own, as warm): no event line, and the same lines
     # otherwise, but for the times and the work folder's name

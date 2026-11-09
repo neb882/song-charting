@@ -21,6 +21,19 @@
      written by default (`levels`: the friend plays Expert, and asks for the others when he wants them); the lower
      tiers are reduced from it when asked for. Solos go on every section named "Solo" (`solos` "labels", below).
      The result and its exit codes are `songcharter assemble`'s.
+     The song folder's audio is Clone Hero's multitrack (`one_audio` False, the default): guitar.ogg, bass.ogg and
+     drums.ogg from the stems of the parts charted and song.ogg the mix less them, so Clone Hero mutes a part's own
+     sound on a missed note and a clean run sums to the one song.ogg (`one_audio`: that one file).
+  4b. **Stems** (`stems`, off by default; M8-12): the six stems of the separation's cache, as 24-bit FLAC at 44.1 kHz
+     on the input's own timeline (no lead-in), into "<the song folder's name> (stems)" beside the song folder
+     (`stems_folder`; never inside it, where Clone Hero would read guitar.* as the song's audio): drums.flac,
+     bass.flac, guitar.flac, piano.flac, vocals.flac, other.flac, byte-identical for the same input. Read from the
+     cache before its prune, so a run that finds the separation cached separates nothing. An existing stems folder
+     holding anything else is refused before any audio work (`check_stems_folder`), and a disk without room for them
+     (STEMS_FLAC_SHARE of 24-bit PCM, `stems_bytes`) right after the decode, where their size is known
+     (`stems_room`: an InputError naming the folder and the space needed). A disk that has filled by the time they are
+     written is a warning (M8-12's review): the half-written folder is removed, the run ends as the gate says, the
+     result's `stems` is null and pipeline.json's `stems` says why in plain words for the page (`STEMS_NO_ROOM`).
   5. **Preview** (preview.py) of the folder assemble wrote, the song folder or its .failed, into work/preview/
      (overview.png, page_NN.png), judged against the work folder's stems, when matplotlib and librosa import. It
      only informs: absent libraries or a preview that fails give one warning, never another exit code, and so does
@@ -121,6 +134,7 @@ The heavy stages are the methods of `Engines`, so tests stand in for them; impor
 """
 from __future__ import annotations
 
+import errno
 import functools
 import hashlib
 import importlib.util
@@ -162,6 +176,13 @@ PLAYING_DB = -15.0       # a stem's frame within this of its P95 level is playin
 # what the librosa sections cost, in the sections' fallback (the page's banner)
 SIMPLER = ("The bar lines and the tempo's halving test come from a simpler analysis: on a slow or fast song the chart "
            "may sit at double or half the tempo, and the sections have plainer names.")
+STEM_FILES = ("drums", "bass", "guitar", "piano", "vocals", "other")   # htdemucs_6s's six, as the stems export names them
+STEMS_SUFFIX = " (stems)"   # the stems folder: the song folder's name and this, beside it (stems_folder)
+STEMS_FLAC_SHARE = 0.5      # a stem's 24-bit FLAC against its 24-bit PCM, about (DESIGN.md 2.2: 0.35-0.68 on creep)
+# why the page shows no stems when the disk filled while they were written (pipeline.json's stems.why)
+STEMS_NO_ROOM = ("The disk ran out of room while the separated instruments were being saved (they need about {mb}), "
+                 "so they were not saved. The chart is not affected. Free some space, then chart the song again with "
+                 "the stems ticked to save them.")
 SOLO_MODES = ("stems", "labels", "off")  # assemble's solos modes; a list of section names is the other kind
 # the placeholders for what no tag or caller gives ({name}: the song's name, as resolved); the album's is Encore's
 # song.ini rule for a single (docs/reports/charting-conventions.md, section 8), instead of "Unknown"
@@ -202,6 +223,8 @@ class Options:
     background: Path | str | None = None         # an image for background.jpg, Clone Hero's song background
     cpu_retry: bool = True                       # a guitar take whose CUDA run failed is run again on the CPU, once
                                                  # a chart (the module docstring); the page has no control for it
+    stems: bool = False                          # also the six stems as FLAC, beside the song folder (step 4b)
+    one_audio: bool = False                      # one song.ogg instead of Clone Hero's multitrack audio (step 4)
 
     def check(self) -> None:
         if not self.instruments:
@@ -221,6 +244,9 @@ class Options:
             raise InputError(f"preview is true or false, not {self.preview!r}")
         if not isinstance(self.cpu_retry, bool):
             raise InputError(f"cpu_retry is true or false, not {self.cpu_retry!r}")
+        for key in ("stems", "one_audio"):
+            if not isinstance(getattr(self, key), bool):
+                raise InputError(f"{key} is true or false, not {getattr(self, key)!r}")
         if self.threads is not None and (isinstance(self.threads, bool) or not isinstance(self.threads, int)
                                          or self.threads < 1):
             raise InputError(f"threads must be a whole number of at least 1, not {self.threads!r}")
@@ -282,6 +308,7 @@ class ChartResult:
     fallbacks: list[dict] = field(default_factory=list)  # every move to the CPU: {"stage", "from", "to", "reason"}
     lyrics: dict | None = None   # pipeline.json's `lyrics` (counts and confidence only); None when none were given
     art: dict = field(default_factory=dict)   # pipeline.json's `art`: {"album_art", "background"} (art.prepare)
+    stems: Path | None = None    # the stems folder (step 4b) when `stems` was on
 
     @property
     def ok(self) -> bool:
@@ -853,6 +880,107 @@ def _distinct_takes(runs: list[Run], warn: Callable[[str], None]) -> list[Run]:
     return kept
 
 
+def stems_folder(out: Path) -> Path:
+    """Where the stems go: "<out's name> (stems)" beside the song folder `out`."""
+    return out.with_name(out.name + STEMS_SUFFIX)
+
+
+def check_stems_folder(folder: Path) -> None:
+    """An InputError when `folder` is there and is not a folder, or holds anything but the stems an earlier export
+    wrote (STEM_FILES as .flac; OS clutter and hidden files aside): the export replaces what is there."""
+    from .assemble import _HARMLESS_FILES
+    if not folder.exists():
+        return
+    if not folder.is_dir():
+        raise InputError(f"{folder} is there and is not a folder: the stems go into a folder of that name")
+    ours = {f"{s}.flac" for s in STEM_FILES} | _HARMLESS_FILES
+    foreign = sorted(p.name for p in folder.iterdir()
+                     if not (p.is_file() and (p.name.lower() in ours or p.name.startswith("."))))
+    if foreign:
+        raise InputError(f"the stems folder {folder} holds {', '.join(foreign[:5])}"
+                         f"{' and more' if len(foreign) > 5 else ''}, which songcharter did not write: move them "
+                         "out, or chart into another folder")
+
+
+class NoRoom(InputError):
+    """No room for the stems (export_stems): `need` bytes."""
+
+    def __init__(self, message: str, need: int):
+        super().__init__(message)
+        self.need = need
+
+
+def disk_free(path: Path) -> int:
+    """Free bytes on the disk that holds `path`, or its nearest existing parent."""
+    import shutil
+    while not path.exists() and path.parent != path:
+        path = path.parent
+    return shutil.disk_usage(path).free
+
+
+def stems_room(folder: Path, frames: int, channels: int = 2) -> None:
+    """An InputError when the disk holding the stems folder has less free than `stems_bytes`: run right after the
+    decode, before the long work."""
+    need, have = stems_bytes(frames, channels), disk_free(folder.parent)
+    if have < need:
+        raise InputError(f"no room for the stems in {folder.parent}: they need about {_mb(need)}, and {_mb(have)} "
+                         "are free. Free some space, or chart again without the stems")
+
+
+def stems_bytes(frames: int, channels: int = 2, files: int = len(STEM_FILES)) -> int:
+    """About how much disk the stems take: 24-bit PCM of `files` stems, times STEMS_FLAC_SHARE."""
+    return int(frames * channels * 3 * files * STEMS_FLAC_SHARE)
+
+
+def _mb(n: int) -> str:
+    return f"{max(1, round(n / 1e6))} MB"
+
+
+def export_stems(source: Path, folder: Path, free: Callable[[Path], int] | None = None) -> dict:
+    """The separation's stems (`source`: <stem>.wav each, float32 at 44.1 kHz on the input's timeline) as 24-bit FLAC
+    (audio.write_flac) into `folder`, through a hidden staging folder beside it that replaces it at the end. NoRoom
+    (an InputError) naming the folder and the space needed when the disk has less free than `stems_bytes` or fills
+    while they are written; the staging folder is removed then, and `folder` keeps what it held. Returns the record:
+    {"folder", "files", "bytes", "seconds"}."""
+    import shutil
+    import tempfile
+    wavs = [(s, source / f"{s}.wav") for s in STEM_FILES if (source / f"{s}.wav").is_file()]
+    if not wavs:
+        raise ToolError(f"no stems in {source} to save")
+    import soundfile as sf
+    infos = {s: sf.info(str(w)) for s, w in wavs}
+    frames = max(i.frames for i in infos.values())
+    need = stems_bytes(frames, max(i.channels for i in infos.values()), len(wavs))
+    folder.parent.mkdir(parents=True, exist_ok=True)
+    have = (free or disk_free)(folder.parent)
+    if have < need:
+        raise NoRoom(f"no room for the stems in {folder.parent}: they need about {_mb(need)}, and {_mb(have)} are "
+                     "free", need)
+    staging = Path(tempfile.mkdtemp(prefix=f".{folder.name}.", suffix=".partial", dir=folder.parent))
+    written = 0
+    try:
+        for s, w in wavs:
+            y, rate = A.read_wav(w)
+            if rate != SAMPLE_RATE:
+                raise ToolError(f"the {s} stem is {rate} Hz, not {SAMPLE_RATE}")
+            written += A.write_flac(y, staging / f"{s}.flac", rate)
+            del y
+        if folder.exists():
+            shutil.rmtree(folder)
+        os.replace(staging, folder)
+    except OSError as e:
+        shutil.rmtree(staging, ignore_errors=True)
+        if e.errno in (errno.ENOSPC, errno.EDQUOT):
+            raise NoRoom(f"the disk filled while the stems were written into {folder}: they need about "
+                         f"{_mb(need)}", need) from None
+        raise
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return {"folder": str(folder), "files": [f"{s}.flac" for s, _ in wavs], "bytes": written,
+            "seconds": round(frames / SAMPLE_RATE, 3)}
+
+
 def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, engines: Engines | None = None,
           log: Callable[[str], None] | None = None,
           sampler: Callable[[], D.Sampler] | None = D.Sampler,
@@ -880,6 +1008,8 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         raise InputError(f"the work folder {work} and the output {out} must be apart, neither inside the other")
     check_output(out)
     check_output(failed_folder(out))
+    if options.stems:
+        check_stems_folder(stems_folder(out))
     problems = engines.missing(options)
     if problems:
         raise ToolError("cannot chart: " + "; ".join(problems))
@@ -890,7 +1020,7 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
     order = ["decode", "separate"] + [i for i in ("drums", "bass") if i in instruments] + ["sections"]
     no_lyrics = engines.lyrics_missing() if options.lyrics is not None else None
     order += ["lyrics"] * (options.lyrics is not None and no_lyrics is None)
-    order += ["guitar"] * ("guitar" in instruments) + ["assemble"]
+    order += ["guitar"] * ("guitar" in instruments) + ["assemble"] + ["stems"] * options.stems
     no_preview = engines.preview_missing() if options.preview else None
     order += ["preview"] * (options.preview and no_preview is None)
     emit({"event": "plan", "stages": list(order)})
@@ -969,7 +1099,8 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
             report["lyrics"] = {"given": True, "added": False, "why": no_lyrics}
         parts, sections, stem_files, stem_folder, timed = _engine_stages(audio, work, scratch, options, engines, meta,
                                                                          begin, end, warn, fallback, report, emit,
-                                                                         log)
+                                                                         log, stems_folder(out) if options.stems
+                                                                         else None)
         if not parts:
             raise InputError(f"no instrument has notes ({', '.join(instruments)} all came out empty): nothing to "
                              "chart")
@@ -979,6 +1110,7 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
                "solos": (options.solos if isinstance(options.solos, str) else list(options.solos))
                if any(p["instrument"] == "guitar" for p in parts) else "off",
                "levels": [d for d in DIFFICULTIES if d in options.levels],
+               "split_audio": not options.one_audio,
                "metadata": meta, "output": str(out),
                **{key: str(images[name]) for key, name in (("album_art", ART.ALBUM), ("background", ART.BACKGROUND))
                   if name in images}}
@@ -992,6 +1124,20 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         end("assemble", t0, False, f"gate {'OK' if result.ok else 'FAILED'} ({g['errors']} errors, "
             f"{g['warnings']} warnings), {result.folder}", {"ok": result.ok, "folder": str(result.folder)})
         report["assemble"] = {"config": str(config), "ok": result.ok, "folder": str(result.folder)}
+        saved = None
+        if options.stems:   # from the separation's cache, before the prune below (step 4b)
+            saved = stems_folder(out)
+            t0 = begin("stems", f"the six stems as FLAC into {saved.name}")
+            try:
+                report["stems"] = export_stems(stem_folder, saved)
+            except NoRoom as e:   # the chart stands: a warning, and the page says why (M8-12's review)
+                warn(f"stems: not saved ({e})")
+                report["stems"] = {"saved": False, "why": STEMS_NO_ROOM.format(mb=_mb(e.need)), "error": str(e)}
+                saved = None
+                end("stems", t0, False, "not saved: no room on the disk")
+            else:
+                end("stems", t0, False, f"{len(report['stems']['files'])} stems, {_mb(report['stems']['bytes'])}, "
+                    f"in {saved}", {"bytes": report["stems"]["bytes"]})
         preview = None
         if "preview" in order:
             t0 = begin("preview", f"overview and pages of {result.folder.name} in {work / 'preview'}")
@@ -1023,7 +1169,7 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
         size = cache.tree_size(work) + (cache.tree_size(scratch) if scratch is not None else 0)
         report["work_bytes"] = size
         return ChartResult(result, stages, work, config, meta, warnings, preview, scratch, size, fallbacks,
-                           report.get("lyrics"), pictures.record)
+                           report.get("lyrics"), pictures.record, saved)
     except BaseException as e:
         report["error"] = f"{type(e).__name__}: {e}"
         report["traceback"] = traceback.format_exc()
@@ -1040,19 +1186,22 @@ def chart(audio: Path | str, out: Path | str, options: Options = Options(), *, e
 
 def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Options, engines: Engines, meta: dict,
                    begin, end, warn, fallback, record: dict, emit: Callable[[dict], None],
-                   log: Callable[[str], None] = lambda line: None
+                   log: Callable[[str], None] = lambda line: None, stems_to: Path | None = None
                    ) -> tuple[list[dict], str | None, dict[str, str], Path, Timed | None]:
     """Decode, separation and the engines: the assemble parts, the sections file, the stem files assemble reads,
     the folder of every stem (the preview's) and the timed lyrics (None without); `record` (pipeline.json) gets the
     device and why, the guitar takes chosen and why, each take's continuation, and the lyrics' counts; `fallback`
     records each move to the CPU; `emit` gets a `take` event before each guitar take that runs; `log` gets a line
-    per piece of a guitar take that was continued. The audio arrays live only here, so they are freed before
+    per piece of a guitar take that was continued; `stems_to` (the stems folder, when asked for) is checked for room
+    right after the decode (stems_room). The audio arrays live only here, so they are freed before
     assemble reads its own."""
     t0 = begin("decode", audio.name)
     mix, wav, same = _decode(audio, work)
     end("decode", t0, same, f"{mix.shape[1] / SAMPLE_RATE:.2f} s of audio in {wav.name}",
         {"samples": int(mix.shape[1])})
     check_song(audio.name, mix)   # before the separation: a song too short or silent stops here
+    if stems_to is not None:      # and a disk without room for the stems (step 4b), now that their size is known
+        stems_room(stems_to, mix.shape[1], mix.shape[0])
 
     device, why, cuda_error = engines.device(options.device)
     record["device"] = {"asked": options.device, "chosen": device, "reason": why}
@@ -1294,7 +1443,7 @@ def _lyrics_stage(options: Options, engines: Engines, stems: Mapping[str, np.nda
 
 def summary(result: ChartResult) -> str:
     """What the pipeline adds to assemble's summary: the art added (when any was), the preview's overview and its
-    flags, the lyrics, the work folder and its size (autochart's scratch folder's included, and named when it
+    flags, the lyrics, the stems folder (when they were saved), the work folder and its size (autochart's scratch folder's included, and named when it
     exists), then the stage times."""
     lines = []
     added = [f"{r['file']} ({'the song file' if r['from'] == 'embedded' else r['from']})"
@@ -1313,6 +1462,8 @@ def summary(result: ChartResult) -> str:
                          f"{(ly.get('confidence') or {}).get('median')}")
         else:
             lines.append(f"lyrics: not added ({ly.get('why')})")
+    if result.stems is not None:
+        lines.append(f"stems: {result.stems}")
     made = result.scratch is not None and result.scratch.is_dir()  # not made by a run without the guitar
     scratch = f"; autochart's scratch folder {result.scratch}" if made else ""
     lines.append(f"work folder: {result.work} ({cache.size_text(result.work_bytes)}{scratch})")

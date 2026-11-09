@@ -36,6 +36,9 @@
   * **Pictures** (M4-11): `album_art` and `background` are the paths of images uploaded through the page; the server
     puts them in for the page's upload ids (server.py: a path never comes from the page) and they become
     --album-art and --background. The job's options say whether each was given.
+  * **Stems and the audio** (M8-12): `stems` (off by default) becomes --stems, the six stems as FLAC in
+    "<the song folder> (stems)" beside it, whose staging folder a cancel deletes too; `one_audio` (off: Clone Hero's
+    multitrack audio, the default) becomes --one-audio. Both are per song: the queue keeps them for a waiting song.
   * **The estimate** (M7-10): how long the chart usually takes (estimate.for_job, which the server works out from
     the upload's length, the options and the doctor summary), given to `start` and kept as it is in the job's
     snapshot (`estimate`, None without one) for the progress screen; and with it, the time left once the guitar's
@@ -73,7 +76,7 @@ META_FLAGS = {"title": "--title", "artist": "--artist", "album": "--album", "yea
 IMAGE_FLAGS = {"album_art": "--album-art", "background": "--background"}
 LIBRARY_NAME_MAX = 80   # the library folder's name: at most this many UTF-16 code units (the module docstring)
 OPTION_KEYS = (*META_FLAGS, "instruments", "levels", "solos", "takes", "device", "threads", "preview", "lyrics",
-               *IMAGE_FLAGS)
+               *IMAGE_FLAGS, "stems", "one_audio")
 TAIL_LINES = 8                     # the log's last lines in an error the job writes itself
 END_WAIT_S = 10.0                  # how long a new job waits for one whose closing event is out to exit
 # an error the job writes itself (the child sent none) in plain words, for the queue's list (M8-10's review, P-F4;
@@ -116,6 +119,8 @@ class ChartOptions:
     lyrics: str | None = field(default=None, repr=False)       # the pasted text, None without: never shown, never kept
     album_art: str | None = None   # an uploaded image's path (the server's, for the page's upload id), None without
     background: str | None = None
+    stems: bool = False       # also the six stems as FLAC beside the song folder (--stems, M8-12)
+    one_audio: bool = False   # one song.ogg, not Clone Hero's multitrack audio (--one-audio, M8-12)
 
     def as_dict(self) -> dict:
         """The options as the job's records show them: `lyrics` is whether some were given, never the text."""
@@ -123,7 +128,8 @@ class ChartOptions:
                 "solos": self.solos if isinstance(self.solos, str) else list(self.solos), "takes": self.takes,
                 "device": self.device, "threads": self.threads, "preview": self.preview,
                 "lyrics": self.lyrics is not None, "album_art": self.album_art is not None,
-                "background": self.background is not None, **self.metadata}
+                "background": self.background is not None, "stems": self.stems, "one_audio": self.one_audio,
+                **self.metadata}
 
 
 def _words(raw: Any, what: str) -> tuple[str, ...]:
@@ -170,11 +176,13 @@ def parse_options(raw: Any) -> ChartOptions:
     options = ChartOptions(instruments=instruments, levels=levels, solos=solos, takes=get.get("takes"),
                            device=get.get("device", "auto"), threads=get.get("threads"), preview=preview,
                            metadata=meta, lyrics=lyrics if lyrics and lyrics.strip() else None,
-                           album_art=get.get("album_art"), background=get.get("background"))
+                           album_art=get.get("album_art"), background=get.get("background"),
+                           stems=get.get("stems", False), one_audio=get.get("one_audio", False))
     pipeline_meta = {"name" if k == "title" else k: v for k, v in meta.items()}
     Options(instruments=options.instruments, takes=options.takes, device=options.device, threads=options.threads,
             metadata=pipeline_meta, solos=options.solos, levels=options.levels, preview=options.preview,
-            lyrics=options.lyrics, album_art=options.album_art, background=options.background).check()
+            lyrics=options.lyrics, album_art=options.album_art, background=options.background, stems=options.stems,
+            one_audio=options.one_audio).check()
     return options
 
 
@@ -200,6 +208,10 @@ def chart_command(song: Path, out: Path, options: ChartOptions, threads: int | N
         cmd.append(f"--threads={threads}")
     if not options.preview:
         cmd.append("--no-preview")
+    if options.stems:
+        cmd.append("--stems")
+    if options.one_audio:
+        cmd.append("--one-audio")
     cmd += [f"{flag}={options.metadata[key]}" for key, flag in META_FLAGS.items() if key in options.metadata]
     cmd += [f"{flag}={getattr(options, key)}" for key, flag in IMAGE_FLAGS.items() if getattr(options, key)]
     return cmd
@@ -229,10 +241,12 @@ def output_folder(home: Path, upload: Mapping[str, Any], options: ChartOptions) 
 
 
 def partial_folders(out: Path) -> list[Path]:
-    """assemble's staging folders for the output `out`: .<name>.*.partial beside it (the name escaped: a song's
-    name keeps [ and ], which a glob reads as a character class)."""
+    """assemble's staging folders for the output `out`, and the stems export's: .<name>.*.partial and
+    .<name> (stems).*.partial beside it (the name escaped: a song's name keeps [ and ], which a glob reads as a
+    character class)."""
     try:
-        return sorted(p for p in out.parent.glob(f".{glob.escape(out.name)}.*.partial") if p.is_dir())
+        return sorted(p for name in (out.name, out.name + " (stems)")
+                      for p in out.parent.glob(f".{glob.escape(name)}.*.partial") if p.is_dir())
     except OSError:
         return []
 

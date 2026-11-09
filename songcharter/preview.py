@@ -209,8 +209,8 @@ def load(folder: Path | str, stems: dict[str, np.ndarray | str | Path] | None = 
             for y in ys:  # summed in time, so leakage in a quiet stem stays under the others' level
                 mix[:len(y)] += y
             arrays[inst] = ("+".join(names), mix)
-    ogg = folder / "song.ogg"
-    audio_end = _audio_length(ogg) if ogg.exists() else None
+    music = A.song_audio_files(folder)   # song.ogg, or the split files (Clone Hero's multitrack): the longest
+    audio_end = max(_audio_length(f) for f in music) if music else None
     duration = max([_chart_end(song) + 2] + [len(y) / A.SAMPLE_RATE + pad for _, y in arrays.values()]
                    + ([audio_end] if audio_end is not None else []))
     beats = _extend(np.array(song.beats, dtype=float), duration)
