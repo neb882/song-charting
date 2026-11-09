@@ -210,7 +210,7 @@ def for_diagnostics(home: Path, find: Callable[[Path, str], Path | None]) -> dic
     """feedback.json in the diagnostics zip: every chart's record that holds a rating or a spot, with the chart as it
     is now (`now`: whether its folder is still in the library, its notes.chart identity, the gate's verdict, the
     song's length and its report.json's `pipeline`: the seeds, takes, devices, fallbacks and engines, so a spot can be
-    reproduced), and no path: the chart is named by its library id. `find` is jobs.find_chart. The notes are his
+    reproduced), and no path: the chart is named by its library id. `find` is jobs.find_chart. A spot's note is his
     own words, as he wrote them."""
     charts = []
     for record in all_records(home):

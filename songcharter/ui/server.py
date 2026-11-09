@@ -915,7 +915,7 @@ class Handler(BaseHTTPRequestHandler):
         given = body.get("upload")
         if given is not None and given != song:
             raise Refused(400, f"That is not the song file {name} was charted from (its sound is not the same): "
-                               "drop that file, or chart this one as a new song")
+                               "drop that file, or press Not now to chart this one as a new song")
         lyrics = body.get("lyrics")
         if lyrics is not None and not isinstance(lyrics, str):
             raise Refused(400, "lyrics is text")

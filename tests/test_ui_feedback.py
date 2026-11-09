@@ -411,6 +411,19 @@ def test_versions_live_beside_the_first_and_are_listed_together(lib):
     assert J.chart_seed(lib.first, rec) == 5 and J.chart_seed(lib.second, {}) == 1
 
 
+def test_look_finds_a_versions_work_folder(lib):
+    """A version's work folder is the song's (cache.by_key by its upload's 16 hex, not its v<N> folder's name): Look
+    and its preview while that folder's last chart is this version (break: the key read from the version folder)."""
+    from songcharter import cache
+    work = lib.root / "work" / f"song-{A}"
+    work.mkdir(parents=True)
+    cache.mark(work, Path("song.wav"), A, None)
+    (work / "pipeline.json").write_text(json.dumps({"assemble": {"folder": str(lib.second)}, "preview": {"ok": False}}))
+    charts = {c["id"]: c for c in J.library(lib.home, lib.root)}
+    assert charts[V2]["look"] is True and charts[V1]["look"] is False
+    assert J.Charted(lib.second, lib.root).result()["work"] == str(work)
+
+
 def test_the_seed_reaches_the_command_line_and_is_checked():
     """--seed=N only for a seed > 0 (the default's command line unchanged); the options' seed checked as the
     pipeline's (breaks: --seed=0 added; a bad seed let through)."""
@@ -493,12 +506,14 @@ def test_chart_it_differently_queues_the_next_seed_with_the_charts_options(lib):
 
 
 def test_a_deleted_version_is_not_made_again(lib):
-    """The last seed asked for is kept (state/versions.json): with version 2 deleted in Windows after version 3 was
-    asked for, the next is version 4, never version 2's seed again (break: the next seed from the library alone)."""
+    """The last seed asked for is kept (state/versions.json): with versions 2 and 3 deleted in Windows and the list
+    cleared, the next is version 4, never a deleted version's seed again (break: the next seed from the library and
+    the queue alone)."""
     assert post(lib, by_id(V1, "/again"), {})[1]["seed"] == 2
     wait_idle(lib.app)
     shutil.rmtree(lib.home / "library" / A / "v2")
     shutil.rmtree(lib.home / "library" / A / "v3")
+    assert post(lib, "/api/queue/clear")[0] == 200 and lib.app.queue.snapshot()["entries"] == []
     assert post(lib, by_id(V1, "/again"), {})[1]["seed"] == 3
     wait_idle(lib.app)
 
