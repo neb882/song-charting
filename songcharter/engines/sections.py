@@ -52,7 +52,9 @@ after the music. songcharter.sections snaps them to measures, merges, splits and
     fallback's parameters and constants). A call whose key matches the folder's engine.json returns the files
     already there; for allin1 the probe still runs first (a few seconds), since its answer is part of the key.
     The hit's engine.json is rewritten with this call's "why" and "settings", so it says why this call chose
-    the backend; the rest describes the run that made the files (its timings under "seconds"/"run").
+    the backend, and for allin1 with this call's probe and fallback: the analysis is cached, never a run's fallback
+    story, so a CPU-asked hit of an auto run's CPU result names no CUDA fallback. The rest describes the run that
+    made the files (its timings under "seconds"/"run").
 
 The fallback needs librosa (`pip install songcharter[sections]`). allin1 needs a Python with all-in-one-infer and
 torchaudio (`pip install all-in-one-infer torchaudio`: wheels, nothing to compile; all-in-one-infer 3.1.0 imports
@@ -370,9 +372,12 @@ def _write_json(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
-def _cached(out: Path, key: str, live: dict) -> SectionsResult | None:
+def _cached(out: Path, key: str, live: dict, allin1: dict | None = None) -> SectionsResult | None:
     """The result already in `out` for this key, else None. A hit's engine.json takes this call's `live` fields
-    (why, settings) and is written back, so the file and the result say why this call chose the backend."""
+    (why, settings) and is written back, so the file and the result say why this call chose the backend. `allin1`:
+    this call's probe and fallback, which replace the run's in the hit's `allin1`. The analysis is cached, never a
+    run's fallback story: the CPU result of an auto run whose CUDA run failed answers a later CPU-asked call with no
+    fallback, and a CPU-asked result answers an auto run's CPU retry with that run's fallback (v0.5.0's review)."""
     try:
         info = json.loads((out / ENGINE).read_text(encoding="utf-8"))
         if info.get("key") != key:
@@ -382,6 +387,8 @@ def _cached(out: Path, key: str, live: dict) -> SectionsResult | None:
         return None
     seconds = info.get("seconds") or {}
     info = {**info, **live, "cached": True, "seconds": {"total": 0.0, "run": seconds.get("run", seconds)}}
+    if allin1 is not None and isinstance(info.get("allin1"), dict):
+        info["allin1"] = {**info["allin1"], **allin1}
     _write_json(out / ENGINE, info)
     return SectionsResult(out / SEGMENTS, info, True)
 
@@ -555,7 +562,7 @@ def _allin1_job(song: SongArrays, payload: np.ndarray, data: bytes, out: Path, s
                            "version": found.get("version"), "model": model, "weights": weights, "device": device,
                            "rate": SAMPLE_RATE})
     live = {"why": why, "settings": {**asdict(s), "python": python}}
-    hit = _cached(out, key, live)
+    hit = _cached(out, key, live, {**found, "fallback": fallback})
     if hit is not None:
         return hit
     seconds = song.samples / SAMPLE_RATE
