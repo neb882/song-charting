@@ -10,7 +10,9 @@
 // event it saw when the connection drops; a reload reattaches to the current job. M8-10: a queue of songs, which the
 // server runs (it starts the next itself): a drop of several songs shares one options form, the list under the
 // progress screen gives each song's state with Install and Look (its own Done screen, by its job id), and the tab's
-// title, the wake lock, the update notice and the whole queue's estimate go across the songs.
+// title, the wake lock, the update notice and the whole queue's estimate go across the songs. M8-14: "How did it
+// play?" (1 to 5, and the spots he marks) on the Done screen and on each chart of "Your charts", and "Chart it
+// differently" (the song again with the next seed: a version 2, 3, ... beside the first).
 "use strict";
 
 const HEADER = { "X-Songcharter": "1" };
@@ -34,7 +36,7 @@ const state = { status: null, upload: null, job: null, stages: {}, offset: 0, ti
   images: { album_art: null, background: null }, sending: 0, version: null, update: null, later: false,
   listen: { parts: {}, job: null }, running: false, wake: null, remaining: null, asking: false,
   box: { items: [], at: 0 }, queue: null, queueKey: null, uploads: [], shown: null, note: "",
-  charts: null, chartsKey: null, chartsOwn: false };
+  charts: null, chartsKey: null, chartsOwn: false, again: null };
 // the Listen control's names for the parts and levels the chart has (the results' `listen`)
 const PART_NAMES = { guitar: "Guitar", bass: "Bass", drums: "Drums" };
 const LEVEL_NAMES = { expert: "Expert", hard: "Hard", medium: "Medium", easy: "Easy" };
@@ -225,6 +227,7 @@ function upload(file, rest, got, failed) {
 function uploaded(got, failed) {
   $("upload").hidden = true;
   if (!got.length) { dropError(failed.join("\n")); return; }
+  if (state.again) { againDropped(got); return; }   // the song file "Chart it differently" asked for (M8-14)
   state.upload = got[0];
   state.uploads = got;
   if (got.length === 1) fillOptions(got[0]);
@@ -1109,7 +1112,7 @@ function smallButton(label, f, cls) {
 
 function queueRow(e) {
   const li = make("li", e.state);
-  li.append(make("span", "queue-name", e.chart || e.name), " ");
+  li.append(make("span", "queue-name", (e.chart || e.name) + (e.version > 1 ? ` (version ${e.version})` : "")), " ");
   let word = STATE_WORDS[e.state] || e.state;
   if (e.state === "not_finished" && e.error) word += `: ${e.error}`;
   if (e.state === "waiting" && e.estimate && e.estimate.low_min > 0) {
@@ -1189,7 +1192,7 @@ async function installFrom(e, msg, replace) {
     if (r.status === 200) {
       text(msg, "Installed. In Clone Hero, open Settings > General and press Scan Songs.");
     } else if (r.status === 409 && d.exists && d.ours) {
-      if (window.confirm(`${e.chart || e.name} is in Clone Hero already, from an earlier chart. Replace the older chart?`)) {
+      if (window.confirm(replaceQuestion(d, e.chart || e.name))) {
         return installFrom(e, msg, true);
       }
       text(msg, "Not installed: the older chart stays.");
@@ -1214,6 +1217,18 @@ async function installFrom(e, msg, replace) {
     text(msg, "songcharter does not answer: is it still running?");
   }
   return null;
+}
+
+// The replace question (409, ours), naming the versions when the song has several (M8-14: they install into the same
+// folder, so one is in the game at a time); `where` the folder's Windows path, for the Done screen
+function replaceQuestion(d, name, where) {
+  const at = where ? ` (${where})` : "";
+  const v = d.version || 1, there = d.installed_version || 1;
+  if (v > 1 || there > 1) {
+    return v === there ? `Version ${v} of ${name} is in Clone Hero already${at}, from an earlier chart. Replace it?` :
+      `Version ${there} of ${name} is in Clone Hero now${at}. Replace it with version ${v}?`;
+  }
+  return `${name} is in Clone Hero already${at}, from an earlier chart. Replace the older chart?`;
 }
 
 // Look: a finished song's own Done screen (its result, preview and flags, Listen, the zip), by its job id
@@ -1250,6 +1265,7 @@ async function loadResults(job) {
   renderListen(res.listen, res.job);   // before the preview, whose flags offer Listen for the parts it has
   renderPreview(res.preview, res.job);
   renderStems(res.stems);
+  renderPlayed(res);
   $("export-box").hidden = !res.installable;
   text($("export-msg"), "").hidden = true;
   $("open-exports").hidden = true;
@@ -1551,7 +1567,7 @@ async function install(replace) {
       installMessage("Done. In Clone Hero, open Settings > General and press Scan Songs." + (d.note ? `\n(${d.note})` : ""),
                      { open: true });
     } else if (r.status === 409 && d.exists && d.ours) {
-      installMessage(`This song is in Clone Hero already (${d.windows_path || d.folder}), from an earlier chart. Replace the older chart?`,
+      installMessage(replaceQuestion(d, "this song", d.windows_path || d.folder).replace(/^this/, "This"),
                      { replace: true });
     } else if (r.status === 409 && d.exists) {
       installMessage(`A folder named like this song is in Clone Hero already (${d.windows_path || d.folder}), and songcharter did not make it, so it stays as it is. Rename or move it in Windows first, or save the zip.`,
@@ -1667,7 +1683,9 @@ function setCharts(charts) {
   const key = JSON.stringify(charts);
   if (key !== state.chartsKey) {   // the rows made again only when a chart changed (a message is not lost)
     state.chartsKey = key;
-    $("charts-list").replaceChildren(...charts.map(chartRow));
+    // a song with versions (M8-14): each of its rows says which
+    const versioned = new Set(charts.filter((c) => c.version > 1).map((c) => c.upload));
+    $("charts-list").replaceChildren(...charts.map((c) => chartRow(c, versioned.has(c.upload))));
   }
   if (!state.chartsOwn) $("charts-fold").open = charts.length <= CHARTS_OPEN;   // until he opens or folds it himself
   state.charts = charts;
@@ -1722,12 +1740,12 @@ function chartAction(msg, f) {
   };
 }
 
-function chartRow(c) {
+function chartRow(c, versioned) {
   const li = make("li", c.readable ? (c.ok ? "ready" : "check_failed") : "unreadable");
   li.append(make("span", "queue-name", c.name));
   if (c.artist) li.append(" ", make("span", "chart-artist", c.artist));
   li.append(" ", make("span", "queue-state", chartVerdict(c)));
-  const facts = [chartDate(c.time)];
+  const facts = [versioned || c.version > 1 ? `version ${c.version || 1}` : "", chartDate(c.time)];
   if (c.readable && c.audio) facts.push(AUDIO_WORDS[c.audio] || c.audio);
   if (c.stems) facts.push("stems saved");
   li.append(make("span", "chart-facts small", facts.filter(Boolean).join(" · ")));
@@ -1745,8 +1763,223 @@ function chartRow(c) {
     actions.append(b);
   }
   if (c.look) actions.append(smallButton("Look", () => look(c.id)));
-  li.append(actions, msg);
+  const extra = make("div", "chart-again");
+  if (c.readable && c.guitar) {
+    const b = smallButton("Chart it differently", chartAction(msg, () => offerAgain(c.id, { name: c.name,
+      lyrics: !!c.lyrics, msg, button: b, panel: extra })));
+    actions.append(b);
+  }
+  li.append(actions, msg, extra);
+  if (c.ok) li.append(feedbackBox(c.id, { rating: c.rating, spots: c.spots }));
   return li;
+}
+
+// ------------------------------------------------------------------------------------------------ how it played (M8-14)
+
+// "How did it play?": 1 to 5 (optional, and changed or taken back with another press), and the spots he marks: a
+// time as Clone Hero shows it (m:ss), one or more reasons, a short note. Kept by songcharter with the chart (not in
+// its folder, which goes into Clone Hero) and sent back in the diagnostics zip. One folded line until he opens it,
+// which reads it from the server; each change is saved at once.
+const RATING_WORDS = "1 = no fun, 5 = great";
+
+function feedbackLine(fb) {
+  const said = [];
+  if (fb && fb.rating) said.push(`${fb.rating} of 5`);
+  const n = fb ? (Array.isArray(fb.spots) ? fb.spots.length : fb.spots || 0) : 0;
+  if (n) said.push(`${n} spot${n === 1 ? "" : "s"} marked`);
+  return "How did it play?" + (said.length ? ` ${said.join(", ")}` : "");
+}
+
+// the folded box for the chart `ref` (a chart's id, a job's, or "current"); `summary` its rating and spots as known
+function feedbackBox(ref, summary) {
+  const box = make("details", "fold feedback");
+  const fb = { ref, data: null, line: make("summary", null, feedbackLine(summary)), body: make("div", "feedback-body"),
+    box };
+  box.append(fb.line, fb.body);
+  box.addEventListener("toggle", () => { if (box.open && !fb.data) loadFeedback(fb); });
+  return box;
+}
+
+async function loadFeedback(fb) {
+  let r;
+  try { r = await api("GET", `/api/jobs/${encodeURIComponent(fb.ref)}/feedback`); } catch (e) { r = null; }
+  if (!r || r.status !== 200) {
+    fb.body.replaceChildren(make("p", "error", r ? r.data.error || `It could not be read (${r.status}).` :
+      "songcharter does not answer: is it still running?"));
+    return;
+  }
+  fb.data = r.data;
+  renderFeedback(fb);
+}
+
+async function sendFeedback(fb, body, msg) {
+  text(msg, "").hidden = true;
+  let r;
+  try { r = await api("POST", `/api/jobs/${encodeURIComponent(fb.ref)}/feedback`, body); } catch (e) { r = null; }
+  if (r && r.status === 200) {
+    fb.data = r.data;
+    renderFeedback(fb);
+    return true;
+  }
+  text(msg, r ? r.data.error || `It could not be saved (${r.status}).` : "songcharter does not answer: is it still running?")
+    .hidden = false;
+  return false;
+}
+
+function renderFeedback(fb) {
+  const d = fb.data;
+  text(fb.line, feedbackLine(d));
+  const msg = make("p", "error feedback-msg");
+  msg.hidden = true;
+  const rate = make("p", "rating");
+  for (let n = 1; n <= 5; n++) {   // the one pressed, pressed again, takes the rating back
+    const b = smallButton(String(n), () => sendFeedback(fb, { rating: d.rating === n ? null : n }, msg),
+      d.rating === n ? "small-button rate on" : "plain small-button rate");
+    b.title = d.rating === n ? "Press again to take the rating back" : `${n} of 5`;
+    rate.append(b);
+  }
+  rate.append(" ", make("span", "small", RATING_WORDS));
+  const spots = make("ul", "spots");
+  const words = Object.fromEntries((d.reasons || []).map((x) => [x.id, x.words]));
+  for (const spot of d.spots || []) {
+    const li = make("li");
+    li.append(make("span", "spot-time", spot.time), " ", (spot.reasons || []).map((x) => words[x] || x).join(", "));
+    if (spot.note) li.append(": ", make("q", "spot-note", spot.note));
+    li.append(" ", smallButton("Remove", () => sendFeedback(fb, { remove: spot.id }, msg)));
+    spots.append(li);
+  }
+  spots.hidden = !(d.spots || []).length;
+  // marking a spot: the time, the reasons, the note; what was typed stays when the server says no
+  const form = make("div", "spot-form");
+  const at = make("input", "spot-at");
+  at.type = "text";
+  at.placeholder = "m:ss";
+  at.autocomplete = "off";
+  at.ariaLabel = "When, as minutes and seconds";
+  const boxes = (d.reasons || []).map((x) => {
+    const label = make("label", "check");
+    const tick = make("input");
+    tick.type = "checkbox";
+    tick.value = x.id;
+    label.append(tick, ` ${x.words}`);
+    return { label, tick };
+  });
+  const note = make("input", "spot-note-input");
+  note.type = "text";
+  note.maxLength = d.note_max || 300;
+  note.placeholder = "A short note (optional)";
+  note.autocomplete = "off";
+  const add = smallButton("Mark it", async () => {
+    const reasons = boxes.filter((x) => x.tick.checked).map((x) => x.tick.value);
+    if (!at.value.trim()) { text(msg, "Write when, as minutes and seconds: 2:28, say.").hidden = false; return; }
+    if (!reasons.length) { text(msg, "Tick at least one reason.").hidden = false; return; }
+    await sendFeedback(fb, { add: { at: at.value, reasons, note: note.value || null } }, msg);
+  }, "small-button");
+  const length = d.length > 0 ? ` (the song is ${mmss(Math.floor(d.length))})` : "";   // the server's own end
+  const reasons = make("span", "spot-reasons");
+  reasons.append(...boxes.map((x) => x.label));
+  form.append(make("p", "spot-head", "Mark a spot"),
+    make("p", "small", `When, as Clone Hero shows it${length}, and what is wrong there (or great):`),
+    at, reasons, note, add);
+  fb.body.replaceChildren(rate, spots, form, msg);
+}
+
+// ------------------------------------------------------------------------------------------------ chart it differently
+
+// "Chart it differently" (M8-14): the chart's song again with the next seed, so the guitar comes out another way, as
+// version 2, 3, ... beside the first (bass, drums and the sections stay: the seed changes only the guitar). A chart
+// made with pasted lyrics asks for them again first (songcharter never keeps them); a song file songcharter no longer
+// has (it keeps one 7 days) is asked for on the drop screen, with this chart's options kept.
+function offerAgain(ref, o) {
+  if (!o.lyrics) return chartAgain(ref, o);
+  const area = make("textarea");
+  area.rows = 6;
+  area.spellcheck = false;
+  const go = (lyrics) => { o.panel.replaceChildren(); return chartAgain(ref, { ...o, lyrics }); };
+  const row = make("p", "actions");
+  row.append(smallButton("Chart it", () => go(area.value.trim() ? area.value : null), "small-button"), " ",
+    smallButton("Without lyrics", () => go(null)));
+  o.panel.replaceChildren(
+    make("p", "small", "This chart had lyrics. songcharter does not keep pasted lyrics: paste them again to have " +
+      "them in the new version, or chart it without them."), area, row);
+  return null;
+}
+
+async function chartAgain(ref, o) {
+  const msg = o.msg, button = o.button;
+  if (button) button.disabled = true;
+  text(msg, "Adding it to the list…").hidden = false;
+  try {
+    const body = {};
+    if (o.lyrics) body.lyrics = o.lyrics;
+    if (o.upload) body.upload = o.upload;
+    const r = await api("POST", `/api/jobs/${encodeURIComponent(ref)}/again`, body);
+    if (r.status === 202) {
+      text(msg, r.data.state === "charting" ? `Version ${r.data.version} is charting now.` :
+        `Version ${r.data.version} waits in the list: it is charted in its turn.`);
+      endAgain();
+      await refreshQueue();
+      refreshCharts();
+      if (r.data.job) attach();
+    } else if (r.status === 400 && r.data.drop) {
+      text(msg, r.data.error);
+      askForFile(ref, { ...o, name: r.data.name || o.name });
+    } else {
+      text(msg, r.data.error || `It could not be charted again (${r.status}).`);
+    }
+  } catch (x) {
+    text(msg, "songcharter does not answer: is it still running?");
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+// the drop screen asks for the song file again; the upload then goes to "Chart it differently", not to the options
+function askForFile(ref, o) {
+  state.again = { ref, name: o.name, lyrics: o.lyrics || null };
+  text($("again-drop-text"), `To chart ${o.name} differently, drop its song file again: songcharter keeps a song ` +
+    "file for 7 days, and this chart's options are kept.");
+  $("again-drop").hidden = false;
+  dropError("");
+  stopListening();
+  closeBox();
+  show("drop-screen");
+  $("back-row").hidden = !state.running;
+}
+
+function endAgain() {
+  state.again = null;
+  $("again-drop").hidden = true;
+}
+
+function againDropped(got) {
+  const want = state.again;
+  if (got.length > 1) { dropError(`Drop only the song file of ${want.name}.`); return; }
+  chartAgain(want.ref, { name: want.name, lyrics: want.lyrics, upload: got[0].id, msg: $("drop-error") });
+}
+
+// the Done screen's part (M8-14): its version, "How did it play?" for a chart that passed, "Chart it differently"
+// for one with a guitar (the results' `library`)
+function renderPlayed(res) {
+  const lib = res.library;
+  const box = $("played");
+  box.replaceChildren();
+  box.hidden = !lib;
+  const v = lib && lib.version > 1 ? `Version ${lib.version}: this song charted differently.` : "";
+  text($("done-version"), v).hidden = !v;
+  if (!lib) return;
+  if (res.ok) box.append(feedbackBox(lib.id, null));
+  if (lib.guitar) {
+    const msg = make("p", "small again-msg");
+    msg.hidden = true;
+    const panel = make("div", "chart-again");
+    const b = smallButton("Chart it differently", () => offerAgain(lib.id, { name: songName(res.folder),
+      lyrics: !!lib.lyrics, msg, button: b, panel }), "plain");
+    const row = make("p", "actions");
+    row.append(b);
+    box.append(row, make("p", "small", "Not as you like it? The guitar is charted again another way (the bass, drums " +
+      "and sections stay), as a new version beside this one."), panel, msg);
+  }
 }
 
 // ------------------------------------------------------------------------------------------------ start
@@ -1783,6 +2016,7 @@ async function start() {
   $("to-charts").addEventListener("click", toCharts);
   $("queue-charts").addEventListener("click", toCharts);
   $("charts-title").addEventListener("click", ownFold);
+  $("again-drop-cancel").addEventListener("click", () => { endAgain(); dropError(""); });
   document.addEventListener("visibilitychange", visible);
   show("drop-screen");
   let st;

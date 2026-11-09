@@ -236,3 +236,36 @@ footer { max-width: 52rem; margin: 0 auto; padding: 0.5rem 1.25rem 2rem; }
 .charts-list li.unreadable .queue-state { color: var(--warn); }
 .chart-artist { color: var(--muted); overflow-wrap: anywhere; }
 .chart-facts { display: block; color: var(--muted); }
+
+/* how it played, and chart it differently (M8-14): one folded line until it is opened */
+#played { margin-top: 1rem; }
+#played .actions { margin-top: 0.5rem; }
+#played > .small { margin: 0.2rem 0 0; }
+details.feedback { margin: 0.5rem 0 0; padding: 0.3rem 0.75rem; }
+details.feedback > summary { font-weight: 400; }
+.charts-list details.feedback { border: 0; padding: 0; margin: 0.15rem 0 0; }
+.charts-list details.feedback > summary { color: var(--muted); font-size: 0.9rem; }
+.feedback-body { padding: 0.25rem 0 0.25rem; }
+.rating { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin: 0.4rem 0; }
+button.rate { min-width: 2.2rem; }
+.spots { padding-left: 1.2rem; margin: 0.3rem 0; }
+.spots li { margin: 0.2rem 0; overflow-wrap: anywhere; }
+.spot-time { font-variant-numeric: tabular-nums; font-weight: 600; }
+.spot-head { font-weight: 600; margin: 0.6rem 0 0; }
+.spot-form .small { margin: 0 0 0.3rem; }
+.spot-form input[type=text] {
+  font: inherit;
+  padding: 0.3rem 0.45rem;
+  margin: 0.15rem 0.4rem 0.3rem 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--page);
+  color: var(--ink);
+}
+.spot-form .spot-at { width: 5.5rem; }
+.spot-form .spot-note-input { width: 100%; max-width: 28rem; display: block; }
+.spot-reasons { display: block; margin: 0.1rem 0 0.2rem; }
+.spot-reasons label.check { margin-right: 0.9rem; }
+.chart-again:empty { display: none; }
+.chart-again textarea { margin: 0.3rem 0; }
+#again-drop .actions { margin-top: 0.25rem; }
