@@ -4,6 +4,7 @@ was mixed from (cached by a hash of the mix), and engines that write what each e
 120 BPM map, a song.ini for drums, segments.json) at the song's own note times and record the arrays they get. The
 decode, the tags, the work folder, the assemble config, assemble and the gate run for real. No model runs here, and
 none is downloaded."""
+import gc
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import weakref
 from pathlib import Path
 
 import numpy as np
@@ -127,7 +129,7 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: BaseExc
              cuda_error: str | None = None, allin1_device: str | None = None, repeat: bool = False,
              auto: str = "cpu", moved: str | None = None, no_preview: str | None = None, segments=None,
              devices="summary", reason: str | None = None, separation_fallback: str | None = None,
-             sections_why: str = "backend librosa asked for"):
+             sections_why: str = "backend librosa asked for", sections_plain: str | None = None):
     """Engines that write what the real ones write, and record each call (with the arrays it got) in `calls`.
     `empty`: engines that find no notes; `bug`: a stage that raises `error` (by default a KeyError: a bug);
     `cuda_error`: device "auto" finds CUDA that does not run; `reason`: why "auto" took the CPU (by default "no
@@ -141,7 +143,9 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: BaseExc
     its scratch folder, as autochart keeps its engine cache there. The GPU memory calls (free_gpu, vram_reset,
     vram_peak_mb) go to `gpu_calls`, and torch's peak on CUDA is 100 MB more for each reset. The sections come
     from librosa as asked for (no fallback) unless `allin1_device` is given, or `sections_why` says why allin1 did
-    not run; the sections engine lets the song's arrays go, as allin1's run does."""
+    not run (`sections_plain`: the page's words for it); the sections engine lets the song's arrays go, as allin1's
+    run does, and records in `alive` how many of them anything still held (the pipeline must hold none). The engines
+    record copies of the arrays they get, so that their records hold none."""
     segments = SEGMENTS if segments is None else segments
     why = reason or (None if auto == "cuda" else
                      f"CUDA did not run on the GPU: {cuda_error}" if cuda_error else D.NO_GPU)
@@ -149,6 +153,7 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: BaseExc
     class StandIns(Engines):
         calls: list[tuple] = []
         gpu_calls: list[tuple] = []
+        alive: list[int] = []
 
         def missing(self, options):
             return []
@@ -193,7 +198,7 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: BaseExc
 
         def drums(self, mix, drums, out, device):
             self._bug("drums")
-            self.calls.append(("drums", mix, drums, out, device))
+            self.calls.append(("drums", mix.copy(), drums.copy(), out, device))
             cached = (out / "notes.chart").is_file()
             if not cached:
                 hits = [] if "drums" in empty else [DrumHit(tick(t), p, c) for t, p, c in drum_times()]
@@ -203,7 +208,7 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: BaseExc
 
         def bass(self, mix, bass, out):
             self._bug("bass")
-            self.calls.append(("bass", mix, bass, out))
+            self.calls.append(("bass", mix.copy(), bass.copy(), out))
             cached = (out / "notes.chart").is_file()
             if not cached:
                 notes = [] if "bass" in empty else [FretNote(tick(t), (lane,)) for t, lane in bass_times()]
@@ -213,9 +218,12 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: BaseExc
         def sections(self, song, out, device, threads):
             self._bug("sections")
             mix, stems = song.arrays()
-            self.calls.append(("sections", dict(stems), out, device, threads))
+            self.calls.append(("sections", {k: v.copy() for k, v in stems.items()}, out, device, threads))
+            refs = [weakref.ref(mix)] + [weakref.ref(y) for y in stems.values()]
             del mix, stems
-            song.release()   # as allin1's run does: the pipeline reads the arrays again after
+            if song.release():   # as allin1's run does: the pipeline reads the arrays again after
+                gc.collect()
+                self.alive.append(sum(r() is not None for r in refs))
             path = out / "segments.json"
             cached = path.is_file() and json.loads(path.read_text()) == {"segments": segments}
             if not cached:
@@ -225,6 +233,7 @@ def standins(empty: tuple[str, ...] = (), bug: str | None = None, error: BaseExc
                 return Run(path, cached, {"backend": "allin1", "segments": len(segments), "allin1": {
                     "model": "harmonix-fold0", "device": allin1_device, "fallback": None, "peak_rss_mb": 512.0}})
             return Run(path, cached, {"backend": "librosa", "why": sections_why,
+                                      **({"plain": sections_plain} if sections_plain else {}),
                                       "segments": len(segments)})
 
         def preview_missing(self):
@@ -2064,17 +2073,22 @@ def test_the_real_engines_are_called_with_the_pipelines_settings(tmp_path, monke
 def test_the_sections_falling_back_to_librosa_is_a_banner(charted, tmp_path):
     """When allin1 failed, was stopped or was left out, the sections' move to librosa is a fallback (from "allin1",
     to "librosa"): in pipeline.json's fallbacks and ChartResult.fallbacks, a `fallback` event (the page's banner)
-    whose reason is the cause's first line and what the simpler analysis costs, and the warning as before. librosa
-    asked for is warned about only."""
+    whose reason is the engine's plain words (else FAILED_PLAIN) and what the simpler analysis costs, with no path,
+    command or exception text, which stay in the warning; librosa asked for is warned about only."""
+    import songcharter.engines.sections as SE
     root, result, _, _ = charted
     stopped = "allin1 was stopped, most likely for memory (a song of 9:09 needs about 9.7 GiB for it on the CPU)"
-    for name, why, cause in (("stopped", stopped, stopped),
-                             ("failed", "allin1 failed (exit 1):\nRuntimeError: shapes", "allin1 failed (exit 1)"),
-                             ("asked", "backend librosa asked for", None)):
+    failed = "allin1 failed (exit 1):\nTraceback ...\nRuntimeError: shapes in /opt/made-up/allin1_runner.py"
+    for name, why, plain, cause in (("stopped", stopped, stopped, stopped),
+                                    ("timeout", "allin1 did not finish (TimeoutExpired: Command '['/x/python']')",
+                                     SE.TIMEOUT_PLAIN, SE.TIMEOUT_PLAIN),
+                                    ("failed", failed, None, SE.FAILED_PLAIN),
+                                    ("asked", "backend librosa asked for", None, None)):
         events = []
         done = chart(root / "song.flac", tmp_path / "out" / name, Options(work=warm_work(result, tmp_path, name),
                                                                   metadata={"genre": "Test"}),
-                     engines=standins(sections_why=why)(), log=lambda line: None, sampler=None, events=events.append)
+                     engines=standins(sections_why=why, sections_plain=plain)(), log=lambda line: None, sampler=None,
+                     events=events.append)
         moved = [f for f in done.fallbacks if f["stage"] == "sections"]
         warned = [e["text"] for e in events if e["event"] == "warning"]
         assert f"sections: the librosa fallback ({why})" in warned
@@ -2083,6 +2097,7 @@ def test_the_sections_falling_back_to_librosa_is_a_banner(charted, tmp_path):
             continue
         record = {"stage": "sections", "from": "allin1", "to": "librosa", "reason": f"{cause}. {P.SIMPLER}"}
         assert moved == [record] and {"event": "fallback", **record} in events
+        assert not re.search(r"/|\\|Error|Traceback|exit|Expired|SONGCHARTER|python|\.py", record["reason"])
         report = json.loads((done.work / "pipeline.json").read_text(encoding="utf-8"))
         assert record in report["fallbacks"]
 
@@ -2096,8 +2111,10 @@ def test_the_arrays_the_sections_let_go_are_read_again_the_same(charted, tmp_pat
     monkeypatch.setattr(P, "_reload", lambda *a: reads.append(a) or real(*a))
     monkeypatch.setattr(P, "_lyrics_stage", lambda options, engines, stems, *rest: seen.update(stems))
     work = warm_work(result, tmp_path)
+    engines = standins()()
     done = chart(root / "song.flac", tmp_path / "out", Options(work=work, metadata={"genre": "Test"}),
-                 engines=standins()(), log=lambda line: None, sampler=None)
+                 engines=engines, log=lambda line: None, sampler=None)
+    assert engines.alive == [0]   # while the sections engine had let them go, nothing held them
     own = stems(int(DURATION * SR))
     assert done.ok and len(reads) == 1 and reads[0][0] == work / "decode.wav"
     assert sorted(seen) == sorted(own)

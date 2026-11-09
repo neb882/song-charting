@@ -55,7 +55,8 @@
     torch here runs on CUDA, a guitar take whose transcriber autochart ran on the CPU, and a guitar take run again
     on the CPU after its CUDA run failed. So is the sections' move from allin1 to librosa (from "allin1", to
     "librosa"; M8-05) when allin1 failed, was stopped (most likely for memory) or was left out for memory: its
-    reason, the page's banner, says what that costs (SIMPLER).
+    reason, the page's banner, says in plain words (the engine's `plain`: no path, command or exception text, which
+    stay in the warning, pipeline.json's stage and engine.json) why, and what that costs (SIMPLER).
   * **The sections stage holds no audio while allin1 runs** (M8-05, DESIGN.md 2.5): the mix and stems go to the
     engine in a SongArrays alone, which lets them go once allin1's input is made and reads them again from
     decode.wav and the stem WAVs after (`_reload`, the separation cache's own read: the same float32 samples).
@@ -1095,7 +1096,7 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
     # the song's arrays go to the sections engine alone, which lets them go while allin1's child runs and reads them
     # again from decode.wav and the stem WAVs after, the same float32 samples (DESIGN.md 2.5: 0.16 GiB a minute of
     # audio less in the tree, M8-03 A-b); a file missing (not written): they are kept
-    from .engines.sections import SongArrays
+    from .engines.sections import FAILED_PLAIN, SongArrays
     names = tuple(stems)
     files = [wav] + [folder / f"{s}.wav" for s in names]
     song = SongArrays(mix, stems, functools.partial(_reload, wav, folder, names) if all(f.is_file() for f in files)
@@ -1120,9 +1121,8 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
                      "CUDA)")
     elif run.info.get("why") == "backend librosa asked for":
         warn(f"sections: the librosa fallback ({run.info['why']})")
-    elif run.info.get("why"):   # allin1 failed, was stopped or was left out: a banner on the page
-        cause = run.info["why"].splitlines()[0].rstrip(":.")
-        fallback("sections", "allin1", "librosa", f"{cause}. {SIMPLER}",
+    elif run.info.get("why"):   # allin1 failed, was stopped or was left out: a banner on the page, in plain words
+        fallback("sections", "allin1", "librosa", f"{run.info.get('plain') or FAILED_PLAIN}. {SIMPLER}",
                  warning=f"sections: the librosa fallback ({run.info['why']})")
     n_seg = run.info.get("segments")
     end("sections", t0, run.cached, f"{how}, {n_seg} segments", {"backend": backend, "segments": n_seg,

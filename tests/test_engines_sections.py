@@ -67,6 +67,8 @@ class FakeAllin1:
         self.inputs.append(np.frombuffer(input, dtype="<i2").reshape(4, job["samples"]))
         if self.during is not None:
             self.during()
+        if self.fail == "timeout":
+            raise subprocess.TimeoutExpired(cmd, timeout)
         if self.fail == "kill" and job["device"] == self.fail_on:
             return subprocess.CompletedProcess(cmd, -9, b"", b"")
         if self.fail == "run":
@@ -756,3 +758,33 @@ def test_the_arrays_are_let_go_while_allin1_runs_and_read_again_when_needed(tmp_
     assert S.cache_key({"stems": view}, {"k": 1}) == S.cache_key({"stems": p}, {"k": 1})
     with pytest.raises(ValueError, match="stems come from the SongArrays"):
         find_sections(held, keep[1], tmp_path / "x", Settings(python="py"), run=FakeAllin1(), download=weights)
+
+
+PAGE_INTERNALS = re.compile(r"/|\\|Error|Traceback|exit|Expired|SONGCHARTER|python|\.py|job\.json")
+
+
+@pytest.mark.parametrize("case", ["timeout", "left out", "not installed", "probe", "run", "kill", "skip", "cuda then cpu"])
+def test_the_pages_words_for_each_cause_hold_no_path_command_or_exception(case, tmp_path, weights, fallback,
+                                                                           monkeypatch):
+    """The librosa result's info["plain"], the banner's words, per cause; engine.json's `why` keeps the details."""
+    from songcharter import wsl
+    mix, stems = song(2.0)
+    monkeypatch.delenv(S.ENV_PYTHON, raising=False)
+    monkeypatch.setattr(S, "ALLIN1_MODULES", ("no_such_allin1_module",))
+    monkeypatch.setattr(wsl, "is_wsl", lambda: case == "left out")
+    meminfo(tmp_path, monkeypatch, 100.0 if case == "skip" else 9 * 1024)   # 9 GiB: under the install's 11 GB
+    python, settings = (None, Settings()) if case in ("left out", "not installed") else ("py", Settings(python="py"))
+    run = {"timeout": FakeAllin1(fail="timeout"), "probe": FakeAllin1(fail="probe"), "run": FakeAllin1(fail="run"),
+           "kill": FakeAllin1(fail="kill"), "cuda then cpu": FakeAllin1(cuda=True, fail="kill", fail_on="cuda")
+           }.get(case, FakeAllin1())
+    if case == "cuda then cpu":
+        meminfo(tmp_path, monkeypatch, 100.0)   # killed on CUDA, then left out on the CPU
+    r = find_sections(mix, stems, tmp_path / "out", settings, run=run, download=weights)
+    want = {"timeout": S.TIMEOUT_PLAIN, "left out": S.LEFT_OUT_PLAIN, "not installed": S.NOT_INSTALLED_PLAIN,
+            "probe": S.FAILED_PLAIN, "run": S.FAILED_PLAIN, "kill": S.stopped_line(2.0)}
+    plain = r.info["plain"]
+    assert r.backend == "librosa" and plain == want.get(case, plain)
+    if case in ("skip", "cuda then cpu"):
+        assert plain == S.memory_skip(2.0, False, 100.0) and plain.startswith("allin1 was left out for memory")
+    assert not PAGE_INTERNALS.search(plain), plain
+    assert fallback[-1][0] != plain or case in ("kill", "skip")   # the details stay in `why`

@@ -125,6 +125,11 @@ PARENT_MIB = (499.0, 2.96)
 FREED_MIB_PER_S = 162 / 60
 MARGIN_MIB = 202 + 1024
 MEMINFO = Path("/proc/meminfo")
+# what the page's banner says when the sections fall back (Allin1Error.plain; the result's info["plain"])
+FAILED_PLAIN = "allin1 failed (the diagnostics zip has the details)"
+TIMEOUT_PLAIN = "allin1 did not finish in time"
+NOT_INSTALLED_PLAIN = "allin1 is not installed"
+LEFT_OUT_PLAIN = "allin1 is left out on this PC to save memory"   # doctor's and the install's memory rule
 KILLED = -9                 # subprocess's returncode for a child ended by SIGKILL (on Linux, the kernel's OOM killer)
 
 # the fallback
@@ -148,14 +153,19 @@ def _fallback_constants() -> tuple:
 
 
 class Allin1Error(ToolError):
-    """allin1 is not available here, or its run failed (a RuntimeError, as errors.ToolError is)."""
+    """allin1 is not available here, or its run failed (a RuntimeError, as errors.ToolError is). `plain`: what the
+    page's banner says of it (no path, command or exception text: those stay in the message), else FAILED_PLAIN."""
+
+    def __init__(self, message: str, plain: str | None = None):
+        super().__init__(message)
+        self.plain = plain
 
 
 class _RunFailed(Allin1Error):
     """The runner exited with an error; `line` is the error's own line from its traceback."""
 
-    def __init__(self, message: str, line: str):
-        super().__init__(message)
+    def __init__(self, message: str, line: str, plain: str | None = None):
+        super().__init__(message, plain)
         self.line = line
 
 
@@ -267,6 +277,16 @@ def memory_skip(seconds: float, freed: bool, capacity: float | None) -> str | No
     return (f"allin1 was left out for memory (a song of {_mmss(seconds)} needs about {child_mib(seconds) / 1024:.1f} "
             f"GiB for it on the CPU, {(tree_mib(seconds, freed) + MARGIN_MIB) / 1024:.1f} GiB with the rest of the "
             f"chart and a margin; this PC has {capacity / 1024:.1f} GiB of memory)")
+
+
+def no_python_plain() -> str:
+    """The banner's words for no allin1 Python: left out for memory where the install leaves it out (WSL with under
+    device.ALLIN1_MEMORY of MemTotal), else not installed."""
+    from .. import device, wsl   # here: device imports this module
+    total = capacity_mib()
+    if wsl.is_wsl() and total is not None and total * 2 ** 20 < device.ALLIN1_MEMORY:
+        return LEFT_OUT_PLAIN
+    return NOT_INSTALLED_PLAIN
 
 
 def stopped_line(seconds: float) -> str:
@@ -471,9 +491,18 @@ def find_sections(mix: np.ndarray, stems: Mapping[str, np.ndarray] | None, out: 
                 raise ToolError(f"allin1 failed ({e}) and the librosa fallback is not installed: pip install "
                                 "songcharter[sections]") from e
             why.append(str(e))
+            plain = e.plain or FAILED_PLAIN
     elif settings.backend == "librosa":
         why.append("backend librosa asked for")
-    return _librosa(*song.arrays(), out, settings, beats, why)
+    result = _librosa(*song.arrays(), out, settings, beats, why)
+    want = plain if settings.backend != "librosa" else None   # the page's words, beside `why`'s details
+    if result.info.get("plain") != want:   # this call's, also on a hit made by another call
+        result.info.pop("plain", None)
+        if want is not None:
+            result.info["plain"] = want
+        if (out / ENGINE).is_file():
+            _write_json(out / ENGINE, result.info)
+    return result
 
 
 # ------------------------------------------------------------------------------------------------------------ allin1
@@ -481,7 +510,8 @@ def find_sections(mix: np.ndarray, stems: Mapping[str, np.ndarray] | None, out: 
 def _allin1(song: SongArrays, out: Path, s: Settings, run, download) -> SectionsResult:
     python = allin1_python(s)
     if python is None:
-        raise Allin1Error(f"no allin1 Python: set {ENV_PYTHON} to a Python with all-in-one-infer (or allin1)")
+        raise Allin1Error(f"no allin1 Python: set {ENV_PYTHON} to a Python with all-in-one-infer (or allin1)",
+                          no_python_plain())
     data = allin1_input(song.arrays()[1]).astype("<i2")
     shape, data = data.shape, data.tobytes()   # what the runner reads on stdin
     payload = np.frombuffer(data, dtype="<i2").reshape(shape)   # the same samples for the key, without a copy
@@ -505,7 +535,7 @@ def _allin1(song: SongArrays, out: Path, s: Settings, run, download) -> Sections
             return _allin1_job(song, payload, data, out, s, python, found, "cpu", f"{why}; {fallback}", fallback,
                                run, download)
         except Allin1Error as again:
-            raise Allin1Error(f"{failed}, and then on the CPU: {again}") from again
+            raise Allin1Error(f"{failed}, and then on the CPU: {again}", again.plain) from again
 
 
 def _allin1_job(song: SongArrays, payload: np.ndarray, data: bytes, out: Path, s: Settings, python: str, found: dict,
@@ -524,7 +554,7 @@ def _allin1_job(song: SongArrays, payload: np.ndarray, data: bytes, out: Path, s
     seconds = song.samples / SAMPLE_RATE
     skip = memory_skip(seconds, song.can_release, capacity_mib()) if device == "cpu" else None
     if skip:
-        raise Allin1Error(skip)
+        raise Allin1Error(skip, skip)
     try:
         checkpoints = checkpoint_paths(model, download)
     except (ImportError, OSError, RuntimeError, ValueError) as e:  # no hub client, no download, not the pinned file
@@ -541,9 +571,10 @@ def _allin1_job(song: SongArrays, payload: np.ndarray, data: bytes, out: Path, s
             proc = run(runner_command(python, "run", str(work / "job.json")), capture_output=True,
                        input=data, timeout=s.timeout_s, cwd=tmp)
         except (OSError, subprocess.SubprocessError) as e:
-            raise Allin1Error(f"allin1 did not finish ({type(e).__name__}: {e})") from e
+            raise Allin1Error(f"allin1 did not finish ({type(e).__name__}: {e})",
+                              TIMEOUT_PLAIN if isinstance(e, subprocess.TimeoutExpired) else None) from e
         if proc.returncode == KILLED:
-            raise _RunFailed(stopped_line(seconds), stopped_line(seconds))
+            raise _RunFailed(stopped_line(seconds), stopped_line(seconds), stopped_line(seconds))
         if proc.returncode != 0 or not (work / "result.json").is_file():
             raise _RunFailed(f"allin1 failed (exit {proc.returncode}):\n{_tail(proc)}", _error_line(proc))
         res = json.loads((work / "result.json").read_text(encoding="utf-8"))
