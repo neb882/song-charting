@@ -492,7 +492,7 @@ def test_chart_it_differently_queues_the_next_seed_with_the_charts_options(lib):
     assert entry["options"] == {"title": "First Song", "artist": "Made-Up Band", "album": "First Song - (Single)",
                                 "genre": "Unknown", "year": "1999", "instruments": ["guitar", "bass", "drums"],
                                 "levels": ["expert", "hard"], "solos": ["Solo 1"], "one_audio": False,
-                                "device": "auto", "takes": 4, "seed": 2}
+                                "device": "auto", "takes": 4, "seed": 2, "name": FIRST}
     assert entry["upload"]["id"] == A
     wait_idle(lib.app)
     cmd = lib.commands[-1]
@@ -827,3 +827,320 @@ def test_the_page_rates_marks_and_charts_it_differently(tmp_path):
     assert out["queueRow"] == "First Song.wav (version 3)"
     html = S.static_files()["index.html"].decode()
     assert 'id="again-drop"' in html and 'id="played"' in html and 'id="done-version"' in html
+
+
+# ------------------------------------------------------------------------------------------------ the review's fixes
+
+# a stand-in chart that names the song as the pipeline does: song_metadata over the uploaded file's own path (its
+# 40-character safe stem) and tags, with the command line's --title and --artist over them
+NAMED = r'''
+import json, os, sys
+from pathlib import Path
+from songcharter import pipeline as P
+out, song = sys.argv[1], sys.argv[2]
+args = dict(a[2:].split("=", 1) for a in sys.argv[3:] if a.startswith("--") and "=" in a)
+seed = int(args.get("seed", "0"))
+meta, _ = P.song_metadata(Path(song), P.read_tags(Path(song)), {"name": args.get("title"),
+                                                                "artist": args.get("artist")})
+def ev(**e):
+    sys.stderr.write("@@songcharter " + json.dumps(e) + "\n"); sys.stderr.flush()
+ev(event="plan", stages=["guitar"])
+os.makedirs(out, exist_ok=True)
+open(os.path.join(out, "notes.chart"), "w").write("[Song]\n{\n}\n// %d\n" % seed)
+open(os.path.join(out, "song.ini"), "w").write(
+    "[song]\nname = %s\nartist = %s\ncharter = songcharter\n" % (meta["name"], meta["artist"]))
+json.dump({"gate": {"ok": True}, "config": {"parts": [{"instrument": "guitar"}], "levels": ["expert"],
+           "solos": "labels", "split_audio": True, "metadata": meta}, "audio": {"duration": 30.0},
+           "lead_in": {"pad_seconds": 2.5}, "pipeline": {"seed": seed}}, open(os.path.join(out, "report.json"), "w"))
+ev(event="result", ok=True, exit=0, folder=out, work="/w", preview=None, summary="gate: OK")
+'''
+
+
+@pytest.fixture
+def named(tmp_path, monkeypatch):
+    """A server whose charts are named as the pipeline names them (NAMED), with a Songs folder."""
+    monkeypatch.setattr(wsl, "is_wsl", lambda: False)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "doctor.json").write_text(json.dumps(DOCTOR), encoding="utf-8")
+    script = tmp_path / "named.py"
+    script.write_text(NAMED, encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+
+    def command(song, out, options, threads):
+        return [sys.executable, str(script), str(out), str(song), *J.chart_command(Path(song), out, options,
+                                                                                   threads)[5:]]
+
+    app = S.App(home, jobs=J.Jobs(home, command=command, env={**os.environ, "PYTHONPATH": str(root)}),
+                log=S.Log(None, console=lambda t: None), report=lambda: DOCTOR, cache_root=tmp_path / "cache")
+    servers = S.bind(app, [0])
+    songs = tmp_path / "Songs"
+    songs.mkdir()
+    ctx = SimpleNamespace(app=app, port=servers[0].server_address[1], home=home, songs=songs, tmp=tmp_path)
+    assert post(ctx, "/api/clonehero", {"folder": str(songs)})[0] == 200
+    yield ctx
+    app.queue.shutdown()
+    for s in servers:
+        s.shutdown()
+        s.server_close()
+
+
+def wav_bytes(tmp_path, tags=None) -> bytes:
+    """A second of made-up sound as WAV, with these tags (ffmpeg's -metadata) when given."""
+    import numpy as np
+    from songcharter import audio as AU
+    raw = tmp_path / "raw.wav"
+    t = np.arange(AU.SAMPLE_RATE) / AU.SAMPLE_RATE
+    y = (0.1 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    AU.write_wav(np.stack([y, y]), raw)
+    if not tags:
+        return raw.read_bytes()
+    out = tmp_path / "tagged.wav"
+    meta = [x for k, v in tags.items() for x in ("-metadata", f"{k}={v}")]
+    subprocess.run([AU.ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-y", "-i", str(raw), *meta, "-c", "copy",
+                    str(out)], check=True)
+    return out.read_bytes()
+
+
+def upload_song(ctx, data: bytes, name: str) -> dict:
+    status, _, body = call(ctx.port, "POST", "/api/upload", data,
+                           {**guarded(ctx.port), "X-Filename": urllib.parse.quote(name)})
+    assert status == 200, body
+    return json.loads(body)
+
+
+@pytest.mark.parametrize("name, options, tags", [
+    ("Made Up Band - A Long Made Up Song Title Here.wav", {}, None),   # a several-song drop: no song fields
+    ("Made Up Band - A Long Made Up Song Title Here.wav", {"title": "A Long Made Up Song Title Here",
+                                                           "artist": "Made Up Band"}, None),
+    ("track 07.wav", {}, {"title": "A Made Up Tagged Song", "artist": "Tagged Made Up Band"}),
+])
+def test_every_version_keeps_the_first_charts_folder_name(named, name, options, tags):
+    """The review's F1: an untagged song with a long name, charted from a several-song drop (no title, no artist:
+    version 1's folder is named from upload.json, its song.ini from the uploaded file's 40-character stem), as one
+    drop with the page's fields, and a tagged file: version 2 (and version 3, through "drop the file again") lands in a
+    folder of version 1's own name, with the same song.ini name and artist; installed after version 1, it asks to
+    replace it in the one Clone Hero folder; the queue entry keeps the name (queue.json, so a restart too) (break: the
+    version's name made again from the metadata)."""
+    data = wav_bytes(named.tmp, tags)   # once: a float WAV's PEAK chunk holds the second it was written
+    up = upload_song(named, data, name)
+    assert post(named, "/api/jobs", {"upload": up["id"], "options": options})[0] == 202
+    wait_idle(named.app)
+    (v1,) = J.chart_folders(named.home)
+    status, answer = post(named, by_id(J.chart_id(v1), "/again"), {})
+    assert status == 202 and answer["version"] == 2, answer
+    entry = named.app.queue.snapshot_entries()[-1]
+    assert entry["options"]["name"] == v1.name
+    assert json.loads((named.home / "state" / "queue.json").read_text())["entries"][-1]["options"]["name"] == v1.name
+    wait_idle(named.app)
+    v2 = v1.parent / "v2" / v1.name
+    assert v2.is_dir(), [str(p.relative_to(named.home)) for p in J.chart_folders(named.home)]
+    ini = [{k: v for k, v in (line.split(" = ", 1) for line in (f / "song.ini").read_text().splitlines()[1:])}
+           for f in (v1, v2)]
+    assert ini[0] == ini[1]   # the same song.ini name and artist: Clone Hero lists one song
+    assert post(named, by_id(J.chart_id(v1), "/install"), {"replace": False})[0] == 200
+    status, answer = post(named, by_id(J.chart_id(v2), "/install"), {"replace": False})
+    assert status == 409 and (answer["version"], answer["installed_version"]) == (2, 1)
+    assert answer["folder"] == str(named.songs / v1.name)
+    shutil.rmtree(named.home / "uploads" / up["id"])   # the song file gone: dropped again, the name kept
+    assert post(named, by_id(J.chart_id(v2), "/again"), {})[1]["drop"] is True
+    assert upload_song(named, data, name)["id"] == up["id"]
+    status, answer = post(named, by_id(J.chart_id(v2), "/again"), {"upload": up["id"]})
+    assert status == 202 and answer["version"] == 3, answer
+    wait_idle(named.app)
+    assert (v1.parent / "v3" / v1.name).is_dir()
+
+
+def test_the_name_option_is_one_path_component():
+    """`name` (a version's folder name) is one path component and no version or failed folder's name; refused
+    otherwise, never joined as a path (break: a separator or a climb let through)."""
+    up = {"id": A, "path": "/x/s.wav", "metadata": {}}
+    home = Path("/h")
+    assert J.output_folder(home, up, J.parse_options({"seed": 1, "name": "Made Up - Name"})) == \
+        home / "library" / A / "v2" / "Made Up - Name"
+    assert J.parse_options({"name": "Ünïcode Made-Up - Song [Live]"}).name == "Ünïcode Made-Up - Song [Live]"
+    for bad in ("../x", "a/b", "a\\b", "..", ".", ".hidden", "", " x", "x ", "a:b", "v2", "Song.failed", "a\x00b",
+                "a\nb", "x" * 256, 7, ["x"]):
+        with pytest.raises(J.InputError, match="name is a song folder's name"):
+            J.parse_options({"name": bad})
+
+
+def test_a_refused_press_uses_no_version_number(lib):
+    """The review's F3: "Chart it differently" refused after its seed was worked out (here lyrics with no word to
+    time, twice) writes no versions.json; the next accepted press is the next number in line, version 3 (break: the
+    seed recorded before the queue took the song: version 5)."""
+    for _ in range(2):
+        status, answer = post(lib, by_id(V2, "/again"), {"lyrics": "!!!"})
+        assert status == 400 and "no word" in answer["error"], answer
+    assert not (lib.home / "state" / "versions.json").exists()
+    assert post(lib, by_id(V2, "/again"), {})[1]["version"] == 3
+    assert json.loads((lib.home / "state" / "versions.json").read_text()) == {A: 2}
+    wait_idle(lib.app)
+
+
+@pytest.mark.parametrize("raw", [b'{"add": {"at": 1e400, "reasons": ["great"]}}',
+                                 b'{"add": {"at": Infinity, "reasons": ["great"]}}',
+                                 b'{"add": {"at": NaN, "reasons": ["great"]}}',
+                                 b'{"add": {"at": 99999999, "reasons": ["great"]}}'])
+def test_a_time_that_is_no_finite_number_is_a_plain_400(lib, raw):
+    """The review's F5 (a): an infinite, NaN or huge time is the plain 400 of any bad time, not a 500 (break: int()
+    of an infinity)."""
+    status, _, body = call(lib.port, "POST", by_id(V1, "/feedback"), raw, guarded(lib.port))
+    assert status == 400 and json.loads(body)["error"] == "the time is minutes and seconds, such as 2:28", body
+
+
+def test_a_damaged_spot_is_left_out_and_the_rest_still_works(lib, tmp_path):
+    """The review's F5 (b): a saved record whose spots hold a non-object, an `at` that is no number or no id: the
+    readable spot is shown, the others left out; add, remove, the library and the zip still work (break: every add
+    and remove a 500)."""
+    good = {"id": "0a0b0c0d", "at": 75, "reasons": ["great"], "note": "made up"}
+    path = FB.path_for(lib.home, V1)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"chart": V1, "rating": 3, "spots": [5, "x", None, {"id": "a1", "at": "1:00",
+                    "reasons": ["great"]}, {"at": 9, "reasons": ["great"]}, {"id": "b2", "at": 3, "reasons": "great"},
+                    good]}), encoding="utf-8")
+    status, fb = get(lib, by_id(V1, "/feedback"))
+    assert status == 200 and [s["id"] for s in fb["spots"]] == ["0a0b0c0d"] and fb["rating"] == 3
+    charts = {c["id"]: c for c in get(lib, "/api/library")[1]["charts"]}
+    assert charts[V1]["spots"] == 1
+    status, fb = post(lib, by_id(V1, "/feedback"), {"add": {"at": "0:10", "reasons": ["off_beat"]}})
+    assert status == 200 and [s["time"] for s in fb["spots"]] == ["0:10", "1:15"]
+    status, fb = post(lib, by_id(V1, "/feedback"), {"remove": "0a0b0c0d"})
+    assert status == 200 and [s["time"] for s in fb["spots"]] == ["0:10"]
+    path.write_text(json.dumps({"chart": V1, "rating": 4, "spots": [7, good]}), encoding="utf-8")
+    z = zipfile.ZipFile(diagnostics.bundle(lib.home, tmp_path / "d.zip", cache_root=lib.root, report=lambda: {},
+                                           clonehero_info=lambda home: {}))
+    assert json.loads(z.read("feedback.json"))["charts"][0]["spots"] == [good]
+
+
+def test_the_rechart_estimate_counts_the_guitar_when_the_rest_is_cached(lib):
+    """Item 7: with the song's work folder in the cache, a re-chart's estimate is its guitar's takes and the build,
+    under a whole chart's; without one, a whole chart's (break: `cached` not passed on)."""
+    from songcharter import cache
+    from songcharter.ui import estimate as E
+    opts = J.parse_options({"takes": 4})
+    whole, cached = E.for_job(245.0, opts, "cpu", "cpu"), E.for_job(245.0, opts, "cpu", "cpu", cached=True)
+    assert cached["high_s"] < whole["high_s"] and cached["low_s"] < whole["low_s"]
+    guitar = [E.GUITAR_ONCE["cpu"][i] * 245 + 4 * (E.TAKE_FIXED[i] + E.GUITAR_TAKE["cpu"][i] * 245 ** 2)
+              for i in (0, 1)]
+    parts = [E.CACHED, E.ASSEMBLE, E.PREVIEW]
+    for i, key in ((0, "low_s"), (1, "high_s")):
+        assert cached[key] == round(guitar[i] + sum(f[i] + r[i] * 245 for f, r in parts), 1)
+    assert post(lib, by_id(V2, "/again"), {})[0] == 202
+    first = lib.app.queue.snapshot_entries()[-1]["estimate"]
+    wait_idle(lib.app)
+    work = lib.root / "work" / f"song-{A}"
+    work.mkdir(parents=True)
+    cache.mark(work, Path("song.wav"), A, None)
+    assert post(lib, by_id(V2, "/again"), {})[0] == 202
+    second = lib.app.queue.snapshot_entries()[-1]["estimate"]
+    wait_idle(lib.app)
+    assert second["high_s"] < first["high_s"] and first == E.for_job(245.0, J.parse_options({"takes": 4}), "cpu",
+                                                                      "cpu")
+
+
+PAGE2 = PAGE.split("(async () => {")[0] + r"""
+(async () => {
+  const out = {};
+  const base = { artist: "Made-Up Band", readable: true, ok: true, audio: "split", stems: false, look: false,
+    upload: "aaaaaaaaaaaaaaaa", guitar: true, lyrics: false, rating: null, spots: 0, name: "First Song" };
+  const v2 = { ...base, id: V2, folder: "Made-Up Band - First Song", time: 1762682400, version: 2, seed: 1 };
+  const v1 = { ...base, id: V1, folder: "Made-Up Band - First Song", time: 1762596000, version: 1, seed: 0, lyrics: true };
+  ctx.setCharts([JSON.parse(JSON.stringify(v2)), JSON.parse(JSON.stringify(v1))]);
+  const rowOf = (id) => els["charts-list"].children.find((li) => vm.runInContext("state.chartRows", ctx).get(id).li === li);
+  const inputs = (box) => { const f = find(box, (x) => x.className === "spot-form");
+    return { at: find(f, (x) => x.className === "spot-at").value, note: find(f, (x) => x.className === "spot-note-input").value,
+      ticks: all(f).filter((x) => x.type === "checkbox" && x.checked).map((x) => x.value) }; };
+  const type = (box, at, ticks, note) => { const f = find(box, (x) => x.className === "spot-form");
+    find(f, (x) => x.className === "spot-at").value = at;
+    find(f, (x) => x.className === "spot-note-input").value = note;
+    all(f).filter((x) => x.type === "checkbox").forEach((x) => { x.checked = ticks.includes(x.value); }); };
+  // (a) a half-typed spot survives a rating saved, a rating refused; a spot saved clears the form
+  const row2 = rowOf(V2), box2 = find(row2, (x) => x.className === "fold feedback");
+  answers[`GET /api/jobs/${enc(V2)}/feedback`] = [[200, { ...FB }]];
+  box2.open = true;
+  box2.on.toggle();
+  await settle();
+  type(box2, "1:05", ["missing_notes"], "half typed, made up");
+  answers[`POST /api/jobs/${enc(V2)}/feedback`] = [[200, { ...FB, rating: 3 }]];
+  button(box2.children[1], "3").on.click();
+  await settle();
+  out.afterRating = inputs(box2);
+  answers[`POST /api/jobs/${enc(V2)}/feedback`] = [[400, { error: "the rating is 1 to 5" }]];
+  button(box2.children[1], "4").on.click();
+  await settle();
+  out.afterRefusal = inputs(box2);
+  // (b) another song ends (a new chart in the list) and the other version's rating changes: this row is the same
+  // element, its box open with what was typed; the changed row keeps its open box, its typed spot and its lyrics panel
+  const row1 = rowOf(V1), box1 = find(row1, (x) => x.className === "fold feedback");
+  answers[`GET /api/jobs/${enc(V1)}/feedback`] = [[200, { ...FB }]];
+  box1.open = true;
+  box1.on.toggle();
+  await settle();
+  type(box1, "2:10", ["great"], "the other box");
+  const msg2 = find(row2, (x) => x.className === "queue-msg small");
+  msg2.textContent = "Installed. In Clone Hero, open Settings > General and press Scan Songs.";
+  msg2.hidden = false;
+  await button(row1, "Chart it differently").on.click();   // a chart with lyrics: its panel opens, made-up words typed
+  find(find(row1, (x) => x.className === "chart-again"), (x) => x.tag === "textarea").value = "zib zab\nzob\n";
+  const third = { ...base, id: "cccccccccccccccc:Other - Third", upload: "cccccccccccccccc", name: "Third",
+    time: 1762700000, version: 1, seed: 0 };
+  ctx.setCharts([third, { ...JSON.parse(JSON.stringify(v2)), rating: 3 }, { ...JSON.parse(JSON.stringify(v1)), rating: 5, spots: 2 }]);
+  const lis = els["charts-list"].children;
+  const new1 = rowOf(V1), newBox1 = find(new1, (x) => x.className === "fold feedback");
+  out.afterFinish = { rows: lis.length, same2: rowOf(V2) === row2, open2: box2.open, typed2: inputs(box2),
+    msg2: [msg2.textContent, msg2.hidden], newRow1: new1 !== row1, sameBox1: newBox1 === box1, open1: box1.open,
+    typed1: inputs(box1), lyrics: find(find(new1, (x) => x.className === "chart-again"), (x) => x.tag === "textarea").value,
+    line1: box1.children[0].textContent };
+  // a spot saved clears its form
+  answers[`POST /api/jobs/${enc(V2)}/feedback`] = [[200, { ...FB, rating: 3, spots: [{ id: "s1", at: 65, time: "1:05",
+    reasons: ["missing_notes"], note: "half typed, made up" }] }]];
+  button(find(box2, (x) => x.className === "spot-form"), "Mark it").on.click();
+  await settle();
+  out.afterSaved = inputs(box2);
+  // the review's F4: a refusal keeps the pasted lyrics and says why; once taken, the panel goes
+  const panel = find(new1, (x) => x.className === "chart-again");
+  answers[`POST /api/jobs/${enc(V1)}/again`] = [[400, { error: "Lyrics only for a song that starts at once: made-up words." }]];
+  button(panel, "Chart it").on.click();
+  await settle();
+  out.refusedLyrics = { text: (find(panel, (x) => x.tag === "textarea") || {}).value || null,
+    msg: find(new1, (x) => x.className === "queue-msg small").textContent };
+  answers[`POST /api/jobs/${enc(V1)}/again`] = [[202, { job: null, entry: "e3", state: "waiting", version: 3, seed: 2 }]];
+  button(panel, "Chart it").on.click();
+  await settle();
+  out.taken = { panel: panel.children.length, msg: find(new1, (x) => x.className === "queue-msg small").textContent };
+  out.againBodies = asked.filter((a) => a[1].endsWith("/again")).map((a) => a[2]);
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_nothing_typed_is_lost(tmp_path):
+    """The review's F2 and F4 (app.js in node, the page test's stand-in DOM): a half-typed spot (time, ticks, note)
+    stays when a rating is saved or refused, and only a saved spot clears it; another song finishing and another
+    chart's change leave a row the same element, its box open with what was typed and its message; a row whose own
+    chart changed keeps its open box, typed spot and lyrics panel; a refused "Chart it differently" keeps the pasted
+    lyrics and says why, an accepted one empties the panel (breaks: renderFeedback rebuilding an empty form;
+    setCharts making every row again; the panel emptied before the answer)."""
+    script = tmp_path / "typed.cjs"
+    script.write_text(PAGE2, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(S.static_files()["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60,
+                          env={**os.environ, "TZ": "UTC", "LANG": "en_US.UTF-8"})
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    typed = {"at": "1:05", "note": "half typed, made up", "ticks": ["missing_notes"]}
+    assert out["afterRating"] == typed and out["afterRefusal"] == typed
+    finish = out["afterFinish"]
+    assert finish["rows"] == 3 and finish["same2"] is True and finish["open2"] is True and finish["typed2"] == typed
+    assert finish["msg2"] == ["Installed. In Clone Hero, open Settings > General and press Scan Songs.", False]
+    assert finish["newRow1"] is True and finish["sameBox1"] is True and finish["open1"] is True
+    assert finish["typed1"] == {"at": "2:10", "note": "the other box", "ticks": ["great"]}
+    assert finish["lyrics"] == "zib zab\nzob\n"
+    assert out["afterSaved"] == {"at": "", "note": "", "ticks": []}
+    assert out["refusedLyrics"] == {"text": "zib zab\nzob\n",
+                                    "msg": "Lyrics only for a song that starts at once: made-up words."}
+    assert out["taken"] == {"panel": 0, "msg": "Version 3 waits in the list: it is charted in its turn."}
+    assert out["againBodies"] == [{"lyrics": "zib zab\nzob\n"}, {"lyrics": "zib zab\nzob\n"}]
