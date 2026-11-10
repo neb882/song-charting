@@ -75,6 +75,7 @@ ones then, but the CI runs they link still name the old ones.
 | `M8-13-your-charts.md` | "Your charts": every chart in the library with Install, Open, Download the stems and Look while its work folder is cached; nothing deleted from the page |
 | `M8-14-feedback.md` | the friend's feedback (a 1-5 rating and marked bad spots, kept per chart and sent in the diagnostics zip) and "Chart it differently" (the next seed as version 2, 3, ... beside the first); two reviews' fixes |
 | `M8-chords.md` | whether the takes' agreement predicts a human chord (it does; the rule failed its bar narrowly; most phantom chords are ones all four takes agree on): not built |
+| `M8-11-measure.md` | the thin spike's 16 GPU takes of sooth scored: no engine setting (hotter sampling, density 5 or 6) lifts the fast runs (refuted at +0.10; raw upper bound about +0.06); the pipeline caps the 1-s peak at 11; an advisor's reading |
 | `M8-ceiling.md` | the quantizer's ceiling on fast runs (0.837 song mean, so the GPU's 0.659 recall is 0.79 of it), and the scorer's drift on alternative charts (a lag line: M9) |
 | `M8-consistency.md` | repeated sections across spliced takes: different-take pairs lose -0.045 [-0.087, -0.011] in consistency; the evidence for the 1-take default |
 | `M8-02-measure-gpu.md` | The owner's 96 GPU takes measured against the human charts: the GPU changes none of the CPU's answers; M8-06 and M8-07 closed, the 4-take default kept, M8-11's thinning spike opened (the fast runs' recall 0.659) |
