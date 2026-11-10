@@ -398,3 +398,188 @@ An example spot entry in feedback.json (the test's made-up chart, the spot at 0:
   - No `__pycache__` was left.
 - Pushed 0a2b342..9b15b65. CI run 42749811675 on 9b15b65 was pending when this was written. The earlier run,
   42747821082 on 0a2b342, had not finished either; its result was not read here.
+
+## The diagnostics zip without the user's name (found on the owner's PC, merged with the gate)
+
+*The builder's report; `<home-root>` stands for the Linux root of home folders in its made-up examples.*
+
+### gate-zipnames: the diagnostics zip names no user (v0.5.0's gate)
+
+Branch `gate-zipnames` in `<wt>/gate-zipnames`. It started at main's cac4c2b and was fast-forwarded to main's 6af0a7f
+before the first push (no overlap: that commit touched CLAUDE.md, PROGRESS and a report only). Head 8ba53e1.
+
+### Commits
+
+- 0d352f1: The diagnostics zip names no user: his folders as ~ and C:\Users\<user> in every file
+  (`songcharter/diagnostics.py`, `tests/test_diagnostics.py`)
+- 8ba53e1: Docs: the diagnostics zip without the user's name (DESIGN 4.5's bundle line, the guide)
+  (`docs/DESIGN.md`, `docs/guide/windows-wsl.md`)
+
+Trailer: the commits end with the session's attribution lines, as CLAUDE.md asks.
+
+### What changed
+
+`songcharter/diagnostics.py`:
+- `scrub(text, home)` rewrites the user's folders:
+  - a Windows profile's name becomes `<user>` in each spelling (`PROFILE`, `WSL_HOME`);
+  - then the Linux home becomes `~` (`home_pattern()`).
+- `PROFILE` matches `<drive>:` or `/mnt/<drive>`, then a separator, `Users` (any case), a separator and the name.
+  - A separator is one or more backslashes (`\`, JSON's `\\`, a repr inside JSON's `\\\\`) or `/`.
+  - The name runs to the next separator or a character Windows forbids in names (`<>:"|?*`, control characters).
+    A JSON `\uXXXX` escape counts as part of it.
+  - `Public`, `Default`, `Default User` and `All Users` are Windows' own folders and stay.
+- `WSL_HOME` matches `wsl.localhost` or `wsl$` after a separator, then `<distro>`, `home` and the name. This covers
+  `\\wsl.localhost\...`, `\\wsl$\...`, `//wsl.localhost/...`, the doubled forms and `\\?\UNC\wsl...`.
+- `home_pattern()` covers Path.home() in four forms: as HOME spells it, its real path, and each as JSON writes it
+  (non-ASCII escaped or not). A match must not continue a name, so `<home-root>/x2`, `<home-root>/x.old` and `<home-root>/x-y` stay.
+  A home at `/`, or none at all, means there is no home to hide.
+- `Bundle.text(bytes)` runs `scrub` with surrogateescape, so bytes that are not UTF-8 are kept as they were.
+  - `Bundle.file` scrubs what it reads. `Bundle.json` scrubs the JSON it makes. MANIFEST.txt is scrubbed as a whole:
+    the `home:` and `cache:` lines, every source and every reason.
+  - `refused` and the manifest's sizes are judged on the scrubbed bytes. A file over MAX_BYTES on disk is still left
+    out unread, as before.
+- MANIFEST.txt gains `NAMES_LINE`, just before the closing feedback line (tests read that line as the last one):
+  "The user's folders are written without his name: the Linux home as ~, a Windows profile as C:\Users\<user>."
+- The module docstring has a new paragraph, "The user's name".
+- Not changed: the CLI's own "in Windows: ..." line, anything that charts, eval/'s zip, and the logs on disk.
+
+Docs:
+- DESIGN 4.5's "Diagnostics bundle" line now says what is hidden and how.
+- The guide's Diagnostics sentence (section 6) says the user name is taken out of the folder paths, which read `~`
+  and `C:\Users\<user>`.
+
+### Spellings covered (all in the bundle test, made-up names `madeup`, `Made Up`, `M\u00e0deup`)
+
+| Spelling | Written as |
+|---|---|
+| Linux home `$HOME/...` (also `$HOME` alone), its real path through a link, and `M\u00e0deup` as JSON escapes it | `~/...` |
+| `C:\Users\Made Up\...` and lowercase `c:\users\madeup\...` | `C:\Users\<user>\...` (the case is kept) |
+| `C:\\Users\\...` (JSON) and `C:\\\\Users\\\\...` (a repr inside JSON) | the same with `<user>` |
+| `C:/Users/M\u00e0deup/...` | `C:/Users/<user>/...` |
+| `/mnt/c/Users/Made Up/...` | `/mnt/c/Users/<user>/...` |
+| `\\wsl.localhost\<distro>\home\madeup\...` and `\\wsl$\<distro>\home\M\u00e0deup\...` | `...\home\<user>\...` |
+| `C:\Users\Public\Documents` | kept |
+
+### Tests (`tests/test_diagnostics.py`)
+
+Changed:
+- The `home` fixture puts the songcharter home inside a made-up `$HOME` (`<tmp>/users/madeup/.songcharter`), with
+  the cache outside it.
+- `test_the_bundle_holds_the_reports_and_never_audio` now expects:
+  - `home: ~/.songcharter` and `cache: <its path as it is>`;
+  - the left-out lines with `~/.songcharter/logs/...`;
+  - clonehero.json's `documents.windows` as `C:\Users\<user>\Documents` (it was the mojibake'd made-up name);
+  - the manifest's new line.
+
+New:
+- `test_no_file_in_the_zip_names_the_user`: each spelling goes in four places: a log, a pipeline.json (with
+  `ensure_ascii`, plus a repr of the list in an error string), a report.json (non-ASCII as it is) and clonehero.json
+  (made here). It checks:
+  - no made-up name, raw or `\u`-escaped, is in any member;
+  - every `.json` member loads;
+  - each path is there in its written form;
+  - the manifest has `home: ~/.songcharter`, the cache as it is, the log's size as written, and `NAMES_LINE`.
+- `test_the_guard_and_the_sizes_are_judged_on_what_is_written` (MAX_BYTES set to 1000):
+  - a log of 980 bytes on disk that `<user>` makes 1,260 bytes is left out ("1260 bytes, over 1000");
+  - a log of home paths goes in as `~/x` lines, and the manifest gives its written size (20).
+- `test_what_is_not_his_folder_stays`: `<home-root>/x2`, `.old`, `-x` and a bare name stay; `madeup.` gives `~.`; an
+  existing `C:\Users\<user>` is not written again; a home at `/` gives no pattern.
+- `test_the_home_as_json_writes_it_and_by_its_real_path`: HOME is a link to `<tmp>/users/M\u00e0deup`, and the real
+  path and the JSON-escaped one both become `~`.
+
+Without the fix, all four tests above fail when run against main's diagnostics.py with the new tests:
+- the bundle test: clonehero.json's documents are not equal;
+- the names test: `('logs/ui.log', 'madeup')` is still in the zip;
+- the size test: `logs/grows.log` goes in;
+- the two unit tests fail because `home_pattern` does not exist on main.
+
+Command:
+
+```
+cp songcharter/diagnostics.py <scratch>/fixed.py; git show origin/main:songcharter/diagnostics.py > songcharter/diagnostics.py
+PYTHONDONTWRITEBYTECODE=1 <venv>/python -m pytest -q -p no:cacheprovider --basetemp=<shm>/pt-zipnames tests/test_diagnostics.py
+-> 4 failed, 5 passed
+```
+
+The fixed file was then restored.
+
+Mutations: 20 breaks, each run against test_diagnostics.py, and every one failed at least one test.
+
+| Break | Caught by |
+|---|---|
+| no scrub in `Bundle.file` | names, size |
+| no scrub in `Bundle.json` | bundle, names |
+| no scrub of the manifest | bundle, names |
+| `PROFILE` dropped | bundle, names, size |
+| `WSL_HOME` dropped | names |
+| the Linux home dropped | all four |
+| the separator a single backslash | bundle, names |
+| the separator without `/` | names |
+| the name without `\u` escapes | names |
+| `PROFILE` case-sensitive | bundle, names, size |
+| `/mnt/<drive>` dropped | names |
+| `NOT_USERS` dropped | names |
+| the home's lookahead dropped | not-his-folder |
+| the home's JSON spellings dropped | home-json |
+| the real path dropped | home-json |
+| `NAMES_LINE` dropped | bundle, names |
+| `refused` on the bytes read | size |
+| the manifest's size from the bytes read | names, size |
+| a home at `/` not skipped | not-his-folder |
+
+### Checks
+
+Affected test files, run with the session's venv from the worktree (no `__pycache__` left):
+
+```
+PYTHONDONTWRITEBYTECODE=1 SONGCHARTER_SCAN_CHART=<checkout>/tools/scan-chart/scan.cjs <venv>/python -m pytest -q \
+  -p no:cacheprovider --basetemp=<shm>/pt-zipnames tests/test_diagnostics.py tests/test_ui_feedback.py tests/test_ui_server.py
+-> 168 passed in 77.03s
+```
+
+After the last test was added, `tests/test_diagnostics.py` alone gave 10 passed. I did not run the suite, a golden
+run or a chart, as the brief says. Nothing here is on the charting path.
+
+Privacy checks: per changed file, `EVAL_DATA=$DEV/eval python3 -I eval/privacy_check.py <file>` and the same with
+`$DEV/eval-set20`. I read only the last line, and ran each on main's version of the same file too:
+
+| File | eval | eval-set20 |
+|---|---|---|
+| `songcharter/diagnostics.py` | 0 found (main 0) | 0 found (main 0) |
+| `tests/test_diagnostics.py` | 0 found (main 0) | 0 found (main 0) |
+| `docs/guide/windows-wsl.md` | 0 found (main 0) | 0 found (main 0) |
+| `docs/DESIGN.md` | 0 found (main 0) | 30 found (main 30) |
+
+DESIGN.md's 30 set20 hits are already on main; this branch adds none.
+
+Personal-details scan: I scanned the added lines of `git diff main...HEAD` and both commit messages for home paths,
+user and machine names, emails and model names. The only names in them are made up (`madeup`, `Made Up`,
+`M\u00e0deup`, `mu`, `Fixture`, `/fixture<home-root>/madeup`). No lyric, and no model name apart from the trailers.
+
+CI: run 42855414836 (push on 8ba53e1), in progress when this report was written:
+<repo>/actions/runs/42855414836
+
+### Left with a name in it, or worth knowing
+
+- The CLI's printed "in Windows: \\wsl.localhost\<distro>\home\<name>\..." line is left, as the brief says. It is
+  on his own screen and not in the zip.
+- A bare user name elsewhere in the text is not chased, as the brief says. For example, a log line that prints a
+  user name with no path around it stays.
+- Only this machine's Path.home() (and its real path) becomes `~`. Another Linux user's `<home-root>/<other>` stays, and
+  so does a home path written while HOME pointed somewhere else. The profile and `\\wsl...` spellings are found by
+  pattern whatever the machine.
+- Over-reach, which is safe for privacy:
+  - a profile folder that ends a path inside a sentence takes the words after it, up to the next separator or a
+    character Windows forbids ("saved C:\Users\X for later: ok" becomes "saved C:\Users\<user>: ok");
+  - a home path inside a longer path (`/data<home-root>/x/...` when HOME is `<home-root>/x`) becomes `/data~/...`;
+  - a folder right under a single-backslash profile whose name starts with `u` and four hex digits is taken as part
+    of the name.
+- clonehero.json's `documents.windows` no longer shows a user name decoded with the wrong code page, since the name
+  is now `<user>`. Mojibake in the folders after it (a localized Documents) still shows, and `documents.linux` being
+  null still marks the failure.
+- feedback.json: a path typed into a spot's note is rewritten too, because every text member is.
+- A file over 5 MB on disk is left out unread, even if the rewrite would have brought it under. Its manifest line is
+  rewritten. Zip member names are not rewritten: they hold no home (`logs/<log>`, `work/<song>-<hex>/...`).
+- Not touched (outside the brief's list): README.md's line "It holds no audio, charts, lyrics or pictures" and the
+  page's Diagnostics caption in `songcharter/ui/static/index.html`. Both still describe the zip correctly and say
+  nothing about paths. PROGRESS.json is the orchestrator's.
