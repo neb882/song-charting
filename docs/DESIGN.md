@@ -3147,7 +3147,13 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
        - **The same song under another name** (M5-13) [code]: our older chart of the song counts as the existing one too, as each folder at the top of Songs with our marks (charter `songcharter` and a `report.json`) whose song.ini has the same name and artist (compared without case, runs of spaces as one; `clonehero.older_charts`). M5-06 raised the library folder's name from 40 to 80 characters, so a song charted under v0.1.0 whose "Artist - Title" runs longer sits in Songs under v0.1.0's cut, and its re-chart would have been a second folder beside it, the song listed twice in Clone Hero [here, the release gate's advisor, reproduced on a made-up name]; a folder of ours the friend renamed is one too. The 409 names it (the page asks to replace the older chart), and the replace moves it to `replaced/` once the new chart is in place; one Windows will not let go stays, with a note that Clone Hero lists the song twice until it is deleted. A folder without our marks, a link, a hidden folder and another song of ours (a v0.1.0 cut two songs share) are never touched. The cost is a look at each folder in Songs, unmeasured on a large library under drvfs.
      - **Preview in Clone Hero:** `"Clone Hero.exe" --song <folder> --player Guitar,Expert` (documented CLI [doc, untested]). Not in v0.1.
      - **Open polish workspace:** the stems under non-reserved names (not `guitar.ogg`, `bass.ogg`, `drums.ogg` or any other name Clone Hero loads), kept out of the install and the zip (critique G11), plus a one-page Moonscraper guide and a "Re-check & re-install" button. Not in v0.1.
-     - **Diagnostics bundle:** logs and `doctor.json`, with no audio (critique G11).
+     - **Diagnostics bundle:** logs and `doctor.json`, with no audio (critique G11). Without the user's name (v0.5.0's
+       gate: the owner's check found it in the zip's paths, and the friend sends this zip to be read elsewhere): every
+       file written into it, MANIFEST.txt too, has the Linux home (`Path.home()`) as `~` and a Windows profile's name
+       as `<user>` in each spelling (`C:\Users\<user>`, its backslashes doubled as JSON writes them, forward slashes,
+       `/mnt/c/Users/<user>`, `\\wsl.localhost\<distro>\home\<user>` and `\\wsl$\...`), the name found by a pattern
+       on the paths; a bare name elsewhere is not chased, and song and folder names stay. The guard and the manifest's
+       sizes judge what is written (`diagnostics.scrub`, its docstring).
 - **The update notice** (M5-07) [code; decided by the owner on 2026-11-05 over a one-click updater, M5-00 section 8]:
   after the first page is served (never on the startup path), a daemon thread runs `updates.check` once per server
   process. It asks GitHub's list of releases at most once a day (`<home>/state/update.json` keeps the answer; after a
