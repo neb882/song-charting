@@ -1140,6 +1140,29 @@ PAGE2 = PAGE.split("(async () => {")[0] + r"""
   button(find(box2, (x) => x.className === "spot-form"), "Mark it").on.click();
   await settle();
   out.afterSaved = inputs(box2);
+  // the second review's R5: a save in one of a chart's two boxes (its row's, the Done screen's) keeps what is typed
+  // in the other
+  ctx.renderPlayed({ ok: true, folder: "/h/library/aaaaaaaaaaaaaaaa/v2/Made-Up Band - First Song",
+    library: { id: V2, version: 2, guitar: true, lyrics: false, rating: 3, spots: 1 } });
+  const doneBox = els.played.children[0];
+  answers[`GET /api/jobs/${enc(V2)}/feedback`] = [[200, { ...FB, rating: 3, spots: [{ id: "s1", at: 65, time: "1:05",
+    reasons: ["missing_notes"], note: "half typed, made up" }] }]];
+  doneBox.open = true;
+  doneBox.on.toggle();
+  await settle();
+  type(doneBox, "0:42", ["great"], "the done box");
+  answers[`POST /api/jobs/${enc(V2)}/feedback`] = [[200, { ...FB, rating: 4, spots: [{ id: "s1", at: 65, time: "1:05",
+    reasons: ["missing_notes"], note: "half typed, made up" }] }]];
+  button(box2.children[1], "4").on.click();
+  await settle();
+  out.doneKept = { typed: inputs(doneBox), line: doneBox.children[0].textContent };
+  type(box2, "1:11", ["too_many_chords"], "the row box");
+  answers[`POST /api/jobs/${enc(V2)}/feedback`] = [[200, { ...FB, rating: 4, spots: [{ id: "s1", at: 65, time: "1:05",
+    reasons: ["missing_notes"], note: "half typed, made up" }, { id: "s2", at: 42, time: "0:42", reasons: ["great"],
+    note: "the done box" }] }]];
+  button(find(doneBox, (x) => x.className === "spot-form"), "Mark it").on.click();
+  await settle();
+  out.rowKept = { typed: inputs(box2), done: inputs(doneBox), line: box2.children[0].textContent };
   // the review's F4: a refusal keeps the pasted lyrics and says why; once taken, the panel goes
   const panel = find(now1, (x) => x.className === "chart-again");
   answers[`POST /api/jobs/${enc(V1)}/again`] = [[400, { error: "Lyrics only for a song that starts at once: made-up words." }]];
@@ -1192,6 +1215,12 @@ def test_nothing_typed_is_lost(tmp_path):
     assert out["unanswered"] == {"line1": "How did it play? 5 of 5, 2 spots marked", "typed1": finish["typed1"],
                                  "reads": 3}   # (break: the box emptied for the error)
     assert out["afterSaved"] == {"at": "", "note": "", "ticks": []}
+    # R5: a rating saved in the row's box keeps the Done screen's half-typed spot, and a spot saved in the Done
+    # screen's box keeps the row's (break: syncFeedback rendering the other box with its form cleared)
+    assert out["doneKept"] == {"typed": {"at": "0:42", "note": "the done box", "ticks": ["great"]},
+                               "line": "How did it play? 4 of 5, 1 spot marked"}
+    assert out["rowKept"] == {"typed": {"at": "1:11", "note": "the row box", "ticks": ["too_many_chords"]},
+                              "done": {"at": "", "note": "", "ticks": []}, "line": "How did it play? 4 of 5, 2 spots marked"}
     assert out["refusedLyrics"] == {"text": "zib zab\nzob\n",
                                     "msg": "Lyrics only for a song that starts at once: made-up words."}
     assert out["taken"] == {"panel": 0, "msg": "Version 3 waits in the list: it is charted in its turn."}
