@@ -3496,7 +3496,13 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     stages come from there: `estimate.CACHED` [est.]), else a whole chart's.
     A chart without a guitar part would come out the same: refused, in words. One press, one version: while its
     request is out, the chart's buttons (the row's or the Done screen's, and the lyrics panel's two) wait, and a
-    second press sends nothing (the second review's R1: a double click queued two versions).
+    second press sends nothing (the second review's R1: a double click queued two versions). And one version of a
+    song at a time: the route answers in milliseconds, so two presses 150 to 300 ms apart still queued two (v0.5.0
+    gate's advisor, finding 2); now, while a version of the song (seed above 0) waits or charts, `/again` on any of
+    its charts is refused (409, using no seed): "Version 3 of this song is already in the list: when it is charted,
+    you can chart it differently again." in the row's or the Done screen's message line, the lyrics panel kept. A
+    plain chart of the song in the list is no version and does not stop it; a version whose chart is out, its
+    process still exiting, counts as charted.
   - **Versions:** a chart with seed N is version N + 1, in `<home>/library/<16 hex>/v<N + 1>/<the same name>/`, beside
     the first, never over it; its id is `<16 hex>:<name>:v<N + 1>` (`jobs.LIBRARY_ID`). The same name is the charted
     folder's own (without .failed), given as the `name` option (one path component, `jobs.folder_name`; kept in the

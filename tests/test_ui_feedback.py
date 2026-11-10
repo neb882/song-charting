@@ -1436,3 +1436,99 @@ def test_the_box_says_he_rated_an_earlier_chart(tmp_path):
     assert out["lines"] == ["You rated an earlier chart of this song 3 of 5. How does this one play?",
                             "You marked 1 spot on an earlier chart of this song. How does this one play?",
                             "How did it play? 2 of 5", "How did it play?"]
+
+
+def held_charts(lib, monkeypatch):
+    """Each chart of `lib` held until its gate file is there (<tmp>/go_<its seed>), and its process left running for
+    1.5 s after its result when <tmp>/linger_<its seed> is there: (the gate's path, the linger's) for a seed."""
+    command = lib.app.jobs.command
+
+    def held(song, out, options, threads):
+        cmd = command(song, out, options, threads)
+        gate, linger = str(lib.tmp / f"go_{options.seed}"), str(lib.tmp / f"linger_{options.seed}")
+        wait = (f"import os, subprocess, sys, time\nwhile not os.path.exists({gate!r}): time.sleep(0.02)\n"
+                "code = subprocess.call([sys.executable] + sys.argv[1:])\n"
+                f"time.sleep(1.5 if os.path.exists({linger!r}) else 0)\nsys.exit(code)")
+        return [cmd[0], "-c", wait, *cmd[1:]]
+
+    monkeypatch.setattr(lib.app.jobs, "command", held)
+    return lambda seed: lib.tmp / f"go_{seed}", lambda seed: lib.tmp / f"linger_{seed}"
+
+
+def test_one_version_of_a_song_at_a_time(lib, monkeypatch):
+    """The advisor's 2 at v0.5.0's gate: while a version of a song (seed above 0) waits or charts, "Chart it
+    differently" on any of its charts is refused (409) in plain words, using no seed; a plain chart of the song in the
+    list is no version and does not stop it; once the version is charted, the next press gives the next version
+    (breaks: no refusal, as two presses 150 ms apart queued two versions; the rule on the upload alone; a seed used
+    by the refusal; a version whose chart is out still refused)."""
+    gate, linger = held_charts(lib, monkeypatch)
+    assert post(lib, "/api/jobs", {"upload": A, "options": {}})[0] == 202   # a plain chart of the song, charting
+    status, answer = post(lib, by_id(V2, "/again"), {})
+    assert status == 202 and (answer["version"], answer["state"]) == (3, "waiting"), answer
+    for ref in (V1, V2):   # from any of the song's charts
+        assert post(lib, by_id(ref, "/again"), {}) == (409, {"error": (
+            "Version 3 of this song is already in the list: when it is charted, you can chart it differently again.")})
+    assert json.loads((lib.home / "state" / "versions.json").read_text()) == {A: 2}
+    gate(0).touch()   # the plain chart ends; version 3 charts
+    deadline = time.monotonic() + 20
+    while not any(e["version"] == 3 and e["state"] == "charting" for e in lib.app.queue.snapshot()["entries"]):
+        assert time.monotonic() < deadline, lib.app.queue.snapshot()
+        time.sleep(0.05)
+    assert post(lib, by_id(V1, "/again"), {}) == (409, {"error": (
+        "Version 3 of this song is charting now: when it is charted, you can chart it differently again.")})
+    linger(2).touch()
+    gate(2).touch()   # version 3's chart is out, its process still exiting: charted, so the next press is taken
+    while lib.app.jobs.current.result() is None:
+        assert time.monotonic() < deadline + 20 and lib.app.jobs.current.state == "running"
+        time.sleep(0.02)
+    gate(3).touch()
+    status, answer = post(lib, by_id(V1, "/again"), {})
+    assert status == 202 and answer["version"] == 4, answer
+    wait_idle(lib.app)
+    gate(4).touch()
+    assert post(lib, by_id(V2, "/again"), {})[1]["version"] == 5
+    assert json.loads((lib.home / "state" / "versions.json").read_text()) == {A: 4}
+    wait_idle(lib.app)
+
+
+PAGE5 = PAGE.split("(async () => {")[0] + r"""
+(async () => {
+  const out = {};
+  const base = { artist: "Made-Up Band", readable: true, ok: true, audio: "split", stems: false, look: false,
+    upload: "aaaaaaaaaaaaaaaa", guitar: true, lyrics: true, rating: null, spots: 0, name: "First Song" };
+  ctx.setCharts([{ ...base, id: V1, folder: "Made-Up Band - First Song", time: 1762596000, version: 1, seed: 0 }]);
+  const row = els["charts-list"].children[0];
+  const words409 = "Version 3 of this song is already in the list: when it is charted, you can chart it differently again.";
+  answers[`POST /api/jobs/${enc(V1)}/again`] = [[409, { error: words409 }]];
+  await button(find(row, (x) => x.className === "queue-actions"), "Chart it differently").on.click();
+  const panel = find(row, (x) => x.className === "chart-again");
+  find(panel, (x) => x.tag === "textarea").value = "zib zab\n";
+  button(panel, "Chart it").on.click();
+  await settle();
+  out.row = { msg: find(row, (x) => x.className === "queue-msg small").textContent,
+    lyrics: find(panel, (x) => x.tag === "textarea").value };
+  ctx.renderPlayed({ ok: true, folder: "/h/library/aaaaaaaaaaaaaaaa/Made-Up Band - First Song",
+    library: { id: V1, version: 1, guitar: true, lyrics: false, rating: null, spots: 0 } });
+  await button(els.played, "Chart it differently").on.click();
+  await settle();
+  out.done = find(els.played, (x) => x.className === "small again-msg").textContent;
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_page_says_a_version_is_in_the_list(tmp_path):
+    """The advisor's 2 on the page (app.js in node, the page test's stand-in DOM): the 409's words in the row's
+    message line, the pasted lyrics kept in the panel (F4), and in the Done screen's line (break: the refusal not
+    said, or the panel emptied)."""
+    script = tmp_path / "busy.cjs"
+    script.write_text(PAGE5, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(S.static_files()["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60,
+                          env={**os.environ, "TZ": "UTC", "LANG": "en_US.UTF-8"})
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    words = "Version 3 of this song is already in the list: when it is charted, you can chart it differently again."
+    assert out == {"row": {"msg": words, "lyrics": "zib zab\n"}, "done": words}

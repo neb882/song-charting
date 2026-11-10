@@ -129,7 +129,8 @@ Nothing is downloaded or installed; charting never waits for it.
     any its versions, the queue's songs and <home>/state/versions.json have used; versions.json is written only once
     the queue has taken the song, so a refusal uses no number: F3), into the queue as POST /api/jobs adds a song,
     with the estimate of a song whose other stages are cached when its work folder is still in the cache: 202
-    {"job", "entry", "state", "version", "seed"}. 400 for a chart without a guitar
+    {"job", "entry", "state", "version", "seed"}; 409 in plain words while a version of the song waits or charts (one
+    at a time: the gate advisor's 2), with no seed used. 400 for a chart without a guitar
     (only the guitar changes with the seed), one whose report.json cannot be read, an `upload` that is not its song
     file; 400 {"error", "drop": true, "name"} when its song file is no longer among the uploads (kept 7 days): the
     page asks for it to be dropped again, then sends its upload id. `lyrics` as /api/jobs takes them (a chart made
@@ -960,6 +961,12 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             cached = False
         with app.again_lock:
+            busy = self._version_listed(song)
+            if busy is not None:   # one at a time (the gate advisor's 2: a double click queued two versions)
+                n = entry_seed(busy.get("options")) + 1
+                raise Refused(409, f"Version {n} of this song is "
+                                   f"{'charting now' if busy['state'] == 'charting' else 'already in the list'}: when "
+                                   "it is charted, you can chart it differently again.")
             seed = app.next_seed(song)
             options["seed"] = seed
             entry, started = self._add(upload, options, lyrics if lyrics and lyrics.strip() else None, cached=cached)
@@ -968,6 +975,16 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(202, {"job": started.id if started is not None else None, "entry": entry["id"],
                                 "state": "charting" if started is not None else "waiting", "version": seed + 1,
                                 "seed": seed})
+
+    def _version_listed(self, song: str) -> dict | None:
+        """A version of the song of this upload (an entry of it with a seed above 0) waiting or charting in the list,
+        else None; one whose chart is out, its process still exiting, counts as charted (Queue.add waits for it)."""
+        cur = self.app.jobs.current
+        out = cur.id if cur is not None and cur.result() is not None else None
+        return next((e for e in self.app.queue.snapshot_entries() if (e.get("upload") or {}).get("id") == song
+                     and entry_seed(e.get("options")) > 0 and (e.get("state") == "waiting" or
+                                                               e.get("state") == "charting" and e.get("job") != out)),
+                    None)
 
     def _keep_image(self, path: Path) -> str:
         """A picture of a chart's own folder as an image upload (as POST /api/upload/image keeps one): its id."""
