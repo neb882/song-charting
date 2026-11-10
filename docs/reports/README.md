@@ -74,9 +74,14 @@ ones then, but the CI runs they link still name the old ones.
 | `M8-12-stems-out.md` | The stems saved as FLAC beside the song folder (an option) and Clone Hero's multitrack audio (guitar, bass and drums in their own files, on by default; one file as an option); the Ogg serial fixed |
 | `M8-13-your-charts.md` | "Your charts": every chart in the library with Install, Open, Download the stems and Look while its work folder is cached; nothing deleted from the page |
 | `M8-14-feedback.md` | the friend's feedback (a 1-5 rating and marked bad spots, kept per chart and sent in the diagnostics zip) and "Chart it differently" (the next seed as version 2, 3, ... beside the first); two reviews' fixes |
+| `M8-chords.md` | whether the takes' agreement predicts a human chord (it does; the rule failed its bar narrowly; most phantom chords are ones all four takes agree on): not built |
+| `M8-ceiling.md` | the quantizer's ceiling on fast runs (0.837 song mean, so the GPU's 0.659 recall is 0.79 of it), and the scorer's drift on alternative charts (a lag line: M9) |
+| `M8-consistency.md` | repeated sections across spliced takes: different-take pairs lose -0.045 [-0.087, -0.011] in consistency; the evidence for the 1-take default |
 | `M8-02-measure-gpu.md` | The owner's 96 GPU takes measured against the human charts: the GPU changes none of the CPU's answers; M8-06 and M8-07 closed, the 4-take default kept, M8-11's thinning spike opened (the fast runs' recall 0.659) |
 | `M8-11-thin-app.md` | The thin spike on the installed app (`eval/gpu.sh thin-spike --app`): the app's tools, takes kept only as the run would make them, a zip of charts and summaries guarded against paths and user names; the owner's steps |
 | `v050-review-fixes.md` | v0.5.0's review fixes: the full review's 15 minors, the owner's 1-take default (Best chart an option), report.json's record of takes and fallbacks, the advisors' fixes |
+| `v050-gate-fixes.md` | v0.5.0's gate: an earlier chart's Look shows none of a later chart's record; the advisor's five fixes (a rating stays with its chart, one "Chart it differently" at a time, the notes around a marked spot in the zip, the record's threads and stages, a rating not saved said plainly) and their review's two |
+| `v0.5.0-gate.md` | v0.5.0's release gate: the golden, stress and 20-song compares, the full review and its fixes, the screens, the advisor's report and what was done, the checks on the owner's PC |
 | `M8-video-review2.md` | The owner's second video review (pm2's v0.4.0 GPU chart): its claims checked; solos' remainder, HOPO chords and the GPU intro's taps measured |
 | `M8-video-review3.md` | The owner's third video review (his full v0.4.0 GPU chart of sooth): solos merged, the tail's tempo and the outro trim measured (none clears) |
 | `M8-compare-autochart-eu.md` | AutoChart.eu against songcharter on take_me_out (the owner's MP3), and a half-beat grid slip on that master |

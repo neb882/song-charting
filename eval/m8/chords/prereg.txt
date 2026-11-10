@@ -1,0 +1,45 @@
+prereg, chords (advisor finding 1). Written 2026-11-09T20:01:07Z, before any number of this measurement.
+
+Data: M8-02 part B's built arms m05 (4 GPU takes spliced) and one (the base take alone), B/charts/<arm>/<label>.notes.chart,
+at the v0.4.0 tag's scorer (git archive into <shm>/chords/code). The 4 GPU takes from the owner's zip, in splice order
+seed_20260609 (base, pick 0), 101, 202, 303. Humans only through eval/scorer's scan; primaries and alts as M8-02 found them.
+
+Clocks: a take's onset = its scan ms + chart delay (input seconds). Our chart's onset = scan ms + chart delay - d, where d
+(the lead-in pad minus the applied offset) is measured per song as the peak of the chart-minus-take onset differences,
+refined by the median of nearest differences within 30 ms. Human frame: input seconds minus the lag of the kept
+folder's decode.wav against the chart's input.wav (score.align), as eval/m8/lanes-drums did for the takes.
+Well aligned: windows_peak_ge_0.3 > 4.5 and lag_mad_ms < 2.0 (M8-02 C's rule), computed against decode.wav.
+
+Chord: an onset with 2+ distinct lanes. k(onset) = number of the 4 takes with a chord onset within 50 ms (0-4; the take the
+window used counts).
+
+Variants: a chord of ours with k < K (K = 2, 3, 4) becomes one note: low = its lowest lane, high = its highest lane,
+mode = the chord's lane found most often in the 4 takes' nearest onsets within 50 ms (ties to the highest). Onset times
+unchanged. 9 variants.
+PRIMARY: K=2, high (the advisor's "2 of 4, its top note"). The other 8 are exploratory.
+
+Bar (per variant, against m05 as built; per song = its primary chart; paired bootstrap over songs, 10000 draws, seed 7,
+m2lib.boot):
+ (a) |our chord share - human's| down on more songs than up, AND the per-song change of that gap has a CI upper end < 0.
+ (b) exact-lane agreement (pairs at 50 ms, lane sets equal): per-song change, CI lower end > -0.002.
+ (c) |our shape changes per onset - human's| (lanes-drums part 1's changes_per_onset): per-song change of the gap,
+     CI upper end < +0.002.
+ (d) F1@50 identical on every chart (onsets unchanged): checked.
+ (e) chord precision (share of our chord onsets with a human chord onset within 50 ms): per-song change, mean > 0 and
+     CI lower end > 0 (songs where either side has no chord dropped; n reported).
+Pass = all five.
+Songs: the 19 whose humans agree (all but s02, s04, s06, s12, M8-02's bar) decide; all 23 beside. Primaries decide;
+well-aligned charts (all, alts included, averaged per song) beside.
+Step 1 gate: share of m05 chord onsets with an onset in the take their window used within 5 ms (after d); < 0.95 stops.
+Beside: the one arm, same table and variants, for the record.
+
+ADDENDUM 2026-11-09T20:08:52Z, after the step 1 check on 3 songs (creep, s03, kimochi_warui) and before the
+other 20 songs or any bar number. Seen so far: step 1's counts on those 3, creep's m05 base row (chord share, exact,
+cpo, F1, chord precision) and creep's whole-chart chord counts by k.
+Step 1 as written fails: 0.44 / 0.66 / 0.64 of m05 chord onsets lie within 5 ms of the take their window used. Why: the
+build quantizes the spliced notes onto the chart's grid, so an onset moves to its slot (abs residual median 3-5 ms, p90
+10-22 ms, max under 50 ms, signed median about -1 ms). The 5 ms test reads quantization, not the time base.
+Amended gate, the time base itself: of the m05 chord onsets, the share with an onset in their window's take within 50 ms
+whose position, mapped onto the chart's tempo map with the measured d, lies within half a 16th (res/8 ticks) of the
+chart's tick (snap16 / n). >= 0.95 passes. On the 3 songs: 0.982, 1.000, 1.000. The literal gate's failure is reported
+first in the report; the measurement goes on under the amended gate, nothing else changed.

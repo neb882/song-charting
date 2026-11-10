@@ -1,0 +1,65 @@
+prereg, repeat consistency (a second advisor's finding 2). Written 2026-11-09T20:49:00Z, before any number of this
+measurement.
+
+Data: M8-02 part B's built arms m05 (4 GPU takes spliced per window) and one (the base take alone),
+B/charts/<arm>/<label>.notes.chart, Expert guitar. Humans: each song's primary chart only, through the v0.4.0 tag's
+eval/scorer scan (scan-chart), as M8-02 found them. Alignment: M8-02's align.py re-run in process (as the chord
+measurer did: our song.ogg = the v0.4.0 golden folder's, whose tempo map and lead-in equal the arms' charts), restricted
+to the primary chart.
+
+Sections (the choice the brief leaves): our chart's own [Events] "section" events, which the build makes from the allin1
+segments (merged or split, renamed "Verse 1A" etc.). Label = the event name's first word, lowercased (intro, verse,
+chorus, solo, instrumental, bridge, break, outro): allin1's label. Instance i = [tick_i, tick_{i+1}); the last instance
+ends one tick after the chart's last note. Length in beats = round((end - start) / resolution). A pair = two instances
+with the same label and the same length in beats. Pairs come from our chart and are used for ours and the human alike.
+Both arms' section events are checked equal; if a song's differ, each arm uses its own.
+
+repeat_consistency of a pair (A, B):
+ - ours: each Expert guitar onset (notes grouped by tick, scorer's onsets) -> (offset in beats from its instance's start
+   tick, lane set). Tolerance in beats = 0.050 s x the pair's tempo (beats / seconds of the two instances, averaged).
+ - human: our instance bounds mapped to the human's frame (our tick -> our chart ms + chart delay - lag, the scorer's
+   alignment); the human's onsets with time in [start - 0.025 s, end - 0.025 s); offset in beats = (human tick - the
+   mapped start as a fractional human tick on the human's tempo map) / human resolution; tolerance = 0.050 s x the
+   human's tempo over the two instances.
+ - hits = one-to-one matches within the tolerance (scorer's match) between onsets with equal lane sets (matched within
+   each lane set); F1 = 2 hits / (nA + nB). Both empty: pair skipped; one empty: 0.
+ - lane-only (fretting alone): the i-th onset of A against the i-th of B, share with equal lane sets over max(nA, nB).
+   Beside, exploratory: the lane-set agreement among onsets matched in time alone (tolerance as above).
+Song value = mean over its pairs. A song with no pair drops out (n reported).
+
+Decision rule: per song, m05 minus one of repeat_consistency; paired bootstrap over songs (m2lib.boot: 10000 draws,
+seed 7). CI upper end < 0: the splice costs consistency. CI lower end > 0: the splice helps it. Otherwise no
+difference detected. Songs: all 23 with sections decide; the 19 of M8-02's bar (all but s02, s04, s06, s12) beside.
+Then both arms against the humans: per song, arm minus human, the same bootstrap, and the human's own value beside.
+Lane-only: the same table, secondary.
+Beside, if time allows: the CPU kept single-take charts against one (same measure), a sanity check only.
+
+ADDENDUM 2026-11-09T20:51:44Z, after a trial on creep and before any consistency number. Seen so far: the alignment's
+per-song lags (counts only) and creep's pair count under the rule above: 0. Why: the build merges and splits allin1's
+segments into the chart's section events (creep's chorus instances become 32 and 64 beats; its verses 32, 36, 64, 44),
+so equal-length repeats vanish. Checked: our chart's section events lie at an allin1 segment bound + the lead-in pad
+(residual within about 60 ms where the build did not move it), so the work folder's segments are the build's.
+Amended sections (primary): the raw allin1 segments of the song's kept work folder (sections/segments.json; 'start'
+and 'end' dropped), each bound + the lead-in pad (v0.4.0 golden report.json) = our chart's time, snapped to our chart's
+nearest beat (a multiple of the resolution); label = allin1's label; length in beats = (end - start) / resolution.
+Everything else as above. The chart-event sections above are kept beside, for the record.
+
+ADDENDUM 2 2026-11-09T20:52:42Z, after the full run's pair counts and the allin1 segment lengths in beats (labels,
+lengths), before reading any consistency number (results.json of that run not opened). Strict equal length leaves 0-1
+pairs on 13 of 23 songs: allin1's bounds jitter by a beat or so (e.g. choruses of 32.0 / 31.0 beats), and a bound that
+is a beat off also misaligns every offset in the instance. Amended pair rule (primary, both section sources):
+ - a pair = same label and |beats_A - beats_B| <= 2;
+ - compared over L = min(beats_A, beats_B): A's onsets with offset in [0, L), B's with offset + s in [0, L), where the
+   shift s in {-2, -1, 0, +1, +2} beats is chosen per pair and per chart to maximize that chart's F1 (ties: the
+   smallest |s|, then the lower s). The lane-only measures use the same window and shift. So each chart (ours, human)
+   gets the same small slack for allin1's bound jitter.
+ - The strict rule (equal beats, s = 0) is kept beside.
+
+ADDENDUM 3 2026-11-09T20:53:57Z, after the first full tables (an implementation fault found by reading them, so this is
+after numbers; it is reported as such). The human side measured offsets in the human's own beats but cut the window
+(L) and the shift in our beats. On charts whose tempo map runs at another scale than ours (human/our median BPM 0.479
+on s10, 1.986 on s11, 1.995 on s13, about 1.14 on s06 and s07) the window then held half or twice the music. Fix: the
+human's onsets are placed on OUR beat grid (human time -> our chart time through the alignment -> our fractional tick;
+offset = (that tick - the instance's start tick) / our resolution), so window, shift and tolerance are the same as
+ours. The first version's numbers are kept beside (results_humangrid.json) and both are reported. The m05-minus-one
+comparison does not touch the human side and is unchanged.
