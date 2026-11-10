@@ -3419,8 +3419,9 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     it, so the earlier chart is then listed without Look rather than shown another chart's record [decision]. The
     queue's Look on an earlier song of the list keeps its button, since its Done screen (the result, Install, the
     zip, Listen, which renders the chart's own folder) is still its own, but the same comparison
-    (`jobs.last_chart_is`, `server.later_chart`) takes the preview off it: "No preview: it went with a later chart of
-    this song (Look at that one in Your charts)", and its preview's pictures answer 404 (v0.5.0's gate) [code]. A
+    (`jobs.last_chart_is`, `server.later_chart`) reads it as having no record: "No preview: it went with a later
+    chart of this song (Look at that one in Your charts)", its preview's pictures answer 404, and none of the later
+    chart's lyrics counts, art source or stems' why (v0.5.0's gate) [code]. A
     folder whose report.json cannot be read is listed by its name as "Can't be read", never hidden; a folder without
     one (the stems folder, assemble's staging, anything else) is not a chart.
   - **Ids, not paths:** a chart's id is `<16 hex>:<its folder's name>` (a safe name has no ":"), percent-encoded in a

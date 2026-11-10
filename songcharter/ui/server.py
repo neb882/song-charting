@@ -145,7 +145,8 @@ reads that event (the release gate's finding: the Done screen once hid "Install 
     each flag {"part", "start", "page"} (`flag_at`: its start read from its text, its page floor(start / page_s) + 1
     within the pages there are) or null, or {"why"} there is none (LATER_CHART when the work folder's pipeline.json
     names another folder as its last chart, later_chart: a later chart of the song, a version of M8-14's, has the
-    work folder and its preview now, as jobs.library's `look` reads it);
+    work folder and its preview now, as jobs.library's `look` reads it; the lyrics, the art's `album_from` and the
+    stems' why below are then read as if there were no pipeline.json);
     pipeline.json's lyrics as counts ({"given", "added", "words", "phrases", "why", "low"}), null when none were
     given; the folder's art ({"album_art": its URL or null, "album_from": "embedded", "given" or null,
     "background": whether there is one}); what the Listen control offers ({"parts": {"guitar": ["expert", ...],
@@ -1420,8 +1421,9 @@ def record_of(result: dict) -> dict:
 
 def later_chart(result: dict, record: dict) -> bool:
     """Whether the result's work folder holds a later chart of its song now: its pipeline.json (`record`) names
-    another folder as its last chart (jobs.last_chart_is, the library's rule for Look). Its preview and flags are
-    then that chart's, so this job has none (LATER_CHART), as its row in Your charts has no Look."""
+    another folder as its last chart (jobs.last_chart_is, the library's rule for Look). Its preview, flags, lyrics
+    counts, art source and stems' why are then that chart's, so `results` reads this job as having no record (no
+    preview: LATER_CHART), as the library does."""
     return last_chart_is(record, str(result.get("folder"))) is False
 
 
@@ -1450,7 +1452,9 @@ def results(job, ref: str = "current") -> dict:
                windows_path=clonehero.windows_path(folder),   # Open folder's hover text
                installable=bool(result.get("ok")) and folder.is_dir())   # its state may still be running: exiting
     pipeline = record_of(result)
-    later = later_chart(result, pipeline)   # its work folder's preview is a later chart's (M8-14's versions)
+    later = later_chart(result, pipeline)   # its work folder's record is a later chart's (M8-14's versions)
+    if later:   # read as if there were none, as the library does: not that chart's preview, lyrics, art or stems
+        pipeline = {}
     pv = pipeline.get("preview")
     where = Path(result["preview"]) if result.get("preview") and not later else None
     if where is not None and (where / "overview.png").is_file():
