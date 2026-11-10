@@ -3479,7 +3479,9 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     stems, which do not change with the seed: the first chart's are the same). It joins the queue as any song does,
     with an estimate of the guitar's takes and the build when the song's work folder is still in the cache (its other
     stages come from there: `estimate.CACHED` [est.]), else a whole chart's.
-    A chart without a guitar part would come out the same: refused, in words.
+    A chart without a guitar part would come out the same: refused, in words. One press, one version: while its
+    request is out, the chart's buttons (the row's or the Done screen's, and the lyrics panel's two) wait, and a
+    second press sends nothing (the second review's R1: a double click queued two versions).
   - **Versions:** a chart with seed N is version N + 1, in `<home>/library/<16 hex>/v<N + 1>/<the same name>/`, beside
     the first, never over it; its id is `<16 hex>:<name>:v<N + 1>` (`jobs.LIBRARY_ID`). The same name is the charted
     folder's own (without .failed), given as the `name` option (one path component, `jobs.folder_name`; kept in the
@@ -3504,8 +3506,12 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
   - **Nothing typed is lost** (the review's F2): a saved rating or removal, or a refusal, leaves a half-typed spot
     (its time, ticks and note) as it is, and only a spot saved clears the form; Your charts makes again only the rows
     whose chart changed, keeping the others as they are (an open box, what is typed in it, a lyrics panel, a row's
-    message), and a changed row keeps its open box, panel and message. A saved spot that does not read (a damaged
-    file) is left out where it is read, and a time that is no finite number is the plain 400 of any bad time (F5).
+    message), and a changed row keeps its open box, panel and message. Only the rows that went are taken out and
+    only those that moved are moved, and the field he is typing in keeps the focus and its caret, so his next keys
+    land there (the second review's R3); a kept box he had opened says the chart's rating now, its spots read again
+    when their number changed (R4). A saved spot that does not read (a damaged file) is left out where it is read,
+    and a time given as a number outside 0 to 999:59's seconds (NaN, an infinity, or a whole number too long for a
+    float: R2) is the plain 400 of any bad time (F5).
   - **The queue's duplicate rule** (the v0.5.0 review's install-01) keys on the upload and the seed: another version
     of a song in the list is not refused as the same song.
   - In Chromium at 1280x860 and 700 px, light and dark [here, the real App and Queue with a stand-in chart, on a
