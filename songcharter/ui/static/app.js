@@ -1805,9 +1805,12 @@ function chartRow(c, versioned, was) {
   }
   if (c.look) actions.append(smallButton("Look", () => look(c.id)));
   const extra = was && was.panel ? was.panel : make("div", "chart-again");
+  extra.button = null;   // the row's "Chart it differently" now, which chartAgain disables (the second review's R1)
   if (c.readable && c.guitar) {
     const b = smallButton("Chart it differently", chartAction(msg, () => offerAgain(c.id, { name: c.name,
       lyrics: !!c.lyrics, msg, button: b, panel: extra })));
+    b.disabled = !!extra.busy;   // made while its chart's request is out
+    extra.button = b;
     actions.append(b);
   }
   li.append(actions, msg, extra);
@@ -2002,17 +2005,24 @@ function offerAgain(ref, o) {
   // the panel, and the lyrics in it, stay until the list has taken the song (the review's F4: a refusal kept nothing)
   const go = (lyrics) => chartAgain(ref, { ...o, lyrics });
   const row = make("p", "actions");
-  row.append(smallButton("Chart it", () => go(area.value.trim() ? area.value : null), "small-button"), " ",
-    smallButton("Without lyrics", () => go(null)));
+  o.panel.choices = [smallButton("Chart it", () => go(area.value.trim() ? area.value : null), "small-button"),
+    smallButton("Without lyrics", () => go(null))];
+  row.append(o.panel.choices[0], " ", o.panel.choices[1]);
   o.panel.replaceChildren(
     make("p", "small", "This chart had lyrics. songcharter does not keep pasted lyrics: paste them again to have " +
       "them in the new version, or chart it without them."), area, row);
   return null;
 }
 
+// one request at a time for a chart (the second review's R1: a second press, on the lyrics panel's buttons that
+// stayed enabled, queued a second version): its panel holds the flag and, with the row made again or not, the row's
+// button now (o.button is the one pressed); that button and the panel's two wait while it is out
 async function chartAgain(ref, o) {
-  const msg = o.msg, button = o.button;
-  if (button) button.disabled = true;
+  const msg = o.msg, panel = o.panel;
+  if (panel && panel.busy) return;
+  const buttons = () => [(panel && panel.button) || o.button, ...((panel && panel.choices) || [])].filter(Boolean);
+  if (panel) panel.busy = true;
+  for (const b of buttons()) b.disabled = true;
   text(msg, "Adding it to the list…").hidden = false;
   try {
     const body = {};
@@ -2036,7 +2046,8 @@ async function chartAgain(ref, o) {
   } catch (x) {
     text(msg, "songcharter does not answer: is it still running?");
   } finally {
-    if (button) button.disabled = false;
+    if (panel) panel.busy = false;
+    for (const b of buttons()) b.disabled = false;
   }
 }
 

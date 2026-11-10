@@ -1225,3 +1225,103 @@ def test_nothing_typed_is_lost(tmp_path):
                                     "msg": "Lyrics only for a song that starts at once: made-up words."}
     assert out["taken"] == {"panel": 0, "msg": "Version 3 waits in the list: it is charted in its turn."}
     assert out["againBodies"] == [{"lyrics": "zib zab\nzob\n"}, {"lyrics": "zib zab\nzob\n"}]
+
+
+PAGE3 = PAGE.split("(async () => {")[0] + r"""
+(async () => {
+  const out = {};
+  const base = { artist: "Made-Up Band", readable: true, ok: true, audio: "split", stems: false, look: false,
+    upload: "aaaaaaaaaaaaaaaa", guitar: true, lyrics: true, rating: null, spots: 0, name: "First Song" };
+  const v1 = { ...base, id: V1, folder: "Made-Up Band - First Song", time: 1762596000, version: 1, seed: 0 };
+  const rowOf = (id) => vm.runInContext("state.chartRows", ctx).get(id).li;
+  const own = (li) => button(find(li, (x) => x.className === "queue-actions"), "Chart it differently");
+  let gate = null, release = null;   // /again held until released
+  const hold = () => { gate = new Promise((ok) => { release = ok; }); };
+  const fetched = ctx.fetch;
+  const sent = [];   // the /again requests sent, held or not
+  ctx.fetch = async (path, init) => {
+    if (path.endsWith("/again")) sent.push(JSON.parse(init.body));
+    if (path.endsWith("/again") && gate) { await gate; gate = null; }
+    return fetched(path, init); };
+  const agains = () => [...sent];
+  ctx.setCharts([JSON.parse(JSON.stringify(v1))]);
+  const row1 = rowOf(V1);
+  await own(row1).on.click();   // a chart that had lyrics: the panel
+  // the row made again (rated elsewhere) with its panel open: the panel's presses disable the new row's button
+  ctx.setCharts([{ ...JSON.parse(JSON.stringify(v1)), rating: 2 }]);
+  const row2 = rowOf(V1), panel = find(row2, (x) => x.className === "chart-again");
+  find(panel, (x) => x.tag === "textarea").value = "zib zab\n";
+  answers[`POST /api/jobs/${enc(V1)}/again`] = [[400, { error: "A made-up refusal." }]];
+  hold();
+  button(panel, "Without lyrics").on.click();
+  button(panel, "Without lyrics").on.click();   // a double click, and "Chart it" too, while the first is out
+  button(panel, "Chart it").on.click();
+  await settle();
+  const states = (li) => [button(panel, "Chart it").disabled, button(panel, "Without lyrics").disabled, own(li).disabled];
+  out.held = { sent: agains().length, newRow: row2 !== row1, disabled: states(row2), oldRow: own(row1).disabled };
+  // made again once more while the request is out: its new button waits too
+  ctx.setCharts([{ ...JSON.parse(JSON.stringify(v1)), rating: 3 }]);
+  const row3 = rowOf(V1);
+  out.remadeDuring = own(row3).disabled;
+  release();
+  await settle();
+  out.refused = { sent: agains().length, disabled: states(row3), msg: find(row3, (x) => x.className === "queue-msg small").textContent,
+    lyrics: find(panel, (x) => x.tag === "textarea").value };
+  // taken: two presses on "Chart it", one request; the panel goes
+  answers[`POST /api/jobs/${enc(V1)}/again`] = [[202, { job: null, entry: "e2", state: "waiting", version: 2, seed: 1 }]];
+  hold();
+  button(panel, "Chart it").on.click();
+  button(panel, "Chart it").on.click();
+  await settle();
+  out.heldAgain = agains().length;
+  release();
+  await settle();
+  out.taken = { bodies: agains(), panel: panel.children.length, msg: find(row3, (x) => x.className === "queue-msg small").textContent };
+  // the Done screen, as the skeptic found it: a double click on "Without lyrics", one request
+  ctx.renderPlayed({ ok: true, folder: "/h/library/aaaaaaaaaaaaaaaa/Made-Up Band - First Song",
+    library: { id: V1, version: 1, guitar: true, lyrics: true, rating: null, spots: 0 } });
+  const done = els.played;
+  await button(done, "Chart it differently").on.click();
+  const donePanel = find(done, (x) => x.className === "chart-again");
+  answers[`POST /api/jobs/${enc(V1)}/again`] = [[202, { job: null, entry: "e3", state: "waiting", version: 3, seed: 2 }]];
+  hold();
+  button(donePanel, "Without lyrics").on.click();
+  button(donePanel, "Without lyrics").on.click();
+  await settle();
+  out.done = { sent: agains().length - 2, disabled: [button(donePanel, "Without lyrics").disabled, button(done, "Chart it differently").disabled] };
+  release();
+  await settle();
+  out.doneTaken = { sent: agains().length - 2, enabled: !button(done, "Chart it differently").disabled,
+    msg: find(done, (x) => x.className === "small again-msg").textContent };
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_one_press_one_version(tmp_path):
+    """The second review's R1 (app.js in node, the page test's stand-in DOM): while a "Chart it differently" request is
+    out, a second press on the lyrics panel's "Without lyrics" or "Chart it" sends nothing (they queued a second
+    version), and the panel's two buttons and the row's button now are disabled: in a row made again with its panel
+    open, the new row's button, not the old one its panel's presses were made with, and in a row made again during the
+    request, its new button too; a refusal enables them again and keeps the lyrics; a 202 empties the panel; the Done
+    screen's panel the same (breaks: no flag; the old row's button disabled; a row made during it enabled; the flag left
+    on after a refusal)."""
+    script = tmp_path / "once.cjs"
+    script.write_text(PAGE3, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(S.static_files()["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60,
+                          env={**os.environ, "TZ": "UTC", "LANG": "en_US.UTF-8"})
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["held"] == {"sent": 1, "newRow": True, "disabled": [True, True, True], "oldRow": False}
+    assert out["remadeDuring"] is True
+    assert out["refused"] == {"sent": 1, "disabled": [False, False, False], "msg": "A made-up refusal.",
+                              "lyrics": "zib zab\n"}
+    assert out["heldAgain"] == 2
+    assert out["taken"] == {"bodies": [{}, {"lyrics": "zib zab\n"}], "panel": 0,
+                            "msg": "Version 2 waits in the list: it is charted in its turn."}
+    assert out["done"] == {"sent": 1, "disabled": [True, True]}
+    assert out["doneTaken"] == {"sent": 1, "enabled": True,
+                                "msg": "Version 3 waits in the list: it is charted in its turn."}
