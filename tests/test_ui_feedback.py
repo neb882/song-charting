@@ -1661,3 +1661,55 @@ def test_a_change_while_notes_chart_cannot_be_read_keeps_the_charts_sha(lib):
     assert post(lib, by_id(V1, "/feedback"), {"rating": 1})[1]["rating"] == 1
     saved = json.loads(FB.path_for(lib.home, V1).read_text(encoding="utf-8"))
     assert [(e["rating"], len(e["spots"]), e["notes_sha"]) for e in saved["earlier"]] == [(5, 1, rated)]
+
+
+DENSE = ("[Song]\r\n{\r\n  Resolution = 192\r\n}\r\n[SyncTrack]\r\n{\r\n  0 = TS 4\r\n  0 = B 120000\r\n}\r\n"
+         "[ExpertSingle]\r\n{\r\n" + "".join(f"  {6 * k} = N {k % 5} 0\r\n" for k in range(4480)) + "}\r\n")   # 64/s
+
+
+def test_a_feedback_json_too_big_goes_without_the_notes(tmp_path, monkeypatch):
+    """The gate review's F2, through the real bundle: 16 made-up charts rated, each with 50 spots whose notes are 300
+    two-byte characters and 5 earlier charts' spots like them, and 10,000 notes around the spots, make a feedback.json
+    over MAX_BYTES. It goes in without the notes (each `around` saying why), every rating with it, and the manifest
+    says so; with a limit the ratings alone pass, the file stays out and the manifest says where they are kept
+    (breaks: the whole file left out; the closing line saying the ratings are there; the notes kept)."""
+    home = tmp_path / "home"
+    note = "é" * FB.NOTE_MAX
+
+    def spots(n):
+        return [{"id": f"{n:04x}{k:04x}", "at": 10 + k, "reasons": ["too_many_chords"], "note": note}
+                for k in range(FB.SPOTS_MAX)]
+
+    ids = []
+    for i in range(16):
+        folder = chart(home, f"{i:016x}", f"Made-Up Band - Song {i}", 1000 + i)
+        (folder / "notes.chart").write_text(DENSE, encoding="utf-8", newline="")
+        ids.append(J.chart_id(folder))
+        path = FB.path_for(home, ids[-1])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "version": 1, "chart": ids[-1], "rating": 3, "spots": spots(i), "notes_sha": FB.notes_id(folder),
+            "updated": 1.0, "earlier": [{"rating": 4, "spots": spots(i), "notes_sha": f"{e:016x}", "updated": 0.5}
+                                        for e in range(FB.EARLIER_MAX)]}), encoding="utf-8")
+
+    def zipped(name):
+        z = zipfile.ZipFile(diagnostics.bundle(home, tmp_path / name, cache_root=tmp_path / "cache",
+                                               report=lambda: {}, clonehero_info=lambda home: {}))
+        fb = json.loads(z.read("feedback.json")) if "feedback.json" in z.namelist() else None
+        return fb, z.read("MANIFEST.txt").decode("utf-8").splitlines()
+
+    fb, manifest = zipped("d.zip")
+    why = {"why": "left out: the file would be over 5 MB"}
+    assert [c["chart"] for c in fb["charts"]] == sorted(ids) and all(c["rating"] == 3 for c in fb["charts"])
+    assert all(len(c["spots"]) == FB.SPOTS_MAX and all(x["around"] == why for x in c["spots"])
+               and len(c["earlier"]) == FB.EARLIER_MAX for c in fb["charts"])
+    whole = next(x for x in manifest if x.startswith("  the page's ratings") and "over" in x)
+    assert int(whole.rsplit(": ", 1)[1].split()[0]) > diagnostics.MAX_BYTES   # with the notes: over the limit
+    assert manifest[-1] == ("feedback.json holds each chart's rating and marked spots, without the guitar's notes "
+                            "around them: with them it would be over 5 MB; a spot's note is the player's own words, "
+                            "as he wrote them.")
+    monkeypatch.setattr(diagnostics, "MAX_BYTES", 10 ** 6)   # the ratings alone are over it too
+    fb, manifest = zipped("small.zip")
+    assert fb is None and manifest[-1] == (
+        "The ratings and marked spots are not in this zip: feedback.json would be over 1 MB even without the notes "
+        "around the spots. They are kept in the state/feedback folder of songcharter's home (above).")

@@ -3507,7 +3507,11 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     word of the chart (not its [Events]: lyrics, sections; not its names). At most 400 notes a spot (the nearest) and
     10,000 in the file [judgement: 20 notes a second for 20 s; about 200 bytes a note as written, so about 2 MB of
     the zip's 5 MB a file], `left_out` and `why` saying what was left out; a chart that does not read, one with no
-    Expert guitar, or spots of another notes.chart than the one there: `why` alone.
+    Expert guitar, or spots of another notes.chart than the one there: `why` alone. A feedback.json still over the
+    zip's 5 MB (many charts with long notes and earlier charts' spots) goes in without the notes, each `around`
+    saying why, and the manifest says so; still over, it stays out, and the manifest says the ratings are kept in
+    songcharter's state/feedback folder (the gate review's F2: the whole file, every rating, was left out, and the
+    manifest said it was there).
   - **Chart it differently** (on the Done screen and on each chart in Your charts with a guitar part, a failed check
     too): `POST /api/jobs/<id>/again` charts the song again with the next seed for its song (`App.next_seed`: one more
     than any its versions in the library, its songs in the queue and `<home>/state/versions.json` have used, so a
