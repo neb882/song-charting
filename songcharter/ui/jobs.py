@@ -11,7 +11,13 @@
     child runs the server's own code). --threads is device.default_threads() when the options leave it empty and the
     device is the CPU (asked for, or "auto" where doctor found no CUDA).
   * **The output folder:** <home>/library/<the upload's 16 hex>/<cache.safe_name(f"{artist} - {title}")>, the artist
-    and title as the chart will have them (the options', else the upload's tags or file name). The name is safe for
+    and title as the chart will have them (the options', else the upload's tags or file name); a chart with another
+    seed (M8-14, "Chart it differently": `seed` N, --seed=N) is version N + 1, in
+    <home>/library/<16 hex>/v<N + 1>/<the same name>, beside the first and never over it. The same name is the first
+    chart's folder's own (`name`, which "Chart it differently" gives: one path component, checked), not one made again
+    from the metadata, which can differ from it (a several-song drop's chart is named from upload.json, its song.ini
+    from the uploaded file's 40-character stem: the review's F1), so every version installs into one Clone Hero
+    folder. The name is safe for
     Windows, as M4-06 copies the folder to /mnt/c, and at most LIBRARY_NAME_MAX (80) characters, cut at a word: it
     is the name the friend sees in Clone Hero's Songs folder and on the Done screen, so it is not held to the work
     folder's 40 (cache.NAME_MAX, for autochart's deep cache paths). Installed, its deepest path on the Windows side
@@ -68,6 +74,13 @@
     looked up among the folders the library holds (`find_chart`), never made into a path; `Charted` is a chart as the
     routes by id take it (a `result` made from its folder), so Install, Open, the stems' zip and Look are the queue's
     own routes. Nothing here deletes a chart.
+  * **Versions** (M8-14): a chart made with seed N > 0 is version N + 1, in <16 hex>/v<N + 1>/<name>/ (`VERSION_DIR`),
+    with the id `<16 hex>:<name>:v<N + 1>`; the first keeps its folder and id. The library lists a song's versions
+    together (its newest chart's time, then each newest first), each with its `version` and `seed` (report.json's
+    `pipeline.seed`, else the folder's version less 1), and what "Chart it differently" needs: `guitar` (the chart has
+    a guitar part: only it changes with the seed), `lyrics` (the chart had pasted lyrics, which are never kept) and
+    `upload` (the song file's 16 hex). `rechart` turns a chart's report.json back into the page's options. The
+    queue's duplicate rule keys on the upload and the seed, so a version is never refused as the same song.
 """
 from __future__ import annotations
 
@@ -97,7 +110,7 @@ META_FLAGS = {"title": "--title", "artist": "--artist", "album": "--album", "yea
 IMAGE_FLAGS = {"album_art": "--album-art", "background": "--background"}
 LIBRARY_NAME_MAX = 80   # the library folder's name: at most this many UTF-16 code units (the module docstring)
 OPTION_KEYS = (*META_FLAGS, "instruments", "levels", "solos", "takes", "device", "threads", "preview", "lyrics",
-               *IMAGE_FLAGS, "stems", "one_audio")
+               *IMAGE_FLAGS, "stems", "one_audio", "seed", "name")
 TAIL_LINES = 8                     # the log's last lines in an error the job writes itself
 END_WAIT_S = 10.0                  # how long a new job waits for one whose closing event is out to exit
 # an error the job writes itself (the child sent none) in plain words, for the queue's list (M8-10's review, P-F4;
@@ -142,6 +155,8 @@ class ChartOptions:
     background: str | None = None
     stems: bool = False       # also the six stems as FLAC beside the song folder (--stems, M8-12)
     one_audio: bool = False   # one song.ogg, not Clone Hero's multitrack audio (--one-audio, M8-12)
+    seed: int = 0             # the guitar takes' seeds moved on by this (--seed, M8-14): version seed + 1
+    name: str | None = None   # the library folder's name (a version's: its first chart's, folder_name), else made
 
     def as_dict(self) -> dict:
         """The options as the job's records show them: `lyrics` is whether some were given, never the text."""
@@ -150,13 +165,26 @@ class ChartOptions:
                 "device": self.device, "threads": self.threads, "preview": self.preview,
                 "lyrics": self.lyrics is not None, "album_art": self.album_art is not None,
                 "background": self.background is not None, "stems": self.stems, "one_audio": self.one_audio,
-                **self.metadata}
+                "seed": self.seed, "name": self.name, **self.metadata}
 
 
 def _words(raw: Any, what: str) -> tuple[str, ...]:
     if not isinstance(raw, list) or not all(isinstance(x, str) for x in raw):
         raise InputError(f"{what} is a list of names, not {raw!r}")
     return tuple(x.strip().lower() for x in raw)
+
+
+def folder_name(raw: Any) -> str | None:
+    """The `name` option (M8-14): a library folder's name as one path component, else an InputError; None for none.
+    Not "." or "..", not hidden, no separator, colon or control character, at most 255 bytes, not a version folder's
+    name (v2, ...) and not a failed build's (".failed"): the name a chart in the library already has."""
+    if raw is None:
+        return None
+    if (not isinstance(raw, str) or not raw.strip() or raw != raw.strip() or raw in (".", "..") or raw.startswith(".")
+            or any(c in raw for c in '/\\:') or any(ord(c) < 32 or ord(c) == 127 for c in raw)
+            or len(raw.encode("utf-8")) > 255 or VERSION_DIR.match(raw) or raw.endswith(FAILED)):
+        raise InputError(f"name is a song folder's name, not {str(raw)[:90]!r}")
+    return raw
 
 
 def parse_options(raw: Any) -> ChartOptions:
@@ -198,12 +226,13 @@ def parse_options(raw: Any) -> ChartOptions:
                            device=get.get("device", "auto"), threads=get.get("threads"), preview=preview,
                            metadata=meta, lyrics=lyrics if lyrics and lyrics.strip() else None,
                            album_art=get.get("album_art"), background=get.get("background"),
-                           stems=get.get("stems", False), one_audio=get.get("one_audio", False))
+                           stems=get.get("stems", False), one_audio=get.get("one_audio", False),
+                           seed=get.get("seed", 0), name=folder_name(get.get("name")))
     pipeline_meta = {"name" if k == "title" else k: v for k, v in meta.items()}
     Options(instruments=options.instruments, takes=options.takes, device=options.device, threads=options.threads,
             metadata=pipeline_meta, solos=options.solos, levels=options.levels, preview=options.preview,
             lyrics=options.lyrics, album_art=options.album_art, background=options.background, stems=options.stems,
-            one_audio=options.one_audio).check()
+            one_audio=options.one_audio, seed=options.seed).check()
     return options
 
 
@@ -225,6 +254,8 @@ def chart_command(song: Path, out: Path, options: ChartOptions, threads: int | N
            f"--device={options.device}"]
     if options.takes is not None:
         cmd.append(f"--takes={options.takes}")
+    if options.seed:   # the default (0) is left out: the command line every earlier version gave
+        cmd.append(f"--seed={options.seed}")
     if threads is not None:
         cmd.append(f"--threads={threads}")
     if not options.preview:
@@ -254,11 +285,16 @@ def lyrics_file(text: str) -> int:
 
 
 def output_folder(home: Path, upload: Mapping[str, Any], options: ChartOptions) -> Path:
-    """<home>/library/<the upload's id>/<cache.safe_name(f"{artist} - {title}", LIBRARY_NAME_MAX)>."""
+    """<home>/library/<the upload's id>/<cache.safe_name(f"{artist} - {title}", LIBRARY_NAME_MAX)>, or the options'
+    `name` when given (a version's: its first chart's folder's name, M8-14); for a seed N > 0, version N + 1's:
+    <home>/library/<the upload's id>/v<N + 1>/<the name>."""
     tags = upload.get("metadata") or {}
     artist = options.metadata.get("artist") or tags.get("artist") or "Unknown"
     title = options.metadata.get("title") or tags.get("name") or Path(upload["path"]).stem
-    return home / "library" / upload["id"] / cache.safe_name(f"{artist} - {title}", LIBRARY_NAME_MAX)
+    base = home / "library" / upload["id"]
+    if options.seed:
+        base = base / f"v{options.seed + 1}"
+    return base / (options.name or cache.safe_name(f"{artist} - {title}", LIBRARY_NAME_MAX))
 
 
 def partial_folders(out: Path) -> list[Path]:
@@ -620,8 +656,9 @@ STATES = ("waiting", "charting", "ready", "check_failed", "not_finished", "cance
 FINISHED = STATES[2:]
 LYRICS_WAIT = ("Lyrics only for a song that starts at once: songcharter keeps pasted lyrics only while it uses them. "
                "Chart this song without them, or add it once nothing is charting.")
-# a song added again while it waits or charts (the same upload; the v0.5.0 review's install-01): it would chart twice,
-# into the same library folder. By where it is: charting, waiting (the list paused: after a restart, say), waiting
+# a song added again while it waits or charts (the same upload and seed; the v0.5.0 review's install-01, M8-14): it
+# would chart twice, into the same library folder. By where it is: charting, waiting (the list paused: after a
+# restart, say), waiting
 ALREADY = {"charting": "This song is already in the list: it is charting now.",
            "paused": "This song is already in the list: press Carry on to chart it.",
            "waiting": "This song is already in the list: it is charted in its turn."}
@@ -637,6 +674,13 @@ class NotInQueue(Exception):
 
 def queue_path(home: Path) -> Path:
     return Path(home) / "state" / "queue.json"
+
+
+def entry_seed(options: Any) -> int:
+    """A queue entry's seed (its options' `seed`, M8-14): 0 when it has none (an entry from before), or one that is
+    not a whole number (checked when it starts)."""
+    seed = options.get("seed") if isinstance(options, Mapping) else None
+    return seed if isinstance(seed, int) and not isinstance(seed, bool) and seed >= 0 else 0
 
 
 def queued_uploads(home: Path) -> set[str]:
@@ -782,6 +826,12 @@ class Queue:
             entry = next((e for e in self.entries if e.get("job") == job_id and e["state"] in FINISHED), None)
             return Kept(entry) if entry is not None else None
 
+    def snapshot_entries(self) -> list[dict]:
+        """A copy of the list's entries as kept, their options among them (the server's next seed reads their seeds,
+        M8-14)."""
+        with self._lock:
+            return [dict(e) for e in self.entries]
+
     def dropped_chart(self, job_id: str) -> str | None:
         """The library id of the chart a finished song made, once Clear the list, Remove or the trim has taken the
         song out of the list (`_drop`), for this server's life; None for any other id. A Done screen still open on
@@ -817,7 +867,8 @@ class Queue:
             chart = chart[:-len(".failed")]
         message = (closing.get("plain") or closing.get("message")) if closing.get("event") == "error" else None
         return {"id": e["id"], "run": e["run"], "name": e["upload"].get("name"), "chart": chart, "state": e["state"],
-                "job": e.get("job"), "estimate": e.get("estimate"), "added": e.get("added"),
+                "version": entry_seed(e["options"]) + 1, "job": e.get("job"), "estimate": e.get("estimate"),
+                "added": e.get("added"),
                 "started": e.get("started"), "ended": e.get("ended"),
                 "error": str(message).split("\n", 1)[0].rstrip(":") if message else None,
                 "lyrics_lost": bool(e.get("lyrics_lost"))}
@@ -856,9 +907,10 @@ class Queue:
         """A song at the end of the list, with the page's `options` as checked (the pictures as upload ids, no
         lyrics) and its estimate: (its entry, its job when it starts at once: nothing charting and none waiting).
         `lyrics` only for a song that starts at once, else an InputError (LYRICS_WAIT); QueueFull at QUEUE_MAX waiting;
-        an InputError (ALREADY) for a song whose upload is already waiting or charting (a finished one may be charted
-        again); prepare's InputError, or JobRunning, for a song that cannot start at once (it is not kept). A chart
-        whose result is out and whose process is still exiting is waited for first, as Jobs.start does."""
+        an InputError (ALREADY) for a song whose upload is already waiting or charting with the same seed (a finished
+        one may be charted again; another seed is another version, M8-14); prepare's InputError, or JobRunning, for a
+        song that cannot start at once (it is not kept). A chart whose result is out and whose process is still
+        exiting is waited for first, as Jobs.start does."""
         cur = self.jobs.current
         if cur is not None and cur.state == "running":
             with cur.cond:
@@ -867,8 +919,9 @@ class Queue:
                 cur.wait_end(END_WAIT_S)
         with self._lock:
             self._settle()
+            seed = entry_seed(options)
             same = next((e for e in self.entries if e["state"] in ("waiting", "charting")
-                         and e["upload"].get("id") == upload.get("id")), None)
+                         and e["upload"].get("id") == upload.get("id") and entry_seed(e["options"]) == seed), None)
             if same is not None:
                 raise InputError(ALREADY["charting" if same["state"] == "charting" else
                                          "paused" if self.paused is not None else "waiting"])
@@ -1075,15 +1128,29 @@ class Queue:
 
 LIBRARY = "library"                # <home>/library: every chart the page has made (output_folder)
 UPLOAD_HEX = re.compile(r"^[0-9a-f]{16}$")   # a library folder's upload: cache.KEY_HEX hex characters
-LIBRARY_ID = re.compile(r"^([0-9a-f]{16}):([^/\\\x00]+)$")   # a chart's id: its upload's 16 hex and its folder's name
+# a chart's id: its upload's 16 hex, its folder's name, and for version 2 on (M8-14) its version
+LIBRARY_ID = re.compile(r"^([0-9a-f]{16}):([^/\\\x00:]+)(?::v([1-9][0-9]{0,6}))?$")
+VERSION_DIR = re.compile(r"^v([2-9]|[1-9][0-9]{1,6})$")   # <16 hex>/v<N>/: version N's charts (N >= 2, M8-14)
 FAILED = ".failed"                 # pipeline.failed_folder's suffix: a build the gate failed, kept for a look
 STEMS_SUFFIX = " (stems)"          # pipeline.STEMS_SUFFIX (not imported: the pipeline is the child's)
 SPLIT_FILES = ("guitar.ogg", "bass.ogg", "drums.ogg")   # package.SPLIT_PARTS' own files (M8-12)
 
 
+def _charts_in(folder: Path) -> list[Path]:
+    """The charts directly in `folder`: folders that hold a report.json (readable or not); not a hidden one
+    (assemble's .partial staging), not a link."""
+    try:
+        folders = sorted(folder.iterdir())
+    except OSError:
+        return []
+    return [f for f in folders if not f.name.startswith(".") and not f.is_symlink() and f.is_dir()
+            and (f / "report.json").is_file()]
+
+
 def chart_folders(home: Path) -> list[Path]:
-    """The library's charts: <home>/library/<16 hex>/<name>/ folders that hold a report.json (readable or not); not
-    a hidden one (assemble's .partial staging), not a link."""
+    """The library's charts: <home>/library/<16 hex>/<name>/ folders that hold a report.json (readable or not), and
+    the versions' in <16 hex>/v<N>/<name>/ (VERSION_DIR, M8-14); not a hidden one (assemble's .partial staging), not
+    a link."""
     found = []
     try:
         uploads = sorted((home / LIBRARY).iterdir()) if (home / LIBRARY).is_dir() else []
@@ -1092,18 +1159,34 @@ def chart_folders(home: Path) -> list[Path]:
     for up in uploads:
         if not UPLOAD_HEX.match(up.name) or up.is_symlink() or not up.is_dir():
             continue
+        found += _charts_in(up)
         try:
-            folders = sorted(up.iterdir())
+            versions = sorted(v for v in up.iterdir() if VERSION_DIR.match(v.name) and not v.is_symlink()
+                              and v.is_dir() and not (v / "report.json").exists())
         except OSError:
             continue
-        found += [f for f in folders if not f.name.startswith(".") and not f.is_symlink() and f.is_dir()
-                  and (f / "report.json").is_file()]
+        for v in versions:
+            found += _charts_in(v)
     return found
 
 
+def version_of(folder: Path) -> int:
+    """A library chart's version: N for one in <16 hex>/v<N>/ (M8-14), else 1."""
+    m = VERSION_DIR.match(folder.parent.name)
+    return int(m[1]) if m and UPLOAD_HEX.match(folder.parent.parent.name) else 1
+
+
+def upload_of(folder: Path) -> str:
+    """A library chart's upload: the 16 hex of the song file it was made from (its version folder's parent's name for
+    version 2 on)."""
+    return folder.parent.parent.name if version_of(folder) > 1 else folder.parent.name
+
+
 def chart_id(folder: Path) -> str:
-    """A library chart's id: `<its upload's 16 hex>:<its folder's name>` (a name has no ":", cache.safe_name)."""
-    return f"{folder.parent.name}:{folder.name}"
+    """A library chart's id: `<its upload's 16 hex>:<its folder's name>` (a name has no ":", cache.safe_name), and
+    `:v<N>` after it for version N >= 2 (M8-14)."""
+    n = version_of(folder)
+    return f"{upload_of(folder)}:{folder.name}" + (f":v{n}" if n > 1 else "")
 
 
 def find_chart(home: Path, chart: Any) -> Path | None:
@@ -1148,7 +1231,7 @@ def _work(folder: Path, root: Path | None) -> tuple[Path | None, dict]:
     if root is None:
         return None, {}
     try:
-        work = cache.by_key(root, folder.parent.name)
+        work = cache.by_key(root, upload_of(folder))
         if work is None:
             return None, {}
         record = json.loads((work / "pipeline.json").read_text(encoding="utf-8"))
@@ -1159,20 +1242,44 @@ def _work(folder: Path, root: Path | None) -> tuple[Path | None, dict]:
     return (work, record) if same else (None, {})
 
 
+def read_report(folder: Path) -> dict | None:
+    """A chart's report.json, when it reads as a JSON object; else None."""
+    try:
+        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return report if isinstance(report, dict) else None
+
+
+def chart_seed(folder: Path, report: Any) -> int:
+    """A chart's seed (M8-14): report.json's `pipeline.seed`, else its folder's version less 1 (a chart made before
+    the seed was recorded is the default's)."""
+    pipeline = report.get("pipeline") if isinstance(report, dict) else None
+    seed = pipeline.get("seed") if isinstance(pipeline, dict) else None
+    return seed if isinstance(seed, int) and not isinstance(seed, bool) and seed >= 0 else version_of(folder) - 1
+
+
+def _parts(report: Any) -> list[str]:
+    """The instruments a chart's report.json says it charted (its config's parts)."""
+    config = report.get("config") if isinstance(report, dict) else None
+    parts = config.get("parts") if isinstance(config, dict) else None
+    return [p["instrument"] for p in parts or [] if isinstance(p, dict) and isinstance(p.get("instrument"), str)] \
+        if isinstance(parts, list) else []
+
+
 def read_chart(folder: Path, root: Path | None) -> dict:
     """One chart of the library as GET /api/library lists it: {"id", "folder" (its folder's name), "name", "artist"
     (song.ini's; the folder's name when it has none), "time" (report.json's, seconds), "readable" (report.json read,
     with its gate), "ok" (the gate passed: Install), "audio" ("one", "split" or null), "stems" (saved beside it),
-    "look" (the work folder is still in the cache: the preview and Listen)}."""
+    "look" (the work folder is still in the cache: the preview and Listen), and since M8-14 "upload" (the song
+    file's 16 hex), "version", "seed", "guitar" (it has a guitar part: "Chart it differently") and "lyrics" (it was
+    made with pasted lyrics)}."""
     base = folder.name[:-len(FAILED)] if folder.name.endswith(FAILED) else folder.name
     try:
         when = (folder / "report.json").stat().st_mtime
     except OSError:
         when = None
-    try:
-        report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        report = None
+    report = read_report(folder)
     gate = report.get("gate") if isinstance(report, dict) else None
     readable = isinstance(gate, dict) and isinstance(gate.get("ok"), bool)
     ini = _song_ini(folder)
@@ -1185,13 +1292,58 @@ def read_chart(folder: Path, root: Path | None) -> dict:
     return {"id": chart_id(folder), "folder": folder.name, "name": ini.get("name") or base,
             "artist": ini.get("artist") or None, "time": when, "readable": readable,
             "ok": readable and gate["ok"] is True and not folder.name.endswith(FAILED), "audio": audio,
-            "stems": _stems(folder) is not None, "look": _work(folder, root)[0] is not None}
+            "stems": _stems(folder) is not None, "look": _work(folder, root)[0] is not None,
+            "upload": upload_of(folder), "version": version_of(folder), "seed": chart_seed(folder, report),
+            "guitar": readable and "guitar" in _parts(report),
+            "lyrics": readable and isinstance(report.get("lyrics"), dict)}
 
 
 def library(home: Path, root: Path | None) -> list[dict]:
-    """Every chart of the library (read_chart), newest first; one without a time last."""
+    """Every chart of the library (read_chart), a song's versions together (M8-14): the songs (their song file's
+    upload) by their newest chart, newest first, and each song's charts newest first; one without a time last."""
     charts = [read_chart(f, root) for f in chart_folders(home)]
-    return sorted(charts, key=lambda c: (c["time"] is None, -(c["time"] or 0), c["id"]))
+    newest: dict[str, float] = {}
+    for c in charts:
+        newest[c["upload"]] = max(newest.get(c["upload"], -1.0), c["time"] if c["time"] is not None else -1.0)
+    return sorted(charts, key=lambda c: (newest[c["upload"]] < 0, -newest[c["upload"]], c["upload"],
+                                         c["time"] is None, -(c["time"] or 0), -c["version"], c["id"]))
+
+
+def rechart(report: Mapping[str, Any]) -> dict:
+    """The page's options (as POST /api/jobs takes them) that make a chart of the library again (M8-14, "Chart it
+    differently"), from its report.json: the instruments it charted (its config's parts: an engine that found no
+    note left one out, as it would again), the levels, the solos, one audio file or split, the song.ini's name,
+    artist, album, genre and year (as given: the same song.ini, and the same folder name), the device and the takes
+    asked for (report.json's `pipeline`; the defaults for a chart made before it was recorded). Not the seed (the
+    caller's), the stems (they do not change with the seed: the first chart's are the same) or the pictures and
+    lyrics (the caller's: an image given is the folder's own, the pasted lyrics were never kept). An InputError when
+    the report does not say enough (no config, or no part)."""
+    config = report.get("config") if isinstance(report.get("config"), dict) else None
+    parts = _parts(report)
+    if config is None or not parts:
+        raise InputError("this chart's report.json does not say how it was made, so it cannot be charted again")
+    pipeline = report.get("pipeline") if isinstance(report.get("pipeline"), dict) else {}
+    device = (pipeline.get("device") or {}).get("asked") if isinstance(pipeline.get("device"), dict) else None
+    takes = (pipeline.get("takes") or {}).get("asked") if isinstance(pipeline.get("takes"), dict) else None
+    meta = config.get("metadata") if isinstance(config.get("metadata"), dict) else {}
+    out: dict[str, Any] = {key: str(meta[name]) for key, name in (("title", "name"), ("artist", "artist"),
+                                                                  ("album", "album"), ("genre", "genre"),
+                                                                  ("year", "year"))
+                           if isinstance(meta.get(name), (str, int)) and str(meta[name]).strip()}
+    out["instruments"] = [i for i in INSTRUMENTS if i in parts]
+    levels = config.get("levels")
+    if isinstance(levels, list) and all(isinstance(x, str) for x in levels):
+        out["levels"] = list(levels)
+    solos = config.get("solos")
+    if isinstance(solos, str) or isinstance(solos, list) and all(isinstance(x, str) for x in solos):
+        out["solos"] = solos
+    if isinstance(config.get("split_audio"), bool):
+        out["one_audio"] = not config["split_audio"]
+    if device in ("auto", "cpu", "cuda"):
+        out["device"] = device
+    if isinstance(takes, int) and not isinstance(takes, bool):
+        out["takes"] = takes
+    return out
 
 
 class Charted:
@@ -1216,7 +1368,7 @@ class Charted:
                 "stems": str(stems) if stems is not None else None, "summary": None}
 
     def snapshot(self, events: bool = True) -> dict:
-        out = {"job": self.id, "state": self.state, "upload": {"id": self.folder.parent.name, "name": None},
+        out = {"job": self.id, "state": self.state, "upload": {"id": upload_of(self.folder), "name": None},
                "options": {}, "started": None, "ended": self.info["time"], "exit": 0 if self.info["ok"] else 1,
                "now": time.time(), "estimate": None, "remaining": None, "kept": True, "library": True}
         if events:

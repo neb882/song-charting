@@ -195,7 +195,7 @@ input file ──ffmpeg (bundled), gapless──► mix: 44.1 kHz stereo float32
     the test song (6:52) 1.19 GB, Take Me Out (4:01) 696 MB, a 35-s excerpt 101 MB [here, pipeline-defaults runs],
     so 5 GB holds four to seven songs [inference].
   - `--work DIR` puts the work folder anywhere, with autochart's scratch inside it, as before.
-- **Determinism.** Seeds are fixed and nothing depends on the wall clock. Two CPU runs must give a byte-identical `notes.chart`.
+- **Determinism.** Reproducible: the same input with the same recorded configuration (seeds, device, engine versions, fallbacks; recorded in report.json's `pipeline` field) gives a byte-identical notes.chart on that machine. A seed the user asks for is configuration (`--seed N`, the page's "Chart it differently": §2.7, "The seed as configuration"). Nothing depends on the wall clock; the default seed (0) gives the seeds every version before M8-14 gave, so two CPU runs with the defaults give a byte-identical `notes.chart`.
   - Demucs's default `shifts=1` draws a random time shift from Python's global `random` (demucs 4.1.0: `apply.py` line 245, `api.py` line 59); the ADTOF test called `apply_model(..., shifts=1)` [here]. So two fresh separations differ unless `random` (and torch) is seeded right before each separation, or `shifts=0` is used. Record the choice in `doctor.json`. M1 is safe only because it reuses cached stems.
   - The chosen guitar take's tokens and seed are cached with the stems and in the polish workspace, and re-runs reuse them unless the user asks to regenerate. Determinism is promised only on the same machine and device: one flipped token changes the whole rest of a take (critique G6).
   - Not yet shown on CUDA: the golden charts run 1 CPU take, and the GPU smoke test's rerun reused its cached takes, so two cold charts of 4 CUDA takes have never been compared. M4-08's A18 charts the test song twice from cold on the 5070 and compares the two `notes.chart` files; this line then says what it found (the advisor on the release candidate, finding 5).
@@ -1622,6 +1622,40 @@ ending any player sees.
 - **Not built:** windows split at section boundaries before the decode (route B2's plan in "Engine A (B2) method"
   below); B1 cannot set the engine's budget, so a piece is the whole tail. A piece re-transcribes its 8-s context
   and drops it, and the seam may still split a phrase the two runs heard differently.
+
+#### The seed as configuration (M8-14)
+- **The rule** (CLAUDE.md, the owner's decision of 2026-11-09): reproducible: the same input with the same recorded
+  configuration (seeds, device, engine versions, fallbacks; recorded in report.json's `pipeline` field) gives a
+  byte-identical notes.chart on that machine. A seed the person asks for is configuration, which makes room for the
+  page's "Chart it differently" (§4.5): a guitar he does not like, charted again another way.
+- **The seed** (`pipeline.Options.seed`, `songcharter chart --seed N`, 0 to 999999 [judgement: the engine's seed
+  stays far inside a 32-bit integer]): each take's seed moved on by N (`take_seeds`): take 1 20260609 + N, takes 2,
+  3, ... 101·k + N. So Quick's one take moves on, and Best moves each of its 4. N = 0, the default, gives the seeds
+  of every version before, so the default chart is byte-identical to before and the golden charts do not move
+  [code; tests/test_seed.py: the guitar asked for exactly 20260609 with seed 0, and the same notes.chart and
+  report.json twice]. Within a chart the seeds are always distinct (20260609 is no multiple of 101); from N = 101 on a
+  later take can meet another N's (101 + 101 = 202 + 0), so Best's 4 takes are all new for the first 100 re-charts
+  of a song [judgement: a song is charted again a few times].
+- **The cache:** a take's key (autochart's take.json: the input, the seed, the sampling settings, the install) and its
+  folder (guitar/seed_<seed>/) hold its seed [code, unchanged since M3], so another seed never reuses a take and the
+  same seed always does. The separation, drums, bass and sections do not depend on the guitar's seed: a chart with
+  another seed takes them from the work folder's caches, and only the guitar and assemble run [tests/test_seed.py].
+- **The record** (report.json's `pipeline`, `pipeline.folder_record`): `seed`; the device asked for and chosen; the
+  takes asked for, planned and made, with `seeds` (each take's), each take's device and the seeds run again on the
+  CPU; each fallback's stage, from and to; and `engines`, what each engine's cache keys on, as version strings and
+  12-hex hashes (`engine_identities`): the separation's model, revision and seed; ADTOF's version and its weights'
+  SHA-256; the bass rules' version and a hash of their libraries' versions; allin1's version, model and a hash of
+  its weights, or librosa's version, with the sections engine's version; autochart's engineVersion and its install's
+  hash (`install_key`, read from the take's take.json). No path, no URL, no reason text. With the options report.json
+  already holds (its config: the parts, levels, solos, one audio file or split, the song.ini's values; `pipeline`:
+  the device and takes asked for), `songcharter chart <song> --seed N` makes that chart again here, which is what a
+  bad spot sent back in the diagnostics zip needs (§4.5).
+- **Is report.json itself byte-identical run to run?** On the same machine, with the same folders and the stages
+  cached, yes: it holds no clock and no random value [tests/test_seed.py compares two report.json files byte for
+  byte, with the stand-in engines]. Across machines or folders, no: it names the decode's, the stems' and the
+  output's paths, and the devices that ran. notes.chart is the file the rule is about.
+- **Not shown yet:** two cold charts with the same seed on CUDA (the Determinism note in §2: M4-08's A18 compares
+  them).
 
 #### Under-charted strumming: a detector, no fill
 The friend found a sparse stretch in the test song around 2:32–2:35 of the original song (his clarification; an
@@ -3409,6 +3443,86 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     Clone Hero already, from an earlier chart. Replace the older chart?" and replaced it; Look showed the chart's
     Done screen with its preview, flags, Listen and stems; no horizontal scroll at 700 px. The one console line was
     Chromium's own for the 409 the replace question rests on; no script error.
+- **How it played, and Chart it differently** (M8-14, the owner's approval of 2026-11-09 after two advisors found the
+  project's success measure, whether the friend enjoys playing the charts, resting on one sentence of his) [code]:
+  - **How did it play?** On the Done screen of a chart that passed and under each such chart in Your charts, one
+    folded line ("How did it play?", with the rating and the spots once there are some) that opens to 1 to 5 (the one
+    pressed, pressed again, takes it back) and "Mark a spot": a time as Clone Hero shows it (m:ss, the song with its
+    lead-in), one or more reasons (too many chords, missing notes, extra notes, off the beat, hard to read, great
+    part: praise is data too) and a short note (at most 300 characters), as many spots as he likes (50 a chart).
+    Each change is saved at once.
+  - **Where it is kept** (`ui/feedback.py`): `<home>/state/feedback/<24 hex>.json`, the hex the SHA-256 of the
+    chart's library id (no song's name in a file's name), with the id inside; never in the song folder, which Install
+    copies into Clone Hero. Written whole through a temporary file; a restart reads it; a new version is a new chart
+    with its own; nothing deletes one (a chart deleted in Windows keeps its record). Each record notes its chart's
+    notes.chart identity (the first 16 hex of its SHA-256) at the last change, so a chart made again into the same
+    folder (the same seed) can be told from the one rated.
+  - **The routes** (behind `/api/jobs`' guards: Host; Origin and `X-Songcharter` on the POST): `GET` and
+    `POST /api/jobs/<id>/feedback`, the id a job's, "current" or a chart's (the chart its result names, found in the
+    library: never a path). One change a POST: `{"rating": 1-5 or null}`, `{"add": {"at", "reasons", "note"}}` or
+    `{"remove": <spot id>}`; each checked (the rating 1 to 5; a time m:ss and not after the song's end, from
+    report.json's audio and lead-in; reasons from the list, at least one; the note text of at most 300 characters,
+    kept as written), else 400 with why in plain words. `GET /api/library` carries each chart's `rating` and `spots`.
+  - **Into the diagnostics zip** (`diagnostics.py`): feedback.json, every chart with a rating or a spot, each with its
+    chart as it is now (still there or not, its notes.chart identity, its gate, its length, and its report.json's
+    `pipeline`: the seeds, takes, devices, fallbacks and engines of §2.7, so a bad spot can be charted again here);
+    the chart named by its id, no path. The note is the friend's own text and travels as he wrote it (the guide says
+    so). The zip's guard, `refused` (by name, size and first bytes), now also checks the files it makes, such as this
+    one; CI's check_no_audio.py reads the whole zip as before.
+  - **Chart it differently** (on the Done screen and on each chart in Your charts with a guitar part, a failed check
+    too): `POST /api/jobs/<id>/again` charts the song again with the next seed for its song (`App.next_seed`: one more
+    than any its versions in the library, its songs in the queue and `<home>/state/versions.json` have used, so a
+    version he deleted in Windows is never made again by it; versions.json is written only once the queue has taken
+    the song, so a refused press uses no number: the review's F3) and the options its report.json records
+    (`jobs.rechart`: the parts it charted, the levels, the solos, one audio file or split, the song.ini's values, the
+    device and takes asked for; a picture he gave, which is in the chart's folder, as an image upload again; not the
+    stems, which do not change with the seed: the first chart's are the same). It joins the queue as any song does,
+    with an estimate of the guitar's takes and the build when the song's work folder is still in the cache (its other
+    stages come from there: `estimate.CACHED` [est.]), else a whole chart's.
+    A chart without a guitar part would come out the same: refused, in words. One press, one version: while its
+    request is out, the chart's buttons (the row's or the Done screen's, and the lyrics panel's two) wait, and a
+    second press sends nothing (the second review's R1: a double click queued two versions).
+  - **Versions:** a chart with seed N is version N + 1, in `<home>/library/<16 hex>/v<N + 1>/<the same name>/`, beside
+    the first, never over it; its id is `<16 hex>:<name>:v<N + 1>` (`jobs.LIBRARY_ID`). The same name is the charted
+    folder's own (without .failed), given as the `name` option (one path component, `jobs.folder_name`; kept in the
+    queue entry, so through a restart and the song file dropped again), not one made again from report.json's
+    metadata: a several-song drop names version 1 from upload.json (the dropped name, up to 80 characters) while its
+    song.ini comes from the uploaded file's 40-character stem, so a rebuilt name could differ and the version install
+    as a second song (the review's F1). The song.ini's name and artist are the same in every version: "Chart it
+    differently" gives version 1's resolved values as the song's fields [tests/test_ui_feedback.py: a several-song
+    drop's long untagged name, the page's fields, a tagged file]. Your charts lists a song's
+    versions together (each song by its newest chart, each version newest first), each saying "version N", its date
+    and its rating; the queue's list says "(version N)". The versions install into the same Clone Hero folder, so one
+    is in the game at a time: the replace question (409, now with `version` and `installed_version`, the second read
+    from the installed folder's report.json) says which: "Version 1 of First Song is in Clone Hero now. Replace it
+    with version 2?".
+  - **The song file:** uploads are kept 7 days (`prune_uploads`). When it is gone, `/again` answers 400 with `drop`,
+    and the page asks him to drop the song file again on the drop screen ("To chart <song> differently, drop its
+    song file again"), with this chart's options kept: the dropped file goes to `/again` with its upload id (the same
+    file has the same id), not to the options form; another file is refused in words.
+  - **Lyrics:** never kept, so a chart made with pasted lyrics asks for them again before it is charted differently
+    ("paste them again ... or chart it without them"); as for any song, only one that starts at once can have them.
+    A refusal keeps the pasted text in its box and says why; the box empties once the list has taken the song.
+  - **Nothing typed is lost** (the review's F2): a saved rating or removal, or a refusal, leaves a half-typed spot
+    (its time, ticks and note) as it is, and only a spot saved clears the form; Your charts makes again only the rows
+    whose chart changed, keeping the others as they are (an open box, what is typed in it, a lyrics panel, a row's
+    message), and a changed row keeps its open box, panel and message. Only the rows that went are taken out and
+    only those that moved are moved, and the field he is typing in keeps the focus and its caret, so his next keys
+    land there (the second review's R3); a kept box he had opened says the chart's rating now, its spots read again
+    when their number changed (R4). A saved spot that does not read (a damaged file) is left out where it is read,
+    and a time given as a number outside 0 to 999:59's seconds (NaN, an infinity, or a whole number too long for a
+    float: R2) is the plain 400 of any bad time (F5).
+  - **The queue's duplicate rule** (the v0.5.0 review's install-01) keys on the upload and the seed: another version
+    of a song in the list is not refused as the same song.
+  - In Chromium at 1280x860 and 700 px, light and dark [here, the real App and Queue with a stand-in chart, on a
+    made-up library: a song in two versions, version 2 rated 4 with two spots]: Your charts shows "version 2" and
+    "version 1" together, each line "How did it play? 4 of 5, 2 spots marked" folded; opened, the five buttons, the
+    spots with Remove and the "Mark a spot" form; a time past the song's end was refused in words ("4:10 is after the
+    song's end (3:34)"), what was typed kept; the Done screen of a new chart, rated and with a spot, then "Chart it
+    differently" charted version 2, whose Done screen says "Version 2: this song charted differently.", and whose
+    Install asked "Version 1 of this song is in Clone Hero now (...). Replace it with version 2?"; with the song file
+    gone, the drop screen asked for it again. No horizontal scroll at 700 px; the console lines were Chromium's own
+    for the 400 and 409 answers; no script error.
 - **Status** [code]: screens 1 to 3 built in M4-04; in M4-06 the Done screen (the preview's overview and pages, "Worth a look" from its flags, the zip, Install into Clone Hero, Another folder, Open folder), the "Paste lyrics" box (the text handed to the chart through a memory file, never written to disk or logged; the lyrics rule allows the app's state folder until the song is charted, never the diagnostics, a log or a report), and the diagnostics bundle (`diagnostics.py`, `songcharter diagnostics --out PATH`, `/api/diagnostics`: logs, `doctor.json`, settings and a MANIFEST.txt, every file checked by name, size and first bytes; no audio, chart, image or pasted text). In M4-11 the "Album art" and "Background image" pickers and the album art on the Done screen (§2.16). In M6-09 the Done screen's "Listen" (§2.17). In M7-10 the estimate, the folded stages, the install first, the tab's title, the wake lock, the drop zone's keys and the update notice put away while a chart runs (above). Quick fixes, Preview in Clone Hero and the polish workspace are not built.
 
 ### 4.6 CI (with the Windows build)

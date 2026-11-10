@@ -2,7 +2,7 @@
 
     songcharter chart <song file> --out DIR [--work DIR] [--instruments guitar,bass,drums]
                       [--levels expert|all|expert,hard,...] [--solos labels|stems|off|"NAME,NAME"] [--takes N]
-                      [--device auto|cpu|cuda] [--no-cpu-retry] [--threads N] [--no-preview] [--lyrics FILE]
+                      [--seed N] [--device auto|cpu|cuda] [--no-cpu-retry] [--threads N] [--no-preview] [--lyrics FILE]
                       [--stems] [--one-audio]
                       [--album-art FILE] [--background FILE] [--title ...] [--artist ...] [--album ...] [--year ...]
                       [--genre ...] [--events]
@@ -37,6 +37,12 @@ or, before exit 2, 3 or 130, `error` {"kind", "message"}: kind "input" for an er
 --lyrics FILE: the song's lyrics as a text file (UTF-8, or Windows' ANSI code page 1252), a line per phrase and a
 blank line between sections; they are timed to the vocal stem and written into the chart (pipeline.py, 3b). Without
 the aligner (pip install songcharter[lyrics]) the chart is made without them, with a warning.
+
+--seed N (M8-14): the guitar takes' seeds, moved on by N (0, the default: the seeds every version before gave;
+pipeline.take_seeds). Another N charts the guitar another way from the same song, as the page's "Chart it
+differently" does; the same N, input and recorded configuration give the same notes.chart on the same machine. A
+song folder's report.json says its seed (`pipeline.seed`) and each take's (`pipeline.takes.seeds`), so
+`songcharter chart <song> --seed N` makes that chart again.
 
 --album-art FILE and --background FILE: a JPEG, PNG or WebP image (at most 20 MB and 64 megapixels) for the song
 folder's album.jpg (512x512, centre-cropped; without it, the song file's own picture when it has one) and
@@ -318,6 +324,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="guitar takes, spliced by agreement: 1, or 3 or more, each about one more autochart run "
                         "(default: 1 on every device; 4 is the page's \"Best chart\": slower, and only sometimes "
                         "better)")
+    c.add_argument("--seed", type=int, default=0, metavar="N",
+                   help="the guitar takes' seeds, moved on by N, from 0 (the default) to 999999: another N charts the "
+                        "guitar another way (the page's \"Chart it differently\"); the song folder's report.json "
+                        "records it, so the same N makes the same chart again")
     c.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto",
                    help="where the models run (default: auto, CUDA when available)")
     c.add_argument("--no-cpu-retry", action="store_true",
@@ -424,7 +434,8 @@ def main(argv: list[str] | None = None) -> int:
                                        threads=args.threads, work=args.work, metadata=meta, levels=args.levels,
                                        solos=args.solos, preview=not args.no_preview, lyrics=lyrics,
                                        album_art=args.album_art, background=args.background,
-                                       cpu_retry=not args.no_cpu_retry, stems=args.stems, one_audio=args.one_audio)
+                                       cpu_retry=not args.no_cpu_retry, stems=args.stems, one_audio=args.one_audio,
+                                       seed=args.seed)
             done = pipeline.chart(args.song, args.out, options, events=_event if events else None)
             result, extra = done.assembled, pipeline.summary(done)
         else:

@@ -133,6 +133,9 @@ TAKE_FIXED = (0.0, 10.0)
 ASSEMBLE = ((0.5, 5.0), (0.05, 0.16))
 ASSEMBLE_ONE = ((0.5, 5.0), (0.025, 0.08))
 STEMS = ((0.5, 2.0), (0.01, 0.04))   # "Save the stems" (M8-12), after the build when the plan has it [est.]
+# "Chart it differently" (M8-14) with the song's work folder still in the cache: the decode checked and the separation,
+# drums, bass and sections read from their caches (`cached`) [est.], then the guitar's takes and the build
+CACHED = ((5.0, 30.0), (0.01, 0.05))
 
 # the container's own line, which ffmpeg prints indented by two spaces after the input's Metadata block; a tag's line
 # (its key, a value's later lines) is indented by four or more, so a tag holding "Duration: 1:00:00" is not read
@@ -159,17 +162,20 @@ def duration(path: Path | str, ffmpeg: str | None = None) -> float | None:
 
 
 def chart_seconds(seconds: float, takes: int, device: str, guitar: str | None = None, *, lyrics: bool = False,
-                  preview: bool = True) -> tuple[float, float]:
+                  preview: bool = True, cached: bool = False) -> tuple[float, float]:
     """The low and the high estimate of a chart's time in seconds, for a song of `seconds` with `takes` guitar takes
     (0: no guitar), the stages on `device` ("cpu" or "cuda") and the guitar on `guitar` (default: `device`), with or
-    without lyrics and the preview (the module docstring)."""
+    without lyrics and the preview (the module docstring). `cached`: every stage but the guitar's takes and the build
+    comes from the work folder's caches (CACHED and ASSEMBLE instead of OTHER: "Chart it differently", M8-14); the
+    guitar's own separation and timing stay counted, as autochart's scratch folder may have gone."""
     guitar = device if guitar is None else guitar
     if device not in DEVICES or guitar not in DEVICES:
         raise ValueError(f"the devices are among {DEVICES}, not {device!r} and {guitar!r}")
     d = float(seconds)
     if not d > 0 or takes < 0:
         raise ValueError(f"a song of {seconds!r} s with {takes!r} takes")
-    parts = [OTHER[device]] + ([PREVIEW] if preview else []) + ([LYRICS[device]] if lyrics else [])
+    parts = ([CACHED, ASSEMBLE] if cached else [OTHER[device]]) + ([PREVIEW] if preview else []) + \
+        ([LYRICS[device]] if lyrics else [])
     out = []
     for i in (0, 1):   # low, high
         total = sum(fixed[i] + rate[i] * d for fixed, rate in parts)
@@ -191,14 +197,15 @@ def round_minutes(low_s: float, high_s: float) -> tuple[int, int]:
     return low, max(high, low + 1)
 
 
-def for_job(seconds: Any, options: Any, auto_device: str | None, guitar_device: str | None = None) -> dict | None:
+def for_job(seconds: Any, options: Any, auto_device: str | None, guitar_device: str | None = None, *,
+            cached: bool = False) -> dict | None:
     """The estimate for a job (`options`: jobs.ChartOptions), or None when the song's length (a finite number of
     seconds) or the device is not known: {"seconds", "takes", "device", "low_s", "high_s", "low_min", "high_min",
     "audio"}, `device` the guitar's and `audio` the build's ("split", or "one" for one song.ogg: `remaining`'s build
     rate). The stages' device is the options' (the doctor summary's for "auto": `auto_device`); the guitar's takes are
     the options', else, as pipeline.guitar_takes, 1 on every device (CUDA_TAKES; the page's "Best chart" asks for
     BEST_TAKES). On CUDA, a guitar the doctor summary found on the CPU (`guitar_device`: autochart's CUDA provider did
-    not load) is timed there."""
+    not load) is timed there. `cached`: the song's other stages come from the cache (chart_seconds)."""
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 0 < seconds < math.inf:
         return None
     device = options.device if options.device in DEVICES else auto_device
@@ -212,7 +219,7 @@ def for_job(seconds: Any, options: Any, auto_device: str | None, guitar_device: 
     else:
         takes = CUDA_TAKES if guitar == "cuda" else 1   # 1 either way since 2026-11-09
     low_s, high_s = chart_seconds(seconds, takes, device, guitar, lyrics=options.lyrics is not None,
-                                  preview=bool(options.preview))
+                                  preview=bool(options.preview), cached=cached)
     low_min, high_min = round_minutes(low_s, high_s)
     return {"seconds": float(seconds), "takes": takes, "device": guitar, "low_s": round(low_s, 1),
             "high_s": round(high_s, 1), "low_min": low_min, "high_min": high_min,

@@ -33,6 +33,10 @@
 
   <section id="drop-screen">
     <h2>1. Your songs</h2>
+    <div id="again-drop" class="banner" hidden>
+      <p id="again-drop-text"></p>
+      <p class="actions"><button type="button" id="again-drop-cancel" class="plain">Not now</button></p>
+    </div>
     <div id="drop" class="drop" tabindex="0">
       <p>Drop a song file here, or several: they are charted one after the other</p>
       <p class="small">MP3, WAV, FLAC, OGG, Opus, M4A, AAC, WMA or AIFF</p>
@@ -182,6 +186,7 @@
   <section id="done-screen" hidden>
     <h2 id="done-title"></h2>
     <p id="done-text"></p>
+    <p id="done-version" class="small" hidden></p>
     <p id="built-row" class="actions" hidden><button type="button" id="open-built" class="plain">Open folder</button></p>
     <p id="built-msg" class="small" hidden></p>
     <div id="results" hidden>
@@ -216,6 +221,7 @@
         <p class="small">The zip holds the song's sound, made from your recording. Sharing it is sharing the song.</p>
         <p id="export-msg" class="small" hidden></p>
       </div>
+      <div id="played" hidden></div>
       <div id="stems-box" hidden>
         <h3>The instruments</h3>
         <p id="stems-line" class="small"></p>
@@ -284,7 +290,7 @@
   <img id="lightbox-img" alt="">
 </dialog>
 <footer>
-  <p><a href="/api/diagnostics" download id="diagnostics">Diagnostics</a> <span class="small">This file holds logs and settings, no audio.</span></p>
+  <p><a href="/api/diagnostics" download id="diagnostics">Diagnostics</a> <span class="small">This file holds logs and settings, and your ratings, no audio.</span></p>
 </footer>
 </body>
 </html>

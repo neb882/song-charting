@@ -112,6 +112,27 @@ Nothing is downloaded or installed; charting never waits for it.
     (/export/stems) and Look (GET /api/jobs/<id> and its /results, the preview and Listen, while its work folder is
     in the cache) are the queue's own routes behind the same guards. POST /api/open's `job`, when given, must be
     one of these ids (400 otherwise: never a path). Nothing deletes a chart.
+  * **How it played** (M8-14, ui/feedback.py, DESIGN.md 4.5): GET /api/jobs/<id>/feedback and POST with one change
+    ({"rating": 1-5 or null}, {"add": {"at": "m:ss", "reasons": [...], "note": "..."}} or {"remove": <spot id>}), by
+    a job's id, "current" or a chart's id like every route above (the chart its result names, in the library), behind
+    the same guards: {"chart", "rating", "spots" ({"id", "at", "time", "reasons", "note"}), "length", "reasons",
+    "note_max"}; 400 with why in plain words for a bad change (a rating not 1 to 5, a time not m:ss or after the
+    song's end, no reason or one not in the list, a note over 300 characters, an unknown spot), or no finished chart.
+    Kept in <home>/state/feedback/, by the chart's id. GET /api/library's charts carry each one's `rating` and
+    `spots` (how many).
+  * **Chart it differently** (M8-14): POST /api/jobs/<id>/again {"upload"?, "lyrics"?}: the chart's song again, with
+    the options its report.json records (jobs.rechart; its given pictures, which are in its folder, become image
+    uploads again; no stems, which the seed does not change), the chart's own folder's name (`name`: every version
+    goes into one Clone Hero folder; the review's F1) and the next seed for its song (`App.next_seed`: one more than
+    any its versions, the queue's songs and <home>/state/versions.json have used; versions.json is written only once
+    the queue has taken the song, so a refusal uses no number: F3), into the queue as POST /api/jobs adds a song,
+    with the estimate of a song whose other stages are cached when its work folder is still in the cache: 202
+    {"job", "entry", "state", "version", "seed"}. 400 for a chart without a guitar
+    (only the guitar changes with the seed), one whose report.json cannot be read, an `upload` that is not its song
+    file; 400 {"error", "drop": true, "name"} when its song file is no longer among the uploads (kept 7 days): the
+    page asks for it to be dropped again, then sends its upload id. `lyrics` as /api/jobs takes them (a chart made
+    with lyrics had them pasted again: they are never kept). The results (GET .../results) carry `library`: {"id",
+    "version", "guitar", "lyrics", "rating", "spots"} of the chart, or null.
 
 **After the build** (M4-06). The routes on "the chart" use the job's `result` event (the current one's, or by id); those that export or
 install need one that passed its gate (else 400): a .failed folder is for a look, not for Clone Hero. A job whose
@@ -147,8 +168,10 @@ reads that event (the release gate's finding: the Done screen once hid "Install 
     written), then the same answer.
   * POST /api/jobs/current/install {"replace"}: clonehero.install of the chart into the Songs folder (no path comes
     from the page): 200 {"installed", "windows_path", "replaced", "note"}; 400 with no chart or no Songs folder;
-    409 {"exists", "ours", "folder", "windows_path"} when that folder is there (a replace of one songcharter did not
-    make is refused the same way); 403 {"blocked", "why", "zip_url", "under_onedrive", "older"}, after making the
+    409 {"exists", "ours", "folder", "windows_path", "version", "installed_version"} when that folder is there (a
+    replace of one songcharter did not make is refused the same way; `version`: this chart's, `installed_version`: the
+    one in Clone Hero, from its report.json, or null when it is not ours: the versions of a song install into the same
+    folder, M8-14); 403 {"blocked", "why", "zip_url", "under_onedrive", "older"}, after making the
     zip, when Windows did not let it finish (`older`: where the older chart stays when it could not be put back,
     also named in `why`). One install at a time.
   * POST /api/open {"what": "song" | "exports" | "built"}: explorer.exe (wsl.open_url with its Windows path) on the
@@ -199,10 +222,11 @@ from .. import __version__, cache, clonehero, device, diagnostics, listen, updat
 from .. import art as ART
 from ..errors import InputError, ToolError
 from ..timed import DIFFICULTIES, INSTRUMENTS
-from . import estimate
+from . import estimate, feedback
 from . import home as default_home
 from .jobs import (CLOSING, LIBRARY_ID, ChartOptions, Charted, Job, Jobs, JobRunning, NotInQueue, NotRunning, Queue,
-                   QueueFull, find_chart, library, parse_options, queued_uploads, stop_orphan)
+                   QueueFull, chart_id, chart_seed, entry_seed, find_chart, library, parse_options, queued_uploads,
+                   read_chart, read_report, rechart, stop_orphan, upload_of, version_of)
 
 APP = "songcharter"
 PORTS = range(8765, 8785)          # 8765-8784
@@ -239,6 +263,7 @@ RANGE = re.compile(r"^bytes=(\d*)-(\d*)$")   # one byte range (the audio player'
 JOB_PATH = re.compile(r"^/api/jobs/(current|\d{8}-\d{6}(?:-\d{1,4})?|[0-9a-f]{16}(?::|%3[Aa])[^/]+)(/.*)?$")
 # a job's id as a request's body names it: the current one, a job's, or a library chart's (M8-13)
 JOB_REF = re.compile(r"^(?:current|\d{8}-\d{6}(?:-\d{1,4})?)$")
+VERSIONS = ("state", "versions.json")   # <home>/state/versions.json: each song's last seed asked for (M8-14)
 
 
 def console_line(text: str) -> None:
@@ -308,6 +333,7 @@ class App:
         self.update: dict | None = None        # what the update check found: {"version", "line", "url"}
         self.listen_lock = threading.Lock()    # one render at a time (M6-09)
         self.listened: dict[str, dict[str, Path]] = {}   # job id -> {"<part>-<level>.ogg": its render}
+        self.again_lock = threading.Lock()     # one "Chart it differently" at a time: each gets its own seed (M8-14)
         self.queue = Queue(self.jobs, self.home, prepare=self.prepare, disk_low=self.disk_low, log=self.log)
 
     # --- the queue (M8-10)
@@ -472,8 +498,48 @@ class App:
         return Path(self._cache_root if self._cache_root is not None else cache.cache_root()).expanduser()
 
     def library(self) -> dict:
-        """GET /api/library (the module docstring)."""
-        return {"charts": library(self.home, self.work_root())}
+        """GET /api/library (the module docstring): each chart with its rating and how many spots it has marked."""
+        charts = library(self.home, self.work_root())
+        for c in charts:
+            c.update(feedback.summary(feedback.read(self.home, c["id"])))
+        return {"charts": charts}
+
+    def next_seed(self, upload: str) -> int:
+        """The seed "Chart it differently" gives the song of this upload next (M8-14): one more than the largest its
+        charts in the library, its songs in the queue (any state) and <home>/state/versions.json have used, so a
+        version deleted in Windows is never made again by it. Nothing is written here: `keep_seed` records it once the
+        queue has taken the song (the review's F3: a refusal uses no number)."""
+        seeds = {c["seed"] for c in library(self.home, None) if c["upload"] == upload}
+        seeds |= {entry_seed(e.get("options")) for e in self.queue.snapshot_entries() if
+                  (e.get("upload") or {}).get("id") == upload}
+        path = self.home.joinpath(*VERSIONS)
+        try:
+            kept = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            kept = {}
+        kept = kept if isinstance(kept, dict) else {}
+        last = kept.get(upload)
+        if isinstance(last, int) and not isinstance(last, bool):
+            seeds.add(last)
+        return max(seeds | {0}) + 1
+
+    def keep_seed(self, upload: str, seed: int) -> None:
+        """<home>/state/versions.json records the seed the queue has just taken for this upload's song (next_seed); a
+        file that cannot be written is logged, and the song charts all the same."""
+        path = self.home.joinpath(*VERSIONS)
+        try:
+            kept = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            kept = {}
+        kept = kept if isinstance(kept, dict) else {}
+        tmp = path.with_name(path.name + ".part")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps({**kept, upload: seed}, indent=1) + "\n", encoding="utf-8")
+            os.replace(tmp, path)
+        except OSError as e:
+            tmp.unlink(missing_ok=True)
+            self.log(f"{path} could not be written ({e})")
 
     def chart(self, chart_id: str, job_id: str | None = None) -> Charted | None:
         """The library's chart of that id, or None; named by `job_id` when it was found through that job (a finished
@@ -680,7 +746,9 @@ class Handler(BaseHTTPRequestHandler):
             if rest == "":
                 return self._json(200, job.snapshot())
             if rest == "/results":
-                return self._json(200, results(job, quote(ref, safe="")))
+                return self._json(200, {**results(job, quote(ref, safe="")), "library": self._library_info(job)})
+            if rest == "/feedback":
+                return self._feedback(job)
             if rest.startswith("/preview/"):
                 return self._preview(job, unquote(rest[len("/preview/"):]))
             if rest.startswith("/art/"):
@@ -714,34 +782,7 @@ class Handler(BaseHTTPRequestHandler):
             upload = read_upload(app.home, body.get("upload"))
             if upload is None:
                 raise Refused(400, f"no such upload: {body.get('upload')!r} (upload the song file again)")
-            options = body.get("options")
-            given = dict(options) if isinstance(options, dict) else options   # the queue keeps the pictures' ids
-            if isinstance(options, dict):   # the images' upload ids become their paths: none comes from the page
-                options = dict(options)
-                for key, what in IMAGE_OPTIONS.items():
-                    if options.get(key) is not None:
-                        image = read_upload(app.home, options[key], kind="image")
-                        if image is None:
-                            raise Refused(400, f"no such {what}: {options[key]!r} (choose the picture again)")
-                        options[key] = image["path"]
-            try:
-                opts = parse_options(options)
-            except InputError as e:
-                raise Refused(400, str(e)) from None
-            doctor = app.doctor()
-            auto = (doctor.get("device") or {}).get("chosen")
-            try:
-                est = estimate.for_job(upload.get("seconds"), opts, auto, doctor.get("guitar_device"))
-            except Exception:  # noqa: BLE001  a bug in the estimate: logged, and the chart starts without one
-                app.log(f"estimate: internal error:\n{traceback.format_exc()}", console=False)
-                est = None
-            try:
-                entry, job = app.queue.add(upload, given or {}, estimate=est, lyrics=opts.lyrics)
-            except (JobRunning, QueueFull) as e:
-                raise Refused(409, str(e) if isinstance(e, QueueFull) else f"a chart is running already (job {e})"
-                              ) from None
-            except InputError as e:
-                raise Refused(400, str(e)) from None
+            entry, job = self._add(upload, body.get("options"))
             return self._json(202, {"job": job.id if job is not None else None, "entry": entry["id"],
                                     "state": "charting" if job is not None else "waiting"})
         if path in QUEUE_POSTS:
@@ -754,6 +795,10 @@ class Handler(BaseHTTPRequestHandler):
             except NotRunning:
                 raise Refused(409, "no chart is running" if m[1] == "current" else "that chart has ended") from None
             return self._json(200, {"job": job.id, "state": job.state})
+        if m and m[2] in ("/feedback", "/again"):   # M8-14: by the chart its result names, in the library
+            job = self._job(unquote(m[1]), gone=True)
+            body = self._read_json()
+            return self._feedback(job, body) if m[2] == "/feedback" else self._again(job, body)
         if m and m[2] in ("/export/zip", "/export/stems", "/install", "/listen"):
             ref, rest = unquote(m[1]), m[2]
             job = self._job(ref, gone=True)
@@ -788,6 +833,153 @@ class Handler(BaseHTTPRequestHandler):
         raise Refused(404, "not found")
 
     # --- the queue (M8-10)
+    def _add(self, upload: dict, options: Any, lyrics: Any = None, cached: bool = False) -> tuple[dict, Job | None]:
+        """A song into the queue (POST /api/jobs, and "Chart it differently"): the page's `options` checked, its
+        pictures' upload ids made into their paths for the check (the queue keeps the ids: none comes from the page),
+        its estimate (`cached`: its stages but the guitar's takes come from the cache, estimate.for_job), and the
+        lyrics (the options', else `lyrics`); Refused 400 or 409 as the module docstring says."""
+        app = self.app
+        given = dict(options) if isinstance(options, dict) else options   # the queue keeps the pictures' ids
+        if isinstance(options, dict):   # the images' upload ids become their paths: none comes from the page
+            options = dict(options)
+            if lyrics is not None:
+                options["lyrics"] = lyrics
+            for key, what in IMAGE_OPTIONS.items():
+                if options.get(key) is not None:
+                    image = read_upload(app.home, options[key], kind="image")
+                    if image is None:
+                        raise Refused(400, f"no such {what}: {options[key]!r} (choose the picture again)")
+                    options[key] = image["path"]
+        try:
+            opts = parse_options(options)
+        except InputError as e:
+            raise Refused(400, str(e)) from None
+        doctor = app.doctor()
+        auto = (doctor.get("device") or {}).get("chosen")
+        try:
+            est = estimate.for_job(upload.get("seconds"), opts, auto, doctor.get("guitar_device"),
+                                   **({"cached": True} if cached else {}))   # a plain song's call as before
+        except Exception:  # noqa: BLE001  a bug in the estimate: logged, and the chart starts without one
+            app.log(f"estimate: internal error:\n{traceback.format_exc()}", console=False)
+            est = None
+        try:
+            return app.queue.add(upload, given or {}, estimate=est, lyrics=opts.lyrics)
+        except (JobRunning, QueueFull) as e:
+            raise Refused(409, str(e) if isinstance(e, QueueFull) else f"a chart is running already (job {e})"
+                          ) from None
+        except InputError as e:
+            raise Refused(400, str(e)) from None
+
+    # --- how it played, and "Chart it differently" (M8-14)
+    def _library_chart(self, job) -> Path:
+        """The library folder of the chart the job's result names (a chart's id names its own); Refused(400) before
+        a result, or when its folder is not among the library's any more."""
+        result = job.result() if job is not None else None
+        if result is None:
+            raise Refused(400, "no finished chart yet")
+        made = Path(str(result.get("folder")))
+        folder = find_chart(self.app.home, chart_id(made))
+        if folder is None:
+            name = made.name[:-len(".failed")] if made.name.endswith(".failed") else made.name
+            raise Refused(400, f"{name}'s folder is not there any more: it was moved or deleted")
+        return folder
+
+    def _library_info(self, job) -> dict | None:
+        """The results' `library`: the chart's id, version, whether it has a guitar part and pasted lyrics, its
+        rating and how many spots it has, or None (no result yet, or not in the library)."""
+        try:
+            folder = self._library_chart(job)
+        except Refused:
+            return None
+        c = read_chart(folder, None)
+        return {**{k: c[k] for k in ("id", "version", "guitar", "lyrics")},
+                **feedback.summary(feedback.read(self.app.home, c["id"]))}
+
+    def _feedback(self, job, body: dict | None = None) -> None:
+        """GET (body None) or POST /api/jobs/<id>/feedback (the module docstring)."""
+        app = self.app
+        folder = self._library_chart(job)
+        cid, report = chart_id(folder), read_report(folder) or {}
+        length = feedback.song_length(report)
+        if body is None:
+            return self._json(200, feedback.public(feedback.read(app.home, cid), length))
+        try:
+            record = feedback.change(app.home, cid, body, length, notes=feedback.notes_id(folder))
+        except InputError as e:
+            raise Refused(400, str(e)) from None
+        app.log(f"feedback on {cid}: rating {record['rating']}, {len(record['spots'])} spot(s)", console=False)
+        return self._json(200, feedback.public(record, length))
+
+    def _again(self, job, body: dict) -> None:
+        """POST /api/jobs/<id>/again (the module docstring): the chart's song again with the next seed."""
+        app = self.app
+        folder = self._library_chart(job)
+        info, report = read_chart(folder, None), read_report(folder) or {}
+        name = info["name"]
+        if not info["readable"]:
+            raise Refused(400, f"{name}'s report cannot be read, so songcharter does not know how it was charted")
+        if not info["guitar"]:
+            raise Refused(400, f"{name} has no guitar part: charting it again changes only the guitar, so it would "
+                               "come out the same")
+        try:
+            options = rechart(report)
+        except InputError as e:
+            raise Refused(400, str(e)) from None
+        song = upload_of(folder)
+        given = body.get("upload")
+        if given is not None and given != song:
+            raise Refused(400, f"That is not the song file {name} was charted from (its sound is not the same): "
+                               "drop that file, or press Not now to chart this one as a new song")
+        lyrics = body.get("lyrics")
+        if lyrics is not None and not isinstance(lyrics, str):
+            raise Refused(400, "lyrics is text")
+        upload = read_upload(app.home, song)
+        if upload is None:   # the uploads go after 7 days: the page asks for the file again
+            return self._json(400, {"error": f"songcharter no longer has the song file of {name}: drop it again to "
+                                             "chart it differently", "drop": True, "name": name})
+        art = report.get("art") if isinstance(report.get("art"), dict) else {}
+        for key, file in (("album_art", ART.ALBUM), ("background", ART.BACKGROUND)):
+            record = art.get(key) if isinstance(art.get(key), dict) else {}
+            if record.get("from") == "given" and (folder / file).is_file():
+                options[key] = self._keep_image(folder / file)   # the picture he gave, from the chart's own folder
+        options["name"] = folder.name[:-len(".failed")] if folder.name.endswith(".failed") else folder.name
+        try:   # its stages but the guitar's are in the work folder's caches, while the cache keeps it
+            cached = cache.by_key(app.work_root(), song) is not None
+        except OSError:
+            cached = False
+        with app.again_lock:
+            seed = app.next_seed(song)
+            options["seed"] = seed
+            entry, started = self._add(upload, options, lyrics if lyrics and lyrics.strip() else None, cached=cached)
+            app.keep_seed(song, seed)   # only now: a refusal above uses no number (F3)
+        app.log(f"chart it differently: {chart_id(folder)} again as version {seed + 1} (seed {seed})")
+        return self._json(202, {"job": started.id if started is not None else None, "entry": entry["id"],
+                                "state": "charting" if started is not None else "waiting", "version": seed + 1,
+                                "seed": seed})
+
+    def _keep_image(self, path: Path) -> str:
+        """A picture of a chart's own folder as an image upload (as POST /api/upload/image keeps one): its id."""
+        data = path.read_bytes()
+        try:
+            _, source = ART.decode(data, f"picture {path.name}")
+        except (InputError, ToolError) as e:
+            raise Refused(400, f"the chart's {path.name} cannot be used again: {e}") from None
+        key = hashlib.sha256(data).hexdigest()
+        target = uploads_folder(self.app.home) / key[:cache.KEY_HEX]
+        target.mkdir(parents=True, exist_ok=True)
+        dest = target / path.name
+        if not dest.is_file():
+            tmp = target / f".{path.name}.{secrets.token_hex(4)}.part"
+            try:
+                tmp.write_bytes(data)
+                os.replace(tmp, dest)
+            finally:
+                tmp.unlink(missing_ok=True)
+        self._keep(target, dest, {"id": target.name, "kind": "image", "name": path.name, "file": dest.name,
+                                  "bytes": len(data), "sha256": key,
+                                  **{k: source[k] for k in ("format", "width", "height")}, "uploaded": time.time()})
+        return target.name
+
     def _job(self, ref: str, gone: bool = False):
         """The job a route names: the current one, a finished song's by its id (Queue.job), or a library chart's
         (M8-13: App.chart); None for none. A finished song the list has dropped (Clear the list, the trim) is found
@@ -975,9 +1167,11 @@ class Handler(BaseHTTPRequestHandler):
                 raise Refused(400, "no Clone Hero Songs folder is known: give it first")
             try:
                 done = clonehero.install(song, songs, app.home, replace=replace)
-            except clonehero.Exists as e:
+            except clonehero.Exists as e:   # the versions of a song go to the same folder: which one is there (M8-14)
+                there = chart_seed(e.target, read_report(e.target)) + 1 if e.ours else None
                 return self._json(409, {"error": str(e), "exists": True, "ours": e.ours, "folder": str(e.target),
-                                        "windows_path": clonehero.windows_path(e.target)})
+                                        "windows_path": clonehero.windows_path(e.target),
+                                        "version": version_of(song), "installed_version": there})
             except clonehero.Blocked as e:
                 out = clonehero.export_zip(song, app.home)
                 app.log(f"install into {songs} blocked ({e.why}); the zip is {out}")
@@ -991,7 +1185,7 @@ class Handler(BaseHTTPRequestHandler):
                 + (f"; {done.note}" if done.note else ""))
         return self._json(200, {"installed": str(done.target), "windows_path": clonehero.windows_path(done.target),
                                 "replaced": None if done.replaced is None else str(done.replaced),
-                                "note": done.note})
+                                "note": done.note, "version": version_of(song)})
 
     def _open(self, what: Any, ref: Any = None) -> None:
         app = self.app
