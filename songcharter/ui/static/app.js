@@ -1842,7 +1842,16 @@ function feedbackLine(fb) {
   if (fb && fb.rating) said.push(`${fb.rating} of 5`);
   const n = fb ? (Array.isArray(fb.spots) ? fb.spots.length : fb.spots || 0) : 0;
   if (n) said.push(`${n} spot${n === 1 ? "" : "s"} marked`);
+  if (!said.length && fb && fb.earlier) return earlierLine(fb.earlier);
   return "How did it play?" + (said.length ? ` ${said.join(", ")}` : "");
+}
+
+// the folder was charted again (a plain chart with other options goes into the same folder): what he gave the chart
+// before is not this one's, so the box says so, with nothing pressed or listed (the advisor's 1)
+function earlierLine(e) {
+  const n = e.spots || 0, spots = `${n} spot${n === 1 ? "" : "s"}`;
+  return (e.rating ? `You rated an earlier chart of this song ${e.rating} of 5${n ? `, with ${spots} marked` : ""}`
+    : `You marked ${spots} on an earlier chart of this song`) + ". How does this one play?";
 }
 
 // the folded box for the chart `ref` (its library id); `summary` its rating and spots as known; `where` "row" (Your

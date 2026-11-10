@@ -115,11 +115,14 @@ Nothing is downloaded or installed; charting never waits for it.
   * **How it played** (M8-14, ui/feedback.py, DESIGN.md 4.5): GET /api/jobs/<id>/feedback and POST with one change
     ({"rating": 1-5 or null}, {"add": {"at": "m:ss", "reasons": [...], "note": "..."}} or {"remove": <spot id>}), by
     a job's id, "current" or a chart's id like every route above (the chart its result names, in the library), behind
-    the same guards: {"chart", "rating", "spots" ({"id", "at", "time", "reasons", "note"}), "length", "reasons",
-    "note_max"}; 400 with why in plain words for a bad change (a rating not 1 to 5, a time not m:ss or after the
-    song's end, no reason or one not in the list, a note over 300 characters, an unknown spot), or no finished chart.
-    Kept in <home>/state/feedback/, by the chart's id. GET /api/library's charts carry each one's `rating` and
-    `spots` (how many).
+    the same guards: {"chart", "rating", "spots" ({"id", "at", "time", "reasons", "note"}), "earlier", "length",
+    "reasons", "note_max"}; 400 with why in plain words for a bad change (a rating not 1 to 5, a time not m:ss or after
+    the song's end, no reason or one not in the list, a note over 300 characters, an unknown spot), or no finished
+    chart; 507 in plain words, with no path, when it cannot be saved for a full disk (500 for another OSError, with
+    its strerror alone), logged. Kept in <home>/state/feedback/, by the chart's id. GET /api/library's charts carry each one's `rating` and
+    `spots` (how many). All of them for the notes.chart in the chart's folder now: a rating given to an earlier chart
+    made into that folder (a plain chart again with other options) is not this one's (feedback.as_now; `earlier`: its
+    rating and spot count, for the page's line).
   * **Chart it differently** (M8-14): POST /api/jobs/<id>/again {"upload"?, "lyrics"?}: the chart's song again, with
     the options its report.json records (jobs.rechart; its given pictures, which are in its folder, become image
     uploads again; no stems, which the seed does not change), the chart's own folder's name (`name`: every version
@@ -127,7 +130,8 @@ Nothing is downloaded or installed; charting never waits for it.
     any its versions, the queue's songs and <home>/state/versions.json have used; versions.json is written only once
     the queue has taken the song, so a refusal uses no number: F3), into the queue as POST /api/jobs adds a song,
     with the estimate of a song whose other stages are cached when its work folder is still in the cache: 202
-    {"job", "entry", "state", "version", "seed"}. 400 for a chart without a guitar
+    {"job", "entry", "state", "version", "seed"}; 409 in plain words while a version of the song waits or charts (one
+    at a time: the gate advisor's 2), with no seed used. 400 for a chart without a guitar
     (only the guitar changes with the seed), one whose report.json cannot be read, an `upload` that is not its song
     file; 400 {"error", "drop": true, "name"} when its song file is no longer among the uploads (kept 7 days): the
     page asks for it to be dropped again, then sends its upload id. `lyrics` as /api/jobs takes them (a chart made
@@ -143,7 +147,10 @@ reads that event (the release gate's finding: the Done screen once hid "Install 
     "preview", "lyrics", "art", "listen", "stems"} (`windows_path`: the folder's, Open folder's hover text): the preview's
     overview and pages as URLs with its flags and remarks, `page_s` (PAGE_S, the seconds a page shows) and `at`, for
     each flag {"part", "start", "page"} (`flag_at`: its start read from its text, its page floor(start / page_s) + 1
-    within the pages there are) or null, or {"why"} there is none;
+    within the pages there are) or null, or {"why"} there is none (LATER_CHART when the work folder's pipeline.json
+    names another folder as its last chart, later_chart: a later chart of the song, a version of M8-14's, has the
+    work folder and its preview now, as jobs.library's `look` reads it; the lyrics, the art's `album_from` and the
+    stems' why below are then read as if there were no pipeline.json);
     pipeline.json's lyrics as counts ({"given", "added", "words", "phrases", "why", "low"}), null when none were
     given; the folder's art ({"album_art": its URL or null, "album_from": "embedded", "given" or null,
     "background": whether there is one}); what the Listen control offers ({"parts": {"guitar": ["expert", ...],
@@ -153,7 +160,8 @@ reads that event (the release gate's finding: the Done screen once hid "Install 
     first job.
   * GET /api/jobs/current/art/album.jpg: the result's album art (image/jpeg), that one name only; anything else 404.
   * GET /api/jobs/current/preview/<name>: only overview.png and page_NN.png from the result's preview folder (the
-    work folder's preview/), by an exact pattern; anything else 404.
+    work folder's preview/), by an exact pattern, and none while a later chart of the song has the work folder
+    (later_chart); anything else 404.
   * POST /api/jobs/current/export/zip: clonehero.export_zip into $SONGCHARTER_HOME/exports/<name>.zip; answers
     {"url": "/api/exports/<name>.zip", "name", "windows_path"}. GET /api/exports/<name>.zip downloads it
     (Content-Disposition: attachment): a single name ending .zip that is a file in exports/; anything else 404.
@@ -225,8 +233,9 @@ from ..timed import DIFFICULTIES, INSTRUMENTS
 from . import estimate, feedback
 from . import home as default_home
 from .jobs import (CLOSING, LIBRARY_ID, ChartOptions, Charted, Job, Jobs, JobRunning, NotInQueue, NotRunning, Queue,
-                   QueueFull, chart_id, chart_seed, entry_seed, find_chart, library, parse_options, queued_uploads,
-                   read_chart, read_report, rechart, stop_orphan, upload_of, version_of)
+                   QueueFull, chart_folders, chart_id, chart_seed, entry_seed, find_chart, last_chart_is, library,
+                   parse_options,
+                   queued_uploads, read_chart, read_report, rechart, stop_orphan, upload_of, version_of)
 
 APP = "songcharter"
 PORTS = range(8765, 8785)          # 8765-8784
@@ -245,9 +254,15 @@ END_WAIT_S = 10.0                  # after a closing event, the stream waits thi
 HELLO_TIMEOUT_S = 0.5
 CHUNK = 1 << 20
 DISK_FULL = "C: (or WSL's disk) is full: free some space on C:, then drop the song again"   # an upload's 507
+# a rating or spot that could not be saved (the gate advisor's 7: it showed "internal error: OSError ..." with a path)
+NOT_SAVED = {"full": "This was not saved: C: (or WSL's disk) is full. Free some space on C:, then try again.",
+             "other": "This was not saved: songcharter could not write it ({why}). Try again in a moment."}
 STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                 ".css": "text/css; charset=utf-8"}
 PREVIEW_NAME = re.compile(r"^(?:overview|page_\d{2,3})\.png$")   # preview.py's files: overview.png, page_01.png, ...
+# why a job has no preview when its work folder's last chart is a later one of its song (later_chart): the Done
+# screen says "No preview: " and this
+LATER_CHART = "it went with a later chart of this song (Look at that one in Your charts)"
 PREVIEW_PAGE = re.compile(r"^page_\d{2,3}\.png$")
 OPEN = ("song", "exports", "built")
 QUEUE_POSTS = ("/api/queue/pause", "/api/queue/carry-on", "/api/queue/clear", "/api/queue/remove")   # POST /api/open's only folders: no path comes from the page
@@ -498,10 +513,12 @@ class App:
         return Path(self._cache_root if self._cache_root is not None else cache.cache_root()).expanduser()
 
     def library(self) -> dict:
-        """GET /api/library (the module docstring): each chart with its rating and how many spots it has marked."""
+        """GET /api/library (the module docstring): each chart with its rating and how many spots it has marked, for
+        the notes.chart in its folder now (feedback.as_now: a rating of an earlier chart there is not this one's)."""
         charts = library(self.home, self.work_root())
+        folders = {chart_id(f): f for f in chart_folders(self.home)}
         for c in charts:
-            c.update(feedback.summary(feedback.read(self.home, c["id"])))
+            c.update(feedback.summary(feedback.read(self.home, c["id"], folders.get(c["id"]))))
         return {"charts": charts}
 
     def next_seed(self, upload: str) -> int:
@@ -893,7 +910,7 @@ class Handler(BaseHTTPRequestHandler):
             return None
         c = read_chart(folder, None)
         return {**{k: c[k] for k in ("id", "version", "guitar", "lyrics")},
-                **feedback.summary(feedback.read(self.app.home, c["id"]))}
+                **feedback.summary(feedback.read(self.app.home, c["id"], folder))}
 
     def _feedback(self, job, body: dict | None = None) -> None:
         """GET (body None) or POST /api/jobs/<id>/feedback (the module docstring)."""
@@ -902,11 +919,16 @@ class Handler(BaseHTTPRequestHandler):
         cid, report = chart_id(folder), read_report(folder) or {}
         length = feedback.song_length(report)
         if body is None:
-            return self._json(200, feedback.public(feedback.read(app.home, cid), length))
+            return self._json(200, feedback.public(feedback.read(app.home, cid, folder), length))
         try:
             record = feedback.change(app.home, cid, body, length, notes=feedback.notes_id(folder))
         except InputError as e:
             raise Refused(400, str(e)) from None
+        except OSError as e:   # a full disk is his to fix, not a bug: said plainly, with no path; the page keeps
+            app.log(f"feedback on {cid} could not be saved: {e}")   # what he typed (F2)
+            full = e.errno == errno.ENOSPC
+            raise Refused(507 if full else 500, NOT_SAVED["full"] if full else NOT_SAVED["other"].format(
+                why=e.strerror or type(e).__name__)) from None
         app.log(f"feedback on {cid}: rating {record['rating']}, {len(record['spots'])} spot(s)", console=False)
         return self._json(200, feedback.public(record, length))
 
@@ -948,6 +970,12 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             cached = False
         with app.again_lock:
+            busy = self._version_listed(song)
+            if busy is not None:   # one at a time (the gate advisor's 2: a double click queued two versions)
+                n = entry_seed(busy.get("options")) + 1
+                raise Refused(409, f"Version {n} of this song is "
+                                   f"{'charting now' if busy['state'] == 'charting' else 'already in the list'}: when "
+                                   "it is charted, you can chart it differently again.")
             seed = app.next_seed(song)
             options["seed"] = seed
             entry, started = self._add(upload, options, lyrics if lyrics and lyrics.strip() else None, cached=cached)
@@ -956,6 +984,16 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(202, {"job": started.id if started is not None else None, "entry": entry["id"],
                                 "state": "charting" if started is not None else "waiting", "version": seed + 1,
                                 "seed": seed})
+
+    def _version_listed(self, song: str) -> dict | None:
+        """A version of the song of this upload (an entry of it with a seed above 0) waiting or charting in the list,
+        else None; one whose chart is out, its process still exiting, counts as charted (Queue.add waits for it)."""
+        cur = self.app.jobs.current
+        out = cur.id if cur is not None and cur.result() is not None else None
+        return next((e for e in self.app.queue.snapshot_entries() if (e.get("upload") or {}).get("id") == song
+                     and entry_seed(e.get("options")) > 0 and (e.get("state") == "waiting" or
+                                                               e.get("state") == "charting" and e.get("job") != out)),
+                    None)
 
     def _keep_image(self, path: Path) -> str:
         """A picture of a chart's own folder as an image upload (as POST /api/upload/image keeps one): its id."""
@@ -1044,7 +1082,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _preview(self, job, name: str) -> None:
         result = job.result() if job is not None else None
-        folder = result.get("preview") if result else None
+        folder = result.get("preview") if result and not later_chart(result, record_of(result)) else None
         if not folder or not PREVIEW_NAME.match(name):
             return self._refuse(404, "not found")
         path = Path(folder) / name
@@ -1401,6 +1439,25 @@ def _preview_why(pv: Any) -> str:
     return "its pictures are not there any more"
 
 
+def record_of(result: dict) -> dict:
+    """The pipeline.json of the work folder a result event names (`work`); {} without one (a library chart whose
+    work folder has left the cache has none, M8-13) or when it cannot be read as a JSON object."""
+    try:
+        record = (json.loads((Path(str(result["work"])) / "pipeline.json").read_text(encoding="utf-8"))
+                  if result.get("work") else {})
+    except (OSError, ValueError):
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
+def later_chart(result: dict, record: dict) -> bool:
+    """Whether the result's work folder holds a later chart of its song now: its pipeline.json (`record`) names
+    another folder as its last chart (jobs.last_chart_is, the library's rule for Look). Its preview, flags, lyrics
+    counts, art source and stems' why are then that chart's, so `results` reads this job as having no record (no
+    preview: LATER_CHART), as the library does."""
+    return last_chart_is(record, str(result.get("folder"))) is False
+
+
 def stems_of(result: dict) -> Path | None:
     """The stems folder a result event names (`stems`), when it is a folder holding .flac files; else None."""
     if not result.get("stems"):
@@ -1425,14 +1482,12 @@ def results(job, ref: str = "current") -> dict:
     out.update(ok=bool(result.get("ok")), folder=str(folder), name=folder.name,
                windows_path=clonehero.windows_path(folder),   # Open folder's hover text
                installable=bool(result.get("ok")) and folder.is_dir())   # its state may still be running: exiting
-    try:   # a library chart whose work folder has left the cache has none (M8-13)
-        pipeline = (json.loads((Path(str(result["work"])) / "pipeline.json").read_text(encoding="utf-8"))
-                    if result.get("work") else {})
-    except (OSError, ValueError):
+    pipeline = record_of(result)
+    later = later_chart(result, pipeline)   # its work folder's record is a later chart's (M8-14's versions)
+    if later:   # read as if there were none, as the library does: not that chart's preview, lyrics, art or stems
         pipeline = {}
-    pipeline = pipeline if isinstance(pipeline, dict) else {}
     pv = pipeline.get("preview")
-    where = Path(result["preview"]) if result.get("preview") else None
+    where = Path(result["preview"]) if result.get("preview") and not later else None
     if where is not None and (where / "overview.png").is_file():
         try:
             pages = sorted((p.name for p in where.iterdir() if PREVIEW_PAGE.match(p.name)),
@@ -1446,7 +1501,7 @@ def results(job, ref: str = "current") -> dict:
                           "flags": flags, "remarks": list(pv.get("remarks") or []), "page_s": PAGE_S,
                           "at": [flag_at(f, len(pages)) for f in flags]}
     else:
-        out["preview"] = {"why": _preview_why(pv)}
+        out["preview"] = {"why": LATER_CHART if later else _preview_why(pv)}
     pictures = pipeline.get("art") if isinstance(pipeline.get("art"), dict) else {}
     album = pictures.get("album_art") if isinstance(pictures.get("album_art"), dict) else {}
     out["art"] = {"album_art": f"/api/jobs/{ref}/art/" + ART.ALBUM if (folder / ART.ALBUM).is_file() else None,

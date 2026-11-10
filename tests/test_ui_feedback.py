@@ -2,6 +2,7 @@
 diagnostics zip (feedback.json), the versions of a song in the library (<16 hex>/v<N>/<name>, ids
 `<16 hex>:<name>:v<N>`), "Chart it differently" (POST /api/jobs/<id>/again: the next seed, into the queue) and the
 replace question naming the versions. Made-up songs only; the chart program is a stand-in (CHART)."""
+import errno
 import hashlib
 import http.client
 import io
@@ -1017,7 +1018,8 @@ def test_a_damaged_spot_is_left_out_and_the_rest_still_works(lib, tmp_path):
     path.write_text(json.dumps({"chart": V1, "rating": 4, "spots": [7, good]}), encoding="utf-8")
     z = zipfile.ZipFile(diagnostics.bundle(lib.home, tmp_path / "d.zip", cache_root=lib.root, report=lambda: {},
                                            clonehero_info=lambda home: {}))
-    assert json.loads(z.read("feedback.json"))["charts"][0]["spots"] == [good]
+    assert [{k: v for k, v in x.items() if k != "around"} for x in json.loads(z.read("feedback.json"))["charts"][0][
+        "spots"]] == [good]
 
 
 def test_a_saved_time_too_long_for_a_float_is_left_out(lib):
@@ -1325,3 +1327,389 @@ def test_one_press_one_version(tmp_path):
     assert out["done"] == {"sent": 1, "disabled": [True, True]}
     assert out["doneTaken"] == {"sent": 1, "enabled": True,
                                 "msg": "Version 3 waits in the list: it is charted in its turn."}
+
+
+# ------------------------------------------------------------------------------------------------ the advisor's fixes
+
+def notes_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
+def test_a_rating_stays_with_the_chart_it_was_given_to(lib, tmp_path):
+    """The advisor's 1 at v0.5.0's gate: version 1 rated 5 with a spot, then charted again into its own folder (a plain
+    chart with other options: another notes.chart there). Its feedback, the library's row and the results say none
+    yet, with the earlier chart's rating and spot count for the page's line, and a read writes nothing; the first
+    change starts the chart's own record and keeps the earlier one in `earlier` (its notes_sha and updated), which
+    the zip carries; charted back to the first chart, its own rating and spot are its again; at most EARLIER_MAX
+    earlier ones, the newest first (breaks: the record read by the chart's id alone; the earlier one dropped; the
+    library's counts the old chart's; the chart charted back not given its own; no cap)."""
+    post(lib, by_id(V1, "/feedback"), {"rating": 5})
+    post(lib, by_id(V1, "/feedback"), {"add": {"at": "1:15", "reasons": ["great"], "note": "made up"}})
+    first = (lib.first / "notes.chart").read_bytes()
+    path = FB.path_for(lib.home, V1)
+    (lib.first / "notes.chart").write_text("[Song]\n{\n}\n// charted again with other options\n", encoding="utf-8")
+    other = notes_hex((lib.first / "notes.chart").read_bytes())
+    status, fb = get(lib, by_id(V1, "/feedback"))
+    assert status == 200 and (fb["rating"], fb["spots"], fb["earlier"]) == (None, [], {"rating": 5, "spots": 1})
+    charts = {c["id"]: c for c in get(lib, "/api/library")[1]["charts"]}
+    assert (charts[V1]["rating"], charts[V1]["spots"]) == (None, 0)
+    library = json.loads(call(lib.port, "GET", by_id(V1, "/results"))[2])["library"]
+    assert (library["rating"], library["spots"]) == (None, 0)
+    assert json.loads(path.read_text(encoding="utf-8"))["rating"] == 5   # read, not written
+
+    def sent(name):
+        z = zipfile.ZipFile(diagnostics.bundle(lib.home, tmp_path / name, cache_root=lib.root, report=lambda: {},
+                                               clonehero_info=lambda home: {}))
+        return next(c for c in json.loads(z.read("feedback.json"))["charts"] if c["chart"] == V1)
+
+    before = sent("before.zip")   # the zip says it so too, before any change
+    assert (before["rating"], before["spots"], before["earlier"][0]["rating"]) == (None, [], 5)
+    status, fb = post(lib, by_id(V1, "/feedback"), {"rating": 3})
+    assert status == 200 and (fb["rating"], fb["spots"], fb["earlier"]) == (3, [], None)
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert (saved["rating"], saved["spots"], saved["notes_sha"]) == (3, [], other)
+    (gone,) = saved["earlier"]
+    assert (gone["rating"], gone["notes_sha"], [s["note"] for s in gone["spots"]]) == (5, notes_hex(first), ["made up"])
+    assert isinstance(gone["updated"], float)
+    after = sent("after.zip")
+    assert after["rating"] == 3 and after["earlier"][0]["rating"] == 5 and after["earlier"][0]["notes_sha"] == notes_hex(
+        first) and after["now"]["notes_sha"] == after["notes_sha"] == other
+    (lib.first / "notes.chart").write_bytes(first)   # charted back with the first options: the chart he rated 5
+    status, fb = get(lib, by_id(V1, "/feedback"))
+    assert (fb["rating"], [s["time"] for s in fb["spots"]], fb["earlier"]) == (5, ["1:15"], None)
+    charts = {c["id"]: c for c in get(lib, "/api/library")[1]["charts"]}
+    assert (charts[V1]["rating"], charts[V1]["spots"]) == (5, 1)
+    assert post(lib, by_id(V1, "/feedback"), {"rating": 4})[1]["spots"][0]["note"] == "made up"
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert [(e["rating"], e["notes_sha"]) for e in saved["earlier"]] == [(3, other)]
+    for i in range(FB.EARLIER_MAX + 2):   # charted again and rated, time after time: the newest kept
+        (lib.first / "notes.chart").write_text(f"[Song]\n{{\n}}\n// again {i}\n", encoding="utf-8")
+        assert post(lib, by_id(V1, "/feedback"), {"rating": 1 + i % 5})[0] == 200
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert len(saved["earlier"]) == FB.EARLIER_MAX and saved["rating"] == 1 + (FB.EARLIER_MAX + 1) % 5
+    assert saved["earlier"][0]["notes_sha"] == notes_hex(f"[Song]\n{{\n}}\n// again {FB.EARLIER_MAX}\n".encode())
+    assert post(lib, by_id(V1, "/feedback"), {"rating": None})[1]["earlier"] == {"rating": 1 + FB.EARLIER_MAX % 5,
+                                                                              "spots": 0}
+    assert len(sent("taken back.zip")["earlier"]) == FB.EARLIER_MAX   # this chart's taken back: the earlier sent
+
+
+PAGE4 = PAGE.split("(async () => {")[0] + r"""
+(async () => {
+  const out = {};
+  const base = { artist: "Made-Up Band", readable: true, ok: true, audio: "split", stems: false, look: false,
+    upload: "aaaaaaaaaaaaaaaa", guitar: true, lyrics: false, rating: null, spots: 0, name: "First Song" };
+  ctx.setCharts([{ ...base, id: V1, folder: "Made-Up Band - First Song", time: 1762596000, version: 1, seed: 0 }]);
+  const box = find(els["charts-list"].children[0], (x) => x.className === "fold feedback");
+  answers[`GET /api/jobs/${enc(V1)}/feedback`] = [[200, { ...FB, earlier: { rating: 5, spots: 2 } }]];
+  box.open = true;
+  box.on.toggle();
+  await settle();
+  const pressed = () => box.children[1].children[0].children.filter((b) => b.tag === "button" && b.className.endsWith(" on")).length;
+  out.opened = { line: box.children[0].textContent, pressed: pressed(),
+    spots: find(box.children[1], (x) => x.className === "spots").hidden };
+  answers[`POST /api/jobs/${enc(V1)}/feedback`] = [[200, { ...FB, rating: 4, earlier: null }]];
+  button(box.children[1], "4").on.click();
+  await settle();
+  out.rated = { line: box.children[0].textContent, pressed: pressed() };
+  out.lines = [ctx.feedbackLine({ rating: null, spots: [], earlier: { rating: 3, spots: 0 } }),
+    ctx.feedbackLine({ rating: null, spots: [], earlier: { rating: null, spots: 1 } }),
+    ctx.feedbackLine({ rating: 2, spots: [], earlier: { rating: 5, spots: 0 } }), ctx.feedbackLine({ rating: null, spots: 0 })];
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_box_says_he_rated_an_earlier_chart(tmp_path):
+    """The advisor's 1 (app.js in node, the page test's stand-in DOM): a box whose record is an earlier chart's says
+    so in its line, in plain words, with no rating pressed and no spot listed; rated, its line is the chart's own
+    (breaks: the earlier rating shown as this chart's; the line not saying it)."""
+    script = tmp_path / "earlier.cjs"
+    script.write_text(PAGE4, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(S.static_files()["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60,
+                          env={**os.environ, "TZ": "UTC", "LANG": "en_US.UTF-8"})
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["opened"] == {"line": "You rated an earlier chart of this song 5 of 5, with 2 spots marked. How does "
+                                     "this one play?", "pressed": 0, "spots": True}
+    assert out["rated"] == {"line": "How did it play? 4 of 5", "pressed": 1}
+    assert out["lines"] == ["You rated an earlier chart of this song 3 of 5. How does this one play?",
+                            "You marked 1 spot on an earlier chart of this song. How does this one play?",
+                            "How did it play? 2 of 5", "How did it play?"]
+
+
+def held_charts(lib, monkeypatch):
+    """Each chart of `lib` held until its gate file is there (<tmp>/go_<its seed>), and its process left running for
+    1.5 s after its result when <tmp>/linger_<its seed> is there: (the gate's path, the linger's) for a seed."""
+    command = lib.app.jobs.command
+
+    def held(song, out, options, threads):
+        cmd = command(song, out, options, threads)
+        gate, linger = str(lib.tmp / f"go_{options.seed}"), str(lib.tmp / f"linger_{options.seed}")
+        wait = (f"import os, subprocess, sys, time\nwhile not os.path.exists({gate!r}): time.sleep(0.02)\n"
+                "code = subprocess.call([sys.executable] + sys.argv[1:])\n"
+                f"time.sleep(1.5 if os.path.exists({linger!r}) else 0)\nsys.exit(code)")
+        return [cmd[0], "-c", wait, *cmd[1:]]
+
+    monkeypatch.setattr(lib.app.jobs, "command", held)
+    return lambda seed: lib.tmp / f"go_{seed}", lambda seed: lib.tmp / f"linger_{seed}"
+
+
+def test_one_version_of_a_song_at_a_time(lib, monkeypatch):
+    """The advisor's 2 at v0.5.0's gate: while a version of a song (seed above 0) waits or charts, "Chart it
+    differently" on any of its charts is refused (409) in plain words, using no seed; a plain chart of the song in the
+    list is no version and does not stop it; once the version is charted, the next press gives the next version
+    (breaks: no refusal, as two presses 150 ms apart queued two versions; the rule on the upload alone; a seed used
+    by the refusal; a version whose chart is out still refused)."""
+    gate, linger = held_charts(lib, monkeypatch)
+    assert post(lib, "/api/jobs", {"upload": A, "options": {}})[0] == 202   # a plain chart of the song, charting
+    status, answer = post(lib, by_id(V2, "/again"), {})
+    assert status == 202 and (answer["version"], answer["state"]) == (3, "waiting"), answer
+    for ref in (V1, V2):   # from any of the song's charts
+        assert post(lib, by_id(ref, "/again"), {}) == (409, {"error": (
+            "Version 3 of this song is already in the list: when it is charted, you can chart it differently again.")})
+    assert json.loads((lib.home / "state" / "versions.json").read_text()) == {A: 2}
+    gate(0).touch()   # the plain chart ends; version 3 charts
+    deadline = time.monotonic() + 20
+    while not any(e["version"] == 3 and e["state"] == "charting" for e in lib.app.queue.snapshot()["entries"]):
+        assert time.monotonic() < deadline, lib.app.queue.snapshot()
+        time.sleep(0.05)
+    assert post(lib, by_id(V1, "/again"), {}) == (409, {"error": (
+        "Version 3 of this song is charting now: when it is charted, you can chart it differently again.")})
+    linger(2).touch()
+    gate(2).touch()   # version 3's chart is out, its process still exiting: charted, so the next press is taken
+    while lib.app.jobs.current.result() is None:
+        assert time.monotonic() < deadline + 20 and lib.app.jobs.current.state == "running"
+        time.sleep(0.02)
+    gate(3).touch()
+    status, answer = post(lib, by_id(V1, "/again"), {})
+    assert status == 202 and answer["version"] == 4, answer
+    wait_idle(lib.app)
+    gate(4).touch()
+    assert post(lib, by_id(V2, "/again"), {})[1]["version"] == 5
+    assert json.loads((lib.home / "state" / "versions.json").read_text()) == {A: 4}
+    wait_idle(lib.app)
+
+
+PAGE5 = PAGE.split("(async () => {")[0] + r"""
+(async () => {
+  const out = {};
+  const base = { artist: "Made-Up Band", readable: true, ok: true, audio: "split", stems: false, look: false,
+    upload: "aaaaaaaaaaaaaaaa", guitar: true, lyrics: true, rating: null, spots: 0, name: "First Song" };
+  ctx.setCharts([{ ...base, id: V1, folder: "Made-Up Band - First Song", time: 1762596000, version: 1, seed: 0 }]);
+  const row = els["charts-list"].children[0];
+  const words409 = "Version 3 of this song is already in the list: when it is charted, you can chart it differently again.";
+  answers[`POST /api/jobs/${enc(V1)}/again`] = [[409, { error: words409 }]];
+  await button(find(row, (x) => x.className === "queue-actions"), "Chart it differently").on.click();
+  const panel = find(row, (x) => x.className === "chart-again");
+  find(panel, (x) => x.tag === "textarea").value = "zib zab\n";
+  button(panel, "Chart it").on.click();
+  await settle();
+  out.row = { msg: find(row, (x) => x.className === "queue-msg small").textContent,
+    lyrics: find(panel, (x) => x.tag === "textarea").value };
+  ctx.renderPlayed({ ok: true, folder: "/h/library/aaaaaaaaaaaaaaaa/Made-Up Band - First Song",
+    library: { id: V1, version: 1, guitar: true, lyrics: false, rating: null, spots: 0 } });
+  await button(els.played, "Chart it differently").on.click();
+  await settle();
+  out.done = find(els.played, (x) => x.className === "small again-msg").textContent;
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_page_says_a_version_is_in_the_list(tmp_path):
+    """The advisor's 2 on the page (app.js in node, the page test's stand-in DOM): the 409's words in the row's
+    message line, the pasted lyrics kept in the panel (F4), and in the Done screen's line (break: the refusal not
+    said, or the panel emptied)."""
+    script = tmp_path / "busy.cjs"
+    script.write_text(PAGE5, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(S.static_files()["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60,
+                          env={**os.environ, "TZ": "UTC", "LANG": "en_US.UTF-8"})
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    words = "Version 3 of this song is already in the list: when it is charted, you can chart it differently again."
+    assert out == {"row": {"msg": words, "lyrics": "zib zab\n"}, "done": words}
+
+
+
+# a made-up chart: 120 BPM (384 ticks a second at 192) to tick 4608 (12 s), then 60 BPM (192 a second); a section
+# name and lyric events of made-up words that must never reach the zip; Expert guitar: a strummed chord at 4 s, a
+# natural HOPO 64 ticks on, a tap, an open sustained 192 ticks at 6 s, one note at 17 s, one at 40 s and 30 at 60 s
+NOTES = """[Song]\r\n{\r\n  Name = "Zibzab Song"\r\n  Offset = 0\r\n  Resolution = 192\r\n}\r\n[SyncTrack]\r\n{\r
+  0 = TS 4\r\n  0 = B 120000\r\n  4608 = B 60000\r\n}\r\n[Events]\r\n{\r\n  0 = E "section Zibzab Part"\r
+  1536 = E "phrase_start"\r\n  1536 = E "lyric Zobble"\r\n}\r\n[ExpertSingle]\r\n{\r\n  1536 = N 0 0\r
+  1536 = N 2 0\r\n  1600 = N 1 0\r\n  1792 = N 3 0\r\n  1792 = N 6 0\r\n  2304 = N 7 192\r\n  5568 = N 4 0\r
+  9984 = N 0 0\r\n""" + "".join(f"  {13824 + 6 * k} = N {k % 5} 0\r\n" for k in range(30)) + "}\r\n"
+
+
+def test_the_zip_carries_the_guitar_notes_around_each_spot(lib, tmp_path, monkeypatch):
+    """The advisor's 3 at v0.5.0's gate: each spot of the chart rated has `around` in feedback.json: the Expert guitar's
+    notes from 10 s before it to 10 s after, as numbers (seconds on the spot's clock, tick, frets, open, strum, HOPO
+    or tap, sustain in ticks) read as Clone Hero plays them, with the resolution and the tempo markers there (the one
+    in force at its start first); no word of the chart (its section, its lyrics, its name); the nearest AROUND_NOTES a
+    spot and AROUND_TOTAL a file, said; a chart that does not read, one with no Expert guitar, and spots of another
+    notes.chart than the one there: no notes, and why; notes.chart itself still refused (breaks: no notes; another
+    clock; the kinds or the sustain wrong; the tempo in force left out; a word of the chart sent; no cap)."""
+    (lib.first / "notes.chart").write_text(NOTES, encoding="utf-8", newline="")
+    post(lib, by_id(V1, "/feedback"), {"add": {"at": "0:10", "reasons": ["off_beat"]}})
+    post(lib, by_id(V1, "/feedback"), {"add": {"at": "0:40", "reasons": ["great"]}})
+    post(lib, by_id(V1, "/feedback"), {"add": {"at": "1:00", "reasons": ["too_many_chords"]}})
+    post(lib, by_id(V2, "/feedback"), {"add": {"at": "0:05", "reasons": ["great"]}})   # its notes.chart: no chart
+
+    def zipped(name):
+        z = zipfile.ZipFile(diagnostics.bundle(lib.home, tmp_path / name, cache_root=lib.root, report=lambda: {},
+                                               clonehero_info=lambda home: {}))
+        assert "feedback.json" in z.namelist() and not any(n.endswith(".chart") for n in z.namelist())
+        return z.read("feedback.json").decode("utf-8"), {c["chart"]: c for c in json.loads(z.read("feedback.json"))[
+            "charts"]}
+
+    text, charts = zipped("d.zip")
+    ten, forty, sixty = (x["around"] for x in charts[V1]["spots"])
+    assert (ten["from_s"], ten["to_s"], ten["resolution"], ten["left_out"]) == (0.0, 20, 192, 0)
+    assert ten["tempos"] == [{"tick": 0, "bpm": 120.0, "s": 0.0}, {"tick": 4608, "bpm": 60.0, "s": 12.0}]
+    assert ten["notes"] == [
+        {"s": 4.0, "tick": 1536, "frets": [0, 2], "open": False, "kind": "strum", "sustain": 0},
+        {"s": 4.167, "tick": 1600, "frets": [1], "open": False, "kind": "hopo", "sustain": 0},
+        {"s": 4.667, "tick": 1792, "frets": [3], "open": False, "kind": "tap", "sustain": 0},
+        {"s": 6.0, "tick": 2304, "frets": [], "open": True, "kind": "strum", "sustain": 192},
+        {"s": 17.0, "tick": 5568, "frets": [4], "open": False, "kind": "strum", "sustain": 0}]
+    assert forty["tempos"] == [{"tick": 4608, "bpm": 60.0, "s": 12.0}]   # in force from before the window
+    assert [(n["s"], n["tick"]) for n in forty["notes"]] == [(40.0, 9984)]
+    assert len(sixty["notes"]) == 30 and sixty["notes"][0] == {"s": 60.0, "tick": 13824, "frets": [0], "open": False,
+                                                                "kind": "strum", "sustain": 0}
+    assert charts[V2]["spots"][0]["around"] == {"why": "its notes.chart could not be read as a chart (InputError)"}
+    for word in ("Zibzab", "Zobble", "lyric", "phrase", "section", "/"):
+        assert word not in json.dumps(charts), word
+    assert "Zibzab" not in text and "Zobble" not in text
+    monkeypatch.setattr(FB, "AROUND_NOTES", 12)   # the cap a spot: the nearest kept
+    monkeypatch.setattr(FB, "AROUND_TOTAL", 5 + 1 + 12)
+    _, charts = zipped("capped.zip")
+    ten, forty, sixty = (x["around"] for x in charts[V1]["spots"])
+    assert len(ten["notes"]) == 5 and len(forty["notes"]) == 1
+    assert sixty["left_out"] == 18 and sixty["why"] == "at most 12 notes a spot: the nearest kept"
+    assert [n["tick"] for n in sixty["notes"]] == [13824 + 6 * k for k in range(12)]   # 1:00 is the first note
+    monkeypatch.setattr(FB, "AROUND_TOTAL", 5 + 1 + 4)
+    _, charts = zipped("total.zip")
+    sixty = charts[V1]["spots"][2]["around"]
+    assert (len(sixty["notes"]), sixty["left_out"], sixty["why"]) == (4, 26, "at most 10 notes in this file, reached")
+    drums = f"{B}:{DRUMS}"   # a chart with no Expert guitar
+    (lib.drums / "notes.chart").write_text(NOTES.split("[ExpertSingle]")[0], encoding="utf-8", newline="")
+    post(lib, by_id(drums, "/feedback"), {"add": {"at": "0:05", "reasons": ["great"]}})
+    assert zipped("none.zip")[1][drums]["spots"][0]["around"] == {"why": "the chart has no Expert guitar part"}
+    (lib.first / "notes.chart").unlink()   # the spots of a notes.chart no longer there
+    assert zipped("gone.zip")[1][V1]["spots"][0]["around"] == {
+        "why": "these spots were marked on another notes.chart than the one there now"}
+    assert diagnostics.refused("notes.chart") == "a chart (notes.chart holds the lyrics)"
+
+
+def test_a_full_files_notes_stay_under_the_zips_limit(tmp_path):
+    """AROUND_TOTAL notes as feedback.json writes them, each spot's window full, stay well under diagnostics' MAX_BYTES
+    (break: a cap that lets the file grow past what the zip takes)."""
+    note = {"s": 123.456, "tick": 123456, "frets": [0, 2, 4], "open": False, "kind": "strum", "sustain": 1920}
+    spot = {"id": "0a0b0c0d", "at": 130, "reasons": ["too_many_chords", "off_beat"], "note": "x" * FB.NOTE_MAX,
+            "around": {"from_s": 120, "to_s": 140, "resolution": 192, "tempos": [{"tick": 0, "bpm": 120.0, "s": 0.0}],
+                       "notes": [note] * FB.AROUND_NOTES, "left_out": 0}}
+    spots = FB.AROUND_TOTAL // FB.AROUND_NOTES
+    data = {"charts": [{"chart": f"{A}:{FIRST}", "rating": 3, "spots": [spot] * spots, "now": {"pipeline": PIPELINE}}]}
+    size = len(json.dumps(data, indent=1, ensure_ascii=False).encode("utf-8"))
+    assert size < diagnostics.MAX_BYTES * 0.6, size
+
+
+def test_a_rating_that_cannot_be_saved_says_so_plainly(lib, monkeypatch):
+    """The advisor's 7 at v0.5.0's gate: a full disk while a rating or a spot is saved is a 507 in plain words with no
+    path (it was "internal error: OSError ..." with the state folder's path), another OSError a 500 with its strerror
+    alone; each logged, and the record as it was (breaks: the OSError not caught; a path in the answer; not logged)."""
+    assert post(lib, by_id(V1, "/feedback"), {"rating": 2})[0] == 200
+    logged = []
+    monkeypatch.setattr(lib.app, "log", lambda text, console=True: logged.append(text))
+    where = str(FB.path_for(lib.home, V1))
+
+    def failing(code, words):
+        def write(home, record):
+            raise OSError(code, words, where)
+        return write
+
+    monkeypatch.setattr(FB, "_write", failing(errno.ENOSPC, "No space left on device"))
+    assert post(lib, by_id(V1, "/feedback"), {"rating": 5}) == (507, {"error": (
+        "This was not saved: C: (or WSL's disk) is full. Free some space on C:, then try again.")})
+    assert post(lib, by_id(V1, "/feedback"), {"add": {"at": "1:00", "reasons": ["great"]}})[0] == 507
+    monkeypatch.setattr(FB, "_write", failing(errno.EACCES, "Permission denied"))
+    assert post(lib, by_id(V1, "/feedback"), {"rating": 5}) == (500, {"error": (
+        "This was not saved: songcharter could not write it (Permission denied). Try again in a moment.")})
+    said = [t for t in logged if "could not be saved" in t]   # (the access lines go to the log too)
+    assert len(said) == 3 and all(t.startswith(f"feedback on {V1} could not be saved") and where in t for t in said)
+    assert get(lib, by_id(V1, "/feedback"))[1]["rating"] == 2
+
+
+def test_a_change_while_notes_chart_cannot_be_read_keeps_the_charts_sha(lib):
+    """The gate review's F1: a change made while the folder's notes.chart cannot be read keeps the sha of the chart
+    rated, so the next chart in the folder does not take its rating and spots as its own (break: notes_sha None
+    saved over it: the next chart shows rating 5 and 1 spot, and rating it overwrites the 5)."""
+    assert post(lib, by_id(V1, "/feedback"), {"rating": 5})[0] == 200
+    rated = FB.notes_id(lib.first)
+    (lib.first / "notes.chart").unlink()
+    assert post(lib, by_id(V1, "/feedback"), {"add": {"at": "1:00", "reasons": ["great"]}})[0] == 200
+    assert json.loads(FB.path_for(lib.home, V1).read_text(encoding="utf-8"))["notes_sha"] == rated
+    (lib.first / "notes.chart").write_text("[Song]\n{\n}\n// another chart\n", encoding="utf-8")
+    status, fb = get(lib, by_id(V1, "/feedback"))
+    assert status == 200 and (fb["rating"], fb["spots"], fb["earlier"]) == (None, [], {"rating": 5, "spots": 1})
+    assert post(lib, by_id(V1, "/feedback"), {"rating": 1})[1]["rating"] == 1
+    saved = json.loads(FB.path_for(lib.home, V1).read_text(encoding="utf-8"))
+    assert [(e["rating"], len(e["spots"]), e["notes_sha"]) for e in saved["earlier"]] == [(5, 1, rated)]
+
+
+DENSE = ("[Song]\r\n{\r\n  Resolution = 192\r\n}\r\n[SyncTrack]\r\n{\r\n  0 = TS 4\r\n  0 = B 120000\r\n}\r\n"
+         "[ExpertSingle]\r\n{\r\n" + "".join(f"  {6 * k} = N {k % 5} 0\r\n" for k in range(4480)) + "}\r\n")   # 64/s
+
+
+def test_a_feedback_json_too_big_goes_without_the_notes(tmp_path, monkeypatch):
+    """The gate review's F2, through the real bundle: 16 made-up charts rated, each with 50 spots whose notes are 300
+    two-byte characters and 5 earlier charts' spots like them, and 10,000 notes around the spots, make a feedback.json
+    over MAX_BYTES. It goes in without the notes (each `around` saying why), every rating with it, and the manifest
+    says so; with a limit the ratings alone pass, the file stays out and the manifest says where they are kept
+    (breaks: the whole file left out; the closing line saying the ratings are there; the notes kept)."""
+    home = tmp_path / "home"
+    note = "é" * FB.NOTE_MAX
+
+    def spots(n):
+        return [{"id": f"{n:04x}{k:04x}", "at": 10 + k, "reasons": ["too_many_chords"], "note": note}
+                for k in range(FB.SPOTS_MAX)]
+
+    ids = []
+    for i in range(16):
+        folder = chart(home, f"{i:016x}", f"Made-Up Band - Song {i}", 1000 + i)
+        (folder / "notes.chart").write_text(DENSE, encoding="utf-8", newline="")
+        ids.append(J.chart_id(folder))
+        path = FB.path_for(home, ids[-1])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "version": 1, "chart": ids[-1], "rating": 3, "spots": spots(i), "notes_sha": FB.notes_id(folder),
+            "updated": 1.0, "earlier": [{"rating": 4, "spots": spots(i), "notes_sha": f"{e:016x}", "updated": 0.5}
+                                        for e in range(FB.EARLIER_MAX)]}), encoding="utf-8")
+
+    def zipped(name):
+        z = zipfile.ZipFile(diagnostics.bundle(home, tmp_path / name, cache_root=tmp_path / "cache",
+                                               report=lambda: {}, clonehero_info=lambda home: {}))
+        fb = json.loads(z.read("feedback.json")) if "feedback.json" in z.namelist() else None
+        return fb, z.read("MANIFEST.txt").decode("utf-8").splitlines()
+
+    fb, manifest = zipped("d.zip")
+    why = {"why": "left out: the file would be over 5 MB"}
+    assert [c["chart"] for c in fb["charts"]] == sorted(ids) and all(c["rating"] == 3 for c in fb["charts"])
+    assert all(len(c["spots"]) == FB.SPOTS_MAX and all(x["around"] == why for x in c["spots"])
+               and len(c["earlier"]) == FB.EARLIER_MAX for c in fb["charts"])
+    whole = next(x for x in manifest if x.startswith("  the page's ratings") and "over" in x)
+    assert int(whole.rsplit(": ", 1)[1].split()[0]) > diagnostics.MAX_BYTES   # with the notes: over the limit
+    assert manifest[-1] == ("feedback.json holds each chart's rating and marked spots, without the guitar's notes "
+                            "around them: with them it would be over 5 MB; a spot's note is the player's own words, "
+                            "as he wrote them.")
+    monkeypatch.setattr(diagnostics, "MAX_BYTES", 10 ** 6)   # the ratings alone are over it too
+    fb, manifest = zipped("small.zip")
+    assert fb is None and manifest[-1] == (
+        "The ratings and marked spots are not in this zip: feedback.json would be over 1 MB even without the notes "
+        "around the spots. They are kept in the state/feedback folder of songcharter's home (above).")

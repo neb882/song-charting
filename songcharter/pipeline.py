@@ -363,17 +363,21 @@ def folder_record(record: Mapping) -> dict:
     """report.json's `pipeline` (assemble's `pipeline=`): what the song folder keeps of pipeline.json's `record`, so
     that a chart made with less than was meant can be told from a good one once the work folder is pruned ("Your
     charts", a diagnostics zip; v0.5.0's advisor, finding 2), and so that it can be made again (the recorded
-    configuration, M8-14): the seed asked for (`seed`); the device asked for and chosen; the guitar's takes (None
-    without a guitar): asked for (None: the default), planned, made (1 when the first of several takes on CUDA was
-    run again on the CPU or moved there), each take's seed, each take's transcriber device and the seeds run again
-    on the CPU; each fallback's stage, from and to; and the engines' identities (`engines`, engine_identities).
-    Numbers, short words and short hashes only: no reason, as an engine's line can hold a path."""
-    dev, takes = record.get("device") or {}, record.get("takes")
-    return {"seed": (record.get("options") or {}).get("seed", 0),
+    configuration, M8-14): the seed asked for (`seed`); the threads asked for (`threads`, None for the default);
+    the device asked for and chosen; the guitar's takes (None without a guitar): asked for (None: the default),
+    planned, made (1 when the first of several takes on CUDA was run again on the CPU or moved there), each take's
+    seed, each take's transcriber device, the seeds run again on the CPU, and each take's engine stages' devices
+    and the stages its engine took from its own cache (`stage_devices`, `cached_stages`: the driver's devices and
+    cachedStages, the gate advisor's 6); each fallback's stage, from and to; and the engines' identities (`engines`,
+    engine_identities). Numbers, short words and short hashes only: no reason, as an engine's line can hold a
+    path."""
+    opts, dev, takes = record.get("options") or {}, record.get("device") or {}, record.get("takes")
+    return {"seed": opts.get("seed", 0), "threads": opts.get("threads"),
             "device": {"asked": dev.get("asked"), "chosen": dev.get("chosen")},
             "takes": None if takes is None else {
                 "asked": takes.get("asked"), "planned": takes.get("planned"), "made": takes.get("takes"),
-                "seeds": takes.get("seeds"), "devices": takes.get("devices"), "cpu_retries": takes.get("cpu_retries")},
+                "seeds": takes.get("seeds"), "devices": takes.get("devices"), "cpu_retries": takes.get("cpu_retries"),
+                "stage_devices": takes.get("stage_devices"), "cached_stages": takes.get("cached_stages")},
             "fallbacks": [{k: f.get(k) for k in ("stage", "from", "to")} for f in record.get("fallbacks") or []],
             "engines": dict(record.get("engines") or {})}
 
@@ -946,6 +950,30 @@ def _transcriber(run: Run) -> str | None:
     return (run.info.get("devices") or {}).get("transcriber")
 
 
+ENGINE_NAME = re.compile(r"[A-Za-z0-9_.+ -]{1,40}")   # a stage's or a device's name as the driver reports it
+
+
+def _names(value: Any) -> Any:
+    """The driver's devices ({stage: device or None}) or cachedStages ([stage]) with short names only (a path or a
+    message dropped: report.json keeps no path); None when it reports none."""
+    def ok(v: Any) -> bool:
+        return isinstance(v, str) and ENGINE_NAME.fullmatch(v) is not None
+    if isinstance(value, Mapping):
+        return {k: v for k, v in value.items() if ok(k) and (v is None or ok(v))}
+    if isinstance(value, list):
+        return [v for v in value if ok(v)]
+    return None
+
+
+def _take_stages(run: Run) -> tuple[Any, Any]:
+    """A guitar take's (stage devices, cached stages): the devices its summary reports for every engine stage
+    (Take.devices, a continued take's pieces counted) and the stages the engine's whole-song run took from its own
+    cache (the driver's runs[0].cachedStages: a take's features made by an earlier chart, on another device too)."""
+    runs = run.info.get("runs")
+    first = runs[0] if isinstance(runs, list) and runs and isinstance(runs[0], Mapping) else {}
+    return _names(run.info.get("devices")), _names(first.get("cachedStages"))
+
+
 def _distinct_takes(runs: list[Run], warn: Callable[[str], None]) -> list[Run]:
     """The guitar takes without one whose Expert notes repeat an earlier take's (assemble refuses such a take:
     it always agrees with its twin); fewer than three distinct takes cannot be spliced, so then the first alone."""
@@ -1510,6 +1538,8 @@ def _engine_stages(audio: Path, work: Path, scratch: Path | None, options: Optio
                            "why": why,
                            "seeds": list(seeds), "transcriber_moved_to": moved,
                            "devices": [_transcriber(r) for r in runs], "cpu_retries": list(retried),
+                           "stage_devices": [_take_stages(r)[0] for r in runs],
+                           "cached_stages": [_take_stages(r)[1] for r in runs],
                            "cut_short": [st.get("cut_short") for st in stitches],
                            "pieces": [len(st.get("pieces") or []) for st in stitches],
                            "last_note_s": [st.get("last_note_s") for st in stitches]}

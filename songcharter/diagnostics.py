@@ -15,14 +15,19 @@
     built folder's report.json (pipeline.json's assemble.folder: the song folder or its .failed);
   * feedback.json (M8-14): every chart's rating and marked spots from the page (ui/feedback.py,
     <home>/state/feedback), each with its chart as it is now, its report.json's `pipeline` among it (the seeds,
-    takes, devices, fallbacks and engines), so a bad spot can be charted again here; the chart named by its library
-    id, no path. A spot's note is the player's own words, as he wrote them. Left out when no chart has a rating
-    or a spot (the manifest says so);
+    takes, devices, fallbacks and engines), and with each spot the chart's Expert guitar notes from 10 s before it to
+    10 s after (`around`: numbers only, with the chart's resolution and tempo markers there; capped a spot and a
+    file), read from its notes.chart here, so a bad spot can be looked at where the chart cannot be made again (the
+    gate advisor's 3: another GPU need not give the same takes); the chart named by its library id, no path. A
+    spot's note is the player's own words, as he wrote them. Left out when no chart has a rating or a spot (the
+    manifest says so). Over MAX_BYTES, it goes without the notes around the spots (each `around` says why), and the
+    manifest says so; still over, it stays out, and the manifest says where the ratings are kept (the gate review's
+    F2);
   * MANIFEST.txt: every file with its size and where it came from, then every file left out and why.
 
 **Never** (`refused`, each candidate checked by its name, its size and its first bytes, the files made here too): an audio extension or audio
 magic bytes (packaging/ci/check_no_audio.py's test, copied here since that script is not part of the package), a
-notes.chart (it holds the lyrics), a stem, a picture (PNG, JPEG or WebP by its extension or its first bytes: the
+notes.chart (it holds the lyrics: feedback.json's notes are numbers read from it, never its text), a stem, a picture (PNG, JPEG or WebP by its extension or its first bytes: the
 previews, and the album art and backgrounds of M4-11, which may be a person's photo), or any file over MAX_BYTES
 (5 MB). Only the files above are ever
 picked, so the songs, stems, decodes, previews and charts in the home and the cache are never looked at. The lyrics a
@@ -179,6 +184,24 @@ def _feedback(home: Path) -> dict:
     return feedback.for_diagnostics(home, jobs.find_chart)
 
 
+# the manifest's closing line, by whether feedback.json went in (bundle's `fed`)
+FED_LINES = {
+    "whole": "feedback.json holds each chart's rating and marked spots, with the guitar's notes around each spot as "
+             "numbers (no word of the chart); a spot's note is the player's own words, as he wrote them.",
+    "short": "feedback.json holds each chart's rating and marked spots, without the guitar's notes around them: with "
+             "them it would be over {mb}; a spot's note is the player's own words, as he wrote them.",
+    "none": "The ratings and marked spots are not in this zip: feedback.json would be over {mb} even without the "
+            "notes around the spots. They are kept in the state/feedback folder of songcharter's home (above).",
+    "nothing": "No chart has a rating or a marked spot yet, so there is no feedback.json."}
+
+
+def without_notes(rated: dict) -> dict:
+    """feedback.json without the guitar's notes: each spot's `around` only says why (a file over MAX_BYTES)."""
+    why = {"why": f"left out: the file would be over {MAX_BYTES / 10 ** 6:g} MB"}
+    return {**rated, "charts": [{**c, "spots": [{**x, "around": why} for x in c.get("spots") or []]}
+                                for c in rated.get("charts") or []]}
+
+
 def _quick_report() -> dict:
     from . import device
     return device.report(full=False)
@@ -235,18 +258,21 @@ def bundle(home: Path | str, out: Path | str, *, report: Callable[[], dict] | No
                 rated = _feedback(home)
             except Exception as e:  # noqa: BLE001  the rest of the bundle goes all the same
                 rated = {"error": f"{type(e).__name__}: {e}"}
+            fed = None   # feedback.json: None (nothing to send), "whole", "short" (without the notes), or "none"
             if rated.get("charts") or "error" in rated:
-                b.json("feedback.json", rated, "the page's ratings and marked spots (state/feedback), with each "
-                       "chart's report.json pipeline")
+                source = "the page's ratings and marked spots (state/feedback), with each chart's report.json pipeline"
+                fed = "whole" if b.json("feedback.json", rated, source) else "none"
+                if fed == "none" and b.left and b.left[-1][1].endswith(f"over {MAX_BYTES}"):   # too big: without
+                    # the notes around the spots, so the ratings still come (the gate review's F2)
+                    fed = "short" if b.json("feedback.json", without_notes(rated), f"{source}, without the notes "
+                                            "around the spots") else "none"
             lines = [f"songcharter {__version__} diagnostics, made {made}", f"home: {home}", f"cache: {root}",
                      "", "files (bytes, from):"]
             lines += [f"  {name}  {size}  {src}" for name, size, src in b.added]
             lines += ["", "left out (why):"] + ([f"  {src}: {why}" for src, why in b.left] or ["  nothing"])
             lines += ["", "Never in this file: audio, stems, charts (notes.chart), pictures, or a file over "
                           f"{MAX_BYTES // 10 ** 6} MB.",
-                      "feedback.json holds each chart's rating and marked spots; a spot's note is the player's own "
-                      "words, as he wrote them." if rated.get("charts") or "error" in rated else
-                      "No chart has a rating or a marked spot yet, so there is no feedback.json."]
+                      FED_LINES[fed or "nothing"].format(mb=f"{MAX_BYTES / 10 ** 6:g} MB")]
             z.writestr("MANIFEST.txt", "\n".join(lines) + "\n")
         os.replace(part, out)
     finally:

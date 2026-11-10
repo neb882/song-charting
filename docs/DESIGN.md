@@ -1627,7 +1627,10 @@ ending any player sees.
 - **The rule** (CLAUDE.md, the owner's decision of 2026-11-09): reproducible: the same input with the same recorded
   configuration (seeds, device, engine versions, fallbacks; recorded in report.json's `pipeline` field) gives a
   byte-identical notes.chart on that machine. A seed the person asks for is configuration, which makes room for the
-  page's "Chart it differently" (§4.5): a guitar he does not like, charted again another way.
+  page's "Chart it differently" (§4.5): a guitar he does not like, charted again another way. Its scope (v0.5.0
+  gate's advisor, finding 6): the same record gives the same chart from the same cached stages; a take that reused
+  the engine's features cached by a chart on another device says so in its `cached_stages` (the engine's own
+  feature cache is keyed by the audio's hash alone, ac_headless.cjs, so a CUDA take can reuse a CPU chart's).
 - **The seed** (`pipeline.Options.seed`, `songcharter chart --seed N`, 0 to 999999 [judgement: the engine's seed
   stays far inside a 32-bit integer]): each take's seed moved on by N (`take_seeds`): take 1 20260609 + N, takes 2,
   3, ... 101·k + N. So Quick's one take moves on, and Best moves each of its 4. N = 0, the default, gives the seeds
@@ -1640,9 +1643,12 @@ ending any player sees.
   folder (guitar/seed_<seed>/) hold its seed [code, unchanged since M3], so another seed never reuses a take and the
   same seed always does. The separation, drums, bass and sections do not depend on the guitar's seed: a chart with
   another seed takes them from the work folder's caches, and only the guitar and assemble run [tests/test_seed.py].
-- **The record** (report.json's `pipeline`, `pipeline.folder_record`): `seed`; the device asked for and chosen; the
-  takes asked for, planned and made, with `seeds` (each take's), each take's device and the seeds run again on the
-  CPU; each fallback's stage, from and to; and `engines`, what each engine's cache keys on, as version strings and
+- **The record** (report.json's `pipeline`, `pipeline.folder_record`): `seed`; `threads` (as asked; None for the
+  default); the device asked for and chosen; the takes asked for, planned and made, with `seeds` (each take's), each
+  take's transcriber device, the seeds run again on the CPU, and each take's `stage_devices` (the driver's devices,
+  every engine stage's: demucs, timing, transcriber) and `cached_stages` (the driver's cachedStages: the stages its
+  engine took from its own cache), short names only (`pipeline._names`: a path or a message dropped); each
+  fallback's stage, from and to; and `engines`, what each engine's cache keys on, as version strings and
   12-hex hashes (`engine_identities`): the separation's model, revision and seed; ADTOF's version and its weights'
   SHA-256; the bass rules' version and a hash of their libraries' versions; allin1's version, model and a hash of
   its weights, or librosa's version, with the sections engine's version; autochart's engineVersion and its install's
@@ -3416,7 +3422,12 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     it with .flac files, and **Look**: the song's work folder is still in the cache (`cache.by_key` by the upload's
     16 hex, which is the song file's key) and its pipeline.json names this folder as its last chart. A chart of the
     same song made later with other options takes that work folder, and its preview, lyrics counts and pictures with
-    it, so the earlier chart is then listed without Look rather than shown another chart's record [decision]. A
+    it, so the earlier chart is then listed without Look rather than shown another chart's record [decision]. The
+    queue's Look on an earlier song of the list keeps its button, since its Done screen (the result, Install, the
+    zip, Listen, which renders the chart's own folder) is still its own, but the same comparison
+    (`jobs.last_chart_is`, `server.later_chart`) reads it as having no record: "No preview: it went with a later
+    chart of this song (Look at that one in Your charts)", its preview's pictures answer 404, and none of the later
+    chart's lyrics counts, art source or stems' why (v0.5.0's gate) [code]. A
     folder whose report.json cannot be read is listed by its name as "Can't be read", never hidden; a folder without
     one (the stems folder, assemble's staging, anything else) is not a chart.
   - **Ids, not paths:** a chart's id is `<16 hex>:<its folder's name>` (a safe name has no ":"), percent-encoded in a
@@ -3456,19 +3467,51 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     copies into Clone Hero. Written whole through a temporary file; a restart reads it; a new version is a new chart
     with its own; nothing deletes one (a chart deleted in Windows keeps its record). Each record notes its chart's
     notes.chart identity (the first 16 hex of its SHA-256) at the last change, so a chart made again into the same
-    folder (the same seed) can be told from the one rated.
+    folder can be told from the one rated.
+  - **A rating stays with the chart it was given to** (v0.5.0 gate's advisor, finding 1): a plain chart of a song
+    already charted, with other options (Best after Quick), goes into the same folder (seed 0's folder is the same
+    whatever the options), and a record found by the chart's id alone then showed the old chart's rating and spots
+    as the new one's. Now everything that reads a record (the box, Your charts' counts, the results, the zip) reads
+    it for the notes.chart in the folder now (`feedback.as_now`): one of another chart reads as none yet, and the
+    box's line says "You rated an earlier chart of this song 5 of 5. How does this one play?", with nothing pressed
+    and no spot listed. The first change saves it so: the earlier rating and spots go to the record's `earlier`
+    (newest first, at most 5 [judgement: a few re-charts of one song], each with its notes_sha and time), which the
+    zip carries; a chart charted back to one rated before (its options again: the same notes.chart) gets that one's
+    own again. A change made while the folder's notes.chart cannot be read keeps the sha the record had (the gate
+    review's F1: None made the record no chart's, and the next chart took its rating as its own).
   - **The routes** (behind `/api/jobs`' guards: Host; Origin and `X-Songcharter` on the POST): `GET` and
     `POST /api/jobs/<id>/feedback`, the id a job's, "current" or a chart's (the chart its result names, found in the
     library: never a path). One change a POST: `{"rating": 1-5 or null}`, `{"add": {"at", "reasons", "note"}}` or
     `{"remove": <spot id>}`; each checked (the rating 1 to 5; a time m:ss and not after the song's end, from
     report.json's audio and lead-in; reasons from the list, at least one; the note text of at most 300 characters,
     kept as written), else 400 with why in plain words. `GET /api/library` carries each chart's `rating` and `spots`.
-  - **Into the diagnostics zip** (`diagnostics.py`): feedback.json, every chart with a rating or a spot, each with its
-    chart as it is now (still there or not, its notes.chart identity, its gate, its length, and its report.json's
-    `pipeline`: the seeds, takes, devices, fallbacks and engines of §2.7, so a bad spot can be charted again here);
+    A change that cannot be saved is said plainly, with no path, and logged (v0.5.0 gate's advisor, finding 7: a full
+    disk showed "internal error: OSError ..." with the state folder's path): 507 "This was not saved: C: (or WSL's
+    disk) is full. Free some space on C:, then try again." (500 with the error's own words alone for another
+    OSError); what he typed stays in the box (F2).
+  - **Into the diagnostics zip** (`diagnostics.py`): feedback.json, every chart with a rating or a spot (or an
+    earlier chart's), each with its chart as it is now (still there or not, its notes.chart identity, its gate, its
+    length, and its report.json's `pipeline`: the seeds, takes, devices, fallbacks and engines of §2.7);
     the chart named by its id, no path. The note is the friend's own text and travels as he wrote it (the guide says
     so). The zip's guard, `refused` (by name, size and first bytes), now also checks the files it makes, such as this
     one; CI's check_no_audio.py reads the whole zip as before.
+  - **The notes around a spot** (v0.5.0 gate's advisor, finding 3): the zip refuses notes.chart (it holds the
+    lyrics), and the owner's GPU need not chart the friend's chart again (M8-02: 8 of 23 takes identical across
+    devices), so a spot alone was a time with nothing to look at. Each spot of the chart rated (its notes_sha the one
+    there now) carries `around`: the Expert guitar's notes from 10 s before it to 10 s after, as numbers only
+    (`{"s", "tick", "frets", "open", "kind": "strum" | "hopo" | "tap", "sustain"}` in ticks), read from the folder's
+    notes.chart with the project's importer as Clone Hero plays it (`importers.read_chart` with the song.ini's
+    settings; ticks from its tempo map), with the chart's resolution and the tempo markers there (the one in force at
+    the window's start first). The seconds are the chart's from tick 0, which are song.ogg's with the lead-in in it
+    (Offset 0; assemble puts every input second t at t + pad_seconds on the map): the clock of the spot's `at`. No
+    word of the chart (not its [Events]: lyrics, sections; not its names). At most 400 notes a spot (the nearest) and
+    10,000 in the file [judgement: 20 notes a second for 20 s; about 200 bytes a note as written, so about 2 MB of
+    the zip's 5 MB a file], `left_out` and `why` saying what was left out; a chart that does not read, one with no
+    Expert guitar, or spots of another notes.chart than the one there: `why` alone. A feedback.json still over the
+    zip's 5 MB (many charts with long notes and earlier charts' spots) goes in without the notes, each `around`
+    saying why, and the manifest says so; still over, it stays out, and the manifest says the ratings are kept in
+    songcharter's state/feedback folder (the gate review's F2: the whole file, every rating, was left out, and the
+    manifest said it was there).
   - **Chart it differently** (on the Done screen and on each chart in Your charts with a guitar part, a failed check
     too): `POST /api/jobs/<id>/again` charts the song again with the next seed for its song (`App.next_seed`: one more
     than any its versions in the library, its songs in the queue and `<home>/state/versions.json` have used, so a
@@ -3481,7 +3524,13 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     stages come from there: `estimate.CACHED` [est.]), else a whole chart's.
     A chart without a guitar part would come out the same: refused, in words. One press, one version: while its
     request is out, the chart's buttons (the row's or the Done screen's, and the lyrics panel's two) wait, and a
-    second press sends nothing (the second review's R1: a double click queued two versions).
+    second press sends nothing (the second review's R1: a double click queued two versions). And one version of a
+    song at a time: the route answers in milliseconds, so two presses 150 to 300 ms apart still queued two (v0.5.0
+    gate's advisor, finding 2); now, while a version of the song (seed above 0) waits or charts, `/again` on any of
+    its charts is refused (409, using no seed): "Version 3 of this song is already in the list: when it is charted,
+    you can chart it differently again." in the row's or the Done screen's message line, the lyrics panel kept. A
+    plain chart of the song in the list is no version and does not stop it; a version whose chart is out, its
+    process still exiting, counts as charted.
   - **Versions:** a chart with seed N is version N + 1, in `<home>/library/<16 hex>/v<N + 1>/<the same name>/`, beside
     the first, never over it; its id is `<16 hex>:<name>:v<N + 1>` (`jobs.LIBRARY_ID`). The same name is the charted
     folder's own (without .failed), given as the `name` option (one path component, `jobs.folder_name`; kept in the
