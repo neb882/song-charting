@@ -3484,6 +3484,10 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     `{"remove": <spot id>}`; each checked (the rating 1 to 5; a time m:ss and not after the song's end, from
     report.json's audio and lead-in; reasons from the list, at least one; the note text of at most 300 characters,
     kept as written), else 400 with why in plain words. `GET /api/library` carries each chart's `rating` and `spots`.
+    A change that cannot be saved is said plainly, with no path, and logged (v0.5.0 gate's advisor, finding 7: a full
+    disk showed "internal error: OSError ..." with the state folder's path): 507 "This was not saved: C: (or WSL's
+    disk) is full. Free some space on C:, then try again." (500 with the error's own words alone for another
+    OSError); what he typed stays in the box (F2).
   - **Into the diagnostics zip** (`diagnostics.py`): feedback.json, every chart with a rating or a spot (or an
     earlier chart's), each with its chart as it is now (still there or not, its notes.chart identity, its gate, its
     length, and its report.json's `pipeline`: the seeds, takes, devices, fallbacks and engines of §2.7);

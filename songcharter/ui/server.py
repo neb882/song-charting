@@ -118,7 +118,8 @@ Nothing is downloaded or installed; charting never waits for it.
     the same guards: {"chart", "rating", "spots" ({"id", "at", "time", "reasons", "note"}), "earlier", "length",
     "reasons", "note_max"}; 400 with why in plain words for a bad change (a rating not 1 to 5, a time not m:ss or after
     the song's end, no reason or one not in the list, a note over 300 characters, an unknown spot), or no finished
-    chart. Kept in <home>/state/feedback/, by the chart's id. GET /api/library's charts carry each one's `rating` and
+    chart; 507 in plain words, with no path, when it cannot be saved for a full disk (500 for another OSError, with
+    its strerror alone), logged. Kept in <home>/state/feedback/, by the chart's id. GET /api/library's charts carry each one's `rating` and
     `spots` (how many). All of them for the notes.chart in the chart's folder now: a rating given to an earlier chart
     made into that folder (a plain chart again with other options) is not this one's (feedback.as_now; `earlier`: its
     rating and spot count, for the page's line).
@@ -253,6 +254,9 @@ END_WAIT_S = 10.0                  # after a closing event, the stream waits thi
 HELLO_TIMEOUT_S = 0.5
 CHUNK = 1 << 20
 DISK_FULL = "C: (or WSL's disk) is full: free some space on C:, then drop the song again"   # an upload's 507
+# a rating or spot that could not be saved (the gate advisor's 7: it showed "internal error: OSError ..." with a path)
+NOT_SAVED = {"full": "This was not saved: C: (or WSL's disk) is full. Free some space on C:, then try again.",
+             "other": "This was not saved: songcharter could not write it ({why}). Try again in a moment."}
 STATIC_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                 ".css": "text/css; charset=utf-8"}
 PREVIEW_NAME = re.compile(r"^(?:overview|page_\d{2,3})\.png$")   # preview.py's files: overview.png, page_01.png, ...
@@ -920,6 +924,11 @@ class Handler(BaseHTTPRequestHandler):
             record = feedback.change(app.home, cid, body, length, notes=feedback.notes_id(folder))
         except InputError as e:
             raise Refused(400, str(e)) from None
+        except OSError as e:   # a full disk is his to fix, not a bug: said plainly, with no path; the page keeps
+            app.log(f"feedback on {cid} could not be saved: {e}")   # what he typed (F2)
+            full = e.errno == errno.ENOSPC
+            raise Refused(507 if full else 500, NOT_SAVED["full"] if full else NOT_SAVED["other"].format(
+                why=e.strerror or type(e).__name__)) from None
         app.log(f"feedback on {cid}: rating {record['rating']}, {len(record['spots'])} spot(s)", console=False)
         return self._json(200, feedback.public(record, length))
 

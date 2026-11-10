@@ -2,6 +2,7 @@
 diagnostics zip (feedback.json), the versions of a song in the library (<16 hex>/v<N>/<name>, ids
 `<16 hex>:<name>:v<N>`), "Chart it differently" (POST /api/jobs/<id>/again: the next seed, into the queue) and the
 replace question naming the versions. Made-up songs only; the chart program is a stand-in (CHART)."""
+import errno
 import hashlib
 import http.client
 import io
@@ -1617,3 +1618,29 @@ def test_a_full_files_notes_stay_under_the_zips_limit(tmp_path):
     data = {"charts": [{"chart": f"{A}:{FIRST}", "rating": 3, "spots": [spot] * spots, "now": {"pipeline": PIPELINE}}]}
     size = len(json.dumps(data, indent=1, ensure_ascii=False).encode("utf-8"))
     assert size < diagnostics.MAX_BYTES * 0.6, size
+
+
+def test_a_rating_that_cannot_be_saved_says_so_plainly(lib, monkeypatch):
+    """The advisor's 7 at v0.5.0's gate: a full disk while a rating or a spot is saved is a 507 in plain words with no
+    path (it was "internal error: OSError ..." with the state folder's path), another OSError a 500 with its strerror
+    alone; each logged, and the record as it was (breaks: the OSError not caught; a path in the answer; not logged)."""
+    assert post(lib, by_id(V1, "/feedback"), {"rating": 2})[0] == 200
+    logged = []
+    monkeypatch.setattr(lib.app, "log", lambda text, console=True: logged.append(text))
+    where = str(FB.path_for(lib.home, V1))
+
+    def failing(code, words):
+        def write(home, record):
+            raise OSError(code, words, where)
+        return write
+
+    monkeypatch.setattr(FB, "_write", failing(errno.ENOSPC, "No space left on device"))
+    assert post(lib, by_id(V1, "/feedback"), {"rating": 5}) == (507, {"error": (
+        "This was not saved: C: (or WSL's disk) is full. Free some space on C:, then try again.")})
+    assert post(lib, by_id(V1, "/feedback"), {"add": {"at": "1:00", "reasons": ["great"]}})[0] == 507
+    monkeypatch.setattr(FB, "_write", failing(errno.EACCES, "Permission denied"))
+    assert post(lib, by_id(V1, "/feedback"), {"rating": 5}) == (500, {"error": (
+        "This was not saved: songcharter could not write it (Permission denied). Try again in a moment.")})
+    said = [t for t in logged if "could not be saved" in t]   # (the access lines go to the log too)
+    assert len(said) == 3 and all(t.startswith(f"feedback on {V1} could not be saved") and where in t for t in said)
+    assert get(lib, by_id(V1, "/feedback"))[1]["rating"] == 2
