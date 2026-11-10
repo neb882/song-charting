@@ -605,8 +605,13 @@ def test_the_results_name_the_chart_in_the_library(lib):
 PAGE = r"""
 const vm = require("vm"), fs = require("fs");
 const els = {};
+const moves = [];   // [the parent's tag, "out" or "in", the child]: what a list took out and put in
 const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [], value: "",
-  open: false, checked: false, on: {}, href: "", title: "", replaceChildren(...c) { this.children = c; },
+  open: false, checked: false, on: {}, href: "", title: "", replaceChildren(...c) {
+    moves.push(...this.children.map((x) => [tag, "out", x]), ...c.map((x) => [tag, "in", x])); this.children = c; },
+  removeChild(x) { moves.push([tag, "out", x]); this.children.splice(this.children.indexOf(x), 1); return x; },
+  insertBefore(x, ref) { if (this.children.includes(x)) this.removeChild(x);
+    moves.push([tag, "in", x]); this.children.splice(ref ? this.children.indexOf(ref) : this.children.length, 0, x); return x; },
   append(...c) { this.children.push(...c); }, remove() {}, addEventListener(kind, f) { this.on[kind] = f; },
   classList: { add() {}, remove() {}, toggle() {} }, removeAttribute() {}, pause() {}, click() {},
   scrollIntoView() {}, focus() {}, select() {} });
@@ -651,7 +656,7 @@ const enc = (id) => encodeURIComponent(id);
                  { ...base, id: "bbbbbbbbbbbbbbbb:Other - Drums", upload: "bbbbbbbbbbbbbbbb", name: "Drums", version: 1,
                    seed: 0, time: 1762509600, guitar: false, ok: false }];
   ctx.setCharts(listed());
-  const rows = els["charts-list"].children;
+  const rows = [...els["charts-list"].children];   // as first shown: the list's own children change with each read
   out.rows = rows.map((li) => ({ facts: words(find(li, (x) => x.className === "chart-facts small")),
     buttons: find(li, (x) => x.className === "queue-actions").children.map((b) => b.textContent),
     feedback: (find(li, (x) => x.className === "fold feedback") || {}).children ?
@@ -1104,13 +1109,31 @@ PAGE2 = PAGE.split("(async () => {")[0] + r"""
   find(find(row1, (x) => x.className === "chart-again"), (x) => x.tag === "textarea").value = "zib zab\nzob\n";
   const third = { ...base, id: "cccccccccccccccc:Other - Third", upload: "cccccccccccccccc", name: "Third",
     time: 1762700000, version: 1, seed: 0 };
+  // v1 rated 5 with two spots elsewhere (another window, say): its record as read again (R4)
+  answers[`GET /api/jobs/${enc(V1)}/feedback`] = [[200, { ...FB, rating: 5, spots: [
+    { id: "s7", at: 20, time: "0:20", reasons: ["great"], note: null },
+    { id: "s8", at: 30, time: "0:30", reasons: ["great"], note: null }] }]];
+  moves.length = 0;
   ctx.setCharts([third, { ...JSON.parse(JSON.stringify(v2)), rating: 3 }, { ...JSON.parse(JSON.stringify(v1)), rating: 5, spots: 2 }]);
   const lis = els["charts-list"].children;
   const new1 = rowOf(V1), newBox1 = find(new1, (x) => x.className === "fold feedback");
+  const named = (li) => li === row2 ? "v2" : li === row1 ? "old v1" : li === new1 ? "new v1" : li === rowOf(third.id) ? "third" : "?";
+  const pressed = (box) => box.children[1].children[0].children.filter((b) => b.tag === "button" && b.className.endsWith(" on")).map((b) => b.textContent);
   out.afterFinish = { rows: lis.length, same2: rowOf(V2) === row2, open2: box2.open, typed2: inputs(box2),
     msg2: [msg2.textContent, msg2.hidden], newRow1: new1 !== row1, sameBox1: newBox1 === box1, open1: box1.open,
     typed1: inputs(box1), lyrics: find(find(new1, (x) => x.className === "chart-again"), (x) => x.tag === "textarea").value,
-    line1: box1.children[0].textContent };
+    line1: box1.children[0].textContent, pressed1: pressed(box1),
+    moves: moves.filter((m) => m[0] === "charts-list").map((m) => [m[1], named(m[2])]) };
+  await settle();
+  out.freshened = { line1: box1.children[0].textContent, pressed1: pressed(box1), typed1: inputs(box1),
+    spots1: words(find(box1, (x) => x.className === "spots")) };
+  // a read again with no answer leaves the box as it was shown, what is typed in it kept
+  answers[`GET /api/jobs/${enc(V1)}/feedback`] = [[500, { error: "made-up failure" }]];
+  ctx.setCharts([third, { ...JSON.parse(JSON.stringify(v2)), rating: 3 }, { ...JSON.parse(JSON.stringify(v1)), rating: 5, spots: 3 }]);
+  await settle();
+  out.unanswered = { line1: box1.children[0].textContent, typed1: find(box1, (x) => x.className === "spot-form") ?
+    inputs(box1) : null, reads: asked.filter((a) => a[1] === `/api/jobs/${enc(V1)}/feedback`).length };
+  const now1 = rowOf(V1);
   // a spot saved clears its form
   answers[`POST /api/jobs/${enc(V2)}/feedback`] = [[200, { ...FB, rating: 3, spots: [{ id: "s1", at: 65, time: "1:05",
     reasons: ["missing_notes"], note: "half typed, made up" }] }]];
@@ -1118,16 +1141,16 @@ PAGE2 = PAGE.split("(async () => {")[0] + r"""
   await settle();
   out.afterSaved = inputs(box2);
   // the review's F4: a refusal keeps the pasted lyrics and says why; once taken, the panel goes
-  const panel = find(new1, (x) => x.className === "chart-again");
+  const panel = find(now1, (x) => x.className === "chart-again");
   answers[`POST /api/jobs/${enc(V1)}/again`] = [[400, { error: "Lyrics only for a song that starts at once: made-up words." }]];
   button(panel, "Chart it").on.click();
   await settle();
   out.refusedLyrics = { text: (find(panel, (x) => x.tag === "textarea") || {}).value || null,
-    msg: find(new1, (x) => x.className === "queue-msg small").textContent };
+    msg: find(now1, (x) => x.className === "queue-msg small").textContent };
   answers[`POST /api/jobs/${enc(V1)}/again`] = [[202, { job: null, entry: "e3", state: "waiting", version: 3, seed: 2 }]];
   button(panel, "Chart it").on.click();
   await settle();
-  out.taken = { panel: panel.children.length, msg: find(new1, (x) => x.className === "queue-msg small").textContent };
+  out.taken = { panel: panel.children.length, msg: find(now1, (x) => x.className === "queue-msg small").textContent };
   out.againBodies = asked.filter((a) => a[1].endsWith("/again")).map((a) => a[2]);
   console.log(JSON.stringify(out));
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -1158,6 +1181,16 @@ def test_nothing_typed_is_lost(tmp_path):
     assert finish["newRow1"] is True and finish["sameBox1"] is True and finish["open1"] is True
     assert finish["typed1"] == {"at": "2:10", "note": "the other box", "ticks": ["great"]}
     assert finish["lyrics"] == "zib zab\nzob\n"
+    # the second review's R3: only the row that went is taken out and only the new rows put in; the row that stayed
+    # is never taken out of the page, which would lose the field he types in (break: replaceChildren of every row)
+    assert finish["moves"] == [["out", "old v1"], ["in", "third"], ["in", "new v1"]]
+    # R4: the moved box, read before, says the rating the list says now, and reads its spots again, what is typed
+    # kept (breaks: the box not freshened; the spots not read again; the form cleared)
+    assert finish["line1"] == "How did it play? 5 of 5" and finish["pressed1"] == ["5"]
+    assert out["freshened"] == {"line1": "How did it play? 5 of 5, 2 spots marked", "pressed1": ["5"],
+                                "typed1": finish["typed1"], "spots1": "0:20 Great part Remove 0:30 Great part Remove"}
+    assert out["unanswered"] == {"line1": "How did it play? 5 of 5, 2 spots marked", "typed1": finish["typed1"],
+                                 "reads": 3}   # (break: the box emptied for the error)
     assert out["afterSaved"] == {"at": "", "note": "", "ticks": []}
     assert out["refusedLyrics"] == {"text": "zib zab\nzob\n",
                                     "msg": "Lyrics only for a song that starts at once: made-up words."}

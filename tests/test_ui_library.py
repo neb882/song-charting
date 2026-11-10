@@ -326,6 +326,9 @@ const vm = require("vm"), fs = require("fs");
 const els = new Proxy({}, { get: (t, k) => t[k] || (t[k] = node(k)) });
 const node = (tag) => ({ tag, hidden: false, textContent: "", className: "", disabled: false, children: [], value: "",
   open: false, on: {}, href: "", download: null, replaceChildren(...c) { this.children = c; },
+  removeChild(x) { this.children.splice(this.children.indexOf(x), 1); return x; },
+  insertBefore(x, ref) { if (this.children.includes(x)) this.removeChild(x);
+    this.children.splice(ref ? this.children.indexOf(ref) : this.children.length, 0, x); return x; },
   append(...c) { this.children.push(...c); }, remove() {}, addEventListener(kind, f) { this.on[kind] = f; },
   classList: { add() {}, remove() {}, toggle() {} }, removeAttribute() {}, pause() {}, click() { clicked.push(this.href); },
   scrollIntoView() { scrolled.push(this.tag); } });

@@ -1688,8 +1688,9 @@ function setCharts(charts) {
     // M8-14: a row is made again only when its own chart changed; the others stay the same elements, in the new
     // order, so an open "How did it play?" box, what is typed in it, an open lyrics panel and a row's message survive
     // a song that ends or another chart's change (the review's F2); a changed row keeps them too (chartRow's `was`)
+    const held = heldFocus();   // the field he is typing in, given back below (the second review's R3)
     const versioned = new Set(charts.filter((c) => c.version > 1).map((c) => c.upload));
-    const old = state.chartRows, rows = new Map();
+    const old = state.chartRows, rows = new Map(), remade = [];
     state.feedbackRows = new Map();   // the rows' "How did it play?" boxes, by chart id
     const lis = charts.map((c) => {
       const key = JSON.stringify(c) + (versioned.has(c.upload) ? "|versioned" : "");
@@ -1697,10 +1698,17 @@ function setCharts(charts) {
       const li = was && was.key === key ? was.li : chartRow(c, versioned.has(c.upload), was && was.li);
       rows.set(c.id, { key, li });
       if (li.feedback) state.feedbackRows.set(c.id, li.feedback);
+      if (li.feedback && !(was && was.li === li)) remade.push([li.feedback, c]);
       return li;
     });
     state.chartRows = rows;
-    $("charts-list").replaceChildren(...lis);
+    // only the rows that went are taken out, and only the rows that moved are moved: a field taken out of the page
+    // loses the focus and his next keys with it (R3); one moved, or in a row made again, has it given back
+    const list = $("charts-list"), keep = new Set(lis);
+    for (const li of [...list.children]) if (!keep.has(li)) list.removeChild(li);
+    lis.forEach((li, i) => { if (list.children[i] !== li) list.insertBefore(li, list.children[i] || null); });
+    giveFocus(held);
+    for (const [fb, c] of remade) freshen(fb, c);
   }
   if (!state.chartsOwn) $("charts-fold").open = charts.length <= CHARTS_OPEN;   // until he opens or folds it himself
   state.charts = charts;
@@ -1710,6 +1718,22 @@ function setCharts(charts) {
   text($("queue-charts"), title);
   $("charts-lost").hidden = !charts.some((c) => c.readable && !c.look);
   placeCharts();
+}
+
+// the field he is typing in and its caret (the second review's R3): a field taken out of the page, or made again,
+// loses them; giveFocus puts them back on it, or on the field made in its place, once it is in the page again
+function heldFocus() {
+  const el = document.activeElement;
+  if (!el || el === document.body) return null;
+  return { el, start: el.selectionStart, end: el.selectionEnd, dir: el.selectionDirection };
+}
+
+function giveFocus(held, el = held && held.el) {
+  if (!held || !el || !el.isConnected || document.activeElement === el) return;
+  el.focus({ preventScroll: true });
+  if (typeof held.start === "number" && typeof el.setSelectionRange === "function") {
+    try { el.setSelectionRange(held.start, held.end, held.dir || "none"); } catch (e) { /* a field with no caret */ }
+  }
 }
 
 // with the start, progress and Done screens; not over the options he is filling
@@ -1850,10 +1874,25 @@ function syncFeedback(fb) {
   }
 }
 
+// a box kept for a row made again (its chart changed elsewhere, in another window, say), when it was read: the
+// rating the list says now, and the spots read again when their number changed, what is typed kept (the second
+// review's R4: it said the old rating)
+function freshen(fb, c) {
+  const d = fb.data;
+  if (!d) return;
+  if (d.rating !== c.rating) {
+    fb.data = { ...d, rating: c.rating };
+    renderFeedback(fb, false);
+  }
+  if ((d.spots || []).length !== c.spots) loadFeedback(fb);
+}
+
+// a box opened: its record read; read again for a box already shown (freshen), which stays as it is if no answer
 async function loadFeedback(fb) {
   let r;
   try { r = await api("GET", `/api/jobs/${encodeURIComponent(fb.ref)}/feedback`); } catch (e) { r = null; }
   if (!r || r.status !== 200) {
+    if (fb.data) return;
     fb.body.replaceChildren(make("p", "error", r ? r.data.error || `It could not be read (${r.status}).` :
       "songcharter does not answer: is it still running?"));
     return;
@@ -1883,6 +1922,9 @@ function renderFeedback(fb, clear) {
   const d = fb.data;
   const was = fb.form && !clear ? { at: fb.form.at.value, note: fb.form.note.value,
     ticks: fb.form.boxes.filter((x) => x.tick.checked).map((x) => x.tick.value) } : null;
+  // the field he is typing in goes to its place in the new form, with its caret (the second review's R3 and R4)
+  const fields = (f) => [f.at, f.note, ...f.boxes.map((x) => x.tick)];
+  const held = was ? heldFocus() : null, typing = held ? fields(fb.form).indexOf(held.el) : -1;
   text(fb.line, feedbackLine(d));
   const msg = make("p", "error feedback-msg");
   msg.hidden = true;
@@ -1943,6 +1985,7 @@ function renderFeedback(fb, clear) {
     make("p", "small", `When, as Clone Hero shows it${length}, and what is wrong there (or great):`),
     at, reasons, note, add);
   fb.body.replaceChildren(rate, spots, form, msg);
+  if (typing >= 0) giveFocus(held, fields(fb.form)[typing]);
 }
 
 // ------------------------------------------------------------------------------------------------ chart it differently
