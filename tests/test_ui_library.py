@@ -130,6 +130,21 @@ def test_the_librarys_names_are_the_pipelines():
     assert pipeline.failed_folder(Path("x/Song")).name == "Song" + J.FAILED
 
 
+def test_the_last_chart_of_a_work_folder_by_resolved_paths(tmp_path):
+    """jobs.last_chart_is, the rule the library's Look and the queue's (server.later_chart) share: True for this
+    folder by any spelling of its path, False for another folder, None when the record names none (breaks: the
+    paths compared unresolved; a record without assemble.folder read as another chart's)."""
+    one = tmp_path / "library" / A / FIRST
+    two = tmp_path / "library" / A / "v2" / FIRST
+    two.mkdir(parents=True)
+    one.mkdir()
+    assert J.last_chart_is({"assemble": {"folder": str(one)}}, one) is True
+    assert J.last_chart_is({"assemble": {"folder": str(two.parent / ".." / FIRST)}}, str(one)) is True
+    assert J.last_chart_is({"assemble": {"folder": str(two)}}, one) is False
+    for record in ({}, {"assemble": {}}, {"assemble": None}, [], None, "x", {"assemble": {"folder": "a\0b"}}):
+        assert J.last_chart_is(record, one) is None, record
+
+
 def test_a_chart_is_found_by_its_id_among_the_librarys_folders_only(tmp_path):
     """find_chart: the id names a folder the library holds; anything else (a path, a climb, the stems folder, a
     folder without report.json, staging, an unknown upload, not text) is None (break: the id joined into a path)."""

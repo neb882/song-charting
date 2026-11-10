@@ -1224,10 +1224,22 @@ def _stems(folder: Path) -> Path | None:
         return None
 
 
+def last_chart_is(record: Any, folder: Path | str) -> bool | None:
+    """Whether a work folder's pipeline.json (`record`) says its last chart (`assemble.folder`) is this folder, by
+    their resolved paths. Two charts of one song share its work folder (the cache keys it by the song file), whose
+    preview and flags are then the later one's: a re-chart with other options (M8-13), every version after the first
+    (M8-14). None when the record does not say (no `assemble.folder` in it)."""
+    try:
+        made = Path(str(record["assemble"]["folder"]))
+        return made.resolve() == Path(folder).resolve()
+    except (OSError, RuntimeError, ValueError, KeyError, TypeError):
+        return None
+
+
 def _work(folder: Path, root: Path | None) -> tuple[Path | None, dict]:
     """The song's work folder in the cache (cache.by_key, by the upload's 16 hex: the song file's key) and its
-    pipeline.json, when that record's last chart is this folder (a chart of the same song with other options, made
-    later, has the work folder now); else (None, {})."""
+    pipeline.json, when that record's last chart is this folder (last_chart_is: otherwise a later chart of the same
+    song has the work folder now); else (None, {})."""
     if root is None:
         return None, {}
     try:
@@ -1235,11 +1247,9 @@ def _work(folder: Path, root: Path | None) -> tuple[Path | None, dict]:
         if work is None:
             return None, {}
         record = json.loads((work / "pipeline.json").read_text(encoding="utf-8"))
-        made = Path(str(record["assemble"]["folder"]))
-        same = made.resolve() == folder.resolve()
     except (OSError, ValueError, KeyError, TypeError):
         return None, {}
-    return (work, record) if same else (None, {})
+    return (work, record) if last_chart_is(record, folder) else (None, {})
 
 
 def read_report(folder: Path) -> dict | None:

@@ -3388,6 +3388,48 @@ def test_a_look_open_on_a_song_the_list_has_dropped_keeps_working(finished, tmp_
     assert get(ctx, f"/api/jobs/{first.id}/results")[0] == 404
 
 
+def test_a_looks_preview_is_its_own_charts_not_a_later_versions(finished):
+    """v0.5.0's gate: version 2 of a song (M8-14's "Chart it differently": the same song, so the same work folder)
+    leaves that folder's preview and pipeline.json its own. Version 1's Look by its job id (its entry in the list,
+    and after a restart) then has no preview and says why, and its preview route 404s; version 2's, the latest
+    chart's, by its id and as `current`, keeps its own; a record naming version 1's folder by another spelling of
+    its path gives version 1 its preview back, and version 2 none. Listen still plays version 1's own chart. (Breaks:
+    results without later_chart; the preview route without it; the paths compared unresolved.)"""
+    ctx = finished
+    first = ctx.run()
+    second = ctx.run({"seed": 1})
+    assert first.id != second.id and second.out == first.out.parent / "v2" / first.out.name
+    pipeline = json.loads((ctx.work / "pipeline.json").read_text(encoding="utf-8"))   # the run's record: version 2's
+    pipeline["assemble"] = {"config": str(ctx.work / "assemble.json"), "ok": True, "folder": str(second.out)}
+    (ctx.work / "pipeline.json").write_text(json.dumps(pipeline), encoding="utf-8")
+    pages = ("overview.png", "page_01.png", "page_02.png")
+    res = json.loads(get(ctx, f"/api/jobs/{first.id}/results")[2])
+    assert res["folder"] == str(first.out) and res["installable"]
+    assert res["preview"] == {"why": "it went with a later chart of this song (Look at that one in Your charts)"}
+    for name in pages:
+        assert get(ctx, f"/api/jobs/{first.id}/preview/{name}")[0] == 404, name
+    for ref in (second.id, "current"):
+        res = json.loads(get(ctx, f"/api/jobs/{ref}/results")[2])
+        assert res["folder"] == str(second.out)
+        assert res["preview"]["flags"] == ["guitar: gap 0:12.0-0:16.0 (2 measures)"]
+        assert res["preview"]["overview"] == f"/api/jobs/{ref}/preview/overview.png"
+        for name in pages:
+            assert get(ctx, f"/api/jobs/{ref}/preview/{name}")[0] == 200, (ref, name)
+    again = S.App(ctx.home, jobs=J.Jobs(ctx.home), log=S.Log(None, console=lambda t: None), report=lambda: DOCTOR)
+    kept = again.queue.job(first.id)   # after a restart: from queue.json
+    assert kept is not None and S.results(kept, first.id)["preview"] == {"why": S.LATER_CHART}
+    assert "overview" in S.results(again.queue.job(second.id), second.id)["preview"]
+    listen_chart(first.out)   # Listen renders the job's own folder over the song (the work folder keeps the render)
+    status, answer = post(ctx, f"/api/jobs/{first.id}/listen", {"part": "guitar", "level": "expert"})
+    assert status == 200 and answer["url"] == f"/api/jobs/{first.id}/listen/guitar-expert.ogg", answer
+    pipeline["assemble"]["folder"] = str(second.out.parent / ".." / first.out.name)   # version 1's, resolved
+    (ctx.work / "pipeline.json").write_text(json.dumps(pipeline), encoding="utf-8")
+    assert "overview" in json.loads(get(ctx, f"/api/jobs/{first.id}/results")[2])["preview"]
+    assert get(ctx, f"/api/jobs/{first.id}/preview/overview.png")[0] == 200
+    assert json.loads(get(ctx, f"/api/jobs/{second.id}/results")[2])["preview"] == {"why": S.LATER_CHART}
+    assert get(ctx, f"/api/jobs/{second.id}/preview/overview.png")[0] == 404
+
+
 def test_the_queues_endpoints_are_behind_the_guards(finished, monkeypatch):
     """Every new endpoint answers only as 127.0.0.1 or localhost, and every POST needs X-Songcharter: 1 and this
     page's Origin: refused, nothing changes; with them, each answers."""
