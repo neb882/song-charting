@@ -1627,7 +1627,10 @@ ending any player sees.
 - **The rule** (CLAUDE.md, the owner's decision of 2026-11-09): reproducible: the same input with the same recorded
   configuration (seeds, device, engine versions, fallbacks; recorded in report.json's `pipeline` field) gives a
   byte-identical notes.chart on that machine. A seed the person asks for is configuration, which makes room for the
-  page's "Chart it differently" (§4.5): a guitar he does not like, charted again another way.
+  page's "Chart it differently" (§4.5): a guitar he does not like, charted again another way. Its scope (v0.5.0
+  gate's advisor, finding 6): the same record gives the same chart from the same cached stages; a take that reused
+  the engine's features cached by a chart on another device says so in its `cached_stages` (the engine's own
+  feature cache is keyed by the audio's hash alone, ac_headless.cjs, so a CUDA take can reuse a CPU chart's).
 - **The seed** (`pipeline.Options.seed`, `songcharter chart --seed N`, 0 to 999999 [judgement: the engine's seed
   stays far inside a 32-bit integer]): each take's seed moved on by N (`take_seeds`): take 1 20260609 + N, takes 2,
   3, ... 101·k + N. So Quick's one take moves on, and Best moves each of its 4. N = 0, the default, gives the seeds
@@ -1640,9 +1643,12 @@ ending any player sees.
   folder (guitar/seed_<seed>/) hold its seed [code, unchanged since M3], so another seed never reuses a take and the
   same seed always does. The separation, drums, bass and sections do not depend on the guitar's seed: a chart with
   another seed takes them from the work folder's caches, and only the guitar and assemble run [tests/test_seed.py].
-- **The record** (report.json's `pipeline`, `pipeline.folder_record`): `seed`; the device asked for and chosen; the
-  takes asked for, planned and made, with `seeds` (each take's), each take's device and the seeds run again on the
-  CPU; each fallback's stage, from and to; and `engines`, what each engine's cache keys on, as version strings and
+- **The record** (report.json's `pipeline`, `pipeline.folder_record`): `seed`; `threads` (as asked; None for the
+  default); the device asked for and chosen; the takes asked for, planned and made, with `seeds` (each take's), each
+  take's transcriber device, the seeds run again on the CPU, and each take's `stage_devices` (the driver's devices,
+  every engine stage's: demucs, timing, transcriber) and `cached_stages` (the driver's cachedStages: the stages its
+  engine took from its own cache), short names only (`pipeline._names`: a path or a message dropped); each
+  fallback's stage, from and to; and `engines`, what each engine's cache keys on, as version strings and
   12-hex hashes (`engine_identities`): the separation's model, revision and seed; ADTOF's version and its weights'
   SHA-256; the bass rules' version and a hash of their libraries' versions; allin1's version, model and a hash of
   its weights, or librosa's version, with the sections engine's version; autochart's engineVersion and its install's

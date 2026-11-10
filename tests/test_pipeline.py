@@ -995,6 +995,7 @@ def test_takes_follow_the_guitar_stages_device(charted, monkeypatch, capsys):
                      "transcriber_moved_to": None,
                      "why": "the default on the cpu: 1 take (each one more is another transcription there, about "
                             "3.6 min for a 7-min song)", "devices": ["cpu"], "cpu_retries": [],
+                     "stage_devices": [{"demucs": None, "timing": None, "transcriber": "cpu"}], "cached_stages": [None],
                      "cut_short": [None], "pieces": [0], "last_note_s": [None]}   # no take cut short (M5-02)
     assert calls == [(DEFAULT_SEED,)] and devices == {"cpu"} and part == []
     takes, calls, devices, part, err = run("Cuda", auto="cuda")
@@ -1018,12 +1019,15 @@ def test_takes_follow_the_guitar_stages_device(charted, monkeypatch, capsys):
                         ("Empty", {})):
         takes, calls, devices, part, err = run(name, "--takes", "4", auto="cuda", devices=shown)
         assert takes["takes"] == 4 and takes["transcriber_moved_to"] is None, name
+        assert takes["stage_devices"] == [shown] * 4, name   # every stage's, as reported (the gate advisor's 6)
         assert calls == [(DEFAULT_SEED,), (101,), (202,), (303,)] and part == others, name
         assert "warning: guitar: autochart's transcriber" not in err, name
     takes, calls, devices, part, err = run("Asked", "--takes", "3", auto="cuda")
     assert takes == {"asked": 3, "planned": 3, "takes": 3, "auto": False, "why": "3 asked for",
                      "seeds": [DEFAULT_SEED, 101, 202], "transcriber_moved_to": None, "devices": ["cuda"] * 3,
                      "cpu_retries": [],
+                     "stage_devices": [{"demucs": None, "timing": None, "transcriber": "cuda"}] * 3,
+                     "cached_stages": [None] * 3,
                      "cut_short": [None] * 3, "pieces": [0] * 3, "last_note_s": [None] * 3}
     assert calls == [(DEFAULT_SEED,), (101,), (202,)] and devices == {"cuda"} and part == others[:2]
     takes, calls, devices, part, err = run("One", "--takes", "1", auto="cuda", moved="cpu")
@@ -1248,7 +1252,9 @@ class Autochart:
         (folder / "autochart_run" / "summary.json").write_text(json.dumps({
             "inputSha256": AC.sha256(audio), "seed": seed, "difficulties": ["expert"],
             "temperature": float(env["AC_TEMPERATURE"]), "topP": float(env["AC_TOP_P"]), "maxTokens": 8192,
-            "runs": [{"status": "completed", "devices": {"transcriber": env["AC_DEVICE"]},
+            "runs": [{"status": "completed", "devices": {"demucs": env["AC_DEVICE"], "transcriber": env["AC_DEVICE"]},
+                      # the engine's features made by the first take, reused by the others (its own cache)
+                      "cachedStages": [] if seed == DEFAULT_SEED else ["demucs", "timing"],
                       **({"nTokens": 8192 if cut else 3000, "nBeats": 200} if self.stops else {})}]}),
             encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, "", "")
@@ -1391,8 +1397,11 @@ def test_a_guitar_take_that_fails_on_cuda_is_run_again_on_the_cpu(charted, tmp_p
         return rec
 
     def run_record(planned, made, devices, retries, fallbacks, asked=4):   # chart_it's "Best chart" (--takes 4)
-        return {"device": {"asked": "auto", "chosen": "cuda"},
-                "takes": {"asked": asked, "planned": planned, "made": made, "devices": devices, "cpu_retries": retries},
+        # the gate advisor's 6: the threads asked for (none), and each take's engine stages and its cached stages
+        return {"threads": None, "device": {"asked": "auto", "chosen": "cuda"},
+                "takes": {"asked": asked, "planned": planned, "made": made, "devices": devices, "cpu_retries": retries,
+                          "stage_devices": [{"demucs": d, "transcriber": d} for d in devices],
+                          "cached_stages": [[]] + [["demucs", "timing"]] * (len(devices) - 1)},
                 "fallbacks": [{"stage": "guitar", "from": "cuda", "to": "cpu"}] * fallbacks}
 
     def take_events():
@@ -2154,3 +2163,26 @@ def test_the_arrays_the_sections_let_go_are_read_again_the_same(charted, tmp_pat
     assert done.ok and len(reads) == 1 and reads[0][0] == work / "decode.wav"
     assert sorted(seen) == sorted(own)
     assert all(seen[s].dtype == np.float32 and np.array_equal(seen[s], own[s]) for s in own)
+
+
+def test_the_record_says_the_threads_and_each_takes_engine_stages(charted, tmp_path, monkeypatch, capsys):
+    """The gate advisor's 6: report.json's `pipeline` records the threads asked for (None for the default) and, per
+    take, the engine's stage devices and its cached stages as the driver reports them, short names only: a path or a
+    message the driver might put there is dropped (breaks: threads not recorded; only the transcriber's device; a
+    path kept)."""
+    root, result, _, _ = charted
+    monkeypatch.setattr(P, "Engines", standins())
+    for name, extra, threads in (("Threads", ["--threads", "3"], 3), ("Default", [], None)):
+        code = main(["chart", str(root / "song.flac"), "--work", str(result.work), "--instruments", "guitar",
+                     "--takes", "3", "--out", str(tmp_path / name), *extra])
+        assert code == 0, capsys.readouterr().err
+        rec = json.loads((tmp_path / name / "report.json").read_text(encoding="utf-8"))["pipeline"]
+        assert rec["threads"] == threads, name
+        assert rec["takes"]["stage_devices"] == [{"demucs": None, "timing": None, "transcriber": "cpu"}] * 3
+        assert rec["takes"]["cached_stages"] == [None] * 3   # the stand-in reports none
+    assert P.folder_record({"options": {"threads": None}})["threads"] is None
+    run = Run(Path("x"), False, {"devices": {"demucs": "cuda", "timing": "/made/up/path", "transcriber": None,
+                                             "a/b": "cpu"},
+                                 "runs": [{"cachedStages": ["demucs", "timing", "/made/up/cache", 7, "x" * 41]}]})
+    assert P._take_stages(run) == ({"demucs": "cuda", "transcriber": None}, ["demucs", "timing"])
+    assert P._take_stages(Run(Path("x"), False, {"runs": "no"})) == (None, None)
