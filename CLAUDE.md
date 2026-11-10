@@ -54,7 +54,9 @@ the lock itself.
 - Reproducible: the same input with the same recorded configuration (seeds, threads, each stage's device, the
   engine's cached stages, engine versions, fallbacks; recorded in report.json's `pipeline` field) gives a
   byte-identical notes.chart on that machine. A seed the user asks for is configuration. The golden diff and the
-  caches still need byte-identical charts at a fixed configuration.
+  caches still need byte-identical charts at a fixed configuration. Measured 2026-11-10: this holds on the CPU
+  (the golden charts); on CUDA the guitar take differs from run to run with the same seed (docs/reports/
+  v0.5.0-gate.md, C), so there the kept take is the chart's only copy. Don't promise a CUDA chart can be made again.
 - User-facing errors are `errors.InputError` or `errors.ToolError`. Exit codes: 0 ok, 1 the gate failed, 2 bad input
   or environment, 3 a bug, with its traceback.
 
