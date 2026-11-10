@@ -210,7 +210,10 @@ def change(home: Path, chart: str, body: Mapping[str, Any], length: float | None
             if not isinstance(gone, str) or len(kept) == len(record["spots"]):
                 raise InputError("no such spot")
             record["spots"] = kept
-        record.update(version=1, notes_sha=notes, updated=round(now(), 3))
+        # a notes.chart that cannot be read now keeps the sha of the chart rated: None would give its rating and
+        # spots to the next chart in the folder (the gate review's F1)
+        record.update(version=1, notes_sha=notes if notes is not None else record["notes_sha"],
+                      updated=round(now(), 3))
         _write(home, record)
         return record
 

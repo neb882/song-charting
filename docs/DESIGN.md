@@ -3477,7 +3477,8 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     and no spot listed. The first change saves it so: the earlier rating and spots go to the record's `earlier`
     (newest first, at most 5 [judgement: a few re-charts of one song], each with its notes_sha and time), which the
     zip carries; a chart charted back to one rated before (its options again: the same notes.chart) gets that one's
-    own again.
+    own again. A change made while the folder's notes.chart cannot be read keeps the sha the record had (the gate
+    review's F1: None made the record no chart's, and the next chart took its rating as its own).
   - **The routes** (behind `/api/jobs`' guards: Host; Origin and `X-Songcharter` on the POST): `GET` and
     `POST /api/jobs/<id>/feedback`, the id a job's, "current" or a chart's (the chart its result names, found in the
     library: never a path). One change a POST: `{"rating": 1-5 or null}`, `{"add": {"at", "reasons", "note"}}` or

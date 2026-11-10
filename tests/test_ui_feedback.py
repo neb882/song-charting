@@ -1644,3 +1644,20 @@ def test_a_rating_that_cannot_be_saved_says_so_plainly(lib, monkeypatch):
     said = [t for t in logged if "could not be saved" in t]   # (the access lines go to the log too)
     assert len(said) == 3 and all(t.startswith(f"feedback on {V1} could not be saved") and where in t for t in said)
     assert get(lib, by_id(V1, "/feedback"))[1]["rating"] == 2
+
+
+def test_a_change_while_notes_chart_cannot_be_read_keeps_the_charts_sha(lib):
+    """The gate review's F1: a change made while the folder's notes.chart cannot be read keeps the sha of the chart
+    rated, so the next chart in the folder does not take its rating and spots as its own (break: notes_sha None
+    saved over it: the next chart shows rating 5 and 1 spot, and rating it overwrites the 5)."""
+    assert post(lib, by_id(V1, "/feedback"), {"rating": 5})[0] == 200
+    rated = FB.notes_id(lib.first)
+    (lib.first / "notes.chart").unlink()
+    assert post(lib, by_id(V1, "/feedback"), {"add": {"at": "1:00", "reasons": ["great"]}})[0] == 200
+    assert json.loads(FB.path_for(lib.home, V1).read_text(encoding="utf-8"))["notes_sha"] == rated
+    (lib.first / "notes.chart").write_text("[Song]\n{\n}\n// another chart\n", encoding="utf-8")
+    status, fb = get(lib, by_id(V1, "/feedback"))
+    assert status == 200 and (fb["rating"], fb["spots"], fb["earlier"]) == (None, [], {"rating": 5, "spots": 1})
+    assert post(lib, by_id(V1, "/feedback"), {"rating": 1})[1]["rating"] == 1
+    saved = json.loads(FB.path_for(lib.home, V1).read_text(encoding="utf-8"))
+    assert [(e["rating"], len(e["spots"]), e["notes_sha"]) for e in saved["earlier"]] == [(5, 1, rated)]
