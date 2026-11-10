@@ -1325,3 +1325,114 @@ def test_one_press_one_version(tmp_path):
     assert out["done"] == {"sent": 1, "disabled": [True, True]}
     assert out["doneTaken"] == {"sent": 1, "enabled": True,
                                 "msg": "Version 3 waits in the list: it is charted in its turn."}
+
+
+# ------------------------------------------------------------------------------------------------ the advisor's fixes
+
+def notes_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
+def test_a_rating_stays_with_the_chart_it_was_given_to(lib, tmp_path):
+    """The advisor's 1 at v0.5.0's gate: version 1 rated 5 with a spot, then charted again into its own folder (a plain
+    chart with other options: another notes.chart there). Its feedback, the library's row and the results say none
+    yet, with the earlier chart's rating and spot count for the page's line, and a read writes nothing; the first
+    change starts the chart's own record and keeps the earlier one in `earlier` (its notes_sha and updated), which
+    the zip carries; charted back to the first chart, its own rating and spot are its again; at most EARLIER_MAX
+    earlier ones, the newest first (breaks: the record read by the chart's id alone; the earlier one dropped; the
+    library's counts the old chart's; the chart charted back not given its own; no cap)."""
+    post(lib, by_id(V1, "/feedback"), {"rating": 5})
+    post(lib, by_id(V1, "/feedback"), {"add": {"at": "1:15", "reasons": ["great"], "note": "made up"}})
+    first = (lib.first / "notes.chart").read_bytes()
+    path = FB.path_for(lib.home, V1)
+    (lib.first / "notes.chart").write_text("[Song]\n{\n}\n// charted again with other options\n", encoding="utf-8")
+    other = notes_hex((lib.first / "notes.chart").read_bytes())
+    status, fb = get(lib, by_id(V1, "/feedback"))
+    assert status == 200 and (fb["rating"], fb["spots"], fb["earlier"]) == (None, [], {"rating": 5, "spots": 1})
+    charts = {c["id"]: c for c in get(lib, "/api/library")[1]["charts"]}
+    assert (charts[V1]["rating"], charts[V1]["spots"]) == (None, 0)
+    library = json.loads(call(lib.port, "GET", by_id(V1, "/results"))[2])["library"]
+    assert (library["rating"], library["spots"]) == (None, 0)
+    assert json.loads(path.read_text(encoding="utf-8"))["rating"] == 5   # read, not written
+
+    def sent(name):
+        z = zipfile.ZipFile(diagnostics.bundle(lib.home, tmp_path / name, cache_root=lib.root, report=lambda: {},
+                                               clonehero_info=lambda home: {}))
+        return next(c for c in json.loads(z.read("feedback.json"))["charts"] if c["chart"] == V1)
+
+    before = sent("before.zip")   # the zip says it so too, before any change
+    assert (before["rating"], before["spots"], before["earlier"][0]["rating"]) == (None, [], 5)
+    status, fb = post(lib, by_id(V1, "/feedback"), {"rating": 3})
+    assert status == 200 and (fb["rating"], fb["spots"], fb["earlier"]) == (3, [], None)
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert (saved["rating"], saved["spots"], saved["notes_sha"]) == (3, [], other)
+    (gone,) = saved["earlier"]
+    assert (gone["rating"], gone["notes_sha"], [s["note"] for s in gone["spots"]]) == (5, notes_hex(first), ["made up"])
+    assert isinstance(gone["updated"], float)
+    after = sent("after.zip")
+    assert after["rating"] == 3 and after["earlier"][0]["rating"] == 5 and after["earlier"][0]["notes_sha"] == notes_hex(
+        first) and after["now"]["notes_sha"] == after["notes_sha"] == other
+    (lib.first / "notes.chart").write_bytes(first)   # charted back with the first options: the chart he rated 5
+    status, fb = get(lib, by_id(V1, "/feedback"))
+    assert (fb["rating"], [s["time"] for s in fb["spots"]], fb["earlier"]) == (5, ["1:15"], None)
+    charts = {c["id"]: c for c in get(lib, "/api/library")[1]["charts"]}
+    assert (charts[V1]["rating"], charts[V1]["spots"]) == (5, 1)
+    assert post(lib, by_id(V1, "/feedback"), {"rating": 4})[1]["spots"][0]["note"] == "made up"
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert [(e["rating"], e["notes_sha"]) for e in saved["earlier"]] == [(3, other)]
+    for i in range(FB.EARLIER_MAX + 2):   # charted again and rated, time after time: the newest kept
+        (lib.first / "notes.chart").write_text(f"[Song]\n{{\n}}\n// again {i}\n", encoding="utf-8")
+        assert post(lib, by_id(V1, "/feedback"), {"rating": 1 + i % 5})[0] == 200
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert len(saved["earlier"]) == FB.EARLIER_MAX and saved["rating"] == 1 + (FB.EARLIER_MAX + 1) % 5
+    assert saved["earlier"][0]["notes_sha"] == notes_hex(f"[Song]\n{{\n}}\n// again {FB.EARLIER_MAX}\n".encode())
+    assert post(lib, by_id(V1, "/feedback"), {"rating": None})[1]["earlier"] == {"rating": 1 + FB.EARLIER_MAX % 5,
+                                                                              "spots": 0}
+    assert len(sent("taken back.zip")["earlier"]) == FB.EARLIER_MAX   # this chart's taken back: the earlier sent
+
+
+PAGE4 = PAGE.split("(async () => {")[0] + r"""
+(async () => {
+  const out = {};
+  const base = { artist: "Made-Up Band", readable: true, ok: true, audio: "split", stems: false, look: false,
+    upload: "aaaaaaaaaaaaaaaa", guitar: true, lyrics: false, rating: null, spots: 0, name: "First Song" };
+  ctx.setCharts([{ ...base, id: V1, folder: "Made-Up Band - First Song", time: 1762596000, version: 1, seed: 0 }]);
+  const box = find(els["charts-list"].children[0], (x) => x.className === "fold feedback");
+  answers[`GET /api/jobs/${enc(V1)}/feedback`] = [[200, { ...FB, earlier: { rating: 5, spots: 2 } }]];
+  box.open = true;
+  box.on.toggle();
+  await settle();
+  const pressed = () => box.children[1].children[0].children.filter((b) => b.tag === "button" && b.className.endsWith(" on")).length;
+  out.opened = { line: box.children[0].textContent, pressed: pressed(),
+    spots: find(box.children[1], (x) => x.className === "spots").hidden };
+  answers[`POST /api/jobs/${enc(V1)}/feedback`] = [[200, { ...FB, rating: 4, earlier: null }]];
+  button(box.children[1], "4").on.click();
+  await settle();
+  out.rated = { line: box.children[0].textContent, pressed: pressed() };
+  out.lines = [ctx.feedbackLine({ rating: null, spots: [], earlier: { rating: 3, spots: 0 } }),
+    ctx.feedbackLine({ rating: null, spots: [], earlier: { rating: null, spots: 1 } }),
+    ctx.feedbackLine({ rating: 2, spots: [], earlier: { rating: 5, spots: 0 } }), ctx.feedbackLine({ rating: null, spots: 0 })];
+  console.log(JSON.stringify(out));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_the_box_says_he_rated_an_earlier_chart(tmp_path):
+    """The advisor's 1 (app.js in node, the page test's stand-in DOM): a box whose record is an earlier chart's says
+    so in its line, in plain words, with no rating pressed and no spot listed; rated, its line is the chart's own
+    (breaks: the earlier rating shown as this chart's; the line not saying it)."""
+    script = tmp_path / "earlier.cjs"
+    script.write_text(PAGE4, encoding="utf-8")
+    app_js = tmp_path / "app.js"
+    app_js.write_bytes(S.static_files()["app.js"])
+    done = subprocess.run(["node", str(script), str(app_js)], capture_output=True, text=True, timeout=60,
+                          env={**os.environ, "TZ": "UTC", "LANG": "en_US.UTF-8"})
+    assert done.returncode == 0, done.stderr
+    out = json.loads(done.stdout)
+    assert out["opened"] == {"line": "You rated an earlier chart of this song 5 of 5, with 2 spots marked. How does "
+                                     "this one play?", "pressed": 0, "spots": True}
+    assert out["rated"] == {"line": "How did it play? 4 of 5", "pressed": 1}
+    assert out["lines"] == ["You rated an earlier chart of this song 3 of 5. How does this one play?",
+                            "You marked 1 spot on an earlier chart of this song. How does this one play?",
+                            "How did it play? 2 of 5", "How did it play?"]

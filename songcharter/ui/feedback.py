@@ -1,7 +1,7 @@
 """The friend's word on each chart (M8-14, DESIGN.md 4.5): how it played, 1 to 5, and the spots he marks, kept with
 the chart and sent back in the diagnostics zip.
 
-    record = feedback.read(home, chart_id)                    # {"chart", "rating", "spots", ...}; an empty one first
+    record = feedback.read(home, chart_id, folder)            # {"chart", "rating", "spots", ...}; an empty one first
     record = feedback.change(home, chart_id, body, length=245.3, notes=sha)   # an InputError for a bad body
     feedback.for_diagnostics(home, find)                      # every chart's, with its report.json's `pipeline`
 
@@ -14,7 +14,14 @@ the chart and sent back in the diagnostics zip.
     SPOTS_MAX, each {"id" (8 hex), "at" (whole seconds of the song as Clone Hero plays it), "reasons" (one or more of
     REASONS, in their order), "note" (his own words, at most NOTE_MAX characters, kept as he wrote them; None
     without)}; `notes_sha` (the first 16 hex of the SHA-256 of the chart's notes.chart when he last changed the record:
-    which chart he rated, should the folder be charted again with the same seed); `updated` (the time).
+    which chart he rated, should the folder be charted again); `updated` (the time); `earlier` (below).
+  * **A chart made again into the same folder** (a plain chart of the song with other options: a seed 0's folder is
+    the same whatever its options, jobs.output_folder; the advisor's 1): the rating and spots given to the chart
+    before are not this one's. Read with its folder (`read`, `as_now`), a record whose notes_sha is not the folder's
+    notes.chart now reads as none yet, with the earlier one's rating and spot count for the page's line ("You rated
+    an earlier chart of this song ..."); the first change then saves it that way: the earlier rating and spots go to
+    `earlier` (newest first, at most EARLIER_MAX, each with its notes_sha and updated), and a chart charted back to
+    one rated before gets its own again from there. Nothing he gave is deleted but past EARLIER_MAX.
   * **The checks** (`change`): a body is {"rating": 1-5 or null}, {"add": {"at": "m:ss", "reasons": [...], "note":
     "..."}} or {"remove": <a spot's id>}; `at` within the song (`length`, the song.ogg's seconds: the song and the
     lead-in, which Clone Hero's clock counts); anything else is an InputError in plain words.
@@ -40,6 +47,8 @@ REASONS = {"too_many_chords": "Too many chords", "missing_notes": "Missing notes
 RATINGS = range(1, 6)
 NOTE_MAX = 300                    # a note's characters at most
 SPOTS_MAX = 50                    # spots a chart at most [judgement: far more than a song has bad spots]
+EARLIER_MAX = 5                   # earlier charts' ratings a record keeps, the newest [judgement: a few re-charts]
+EARLIER_KEYS = ("rating", "spots", "notes_sha", "updated")   # what an `earlier` entry keeps
 TIME = re.compile(r"^\s*(\d{1,3}):([0-5][0-9])\s*$")   # m:ss
 MAX_AT = 999 * 60 + 59            # the latest time m:ss can write: a number past it is no time either
 _lock = threading.Lock()          # one change at a time (the server's request threads)
@@ -55,7 +64,8 @@ def path_for(home: Path, chart: str) -> Path:
 
 
 def empty(chart: str) -> dict:
-    return {"version": 1, "chart": chart, "rating": None, "spots": [], "notes_sha": None, "updated": None}
+    return {"version": 1, "chart": chart, "rating": None, "spots": [], "notes_sha": None, "updated": None,
+            "earlier": []}
 
 
 def _valid(record: Any, chart: str | None = None) -> bool:
@@ -74,18 +84,36 @@ def _spot_ok(x: Any) -> bool:
 
 
 def _whole(record: dict, chart: str) -> dict:
-    """A record as read: the empty record's keys, then its own, its damaged spots left out."""
-    return {**empty(chart), **record, "spots": [x for x in record["spots"] if _spot_ok(x)]}
+    """A record as read: the empty record's keys, then its own, its damaged spots left out (its earlier ones' too)."""
+    earlier = record.get("earlier") if isinstance(record.get("earlier"), list) else []
+    return {**empty(chart), **record, "spots": [x for x in record["spots"] if _spot_ok(x)],
+            "earlier": [{**{k: e.get(k) for k in EARLIER_KEYS}, "spots": [x for x in e["spots"] if _spot_ok(x)]}
+                        for e in earlier if isinstance(e, dict) and isinstance(e.get("spots"), list)]}
 
 
-def read(home: Path, chart: str) -> dict:
+def as_now(record: dict, notes: str | None) -> dict:
+    """The record of the chart in the folder now (`notes`: its notes_id; the module docstring): itself, unless its
+    notes_sha is another chart's: then its rating and spots (if any) go first in `earlier`, and the chart has its own
+    from there (an earlier entry of its notes_sha), else none yet. Either identity unknown: itself."""
+    sha = record.get("notes_sha")
+    if not isinstance(notes, str) or not isinstance(sha, str) or sha == notes:
+        return record
+    earlier = ([{k: record.get(k) for k in EARLIER_KEYS}] if rated(record) else []) + record["earlier"]
+    own = next((e for e in earlier if e.get("notes_sha") == notes), {"notes_sha": notes})
+    return {**record, "rating": None, "spots": [], "updated": None, **own,
+            "earlier": [e for e in earlier if e is not own][:EARLIER_MAX]}
+
+
+def read(home: Path, chart: str, folder: Path | None = None) -> dict:
     """The chart's record, or an empty one (none yet, or a file that does not read as one: never an error); a spot
-    that does not read as one is left out, the others kept (F5)."""
+    that does not read as one is left out, the others kept (F5). With the chart's `folder`, as it stands for the
+    notes.chart there now (as_now)."""
     try:
         record = json.loads(path_for(home, chart).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return empty(chart)
-    return _whole(record, chart) if _valid(record, chart) else empty(chart)
+    record = _whole(record, chart) if _valid(record, chart) else empty(chart)
+    return record if folder is None or record["notes_sha"] is None else as_now(record, notes_id(folder))
 
 
 def _write(home: Path, record: dict) -> None:
@@ -146,14 +174,14 @@ def change(home: Path, chart: str, body: Mapping[str, Any], length: float | None
            notes: str | None = None, now: Callable[[], float] = time.time) -> dict:
     """Apply one change to the chart's record and save it (the module docstring): the record. `length`: the song's
     seconds as Clone Hero plays it (None: not checked); `notes`: the chart's notes.chart identity, recorded with the
-    change."""
+    change (a record of another chart's starts afresh first: as_now)."""
     if not isinstance(body, Mapping):
         raise InputError("the request body is a JSON object")
     kinds = [k for k in ("rating", "add", "remove") if k in body]
     if len(kinds) != 1:
         raise InputError("give one of rating, add or remove")
     with _lock:
-        record = read(home, chart)
+        record = as_now(read(home, chart), notes)
         if kinds == ["rating"]:
             rating = body["rating"]
             if rating is not None and (isinstance(rating, bool) or rating not in RATINGS):
@@ -182,10 +210,13 @@ def change(home: Path, chart: str, body: Mapping[str, Any], length: float | None
 
 def public(record: Mapping[str, Any], length: float | None) -> dict:
     """GET and POST /api/jobs/<id>/feedback's answer: the record's rating and spots (each with its time as m:ss), the
-    song's length and the reasons' words, for the page."""
+    song's length and the reasons' words, for the page; `earlier`, while this chart has neither, the newest earlier
+    chart's rating and spot count (the box's line says he rated an earlier chart), else None."""
     spots = [{"id": x.get("id"), "at": x.get("at"), "time": mmss(x.get("at") or 0), "reasons": x.get("reasons") or [],
               "note": x.get("note")} for x in record.get("spots") or [] if isinstance(x, dict)]
+    earlier = record.get("earlier") or []
     return {"chart": record.get("chart"), "rating": record.get("rating"), "spots": spots,
+            "earlier": summary(earlier[0]) if earlier and not rated(record) else None,
             "length": None if length is None else round(length, 1),
             "reasons": [{"id": k, "words": v} for k, v in REASONS.items()], "note_max": NOTE_MAX}
 
@@ -229,10 +260,11 @@ def for_diagnostics(home: Path, find: Callable[[Path, str], Path | None]) -> dic
     is now (`now`: whether its folder is still in the library, its notes.chart identity, the gate's verdict, the
     song's length and its report.json's `pipeline`: the seeds, takes, devices, fallbacks and engines, so a spot can be
     reproduced), and no path: the chart is named by its library id. `find` is jobs.find_chart. A spot's note is his
-    own words, as he wrote them."""
+    own words, as he wrote them. The record as it stands for the chart there now (as_now): a rating given to an
+    earlier chart in its folder is in `earlier`, with that chart's notes_sha."""
     charts = []
     for record in all_records(home):
-        if not rated(record):
+        if not rated(record) and not record["earlier"]:
             continue
         where = find(Path(home), record["chart"])
         now: dict[str, Any] = {"there": where is not None}
@@ -245,10 +277,14 @@ def for_diagnostics(home: Path, find: Callable[[Path, str], Path | None]) -> dic
             gate = report.get("gate") if isinstance(report.get("gate"), dict) else {}
             now.update(notes_sha=notes_id(where), ok=gate.get("ok"), length=song_length(report),
                        pipeline=report.get("pipeline"))
-        charts.append({k: record.get(k) for k in ("chart", "rating", "spots", "notes_sha", "updated")} | {"now": now})
+            record = as_now(record, now["notes_sha"])
+        charts.append({k: record.get(k) for k in ("chart", "rating", "spots", "notes_sha", "updated", "earlier")}
+                      | {"now": now})
     return {"about": "Each chart's rating (1 to 5) and the spots marked on it, with the chart's record (its "
                      "report.json's pipeline: seeds, takes, devices, fallbacks, engines). A spot's `at` is seconds "
-                     "of the song as Clone Hero plays it (with the lead-in); its note is the player's own words.",
+                     "of the song as Clone Hero plays it (with the lead-in); its note is the player's own words. "
+                     "`earlier`: the ratings and spots given to an earlier chart made into the same folder (charted "
+                     "again with other options), each with that chart's notes_sha, the newest first.",
             "reasons": REASONS, "charts": charts}
 
 

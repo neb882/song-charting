@@ -3461,16 +3461,26 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     copies into Clone Hero. Written whole through a temporary file; a restart reads it; a new version is a new chart
     with its own; nothing deletes one (a chart deleted in Windows keeps its record). Each record notes its chart's
     notes.chart identity (the first 16 hex of its SHA-256) at the last change, so a chart made again into the same
-    folder (the same seed) can be told from the one rated.
+    folder can be told from the one rated.
+  - **A rating stays with the chart it was given to** (v0.5.0 gate's advisor, finding 1): a plain chart of a song
+    already charted, with other options (Best after Quick), goes into the same folder (seed 0's folder is the same
+    whatever the options), and a record found by the chart's id alone then showed the old chart's rating and spots
+    as the new one's. Now everything that reads a record (the box, Your charts' counts, the results, the zip) reads
+    it for the notes.chart in the folder now (`feedback.as_now`): one of another chart reads as none yet, and the
+    box's line says "You rated an earlier chart of this song 5 of 5. How does this one play?", with nothing pressed
+    and no spot listed. The first change saves it so: the earlier rating and spots go to the record's `earlier`
+    (newest first, at most 5 [judgement: a few re-charts of one song], each with its notes_sha and time), which the
+    zip carries; a chart charted back to one rated before (its options again: the same notes.chart) gets that one's
+    own again.
   - **The routes** (behind `/api/jobs`' guards: Host; Origin and `X-Songcharter` on the POST): `GET` and
     `POST /api/jobs/<id>/feedback`, the id a job's, "current" or a chart's (the chart its result names, found in the
     library: never a path). One change a POST: `{"rating": 1-5 or null}`, `{"add": {"at", "reasons", "note"}}` or
     `{"remove": <spot id>}`; each checked (the rating 1 to 5; a time m:ss and not after the song's end, from
     report.json's audio and lead-in; reasons from the list, at least one; the note text of at most 300 characters,
     kept as written), else 400 with why in plain words. `GET /api/library` carries each chart's `rating` and `spots`.
-  - **Into the diagnostics zip** (`diagnostics.py`): feedback.json, every chart with a rating or a spot, each with its
-    chart as it is now (still there or not, its notes.chart identity, its gate, its length, and its report.json's
-    `pipeline`: the seeds, takes, devices, fallbacks and engines of §2.7, so a bad spot can be charted again here);
+  - **Into the diagnostics zip** (`diagnostics.py`): feedback.json, every chart with a rating or a spot (or an
+    earlier chart's), each with its chart as it is now (still there or not, its notes.chart identity, its gate, its
+    length, and its report.json's `pipeline`: the seeds, takes, devices, fallbacks and engines of §2.7);
     the chart named by its id, no path. The note is the friend's own text and travels as he wrote it (the guide says
     so). The zip's guard, `refused` (by name, size and first bytes), now also checks the files it makes, such as this
     one; CI's check_no_audio.py reads the whole zip as before.

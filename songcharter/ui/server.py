@@ -115,11 +115,13 @@ Nothing is downloaded or installed; charting never waits for it.
   * **How it played** (M8-14, ui/feedback.py, DESIGN.md 4.5): GET /api/jobs/<id>/feedback and POST with one change
     ({"rating": 1-5 or null}, {"add": {"at": "m:ss", "reasons": [...], "note": "..."}} or {"remove": <spot id>}), by
     a job's id, "current" or a chart's id like every route above (the chart its result names, in the library), behind
-    the same guards: {"chart", "rating", "spots" ({"id", "at", "time", "reasons", "note"}), "length", "reasons",
-    "note_max"}; 400 with why in plain words for a bad change (a rating not 1 to 5, a time not m:ss or after the
-    song's end, no reason or one not in the list, a note over 300 characters, an unknown spot), or no finished chart.
-    Kept in <home>/state/feedback/, by the chart's id. GET /api/library's charts carry each one's `rating` and
-    `spots` (how many).
+    the same guards: {"chart", "rating", "spots" ({"id", "at", "time", "reasons", "note"}), "earlier", "length",
+    "reasons", "note_max"}; 400 with why in plain words for a bad change (a rating not 1 to 5, a time not m:ss or after
+    the song's end, no reason or one not in the list, a note over 300 characters, an unknown spot), or no finished
+    chart. Kept in <home>/state/feedback/, by the chart's id. GET /api/library's charts carry each one's `rating` and
+    `spots` (how many). All of them for the notes.chart in the chart's folder now: a rating given to an earlier chart
+    made into that folder (a plain chart again with other options) is not this one's (feedback.as_now; `earlier`: its
+    rating and spot count, for the page's line).
   * **Chart it differently** (M8-14): POST /api/jobs/<id>/again {"upload"?, "lyrics"?}: the chart's song again, with
     the options its report.json records (jobs.rechart; its given pictures, which are in its folder, become image
     uploads again; no stems, which the seed does not change), the chart's own folder's name (`name`: every version
@@ -229,7 +231,8 @@ from ..timed import DIFFICULTIES, INSTRUMENTS
 from . import estimate, feedback
 from . import home as default_home
 from .jobs import (CLOSING, LIBRARY_ID, ChartOptions, Charted, Job, Jobs, JobRunning, NotInQueue, NotRunning, Queue,
-                   QueueFull, chart_id, chart_seed, entry_seed, find_chart, last_chart_is, library, parse_options,
+                   QueueFull, chart_folders, chart_id, chart_seed, entry_seed, find_chart, last_chart_is, library,
+                   parse_options,
                    queued_uploads, read_chart, read_report, rechart, stop_orphan, upload_of, version_of)
 
 APP = "songcharter"
@@ -505,10 +508,12 @@ class App:
         return Path(self._cache_root if self._cache_root is not None else cache.cache_root()).expanduser()
 
     def library(self) -> dict:
-        """GET /api/library (the module docstring): each chart with its rating and how many spots it has marked."""
+        """GET /api/library (the module docstring): each chart with its rating and how many spots it has marked, for
+        the notes.chart in its folder now (feedback.as_now: a rating of an earlier chart there is not this one's)."""
         charts = library(self.home, self.work_root())
+        folders = {chart_id(f): f for f in chart_folders(self.home)}
         for c in charts:
-            c.update(feedback.summary(feedback.read(self.home, c["id"])))
+            c.update(feedback.summary(feedback.read(self.home, c["id"], folders.get(c["id"]))))
         return {"charts": charts}
 
     def next_seed(self, upload: str) -> int:
@@ -900,7 +905,7 @@ class Handler(BaseHTTPRequestHandler):
             return None
         c = read_chart(folder, None)
         return {**{k: c[k] for k in ("id", "version", "guitar", "lyrics")},
-                **feedback.summary(feedback.read(self.app.home, c["id"]))}
+                **feedback.summary(feedback.read(self.app.home, c["id"], folder))}
 
     def _feedback(self, job, body: dict | None = None) -> None:
         """GET (body None) or POST /api/jobs/<id>/feedback (the module docstring)."""
@@ -909,7 +914,7 @@ class Handler(BaseHTTPRequestHandler):
         cid, report = chart_id(folder), read_report(folder) or {}
         length = feedback.song_length(report)
         if body is None:
-            return self._json(200, feedback.public(feedback.read(app.home, cid), length))
+            return self._json(200, feedback.public(feedback.read(app.home, cid, folder), length))
         try:
             record = feedback.change(app.home, cid, body, length, notes=feedback.notes_id(folder))
         except InputError as e:
