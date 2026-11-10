@@ -857,7 +857,8 @@ class Handler(BaseHTTPRequestHandler):
         doctor = app.doctor()
         auto = (doctor.get("device") or {}).get("chosen")
         try:
-            est = estimate.for_job(upload.get("seconds"), opts, auto, doctor.get("guitar_device"), cached=cached)
+            est = estimate.for_job(upload.get("seconds"), opts, auto, doctor.get("guitar_device"),
+                                   **({"cached": True} if cached else {}))   # a plain song's call as before
         except Exception:  # noqa: BLE001  a bug in the estimate: logged, and the chart starts without one
             app.log(f"estimate: internal error:\n{traceback.format_exc()}", console=False)
             est = None
