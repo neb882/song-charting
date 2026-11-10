@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
 import re
 import secrets
@@ -65,11 +64,12 @@ def _valid(record: Any, chart: str | None = None) -> bool:
 
 
 def _spot_ok(x: Any) -> bool:
-    """A saved spot that reads as one: an object with its id, a time that is a finite number from 0, its reasons as
-    text and its note as text or None (a damaged one is left out where it is read: the review's F5)."""
+    """A saved spot that reads as one: an object with its id, a time that is a number from 0 to MAX_AT, its reasons as
+    text and its note as text or None (a damaged one is left out where it is read: the review's F5). The bounds alone
+    refuse NaN and the infinities; math.isfinite would raise on a whole number too long for a float (R2)."""
     at = x.get("at") if isinstance(x, dict) else None
     return (isinstance(x, dict) and isinstance(x.get("id"), str) and isinstance(at, (int, float))
-            and not isinstance(at, bool) and math.isfinite(at) and at >= 0 and isinstance(x.get("reasons"), list)
+            and not isinstance(at, bool) and 0 <= at <= MAX_AT and isinstance(x.get("reasons"), list)
             and all(isinstance(r, str) for r in x["reasons"]) and (x.get("note") is None or isinstance(x["note"], str)))
 
 
@@ -113,10 +113,10 @@ def parse_time(value: Any, length: float | None) -> int:
             shown = value.strip()[:20] or "nothing"
             raise InputError(f"{shown} is not a time: write minutes and seconds, such as 2:28")
         at = int(m[1]) * 60 + int(m[2])
-    elif (isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
-          and 0 <= value <= MAX_AT):
+    elif isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= MAX_AT:
         at = int(value)
-    else:   # not a number, a bool, NaN, infinite (JSON's 1e400), negative or past m:ss (F5)
+    else:   # not a number, a bool, NaN, infinite (JSON's 1e400), negative or past m:ss (F5), a whole number too long
+        # for a float among them: the bounds alone refuse NaN and the infinities, and never overflow (R2)
         raise InputError("the time is minutes and seconds, such as 2:28")
     if length is not None and at > length:
         raise InputError(f"{mmss(at)} is after the song's end ({mmss(length)})")

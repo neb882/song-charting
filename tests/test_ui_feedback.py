@@ -981,10 +981,12 @@ def test_a_refused_press_uses_no_version_number(lib):
 @pytest.mark.parametrize("raw", [b'{"add": {"at": 1e400, "reasons": ["great"]}}',
                                  b'{"add": {"at": Infinity, "reasons": ["great"]}}',
                                  b'{"add": {"at": NaN, "reasons": ["great"]}}',
-                                 b'{"add": {"at": 99999999, "reasons": ["great"]}}'])
+                                 b'{"add": {"at": 99999999, "reasons": ["great"]}}',
+                                 b'{"add": {"at": 1' + b'0' * 400 + b', "reasons": ["great"]}}'])
 def test_a_time_that_is_no_finite_number_is_a_plain_400(lib, raw):
     """The review's F5 (a): an infinite, NaN or huge time is the plain 400 of any bad time, not a 500 (break: int()
-    of an infinity)."""
+    of an infinity); the second review's R2: so is a whole number too long for a float (break: math.isfinite on it,
+    an OverflowError)."""
     status, _, body = call(lib.port, "POST", by_id(V1, "/feedback"), raw, guarded(lib.port))
     assert status == 400 and json.loads(body)["error"] == "the time is minutes and seconds, such as 2:28", body
 
@@ -1011,6 +1013,23 @@ def test_a_damaged_spot_is_left_out_and_the_rest_still_works(lib, tmp_path):
     z = zipfile.ZipFile(diagnostics.bundle(lib.home, tmp_path / "d.zip", cache_root=lib.root, report=lambda: {},
                                            clonehero_info=lambda home: {}))
     assert json.loads(z.read("feedback.json"))["charts"][0]["spots"] == [good]
+
+
+def test_a_saved_time_too_long_for_a_float_is_left_out(lib):
+    """The second review's R2: a saved spot whose `at` is a whole number too long for a float is left out where it is
+    read, as any damaged spot; the record, the library and a rating still answer 200 (break: math.isfinite on it, an
+    OverflowError and a 500 that empties Your charts)."""
+    good = {"id": "0a0b0c0d", "at": 75, "reasons": ["great"], "note": None}
+    path = FB.path_for(lib.home, V1)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"chart": V1, "rating": 2, "spots": [{"id": "e1", "at": 10 ** 400, "reasons": ["great"],
+                                                                     "note": None}, good]}), encoding="utf-8")
+    status, fb = get(lib, by_id(V1, "/feedback"))
+    assert status == 200 and [s["id"] for s in fb["spots"]] == ["0a0b0c0d"] and fb["rating"] == 2
+    status, listed = get(lib, "/api/library")
+    assert status == 200 and {c["id"]: c for c in listed["charts"]}[V1]["spots"] == 1
+    status, fb = post(lib, by_id(V1, "/feedback"), {"rating": 5})
+    assert status == 200 and fb["rating"] == 5 and [s["id"] for s in fb["spots"]] == ["0a0b0c0d"]
 
 
 def test_the_rechart_estimate_counts_the_guitar_when_the_rest_is_cached(lib):
