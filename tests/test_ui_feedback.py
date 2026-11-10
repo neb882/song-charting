@@ -1017,7 +1017,8 @@ def test_a_damaged_spot_is_left_out_and_the_rest_still_works(lib, tmp_path):
     path.write_text(json.dumps({"chart": V1, "rating": 4, "spots": [7, good]}), encoding="utf-8")
     z = zipfile.ZipFile(diagnostics.bundle(lib.home, tmp_path / "d.zip", cache_root=lib.root, report=lambda: {},
                                            clonehero_info=lambda home: {}))
-    assert json.loads(z.read("feedback.json"))["charts"][0]["spots"] == [good]
+    assert [{k: v for k, v in x.items() if k != "around"} for x in json.loads(z.read("feedback.json"))["charts"][0][
+        "spots"]] == [good]
 
 
 def test_a_saved_time_too_long_for_a_float_is_left_out(lib):
@@ -1532,3 +1533,87 @@ def test_the_page_says_a_version_is_in_the_list(tmp_path):
     out = json.loads(done.stdout)
     words = "Version 3 of this song is already in the list: when it is charted, you can chart it differently again."
     assert out == {"row": {"msg": words, "lyrics": "zib zab\n"}, "done": words}
+
+
+
+# a made-up chart: 120 BPM (384 ticks a second at 192) to tick 4608 (12 s), then 60 BPM (192 a second); a section
+# name and lyric events of made-up words that must never reach the zip; Expert guitar: a strummed chord at 4 s, a
+# natural HOPO 64 ticks on, a tap, an open sustained 192 ticks at 6 s, one note at 17 s, one at 40 s and 30 at 60 s
+NOTES = """[Song]\r\n{\r\n  Name = "Zibzab Song"\r\n  Offset = 0\r\n  Resolution = 192\r\n}\r\n[SyncTrack]\r\n{\r
+  0 = TS 4\r\n  0 = B 120000\r\n  4608 = B 60000\r\n}\r\n[Events]\r\n{\r\n  0 = E "section Zibzab Part"\r
+  1536 = E "phrase_start"\r\n  1536 = E "lyric Zobble"\r\n}\r\n[ExpertSingle]\r\n{\r\n  1536 = N 0 0\r
+  1536 = N 2 0\r\n  1600 = N 1 0\r\n  1792 = N 3 0\r\n  1792 = N 6 0\r\n  2304 = N 7 192\r\n  5568 = N 4 0\r
+  9984 = N 0 0\r\n""" + "".join(f"  {13824 + 6 * k} = N {k % 5} 0\r\n" for k in range(30)) + "}\r\n"
+
+
+def test_the_zip_carries_the_guitar_notes_around_each_spot(lib, tmp_path, monkeypatch):
+    """The advisor's 3 at v0.5.0's gate: each spot of the chart rated has `around` in feedback.json: the Expert guitar's
+    notes from 10 s before it to 10 s after, as numbers (seconds on the spot's clock, tick, frets, open, strum, HOPO
+    or tap, sustain in ticks) read as Clone Hero plays them, with the resolution and the tempo markers there (the one
+    in force at its start first); no word of the chart (its section, its lyrics, its name); the nearest AROUND_NOTES a
+    spot and AROUND_TOTAL a file, said; a chart that does not read, one with no Expert guitar, and spots of another
+    notes.chart than the one there: no notes, and why; notes.chart itself still refused (breaks: no notes; another
+    clock; the kinds or the sustain wrong; the tempo in force left out; a word of the chart sent; no cap)."""
+    (lib.first / "notes.chart").write_text(NOTES, encoding="utf-8", newline="")
+    post(lib, by_id(V1, "/feedback"), {"add": {"at": "0:10", "reasons": ["off_beat"]}})
+    post(lib, by_id(V1, "/feedback"), {"add": {"at": "0:40", "reasons": ["great"]}})
+    post(lib, by_id(V1, "/feedback"), {"add": {"at": "1:00", "reasons": ["too_many_chords"]}})
+    post(lib, by_id(V2, "/feedback"), {"add": {"at": "0:05", "reasons": ["great"]}})   # its notes.chart: no chart
+
+    def zipped(name):
+        z = zipfile.ZipFile(diagnostics.bundle(lib.home, tmp_path / name, cache_root=lib.root, report=lambda: {},
+                                               clonehero_info=lambda home: {}))
+        assert "feedback.json" in z.namelist() and not any(n.endswith(".chart") for n in z.namelist())
+        return z.read("feedback.json").decode("utf-8"), {c["chart"]: c for c in json.loads(z.read("feedback.json"))[
+            "charts"]}
+
+    text, charts = zipped("d.zip")
+    ten, forty, sixty = (x["around"] for x in charts[V1]["spots"])
+    assert (ten["from_s"], ten["to_s"], ten["resolution"], ten["left_out"]) == (0.0, 20, 192, 0)
+    assert ten["tempos"] == [{"tick": 0, "bpm": 120.0, "s": 0.0}, {"tick": 4608, "bpm": 60.0, "s": 12.0}]
+    assert ten["notes"] == [
+        {"s": 4.0, "tick": 1536, "frets": [0, 2], "open": False, "kind": "strum", "sustain": 0},
+        {"s": 4.167, "tick": 1600, "frets": [1], "open": False, "kind": "hopo", "sustain": 0},
+        {"s": 4.667, "tick": 1792, "frets": [3], "open": False, "kind": "tap", "sustain": 0},
+        {"s": 6.0, "tick": 2304, "frets": [], "open": True, "kind": "strum", "sustain": 192},
+        {"s": 17.0, "tick": 5568, "frets": [4], "open": False, "kind": "strum", "sustain": 0}]
+    assert forty["tempos"] == [{"tick": 4608, "bpm": 60.0, "s": 12.0}]   # in force from before the window
+    assert [(n["s"], n["tick"]) for n in forty["notes"]] == [(40.0, 9984)]
+    assert len(sixty["notes"]) == 30 and sixty["notes"][0] == {"s": 60.0, "tick": 13824, "frets": [0], "open": False,
+                                                                "kind": "strum", "sustain": 0}
+    assert charts[V2]["spots"][0]["around"] == {"why": "its notes.chart could not be read as a chart (InputError)"}
+    for word in ("Zibzab", "Zobble", "lyric", "phrase", "section", "/"):
+        assert word not in json.dumps(charts), word
+    assert "Zibzab" not in text and "Zobble" not in text
+    monkeypatch.setattr(FB, "AROUND_NOTES", 12)   # the cap a spot: the nearest kept
+    monkeypatch.setattr(FB, "AROUND_TOTAL", 5 + 1 + 12)
+    _, charts = zipped("capped.zip")
+    ten, forty, sixty = (x["around"] for x in charts[V1]["spots"])
+    assert len(ten["notes"]) == 5 and len(forty["notes"]) == 1
+    assert sixty["left_out"] == 18 and sixty["why"] == "at most 12 notes a spot: the nearest kept"
+    assert [n["tick"] for n in sixty["notes"]] == [13824 + 6 * k for k in range(12)]   # 1:00 is the first note
+    monkeypatch.setattr(FB, "AROUND_TOTAL", 5 + 1 + 4)
+    _, charts = zipped("total.zip")
+    sixty = charts[V1]["spots"][2]["around"]
+    assert (len(sixty["notes"]), sixty["left_out"], sixty["why"]) == (4, 26, "at most 10 notes in this file, reached")
+    drums = f"{B}:{DRUMS}"   # a chart with no Expert guitar
+    (lib.drums / "notes.chart").write_text(NOTES.split("[ExpertSingle]")[0], encoding="utf-8", newline="")
+    post(lib, by_id(drums, "/feedback"), {"add": {"at": "0:05", "reasons": ["great"]}})
+    assert zipped("none.zip")[1][drums]["spots"][0]["around"] == {"why": "the chart has no Expert guitar part"}
+    (lib.first / "notes.chart").unlink()   # the spots of a notes.chart no longer there
+    assert zipped("gone.zip")[1][V1]["spots"][0]["around"] == {
+        "why": "these spots were marked on another notes.chart than the one there now"}
+    assert diagnostics.refused("notes.chart") == "a chart (notes.chart holds the lyrics)"
+
+
+def test_a_full_files_notes_stay_under_the_zips_limit(tmp_path):
+    """AROUND_TOTAL notes as feedback.json writes them, each spot's window full, stay well under diagnostics' MAX_BYTES
+    (break: a cap that lets the file grow past what the zip takes)."""
+    note = {"s": 123.456, "tick": 123456, "frets": [0, 2, 4], "open": False, "kind": "strum", "sustain": 1920}
+    spot = {"id": "0a0b0c0d", "at": 130, "reasons": ["too_many_chords", "off_beat"], "note": "x" * FB.NOTE_MAX,
+            "around": {"from_s": 120, "to_s": 140, "resolution": 192, "tempos": [{"tick": 0, "bpm": 120.0, "s": 0.0}],
+                       "notes": [note] * FB.AROUND_NOTES, "left_out": 0}}
+    spots = FB.AROUND_TOTAL // FB.AROUND_NOTES
+    data = {"charts": [{"chart": f"{A}:{FIRST}", "rating": 3, "spots": [spot] * spots, "now": {"pipeline": PIPELINE}}]}
+    size = len(json.dumps(data, indent=1, ensure_ascii=False).encode("utf-8"))
+    assert size < diagnostics.MAX_BYTES * 0.6, size

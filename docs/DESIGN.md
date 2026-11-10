@@ -3484,6 +3484,19 @@ A stdlib `ThreadingHTTPServer` on 127.0.0.1 serves a vanilla-JS page (no CDN; CS
     the chart named by its id, no path. The note is the friend's own text and travels as he wrote it (the guide says
     so). The zip's guard, `refused` (by name, size and first bytes), now also checks the files it makes, such as this
     one; CI's check_no_audio.py reads the whole zip as before.
+  - **The notes around a spot** (v0.5.0 gate's advisor, finding 3): the zip refuses notes.chart (it holds the
+    lyrics), and the owner's GPU need not chart the friend's chart again (M8-02: 8 of 23 takes identical across
+    devices), so a spot alone was a time with nothing to look at. Each spot of the chart rated (its notes_sha the one
+    there now) carries `around`: the Expert guitar's notes from 10 s before it to 10 s after, as numbers only
+    (`{"s", "tick", "frets", "open", "kind": "strum" | "hopo" | "tap", "sustain"}` in ticks), read from the folder's
+    notes.chart with the project's importer as Clone Hero plays it (`importers.read_chart` with the song.ini's
+    settings; ticks from its tempo map), with the chart's resolution and the tempo markers there (the one in force at
+    the window's start first). The seconds are the chart's from tick 0, which are song.ogg's with the lead-in in it
+    (Offset 0; assemble puts every input second t at t + pad_seconds on the map): the clock of the spot's `at`. No
+    word of the chart (not its [Events]: lyrics, sections; not its names). At most 400 notes a spot (the nearest) and
+    10,000 in the file [judgement: 20 notes a second for 20 s; about 200 bytes a note as written, so about 2 MB of
+    the zip's 5 MB a file], `left_out` and `why` saying what was left out; a chart that does not read, one with no
+    Expert guitar, or spots of another notes.chart than the one there: `why` alone.
   - **Chart it differently** (on the Done screen and on each chart in Your charts with a guitar part, a failed check
     too): `POST /api/jobs/<id>/again` charts the song again with the next seed for its song (`App.next_seed`: one more
     than any its versions in the library, its songs in the queue and `<home>/state/versions.json` have used, so a

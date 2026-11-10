@@ -160,7 +160,8 @@ page.
 - **If downloads keep failing with certificate errors**, usually after the PC slept and WSL's clock went wrong: in
   Terminal (right-click Start), type `wsl --shutdown`, then open Ubuntu and paste the install line again.
 - The "Diagnostics" link at the bottom of songcharter's page saves a zip to your Downloads folder (logs and settings,
-  and your ratings and marked spots with your notes as you wrote them; no audio). Send it. Or, in Ubuntu, type `songcharter diagnostics --out diagnostics.zip`: the line that
+  your ratings and marked spots with your notes as you wrote them, and the chart's guitar notes around each spot, as
+  numbers; no audio and no lyrics). Send it. Or, in Ubuntu, type `songcharter diagnostics --out diagnostics.zip`: the line that
   starts "in Windows:" says where the zip is.
 
 ## 7. Remove it

@@ -4,6 +4,7 @@ the chart and sent back in the diagnostics zip.
     record = feedback.read(home, chart_id, folder)            # {"chart", "rating", "spots", ...}; an empty one first
     record = feedback.change(home, chart_id, body, length=245.3, notes=sha)   # an InputError for a bad body
     feedback.for_diagnostics(home, find)                      # every chart's, with its report.json's `pipeline`
+                                                              # and the guitar's notes around each spot
 
   * **Where:** <home>/state/feedback/<24 hex>.json, the hex the SHA-256 of the chart's library id (jobs.LIBRARY_ID:
     `<16 hex>:<name>[:v<N>]`, which the record holds), so no name of a song is made into a file's name. Not in the
@@ -28,6 +29,7 @@ the chart and sent back in the diagnostics zip.
 """
 from __future__ import annotations
 
+import bisect
 import hashlib
 import json
 import os
@@ -52,6 +54,11 @@ EARLIER_KEYS = ("rating", "spots", "notes_sha", "updated")   # what an `earlier`
 TIME = re.compile(r"^\s*(\d{1,3}):([0-5][0-9])\s*$")   # m:ss
 MAX_AT = 999 * 60 + 59            # the latest time m:ss can write: a number past it is no time either
 _lock = threading.Lock()          # one change at a time (the server's request threads)
+# a spot's notes in feedback.json (the gate advisor's 3: the owner's GPU may not chart the friend's chart again)
+AROUND_S = 10                     # the Expert guitar's notes this many seconds before a spot to as many after
+AROUND_NOTES = 400                # at most this many a spot, the nearest it [judgement: 20 notes a second for 20 s]
+AROUND_TOTAL = 10000              # and in the whole file: about 2 MB at about 200 bytes a note as written, under
+                                  # diagnostics.MAX_BYTES (5 MB) with room for the rest [tests/test_ui_feedback.py]
 
 
 def folder(home: Path) -> Path:
@@ -255,14 +262,73 @@ def notes_id(folder_path: Path) -> str | None:
         return None
 
 
+def guitar_notes(folder: Path) -> tuple[dict | None, str | None]:
+    """The chart's Expert guitar as numbers, read as Clone Hero plays it (importers.read_chart with the folder's
+    song.ini settings), for the spots in feedback.json: ({"resolution", "tempos": [{"tick", "bpm", "s"}], "notes":
+    [{"s", "tick", "frets", "open", "kind", "sustain"}]}, None), or (None, why). Seconds from the chart's tick 0 (its
+    Offset and the ini's delay, both 0 in songcharter's charts): song.ogg's, the lead-in in it (assemble puts every
+    input second t at t + pad_seconds on the map), the clock of a spot's `at`. No text of the chart: not its
+    [Events] (the lyrics, the sections), not its names."""
+    from .. import importers
+    from ..timed import OPEN
+    path = Path(folder) / "notes.chart"
+    try:
+        raw = importers._parse_chart(importers._decode(path.read_bytes()))   # the resolution and the tempo map
+        ini = Path(folder) / "song.ini"
+        mods = importers.read_ini_modifiers(ini) if ini.is_file() else importers.ChartModifiers()
+        part = importers.read_chart(path, modifiers=mods).parts.get(("guitar", "expert"))
+    except Exception as e:  # noqa: BLE001  a chart that does not read: its spots go without notes, said why
+        return None, f"its notes.chart could not be read as a chart ({type(e).__name__})"
+    if part is None or not part.notes:
+        return None, "the chart has no Expert guitar part"
+    clock = importers._Clock(raw.resolution, raw.tempos)
+    offset = mods.delay_ms / 1000 if mods.delay_ms else raw.offset
+
+    def tick(seconds: float) -> int:   # _Clock.ms turned round: a note's tick from its time
+        ms = (seconds - offset) * 1000
+        i = max(bisect.bisect_right(clock.ms_at, ms) - 1, 0)
+        return round(clock.ticks[i] + (ms - clock.ms_at[i]) * clock.bpms[i] * clock.resolution / 60000)
+
+    notes = []
+    for n in part.notes:
+        t = tick(n.time)
+        notes.append({"s": round(n.time, 3), "tick": t, "frets": [f for f in n.frets if f != OPEN],
+                      "open": OPEN in n.frets, "kind": "tap" if n.tap else "hopo" if n.hopo else "strum",
+                      "sustain": 0 if n.end is None else tick(n.end) - t})
+    tempos = [{"tick": t, "bpm": bpm, "s": round(clock.ms(t) / 1000 + offset, 3)} for t, bpm in raw.tempos]
+    return {"resolution": raw.resolution, "tempos": tempos, "notes": notes}, None
+
+
+def around(guitar: Mapping[str, Any], at: float, left: list[int]) -> dict:
+    """A spot's `around` in feedback.json: the notes from AROUND_S before `at` to AROUND_S after, the nearest
+    AROUND_NOTES of them and no more than left[0] (the file's budget, taken from it), with the chart's resolution and
+    the tempo markers there (the one in force at the start first); how many were left out, and why."""
+    lo, hi = max(0.0, at - AROUND_S), at + AROUND_S
+    near = [n for n in guitar["notes"] if lo <= n["s"] <= hi]
+    room = min(AROUND_NOTES, left[0])
+    kept = sorted(sorted(near, key=lambda n: abs(n["s"] - at))[:room], key=lambda n: n["s"])
+    left[0] -= len(kept)
+    tempos = guitar["tempos"]
+    first = max((i for i, t in enumerate(tempos) if t["s"] <= lo), default=0)
+    out = {"from_s": lo, "to_s": hi, "resolution": guitar["resolution"],
+           "tempos": [t for i, t in enumerate(tempos) if i == first or lo < t["s"] <= hi], "notes": kept,
+           "left_out": len(near) - len(kept)}
+    if out["left_out"]:
+        out["why"] = (f"at most {AROUND_NOTES} notes a spot: the nearest kept" if room == AROUND_NOTES else
+                      f"at most {AROUND_TOTAL} notes in this file, reached")
+    return out
+
+
 def for_diagnostics(home: Path, find: Callable[[Path, str], Path | None]) -> dict:
     """feedback.json in the diagnostics zip: every chart's record that holds a rating or a spot, with the chart as it
     is now (`now`: whether its folder is still in the library, its notes.chart identity, the gate's verdict, the
     song's length and its report.json's `pipeline`: the seeds, takes, devices, fallbacks and engines, so a spot can be
     reproduced), and no path: the chart is named by its library id. `find` is jobs.find_chart. A spot's note is his
     own words, as he wrote them. The record as it stands for the chart there now (as_now): a rating given to an
-    earlier chart in its folder is in `earlier`, with that chart's notes_sha."""
-    charts = []
+    earlier chart in its folder is in `earlier`, with that chart's notes_sha. Each spot of the chart rated (its
+    notes_sha the one there now) has `around`: the guitar's notes about it (guitar_notes, around; the gate advisor's
+    3), or why none."""
+    charts, left = [], [AROUND_TOTAL]
     for record in all_records(home):
         if not rated(record) and not record["earlier"]:
             continue
@@ -278,13 +344,28 @@ def for_diagnostics(home: Path, find: Callable[[Path, str], Path | None]) -> dic
             now.update(notes_sha=notes_id(where), ok=gate.get("ok"), length=song_length(report),
                        pipeline=report.get("pipeline"))
             record = as_now(record, now["notes_sha"])
-        charts.append({k: record.get(k) for k in ("chart", "rating", "spots", "notes_sha", "updated", "earlier")}
-                      | {"now": now})
+        guitar, why = (None, "the chart's folder is not there any more") if where is None else (
+            (None, "these spots were marked on another notes.chart than the one there now")
+            if record["notes_sha"] != now["notes_sha"] else (None, None))
+        spots = []
+        for spot in record["spots"]:
+            if guitar is None and why is None:   # read once a chart, for its first spot
+                guitar, why = guitar_notes(where)
+            spots.append({**spot, "around": {"why": why} if guitar is None else around(guitar, spot["at"], left)})
+        charts.append({k: record.get(k) for k in ("chart", "rating", "notes_sha", "updated", "earlier")}
+                      | {"spots": spots, "now": now})
     return {"about": "Each chart's rating (1 to 5) and the spots marked on it, with the chart's record (its "
                      "report.json's pipeline: seeds, takes, devices, fallbacks, engines). A spot's `at` is seconds "
                      "of the song as Clone Hero plays it (with the lead-in); its note is the player's own words. "
                      "`earlier`: the ratings and spots given to an earlier chart made into the same folder (charted "
-                     "again with other options), each with that chart's notes_sha, the newest first.",
+                     "again with other options), each with that chart's notes_sha, the newest first. A spot's "
+                     f"`around`: the chart's Expert guitar notes from {AROUND_S} s before it to {AROUND_S} s after, "
+                     "as numbers only (s: seconds on the clock of `at`; tick; frets 0 to 4, green to orange; open; "
+                     "kind: strum, hopo or tap; sustain in ticks), with the chart's resolution and its tempo "
+                     "markers there (the one in force at the start first); never a word of the chart. At most "
+                     f"{AROUND_NOTES} notes a spot (the nearest) and {AROUND_TOTAL} in this file: `left_out` and "
+                     "`why` say so; `why` alone when there are none. An `earlier` chart's spots have no `around`: "
+                     "that chart is not there now.",
             "reasons": REASONS, "charts": charts}
 
 

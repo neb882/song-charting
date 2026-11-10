@@ -15,14 +15,17 @@
     built folder's report.json (pipeline.json's assemble.folder: the song folder or its .failed);
   * feedback.json (M8-14): every chart's rating and marked spots from the page (ui/feedback.py,
     <home>/state/feedback), each with its chart as it is now, its report.json's `pipeline` among it (the seeds,
-    takes, devices, fallbacks and engines), so a bad spot can be charted again here; the chart named by its library
-    id, no path. A spot's note is the player's own words, as he wrote them. Left out when no chart has a rating
-    or a spot (the manifest says so);
+    takes, devices, fallbacks and engines), and with each spot the chart's Expert guitar notes from 10 s before it to
+    10 s after (`around`: numbers only, with the chart's resolution and tempo markers there; capped a spot and a
+    file), read from its notes.chart here, so a bad spot can be looked at where the chart cannot be made again (the
+    gate advisor's 3: another GPU need not give the same takes); the chart named by its library id, no path. A
+    spot's note is the player's own words, as he wrote them. Left out when no chart has a rating or a spot (the
+    manifest says so);
   * MANIFEST.txt: every file with its size and where it came from, then every file left out and why.
 
 **Never** (`refused`, each candidate checked by its name, its size and its first bytes, the files made here too): an audio extension or audio
 magic bytes (packaging/ci/check_no_audio.py's test, copied here since that script is not part of the package), a
-notes.chart (it holds the lyrics), a stem, a picture (PNG, JPEG or WebP by its extension or its first bytes: the
+notes.chart (it holds the lyrics: feedback.json's notes are numbers read from it, never its text), a stem, a picture (PNG, JPEG or WebP by its extension or its first bytes: the
 previews, and the album art and backgrounds of M4-11, which may be a person's photo), or any file over MAX_BYTES
 (5 MB). Only the files above are ever
 picked, so the songs, stems, decodes, previews and charts in the home and the cache are never looked at. The lyrics a
@@ -244,8 +247,9 @@ def bundle(home: Path | str, out: Path | str, *, report: Callable[[], dict] | No
             lines += ["", "left out (why):"] + ([f"  {src}: {why}" for src, why in b.left] or ["  nothing"])
             lines += ["", "Never in this file: audio, stems, charts (notes.chart), pictures, or a file over "
                           f"{MAX_BYTES // 10 ** 6} MB.",
-                      "feedback.json holds each chart's rating and marked spots; a spot's note is the player's own "
-                      "words, as he wrote them." if rated.get("charts") or "error" in rated else
+                      "feedback.json holds each chart's rating and marked spots, with the guitar's notes around each "
+                      "spot as numbers (no word of the chart); a spot's note is the player's own words, as he wrote "
+                      "them." if rated.get("charts") or "error" in rated else
                       "No chart has a rating or a marked spot yet, so there is no feedback.json."]
             z.writestr("MANIFEST.txt", "\n".join(lines) + "\n")
         os.replace(part, out)
