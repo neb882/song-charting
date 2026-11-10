@@ -25,6 +25,19 @@
     F2);
   * MANIFEST.txt: every file with its size and where it came from, then every file left out and why.
 
+**The user's name** (v0.5.0's gate: the friend sends this zip, and it is read on other machines): every file written
+into the zip (the files copied, the JSON made here, MANIFEST.txt) has the user's folders written without his name
+(`scrub`). The Linux home folder (Path.home(), as text spells it and as JSON writes it) becomes `~`;
+$SONGCHARTER_HOME and the cache root outside it stay as they are. A Windows profile folder keeps its spelling with
+`<user>` for the name: `C:\\Users\\<user>` (its backslashes doubled as JSON writes them, or doubled again for a repr
+inside JSON, or forward slashes), `/mnt/c/Users/<user>`, and the Linux home as Windows sees it,
+`\\\\wsl.localhost\\<distro>\\home\\<user>` and `\\\\wsl$\\...`. The name is found by a pattern on the paths, so a log
+that holds what another run wrote goes the same way: it runs to the next separator or a character Windows forbids in a
+name (a JSON `\\uXXXX` escape counts as part of it), so a profile folder that ends a path inside a sentence takes the
+words after it up to such a character; Public, Default, Default User and All Users are not names and stay. A bare
+user name elsewhere in the text is not chased (it could be any word). The guard (`refused`) and the sizes in the
+manifest are judged on what is written; a file over MAX_BYTES on disk is still left out unread.
+
 **Never** (`refused`, each candidate checked by its name, its size and its first bytes, the files made here too): an audio extension or audio
 magic bytes (packaging/ci/check_no_audio.py's test, copied here since that script is not part of the package), a
 notes.chart (it holds the lyrics: feedback.json's notes are numbers read from it, never its text), a stem, a picture (PNG, JPEG or WebP by its extension or its first bytes: the
@@ -37,6 +50,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import time
 import zipfile
@@ -59,6 +73,47 @@ NEVER_SUFFIXES = {".png": "a picture (PNG)", ".jpg": "a picture (JPEG)", ".jpeg"
 PICTURE_MAGIC = {b"\x89PNG": "a PNG header", b"\xff\xd8\xff": "a JPEG header"}   # WebP is RIFF: refused as audio
 WORK_FILES = ("pipeline.json", "assemble.json", cache.MARKER)
 PREVIEW_KEYS = ("ok", "flags", "flags_by_kind", "remarks", "pages", "skipped", "error")
+
+# the user's folders without his name (the module docstring, "The user's name")
+USER = "<user>"
+_SEP = r"(?:\\+|/)"                         # \, \\ as JSON writes it, \\\\ for a repr inside JSON, or /
+_PART = r"[^\\/<>:\"|?*\x00-\x1f]"          # a character Windows allows in a folder's name
+_NAME = rf"(?:\\u[0-9a-fA-F]{{4}}|{_PART})+"   # ... or a JSON \u escape of one
+PROFILE = re.compile(rf"(?P<pre>(?:\b[a-z]:|/mnt/[a-z]){_SEP}users{_SEP})(?P<name>{_NAME})", re.IGNORECASE)
+WSL_HOME = re.compile(rf"(?P<pre>(?<![^\\/])wsl(?:\.localhost|\$){_SEP}{_PART}+{_SEP}home{_SEP})(?P<name>{_NAME})",
+                      re.IGNORECASE)
+NOT_USERS = {"public", "default", "default user", "all users"}   # Windows' own folders in C:\Users
+NAMES_LINE = ("The user's folders are written without his name: the Linux home as ~, a Windows profile as "
+              "C:\\Users\\<user>.")
+
+
+def home_pattern() -> re.Pattern | None:
+    """Path.home() as text may spell it (as it is, its real path when a link leads there, and as JSON writes each,
+    non-ASCII escaped or not), not followed by more of a name (/home/x2, /home/x.old); None when there is no home to
+    hide (none found, or the root folder)."""
+    try:
+        home = Path.home()
+        homes = {str(home), os.path.realpath(home)}
+    except (RuntimeError, OSError, KeyError):
+        return None
+    spelled = set()
+    for h in homes:
+        h = h.rstrip("/")
+        if h.startswith("/"):
+            spelled |= {h, json.dumps(h)[1:-1], json.dumps(h, ensure_ascii=False)[1:-1]}
+    if not spelled:
+        return None
+    spellings = "|".join(re.escape(h) for h in sorted(spelled, key=len, reverse=True))
+    return re.compile(f"(?:{spellings})" + r"(?!\w|[.\-]\w)")
+
+
+def scrub(text: str, home: re.Pattern | None) -> str:
+    """`text` with the user's folders written without his name: a Windows profile's name as USER in each spelling,
+    then the Linux home (`home`, home_pattern()'s) as ~ (the module docstring)."""
+    def user(m: re.Match) -> str:
+        return m[0] if m["name"].strip().lower() in NOT_USERS else m["pre"] + USER
+    text = WSL_HOME.sub(user, PROFILE.sub(user, text))
+    return home.sub("~", text) if home is not None else text
 
 
 def magic_reason(head: bytes) -> str | None:
@@ -97,15 +152,22 @@ def refused(name: str, data: bytes | None = None, size: int | None = None) -> st
 
 
 class Bundle:
-    """The zip being made: each file checked (`refused`) as it goes in, and the manifest's lines."""
+    """The zip being made: each file without the user's name (`scrub`) and checked (`refused`) as it goes in, and
+    the manifest's lines."""
 
     def __init__(self, z: zipfile.ZipFile):
         self.z = z
+        self.home = home_pattern()
         self.added: list[tuple[str, int, str]] = []    # name in the zip, bytes, where from
         self.left: list[tuple[str, str]] = []          # where from, why not
 
+    def text(self, data: bytes) -> bytes:
+        """`data` as it is written: without the user's name (`scrub`), any byte that is not UTF-8 kept as it was."""
+        return scrub(data.decode("utf-8", "surrogateescape"), self.home).encode("utf-8", "surrogateescape")
+
     def file(self, arcname: str, path: Path) -> bool:
-        """`path` into the zip as `arcname`, when it exists and passes; whether it went in."""
+        """`path` into the zip as `arcname`, without the user's name, when it exists and passes (judged on what is
+        written; a file over MAX_BYTES on disk is not read); whether it went in."""
         try:
             size = path.stat().st_size
         except OSError as e:
@@ -115,7 +177,7 @@ class Bundle:
         why = refused(path.name, None, size)
         if why is None:
             try:
-                data = path.read_bytes()
+                data = self.text(path.read_bytes())
             except OSError as e:
                 why = f"unreadable ({e.strerror or type(e).__name__})"
             else:
@@ -128,9 +190,9 @@ class Bundle:
         return True
 
     def json(self, arcname: str, value: Any, source: str) -> bool:
-        """`value` as JSON into the zip as `arcname`, when it passes `refused` as a file would (its name, size and
-        first bytes: M8-14, the made files under the same guard); whether it went in."""
-        data = (json.dumps(value, indent=1, ensure_ascii=False, default=str) + "\n").encode("utf-8")
+        """`value` as JSON into the zip as `arcname`, without the user's name, when it passes `refused` as a file
+        would (its name, size and first bytes: M8-14, the made files under the same guard); whether it went in."""
+        data = self.text((json.dumps(value, indent=1, ensure_ascii=False, default=str) + "\n").encode("utf-8"))
         why = refused(arcname, data, len(data))
         if why is not None:
             self.left.append((source, why))
@@ -271,9 +333,9 @@ def bundle(home: Path | str, out: Path | str, *, report: Callable[[], dict] | No
             lines += [f"  {name}  {size}  {src}" for name, size, src in b.added]
             lines += ["", "left out (why):"] + ([f"  {src}: {why}" for src, why in b.left] or ["  nothing"])
             lines += ["", "Never in this file: audio, stems, charts (notes.chart), pictures, or a file over "
-                          f"{MAX_BYTES // 10 ** 6} MB.",
+                          f"{MAX_BYTES // 10 ** 6} MB.", NAMES_LINE,
                       FED_LINES[fed or "nothing"].format(mb=f"{MAX_BYTES / 10 ** 6:g} MB")]
-            z.writestr("MANIFEST.txt", "\n".join(lines) + "\n")
+            z.writestr("MANIFEST.txt", b.text(("\n".join(lines) + "\n").encode("utf-8")))
         os.replace(part, out)
     finally:
         part.unlink(missing_ok=True)
